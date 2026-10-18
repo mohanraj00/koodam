@@ -59,9 +59,13 @@ spec:
       labels:
         {{- include "koodam.gatewaySelector" (list . "postgres") | nindent 8 }}
     spec:
+      securityContext:
+        {{- toYaml $pg.podSecurityContext | nindent 8 }}
       containers:
       - name: postgres
         image: {{ $pg.image }}
+        securityContext:
+          {{- toYaml $pg.securityContext | nindent 10 }}
         env:
         - name: POSTGRES_USER
           value: litellm

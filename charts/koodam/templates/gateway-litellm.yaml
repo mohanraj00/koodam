@@ -57,9 +57,13 @@ spec:
       labels:
         {{- include "koodam.gatewaySelector" (list . "litellm") | nindent 8 }}
     spec:
+      securityContext:
+        {{- toYaml $b.litellm.podSecurityContext | nindent 8 }}
       containers:
       - name: litellm
         image: {{ $b.litellm.image }}
+        securityContext:
+          {{- toYaml $b.litellm.securityContext | nindent 10 }}
         args: [--config, /etc/litellm/config.yaml, --port, "4000"]
         env:
         - name: LITELLM_MASTER_KEY

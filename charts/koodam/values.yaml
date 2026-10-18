@@ -40,6 +40,18 @@ gateway:
       # Helm writes small floats as "1e-06". Do not set a cost per token here.
       modelList: []
       resources: {}
+      # The image user is root. LiteLLM also runs as the user "nobody" (65534).
+      podSecurityContext:
+        runAsNonRoot: true
+        runAsUser: 65534
+        runAsGroup: 65534
+        seccompProfile:
+          type: RuntimeDefault
+      securityContext:
+        allowPrivilegeEscalation: false
+        capabilities:
+          drop:
+          - ALL
     # A model that LiteLLM answers itself (mock_response), with no model server.
     # The cost per token makes the spend more than zero. Use it for tests only.
     mock:
@@ -64,6 +76,19 @@ gateway:
         size: 1Gi
         storageClassName: ""
       resources: {}
+      # The user "postgres" in the alpine image is 70. fsGroup lets this user write the data volume.
+      podSecurityContext:
+        runAsNonRoot: true
+        runAsUser: 70
+        runAsGroup: 70
+        fsGroup: 70
+        seccompProfile:
+          type: RuntimeDefault
+      securityContext:
+        allowPrivilegeEscalation: false
+        capabilities:
+          drop:
+          - ALL
 
 # The time that the controller adds to deadlineSeconds for the key TTL.
 keyGrace: 1m
