@@ -46,6 +46,8 @@ koodam delete NAME       # the controller revokes the key first
 
 Build it with `go build -o bin/koodam ./cmd/koodam`. It uses your kubeconfig, and `-n`, `--context` and `--kubeconfig` work as in kubectl.
 
+For `koodam logs` and `run --wait`, the CLI user needs `get` on jobs, `list` on pods and `get` on pods/log in the namespace. The Agent viewer and editor ClusterRoles do not give them.
+
 ## Plan
 
 | Version | Adds |
