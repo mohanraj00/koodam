@@ -39,8 +39,11 @@ type fake struct {
 	logs     []spendLog
 	rawInURL bool
 	echoKey  bool
-	// noRoutes makes /key/block and /key/info return the FastAPI 404 for a wrong route.
-	noRoutes bool
+	// routeBody, if set, makes /key/block and /key/info return this 404 body, as a
+	// wrong route or a proxy in front of LiteLLM can.
+	routeBody string
+	// deleted holds the hashes that /key/info gives from the archive of deleted keys.
+	deleted map[string]bool
 	// blockNotFound makes /key/block return 404 for all keys.
 	blockNotFound bool
 	// echoMaster makes each response an error that contains the Authorization header.
@@ -49,7 +52,14 @@ type fake struct {
 
 const testModel = "local-agent"
 
-func newFake() *fake { return &fake{keys: map[string]map[string]any{}, blocked: map[string]bool{}} }
+// notFoundBody is the LiteLLM v1.104.2 body for a missing key. The long message
+// makes it longer than the 300 bytes that an error message keeps.
+var notFoundBody = `{"error":{"message":"Key not found.` + strings.Repeat(" More detail.", 30) +
+	`","type":"not_found_error","param":"key","code":"404"}}`
+
+func newFake() *fake {
+	return &fake{keys: map[string]map[string]any{}, blocked: map[string]bool{}, deleted: map[string]bool{}}
+}
 
 func (f *fake) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	f.mu.Lock()
@@ -79,9 +89,9 @@ func (f *fake) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		f.keys[h] = b
 		_, _ = w.Write([]byte(`{}`))
 	case "/key/block":
-		if f.noRoutes {
+		if f.routeBody != "" {
 			w.WriteHeader(http.StatusNotFound)
-			_, _ = w.Write([]byte(`{"detail":"Not Found"}`))
+			_, _ = w.Write([]byte(f.routeBody))
 			return
 		}
 		var b map[string]string
@@ -89,20 +99,25 @@ func (f *fake) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h := hashKey(b["key"])
 		if _, ok := f.keys[h]; !ok || f.blockNotFound {
 			w.WriteHeader(http.StatusNotFound)
-			_, _ = w.Write([]byte(`{"error":{"message":"key not found"}}`))
+			_, _ = w.Write([]byte(notFoundBody))
 			return
 		}
 		f.blocked[h] = true
 		_, _ = w.Write([]byte(`{}`))
 	case "/key/info":
-		if f.noRoutes {
+		if f.routeBody != "" {
 			w.WriteHeader(http.StatusNotFound)
-			_, _ = w.Write([]byte(`{"detail":"Not Found"}`))
+			_, _ = w.Write([]byte(f.routeBody))
 			return
 		}
-		if _, ok := f.keys[r.URL.Query().Get("key")]; !ok {
+		h := r.URL.Query().Get("key")
+		if f.deleted[h] {
+			_ = json.NewEncoder(w).Encode(map[string]any{"info": map[string]any{"status": "deleted", "spend": 0.0}})
+			return
+		}
+		if _, ok := f.keys[h]; !ok {
 			w.WriteHeader(http.StatusNotFound)
-			_, _ = w.Write([]byte(`{"error":{"message":"key not found"}}`))
+			_, _ = w.Write([]byte(notFoundBody))
 			return
 		}
 		s := 0.0
@@ -213,12 +228,32 @@ func TestBlockKeyFailsOn404WhenTheKeyExists(t *testing.T) {
 }
 
 func TestBlockKeyFailsOnARoute404(t *testing.T) {
+	for _, body := range []string{`{"detail":"Not Found"}`, `{"error":"route not found"}`, `<html>404</html>`} {
+		f := newFake()
+		f.routeBody = body
+		l, stop := client(f)
+		if err := l.BlockKey(context.Background(), "sk-kd-missing"); err == nil {
+			t.Errorf("a route 404 with the body %s must not count as a revoke", body)
+		}
+		stop()
+	}
+}
+
+func TestBlockKeySucceedsForAMissingKey(t *testing.T) {
+	l, stop := client(newFake())
+	defer stop()
+	if err := l.BlockKey(context.Background(), "sk-kd-missing"); err != nil {
+		t.Fatalf("a missing key is revoked: %v", err)
+	}
+}
+
+func TestBlockKeySucceedsForADeletedKey(t *testing.T) {
 	f := newFake()
-	f.noRoutes = true
+	f.deleted[hashKey("sk-kd-deleted")] = true
 	l, stop := client(f)
 	defer stop()
-	if err := l.BlockKey(context.Background(), "sk-kd-missing"); err == nil {
-		t.Fatal("a route 404 must not count as a revoke")
+	if err := l.BlockKey(context.Background(), "sk-kd-deleted"); err != nil {
+		t.Fatalf("a deleted key is revoked: %v", err)
 	}
 }
 

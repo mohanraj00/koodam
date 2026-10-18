@@ -69,6 +69,8 @@ type HTTPError struct {
 	Path   string
 	Status int
 	Body   string
+	// keyNotFound is true if the full body is the LiteLLM error for a missing key.
+	keyNotFound bool
 }
 
 func (e *HTTPError) Error() string {
@@ -132,7 +134,8 @@ func (l *LiteLLM) do(ctx context.Context, method, path string, body any, secret 
 			if len(b) > 300 {
 				b = b[:300]
 			}
-			return &HTTPError{Path: strings.SplitN(path, "?", 2)[0], Status: resp.StatusCode, Body: b}
+			return &HTTPError{Path: strings.SplitN(path, "?", 2)[0], Status: resp.StatusCode, Body: b,
+				keyNotFound: resp.StatusCode == http.StatusNotFound && isKeyNotFound(data)}
 		}
 		if out != nil {
 			if err := json.Unmarshal(data, out); err != nil {
@@ -145,31 +148,39 @@ func (l *LiteLLM) do(ctx context.Context, method, path string, body any, secret 
 }
 
 func (l *LiteLLM) exists(ctx context.Context, value string) (bool, error) {
-	err := l.do(ctx, http.MethodGet, "/key/info?key="+url.QueryEscape(hashKey(value)), nil, value, nil)
+	var ki keyInfo
+	err := l.do(ctx, http.MethodGet, "/key/info?key="+url.QueryEscape(hashKey(value)), nil, value, &ki)
 	if keyMissing(err) {
 		return false, nil
 	}
-	return err == nil, err
+	if err != nil {
+		return false, err
+	}
+	// LiteLLM gives a deleted key from its archive with the status "deleted".
+	return ki.Info.Status != "deleted", nil
 }
 
-// keyMissing is true only for a LiteLLM error about the key. A wrong route gives the
-// FastAPI body {"detail":"Not Found"}, and a proxy can give HTML. Both are not proof
-// that the key is missing, so a revoke fails closed.
+// keyMissing is true only for the LiteLLM error for a missing key: HTTP 404 with
+// error.type "not_found_error" and error.param "key". A wrong route or a proxy in front
+// of LiteLLM can give a different 404. That is not proof that the key is missing, so a
+// revoke fails closed.
 func keyMissing(err error) bool {
 	he, ok := errors.AsType[*HTTPError](err)
-	if !ok || (he.Status != http.StatusNotFound && he.Status != http.StatusBadRequest) {
+	return ok && he.keyNotFound
+}
+
+// isKeyNotFound reads the full body, before do cuts it for the error message.
+func isKeyNotFound(data []byte) bool {
+	var body struct {
+		Error *struct {
+			Type  string `json:"type"`
+			Param string `json:"param"`
+		} `json:"error"`
+	}
+	if json.Unmarshal(data, &body) != nil || body.Error == nil {
 		return false
 	}
-	var body map[string]json.RawMessage
-	if json.Unmarshal([]byte(he.Body), &body) != nil {
-		return false
-	}
-	d, hasDetail := body["detail"]
-	if hasDetail && string(d) == `"Not Found"` {
-		return false
-	}
-	_, hasError := body["error"]
-	return hasDetail || hasError
+	return body.Error.Type == "not_found_error" && body.Error.Param == "key"
 }
 
 // CreateKey implements Gateway.
@@ -217,7 +228,8 @@ func (l *LiteLLM) BlockKey(ctx context.Context, value string) error {
 
 type keyInfo struct {
 	Info struct {
-		Spend *float64 `json:"spend"`
+		Status string   `json:"status"`
+		Spend  *float64 `json:"spend"`
 	} `json:"info"`
 }
 
