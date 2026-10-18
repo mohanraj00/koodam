@@ -175,11 +175,16 @@ helm-check: helm-sync ## Fail if the Helm chart is not in sync with config/, the
 	@test -z "$$(git ls-files --others --exclude-standard -- $(CHART))" || { echo "The chart has new files. Run 'make helm-sync' and add them."; exit 1; }
 	"$(HELM)" lint --strict $(CHART)
 	"$(HELM)" lint --strict $(CHART) -f $(CHART)/values-ollama.yaml
+	"$(HELM)" lint --strict $(CHART) -f $(CHART)/values-bundled.yaml
 	"$(HELM)" template koodam $(CHART) --namespace koodam-system > /dev/null
 	"$(HELM)" template koodam $(CHART) --namespace koodam-system -f $(CHART)/values-ollama.yaml > /dev/null
 	"$(HELM)" template koodam $(CHART) --namespace koodam-system --set metrics.enabled=true > /dev/null
-	"$(HELM)" template $(LONG_RELEASE) $(CHART) --namespace koodam-system --set metrics.enabled=true | \
-		awk '/^kind: Service$$/{s=1} s && /^  name:/{if (length($$2) > 63) {print "The Service name " $$2 " is too long."; exit 1}; s=0}'
+	"$(HELM)" template koodam $(CHART) --namespace koodam-system -f $(CHART)/values-bundled.yaml > /dev/null
+	"$(HELM)" template koodam $(CHART) --namespace koodam-system -f $(CHART)/values-bundled.yaml \
+		--set gateway.bundled.postgres.persistence.enabled=true --set gateway.bundled.postgres.passwordSecret.name=pg > /dev/null
+	"$(HELM)" template $(LONG_RELEASE) $(CHART) --namespace koodam-system --set metrics.enabled=true \
+		-f $(CHART)/values-bundled.yaml | \
+		awk '/^kind: Service$$/{s=1} s && /^  name:/{n++; if (length($$2) > 63) {print "The Service name " $$2 " is too long."; exit 1}; s=0} END {if (n < 3) {print "The check found " n " Services, not 3."; exit 1}}'
 
 ##@ Deployment
 

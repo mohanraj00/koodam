@@ -1,5 +1,5 @@
-{{- if ne .Values.gateway.mode "existing" }}
-{{- fail "gateway.mode must be \"existing\". The bundled gateway is not in this chart version." }}
+{{- if not (has .Values.gateway.mode (list "existing" "bundled")) }}
+{{- fail "gateway.mode must be \"existing\" or \"bundled\"." }}
 {{- end }}
 apiVersion: apps/v1
 kind: Deployment
@@ -47,7 +47,7 @@ spec:
         - --leader-elect
         {{- end }}
         - --health-probe-bind-address=:8081
-        - --gateway-url={{ required "gateway.url is necessary" .Values.gateway.url }}
+        - --gateway-url={{ include "koodam.gatewayUrl" . }}
         - --gateway-master-key-file=/etc/koodam/gateway/master-key
         {{- with .Values.gateway.agentUrl }}
         - --agent-gateway-url={{ . }}
