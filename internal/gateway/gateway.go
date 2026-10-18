@@ -29,6 +29,9 @@ import (
 // Usage also returns the count that it read, which can be low.
 var ErrSpendNotSettled = errors.New("gateway: spend did not settle")
 
+// ErrKeyNotFound is the Usage error when the gateway says that the key is not there.
+var ErrKeyNotFound = errors.New("gateway: key not found")
+
 // KeySpec is the key for one run. The caller makes Value with NewKeyValue and saves it
 // before CreateKey, so that a retry after a crash uses the same key.
 type KeySpec struct {
@@ -53,12 +56,14 @@ type Usage struct {
 type Gateway interface {
 	// CreateKey makes the key. If the key already exists, CreateKey returns nil.
 	CreateKey(ctx context.Context, spec KeySpec) error
-	// BlockKey stops all later calls with the key. A blocked key returns nil. A missing key
-	// returns nil only if the gateway says that the key is missing.
-	BlockKey(ctx context.Context, value string) error
-	// Usage waits until the spend is stable and returns the count for the key.
-	// If the spend does not settle, it returns the count and ErrSpendNotSettled.
-	Usage(ctx context.Context, value string) (Usage, error)
+	// BlockKey stops all later calls with the key. key is the key value or its HashKey.
+	// A blocked key returns nil. A missing key returns nil only if the gateway says that the
+	// key is missing.
+	BlockKey(ctx context.Context, key string) error
+	// Usage waits until the spend is stable and returns the count for the key. key is the key
+	// value or its HashKey. If the spend does not settle, it returns the count and
+	// ErrSpendNotSettled. If the key is missing, it returns ErrKeyNotFound.
+	Usage(ctx context.Context, key string) (Usage, error)
 }
 
 // NewKeyValue returns a new random key value with the prefix "sk-kd-".

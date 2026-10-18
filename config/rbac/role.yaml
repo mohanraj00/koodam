@@ -8,17 +8,11 @@ rules:
   - ""
   resources:
   - secrets
-  verbs:
-  - create
-  - delete
-  - get
-- apiGroups:
-  - ""
-  resources:
   - serviceaccounts
   verbs:
   - create
   - delete
+  - get
 - apiGroups:
   - batch
   resources:
@@ -63,3 +57,4 @@ rules:
   verbs:
   - create
   - delete
+  - get

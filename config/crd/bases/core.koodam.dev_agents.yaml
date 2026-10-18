@@ -222,6 +222,12 @@ spec:
                 description: KeyAlias identifies the gateway key. The key value is
                   never in the status.
                 type: string
+              keyHash:
+                description: |-
+                  KeyHash is the SHA-256 hash of the key. The controller writes it before it makes the key,
+                  and uses it to block the key and to read the usage. The gateway refuses the hash for
+                  model calls, so it is not a credential.
+                type: string
               phase:
                 description: Phase is the lifecycle phase.
                 enum:

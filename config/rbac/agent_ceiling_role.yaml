@@ -1,6 +1,7 @@
-# The ceiling for the run Roles. The controller holds these rules and has no escalate or bind
-# verb, so the API server refuses an Agent with spec.rules outside this ClusterRole. Add a rule
-# here on purpose, with a reason in the PR.
+# The ceiling for the run Roles. The controller holds these rules, so that it can grant them. The
+# controller refuses an Agent with spec.rules outside this ClusterRole before it makes a key. The
+# same rules are the ceiling in internal/controller/agent_controller.go, and a test compares them.
+# Add a rule here on purpose, with a reason in the PR.
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:

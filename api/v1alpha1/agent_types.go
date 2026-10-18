@@ -103,6 +103,12 @@ type AgentStatus struct {
 	// +optional
 	KeyAlias string `json:"keyAlias,omitempty"`
 
+	// KeyHash is the SHA-256 hash of the key. The controller writes it before it makes the key,
+	// and uses it to block the key and to read the usage. The gateway refuses the hash for
+	// model calls, so it is not a credential.
+	// +optional
+	KeyHash string `json:"keyHash,omitempty"`
+
 	// RevokedAt is the time when the controller blocked the key and deleted the credentials.
 	// +optional
 	RevokedAt *metav1.Time `json:"revokedAt,omitempty"`

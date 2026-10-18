@@ -19,6 +19,7 @@ package controller
 import (
 	"bytes"
 	"context"
+	"errors"
 	"sync"
 	"time"
 
@@ -51,6 +52,8 @@ type fakeGateway struct {
 	// accessAtBlock is true if the RoleBinding existed at the first BlockKey.
 	accessAtBlock bool
 	runBinding    types.NamespacedName
+	// usageErr is the Usage error.
+	usageErr error
 }
 
 func (g *fakeGateway) CreateKey(_ context.Context, s gateway.KeySpec) error {
@@ -61,14 +64,14 @@ func (g *fakeGateway) CreateKey(_ context.Context, s gateway.KeySpec) error {
 	return nil
 }
 
-func (g *fakeGateway) BlockKey(ctx context.Context, value string) error {
+func (g *fakeGateway) BlockKey(ctx context.Context, key string) error {
 	err := k8sClient.Get(ctx, g.runBinding, &rbacv1.RoleBinding{})
 	g.mu.Lock()
 	defer g.mu.Unlock()
 	if len(g.blocked) == 0 {
 		g.accessAtBlock = err == nil
 	}
-	g.blocked = append(g.blocked, value)
+	g.blocked = append(g.blocked, key)
 	g.order = append(g.order, "block")
 	return nil
 }
@@ -77,6 +80,9 @@ func (g *fakeGateway) Usage(context.Context, string) (gateway.Usage, error) {
 	g.mu.Lock()
 	defer g.mu.Unlock()
 	g.order = append(g.order, "usage")
+	if g.usageErr != nil {
+		return gateway.Usage{}, g.usageErr
+	}
 	return gateway.Usage{Spend: 0.25, Calls: 3, FailedCalls: 1, InputTokens: 100, OutputTokens: 20}, nil
 }
 
@@ -133,7 +139,7 @@ var _ = Describe("Agent Controller", func() {
 	}
 	expectRevoked := func(phase corev1alpha1.AgentPhase) {
 		Expect(gw.accessAtBlock).To(BeTrue(), "the key must be blocked before the access is deleted")
-		Expect(gw.blocked).To(Equal([]string{gw.created[0].Value}))
+		Expect(gw.blocked).To(Equal([]string{gateway.HashKey(gw.created[0].Value)}))
 		Expect(gw.order).To(Equal([]string{"create", "block", "usage"}))
 		Expect(exists(&rbacv1.RoleBinding{})).To(BeFalse())
 		Expect(exists(&rbacv1.Role{})).To(BeFalse())
@@ -189,6 +195,7 @@ var _ = Describe("Agent Controller", func() {
 		Expect(a.Finalizers).To(ContainElement(finalizer))
 		Expect(a.Status.Phase).To(Equal(corev1alpha1.AgentRunning))
 		Expect(a.Status.KeyAlias).To(Equal("kd-" + string(a.UID)))
+		Expect(a.Status.KeyHash).To(Equal(gateway.HashKey(gw.created[0].Value)))
 		Expect(meta.IsStatusConditionTrue(a.Status.Conditions, condProvisioned)).To(BeTrue())
 
 		Expect(gw.created).To(HaveLen(1))
@@ -201,6 +208,7 @@ var _ = Describe("Agent Controller", func() {
 
 		sec := &corev1.Secret{}
 		Expect(exists(sec)).To(BeTrue())
+		Expect(*sec.Immutable).To(BeTrue())
 		Expect(string(sec.Data["ANTHROPIC_AUTH_TOKEN"])).To(Equal(s.Value))
 		Expect(string(sec.Data["OPENAI_API_KEY"])).To(Equal(s.Value))
 		Expect(string(sec.Data["OPENAI_BASE_URL"])).To(Equal("http://gw.test:4000/v1"))
@@ -267,8 +275,79 @@ var _ = Describe("Agent Controller", func() {
 	It("revokes after a controller restart during a run", func() {
 		reconcileOnce(newReconciler())
 		endJob(batchv1.JobComplete)
-		// A new reconciler has no memory of the run. It reads the key from the Secret.
+		// A new reconciler has no memory of the run. It reads the key hash from the status.
 		reconcileOnce(newReconciler())
 		expectRevoked(corev1alpha1.AgentSucceeded)
+	})
+
+	It("fails a rule outside the ceiling before it makes a key", func() {
+		a := agent()
+		a.Spec.Rules = []rbacv1.PolicyRule{{APIGroups: []string{""}, Resources: []string{"secrets"}, Verbs: []string{"get"}}}
+		Expect(k8sClient.Update(ctx, a)).To(Succeed())
+		reconcileOnce(newReconciler())
+		a = agent()
+		Expect(a.Status.Phase).To(Equal(corev1alpha1.AgentFailed))
+		Expect(meta.FindStatusCondition(a.Status.Conditions, condRevoked).Reason).To(Equal("Invalid"))
+		Expect(gw.created).To(BeEmpty())
+		Expect(exists(&corev1.Secret{})).To(BeFalse())
+		Expect(a.Finalizers).NotTo(ContainElement(finalizer))
+	})
+
+	It("keeps an object with the run name from a different owner", func() {
+		other := &rbacv1.Role{ObjectMeta: metav1.ObjectMeta{Name: "kd-" + name, Namespace: ns},
+			Rules: []rbacv1.PolicyRule{{APIGroups: []string{""}, Resources: []string{"secrets"}, Verbs: []string{"get"}}}}
+		Expect(k8sClient.Create(ctx, other)).To(Succeed())
+		reconcileOnce(newReconciler())
+		a := agent()
+		Expect(a.Status.Phase).To(Equal(corev1alpha1.AgentFailed))
+		Expect(meta.FindStatusCondition(a.Status.Conditions, condRevoked).Reason).To(Equal("NameConflict"))
+		Expect(gw.blocked).To(Equal([]string{a.Status.KeyHash}))
+		role := &rbacv1.Role{}
+		Expect(exists(role)).To(BeTrue(), "the controller does not delete an object that it does not own")
+		Expect(role.UID).To(Equal(other.UID))
+		Expect(exists(&rbacv1.RoleBinding{})).To(BeFalse())
+		Expect(exists(&batchv1.Job{})).To(BeFalse())
+		Expect(exists(&corev1.ServiceAccount{})).To(BeFalse())
+		Expect(exists(&corev1.Secret{})).To(BeFalse())
+	})
+
+	It("revokes by the status hash when the Secret is gone", func() {
+		r := newReconciler()
+		reconcileOnce(r)
+		Expect(k8sClient.Delete(ctx, &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: "kd-" + name, Namespace: ns}})).
+			To(Succeed())
+		endJob(batchv1.JobComplete)
+		reconcileOnce(r)
+		expectRevoked(corev1alpha1.AgentSucceeded)
+	})
+
+	It("continues a revoke that stopped", func() {
+		r := newReconciler()
+		reconcileOnce(r)
+		endJob(batchv1.JobComplete)
+		gw.usageErr = errors.New("gateway down")
+		_, err := r.Reconcile(ctx, reconcile.Request{NamespacedName: key()})
+		Expect(err).To(HaveOccurred())
+		a := agent()
+		Expect(a.Status.Phase).To(Equal(corev1alpha1.AgentSucceeded), "the end phase is written before the revoke")
+		Expect(a.Finalizers).To(ContainElement(finalizer))
+
+		gw.usageErr = nil
+		reconcileOnce(r)
+		a = agent()
+		Expect(meta.IsStatusConditionTrue(a.Status.Conditions, condRevoked)).To(BeTrue())
+		Expect(a.Finalizers).NotTo(ContainElement(finalizer))
+		Expect(exists(&corev1.Secret{})).To(BeFalse())
+		Expect(gw.created).To(HaveLen(1), "a retry does not provision again")
+	})
+
+	It("completes the revoke when the gateway has no key", func() {
+		r := newReconciler()
+		reconcileOnce(r)
+		gw.usageErr = gateway.ErrKeyNotFound
+		Expect(k8sClient.Delete(ctx, agent())).To(Succeed())
+		reconcileOnce(r)
+		err := k8sClient.Get(ctx, key(), &corev1alpha1.Agent{})
+		Expect(apierrors.IsNotFound(err)).To(BeTrue(), "the finalizer is removed")
 	})
 })
