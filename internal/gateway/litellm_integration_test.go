@@ -44,7 +44,7 @@ func TestLiteLLMLive(t *testing.T) {
 	s.Alias = "kd-live-" + s.Value[len(s.Value)-8:]
 	s.Model = os.Getenv("LITELLM_MODEL")
 	if s.Model == "" {
-		s.Model = "local-agent"
+		s.Model = testModel
 	}
 	s.TTL = 2 * time.Minute
 	if err := l.CreateKey(ctx, s); err != nil {

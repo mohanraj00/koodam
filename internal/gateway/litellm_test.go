@@ -41,6 +41,8 @@ type fake struct {
 	echoKey  bool
 }
 
+const testModel = "local-agent"
+
 func newFake() *fake { return &fake{keys: map[string]map[string]any{}, blocked: map[string]bool{}} }
 
 func (f *fake) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -97,7 +99,7 @@ func (f *fake) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-func client(t *testing.T, f *fake) (*LiteLLM, func()) {
+func client(f *fake) (*LiteLLM, func()) {
 	srv := httptest.NewServer(f)
 	l := NewLiteLLM(srv.URL+"/", "master")
 	l.RetryDelay, l.SpendPoll, l.SpendWait = time.Millisecond, time.Millisecond, time.Second
@@ -109,13 +111,13 @@ func spec(t *testing.T) KeySpec {
 	if err != nil {
 		t.Fatal(err)
 	}
-	return KeySpec{Value: v, Alias: "kd-uid", Model: "local-agent", Budget: 0.5, TTL: 960 * time.Second,
+	return KeySpec{Value: v, Alias: "kd-uid", Model: testModel, Budget: 0.5, TTL: 960 * time.Second,
 		Metadata: map[string]string{"agent": "a"}}
 }
 
 func TestCreateKeySendsBudgetModelAndTTL(t *testing.T) {
 	f := newFake()
-	l, stop := client(t, f)
+	l, stop := client(f)
 	defer stop()
 	s := spec(t)
 	if err := l.CreateKey(context.Background(), s); err != nil {
@@ -125,17 +127,17 @@ func TestCreateKeySendsBudgetModelAndTTL(t *testing.T) {
 	if b["duration"] != "960s" || b["max_budget"] != 0.5 || b["key_alias"] != "kd-uid" {
 		t.Fatalf("body %v", b)
 	}
-	if m := b["models"].([]any); len(m) != 1 || m[0] != "local-agent" {
+	if m := b["models"].([]any); len(m) != 1 || m[0] != testModel {
 		t.Fatalf("models %v", m)
 	}
 }
 
 func TestCreateKeyIsIdempotent(t *testing.T) {
 	f := newFake()
-	l, stop := client(t, f)
+	l, stop := client(f)
 	defer stop()
 	s := spec(t)
-	for i := 0; i < 2; i++ {
+	for i := range 2 {
 		if err := l.CreateKey(context.Background(), s); err != nil {
 			t.Fatalf("try %d: %v", i, err)
 		}
@@ -145,7 +147,7 @@ func TestCreateKeyIsIdempotent(t *testing.T) {
 func TestErrorsDoNotContainTheKey(t *testing.T) {
 	f := newFake()
 	f.echoKey = true
-	l, stop := client(t, f)
+	l, stop := client(f)
 	defer stop()
 	s := spec(t)
 	err := l.CreateKey(context.Background(), s)
@@ -160,7 +162,7 @@ func TestErrorsDoNotContainTheKey(t *testing.T) {
 func TestKeyIsNotInURLs(t *testing.T) {
 	f := newFake()
 	f.spend = []float64{0.1, 0.1}
-	l, stop := client(t, f)
+	l, stop := client(f)
 	defer stop()
 	s := spec(t)
 	ctx := context.Background()
@@ -177,7 +179,7 @@ func TestKeyIsNotInURLs(t *testing.T) {
 
 func TestBlockKey(t *testing.T) {
 	f := newFake()
-	l, stop := client(t, f)
+	l, stop := client(f)
 	defer stop()
 	s := spec(t)
 	ctx := context.Background()
@@ -203,7 +205,7 @@ func TestUsageWaitsForStableSpendAndCountsSuccessOnly(t *testing.T) {
 		{Status: "success", PromptTokens: 200, CompletionTokens: 20},
 		{Status: "failure"},
 	}
-	l, stop := client(t, f)
+	l, stop := client(f)
 	defer stop()
 	s := spec(t)
 	ctx := context.Background()

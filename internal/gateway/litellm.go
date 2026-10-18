@@ -137,8 +137,7 @@ func (l *LiteLLM) do(ctx context.Context, method, path string, body any, secret 
 
 func (l *LiteLLM) exists(ctx context.Context, value string) (bool, error) {
 	err := l.do(ctx, http.MethodGet, "/key/info?key="+url.QueryEscape(hashKey(value)), nil, value, nil)
-	var he *HTTPError
-	if errors.As(err, &he) && (he.Status == http.StatusNotFound || he.Status == http.StatusBadRequest) {
+	if he, ok := errors.AsType[*HTTPError](err); ok && (he.Status == http.StatusNotFound || he.Status == http.StatusBadRequest) {
 		return false, nil
 	}
 	return err == nil, err
@@ -162,8 +161,7 @@ func (l *LiteLLM) CreateKey(ctx context.Context, s KeySpec) error {
 		return nil
 	}
 	// A retry after a crash: the key can already exist.
-	var he *HTTPError
-	if errors.As(err, &he) {
+	if _, ok := errors.AsType[*HTTPError](err); ok {
 		if ok, e := l.exists(ctx, s.Value); e == nil && ok {
 			return nil
 		}
@@ -174,8 +172,7 @@ func (l *LiteLLM) CreateKey(ctx context.Context, s KeySpec) error {
 // BlockKey implements Gateway.
 func (l *LiteLLM) BlockKey(ctx context.Context, value string) error {
 	err := l.do(ctx, http.MethodPost, "/key/block", map[string]string{"key": value}, value, nil)
-	var he *HTTPError
-	if errors.As(err, &he) && he.Status == http.StatusNotFound {
+	if he, ok := errors.AsType[*HTTPError](err); ok && he.Status == http.StatusNotFound {
 		return nil
 	}
 	return err
