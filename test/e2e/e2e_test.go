@@ -20,8 +20,10 @@ limitations under the License.
 package e2e
 
 import (
+	"crypto/tls"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"os"
 	"os/exec"
@@ -61,6 +63,10 @@ const (
 	residualWait = 30 * time.Second
 	// controllerSelector selects the controller pod of the release.
 	controllerSelector = "control-plane=controller-manager,app.kubernetes.io/instance=" + release
+	// metricsName is the name of the test ServiceAccount, ClusterRole and ClusterRoleBinding
+	// for the metrics scrape.
+	metricsName = "koodam-e2e-metrics"
+	metricsPort = "18443"
 )
 
 // call is a shell command that calls the model with the run key and prints the HTTP status.
@@ -69,16 +75,20 @@ const call = `curl -s -o /dev/null -w '%{http_code}' -H "Authorization: Bearer $
 	`-H 'Content-Type: application/json' "$OPENAI_BASE_URL/chat/completions" ` +
 	`-d "{\"model\":\"$ANTHROPIC_MODEL\",\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}]}"`
 
+// pause is the time between 2 calls of a run. It is longer than the 1 s spend write interval of
+// the gateway, so the gateway knows the spend of a call before the next call.
+const pause = "1.5"
+
 // callsScript makes n model calls and then waits for sleep seconds. A TERM signal ends it.
 func callsScript(n, sleep int) string {
 	return "trap 'exit 0' TERM\nfor i in $(seq " + strconv.Itoa(n) + `); do [ "$(` + call +
-		`)" = 200 ] || exit 1; sleep 0.2; done` + "\nsleep " + strconv.Itoa(sleep) + " & wait"
+		`)" = 200 ] || exit 1; sleep ` + pause + "; done\nsleep " + strconv.Itoa(sleep) + " & wait"
 }
 
 // budgetScript calls the model until the gateway refuses a call. It fails after 500 calls.
 const budgetScript = `for i in $(seq 500); do
 c=$(` + call + `)
-case "$c" in 200) sleep 0.2 ;; 4*) exit 0 ;; *) exit 1 ;; esac
+case "$c" in 200) sleep ` + pause + ` ;; 4*) exit 0 ;; *) exit 1 ;; esac
 done
 exit 1`
 
@@ -111,13 +121,13 @@ var _ = Describe("Residual access", Ordered, func() {
 		r := start(a)
 
 		By("checking that the run credentials work while the run is live")
-		Expect(modelCall(r.key)).To(Equal(http.StatusOK), "The run key did not work during the run.")
-		allowed, answered := canListPods(r.token)
-		Expect(answered && allowed).To(BeTrue(), "The run token could not list pods during the run.")
+		code, _ := modelCall(r.key)
+		Expect(code).To(Equal(http.StatusOK), "The run key did not work during the run.")
+		allowed, err := canListPods(r.token)
+		Expect(err == nil && allowed).To(BeTrue(), "The run token could not list pods during the run.")
 
-		end := waitEnd(a)
-		expectNoAccess(a, r, end, false)
-		Expect(a.Status.Usage).NotTo(BeNil())
+		expectNoAccess(a, r, jobEnd(a))
+		expectSucceeded(a)
 		Expect(a.Status.Usage.Calls).To(BeNumerically(">=", 3))
 	})
 
@@ -128,10 +138,10 @@ var _ = Describe("Residual access", Ordered, func() {
 		By("deleting the Agent during the run")
 		end := time.Now()
 		Expect(k8s.Delete(ctx, a)).To(Succeed())
+		expectNoAccess(a, r, end)
 		Eventually(func() bool {
 			return apierrors.IsNotFound(k8s.Get(ctx, client.ObjectKeyFromObject(a), a))
-		}).Should(BeTrue(), "The Agent was not deleted.")
-		expectNoAccess(a, r, end, true)
+		}, time.Minute).Should(BeTrue(), "The Agent was not deleted.")
 	})
 
 	It("leaves no access after a controller restart during the run", func() {
@@ -143,8 +153,8 @@ var _ = Describe("Residual access", Ordered, func() {
 			client.MatchingLabels{"control-plane": "controller-manager",
 				"app.kubernetes.io/instance": release})).To(Succeed())
 
-		end := waitEnd(a)
-		expectNoAccess(a, r, end, false)
+		expectNoAccess(a, r, jobEnd(a))
+		expectSucceeded(a)
 	})
 
 	It("stops a budget run with an overspend of not more than the largest call", func() {
@@ -152,11 +162,10 @@ var _ = Describe("Residual access", Ordered, func() {
 		a.Spec.Budget = resource.MustParse("0.0001")
 		r := start(a)
 
-		end := waitEnd(a)
-		expectNoAccess(a, r, end, false)
+		expectNoAccess(a, r, jobEnd(a))
+		expectSucceeded(a)
 
 		By("comparing the spend with the budget and the largest call")
-		Expect(a.Status.Usage).NotTo(BeNil())
 		spend, err := strconv.ParseFloat(a.Status.Usage.Spend, 64)
 		Expect(err).NotTo(HaveOccurred())
 		budget := a.Spec.Budget.AsApproximateFloat64()
@@ -165,6 +174,55 @@ var _ = Describe("Residual access", Ordered, func() {
 			spend, budget, largest, a.Status.Usage.Calls)
 		Expect(spend).To(BeNumerically(">=", budget), "The gateway refused a call before the budget.")
 		Expect(spend-budget).To(BeNumerically("<=", largest), "The overspend is more than the largest call.")
+	})
+})
+
+var _ = Describe("Metrics", func() {
+	It("serves the metrics to an authorized scrape only", func() {
+		By("making a ServiceAccount that can read the metrics")
+		objs := []client.Object{
+			&corev1.ServiceAccount{ObjectMeta: metav1.ObjectMeta{Name: metricsName, Namespace: systemNS}},
+			&rbacv1.ClusterRole{ObjectMeta: metav1.ObjectMeta{Name: metricsName}, Rules: []rbacv1.PolicyRule{
+				{NonResourceURLs: []string{"/metrics"}, Verbs: []string{"get"}}}},
+			&rbacv1.ClusterRoleBinding{ObjectMeta: metav1.ObjectMeta{Name: metricsName},
+				RoleRef:  rbacv1.RoleRef{APIGroup: rbacv1.GroupName, Kind: "ClusterRole", Name: metricsName},
+				Subjects: []rbacv1.Subject{{Kind: rbacv1.ServiceAccountKind, Name: metricsName, Namespace: systemNS}}},
+		}
+		for _, o := range objs {
+			Expect(client.IgnoreAlreadyExists(k8s.Create(ctx, o))).To(Succeed())
+		}
+		tr, err := clientset.CoreV1().ServiceAccounts(systemNS).CreateToken(ctx, metricsName,
+			&authnv1.TokenRequest{}, metav1.CreateOptions{})
+		Expect(err).NotTo(HaveOccurred())
+
+		pf := forward(release+"-metrics-service", metricsPort+":8443")
+		defer func() { _ = pf.Process.Kill() }()
+		scrape := func(token string) (int, string) {
+			req, err := http.NewRequestWithContext(ctx, http.MethodGet, "https://127.0.0.1:"+metricsPort+"/metrics", nil)
+			Expect(err).NotTo(HaveOccurred())
+			if token != "" {
+				req.Header.Set("Authorization", "Bearer "+token)
+			}
+			// The metrics endpoint has a self-signed certificate.
+			c := &http.Client{Timeout: callTimeout, Transport: &http.Transport{
+				TLSClientConfig: &tls.Config{InsecureSkipVerify: true}}} //nolint:gosec
+			resp, err := c.Do(req)
+			if err != nil {
+				return 0, ""
+			}
+			defer func() { _ = resp.Body.Close() }()
+			b, _ := io.ReadAll(resp.Body)
+			return resp.StatusCode, string(b)
+		}
+		By("scraping the metrics with the token")
+		Eventually(func(g Gomega) {
+			code, body := scrape(tr.Status.Token)
+			g.Expect(code).To(Equal(http.StatusOK))
+			g.Expect(strings.Contains(body, "controller_runtime_reconcile_total")).To(BeTrue())
+		}, 2*time.Minute, time.Second).Should(Succeed())
+		By("scraping the metrics with no token")
+		code, _ := scrape("")
+		Expect(code).To(Equal(http.StatusUnauthorized))
 	})
 })
 
@@ -204,92 +262,139 @@ func start(a *corev1alpha1.Agent) run {
 	return run{key: key, token: tr.Status.Token}
 }
 
-// waitEnd waits until the Agent is Succeeded and returns the time when its Job completed.
-func waitEnd(a *corev1alpha1.Agent) time.Time {
-	By("waiting for the end of the run")
-	Eventually(func() corev1alpha1.AgentPhase {
-		_ = k8s.Get(ctx, client.ObjectKeyFromObject(a), a)
-		return a.Status.Phase
-	}).Should(Or(Equal(corev1alpha1.AgentSucceeded), Equal(corev1alpha1.AgentFailed)))
-	Expect(a.Status.Phase).To(Equal(corev1alpha1.AgentSucceeded))
-	job := &batchv1.Job{}
-	Expect(k8s.Get(ctx, client.ObjectKey{Namespace: runNS, Name: a.Status.Job}, job)).To(Succeed())
-	Expect(job.Status.CompletionTime).NotTo(BeNil())
-	return job.Status.CompletionTime.Time
+// jobEnded is true if the Job has a true Complete or Failed condition. It returns the condition time.
+func jobEnded(job *batchv1.Job) (time.Time, bool) {
+	for _, c := range job.Status.Conditions {
+		if c.Status == corev1.ConditionTrue && (c.Type == batchv1.JobComplete || c.Type == batchv1.JobFailed) {
+			return c.LastTransitionTime.Time, true
+		}
+	}
+	return time.Time{}, false
 }
 
-// expectNoAccess probes the run credentials 30 s after end. If gone is true, the Agent is deleted.
-func expectNoAccess(a *corev1alpha1.Agent, r run, end time.Time, gone bool) {
+// jobEnd waits for the end of the run Job and returns the time of the end condition. It does not
+// wait for the controller.
+func jobEnd(a *corev1alpha1.Agent) time.Time {
+	By("waiting for the end of the run Job")
+	var end time.Time
+	Eventually(func() bool {
+		job := &batchv1.Job{}
+		if k8s.Get(ctx, client.ObjectKey{Namespace: runNS, Name: a.Status.Job}, job) != nil {
+			return false
+		}
+		t, ok := jobEnded(job)
+		end = t
+		return ok
+	}).Should(BeTrue(), "The run Job did not end.")
+	return end
+}
+
+// expectSucceeded checks that the Agent is Succeeded, with the Revoked condition and the usage.
+func expectSucceeded(a *corev1alpha1.Agent) {
+	Expect(k8s.Get(ctx, client.ObjectKeyFromObject(a), a)).To(Succeed())
+	Expect(a.Status.Phase).To(Equal(corev1alpha1.AgentSucceeded))
+	Expect(meta.IsStatusConditionTrue(a.Status.Conditions, "Revoked")).To(BeTrue())
+	Expect(a.Status.Usage).NotTo(BeNil())
+}
+
+// expectNoAccess probes the run credentials 30 s after end. It fails if that time is past.
+func expectNoAccess(a *corev1alpha1.Agent, r run, end time.Time) {
 	By("waiting until 30 s after the end of the run")
-	time.Sleep(time.Until(end.Add(residualWait)))
+	wait := time.Until(end.Add(residualWait))
+	Expect(wait > 0).To(BeTrue(), "The test saw the end of the run more than 30 s late.")
+	time.Sleep(wait)
+
+	By("calling the model with the master key, as a control")
+	code, _ := modelCall(masterKey)
+	Expect(code).To(Equal(http.StatusOK), "The control call with the master key did not work.")
 
 	By("calling the model with the run key")
-	code := modelCall(r.key)
-	Expect(code >= 400 && code < 500).To(BeTrue(), "The gateway did not refuse the run key after the run.")
+	code, errType := modelCall(r.key)
+	Expect(code == http.StatusUnauthorized && errType == "auth_error").To(BeTrue(), fmt.Sprintf(
+		"The gateway did not refuse the run key as a key that is not valid: status %d, error type %q.",
+		code, errType))
 
 	By("calling the API with the run token")
 	_, err := tokenClient(r.token).CoreV1().Pods(runNS).List(ctx, metav1.ListOptions{})
-	Expect(apierrors.IsUnauthorized(err) || apierrors.IsForbidden(err)).To(BeTrue(),
-		"The API server did not refuse the run token after the run.")
+	Expect(apierrors.IsUnauthorized(err)).To(BeTrue(), "The API server did not refuse the run token.")
 
 	By("asking the API server if the run token can list pods")
-	allowed, answered := canListPods(r.token)
-	Expect(answered).To(BeTrue(), "The access review with the run token did not get an answer.")
-	Expect(allowed).To(BeFalse(), "The run token can list pods after the run.")
+	allowed, err := canListPods(r.token)
+	Expect(apierrors.IsUnauthorized(err) && !allowed).To(BeTrue(),
+		"The access review with the run token did not get a 401.")
 
 	By("listing the objects with the label " + agentLabel)
-	lists := []client.ObjectList{&corev1.SecretList{}, &corev1.ServiceAccountList{},
-		&rbacv1.RoleList{}, &rbacv1.RoleBindingList{}}
-	if gone {
-		// The controller keeps the Job of a run that ended, until the Agent is deleted.
-		lists = append(lists, &batchv1.JobList{})
-	}
-	for _, l := range lists {
-		Expect(k8s.List(ctx, l, client.InNamespace(runNS), client.MatchingLabels{agentLabel: a.Name})).To(Succeed())
+	sel := []client.ListOption{client.InNamespace(runNS), client.MatchingLabels{agentLabel: a.Name}}
+	for _, l := range []client.ObjectList{&corev1.SecretList{}, &corev1.ServiceAccountList{},
+		&rbacv1.RoleList{}, &rbacv1.RoleBindingList{}} {
+		Expect(k8s.List(ctx, l, sel...)).To(Succeed())
 		Expect(meta.LenList(l)).To(BeZero(), fmt.Sprintf("A %T item of the run exists after the run.", l))
 	}
-	if !gone {
-		Expect(k8s.Get(ctx, client.ObjectKeyFromObject(a), a)).To(Succeed())
-		Expect(meta.IsStatusConditionTrue(a.Status.Conditions, "Revoked")).To(BeTrue())
+	// The controller keeps the Job of a run that ended, and its pods, until the Agent is deleted.
+	// They must be stopped and must hold no credential.
+	jobs := &batchv1.JobList{}
+	Expect(k8s.List(ctx, jobs, sel...)).To(Succeed())
+	for _, j := range jobs.Items {
+		_, ended := jobEnded(&j)
+		Expect(ended && j.Status.Active == 0).To(BeTrue(), "A Job of the run did not stop.")
+	}
+	pods := &corev1.PodList{}
+	Expect(k8s.List(ctx, pods, sel...)).To(Succeed())
+	for _, p := range pods.Items {
+		Expect(p.Status.Phase).To(BeElementOf(corev1.PodSucceeded, corev1.PodFailed), "A pod of the run did not stop.")
+		for _, c := range p.Spec.Containers {
+			for _, e := range c.EnvFrom {
+				if e.SecretRef != nil {
+					err := k8s.Get(ctx, client.ObjectKey{Namespace: runNS, Name: e.SecretRef.Name}, &corev1.Secret{})
+					Expect(apierrors.IsNotFound(err)).To(BeTrue(), "A Secret of a run pod exists after the run.")
+				}
+			}
+		}
 	}
 }
 
-// modelCall calls the mock model through the gateway with key and returns the HTTP status.
-// It does not print the key or the response body.
-func modelCall(key string) int {
+// modelCall calls the mock model through the gateway with key. It returns the HTTP status and the
+// error type of the answer. It does not print the key or the response body.
+func modelCall(key string) (int, string) {
 	body := `{"model":"` + mockModel + `","messages":[{"role":"user","content":"probe"}]}`
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, gatewayURL+"/v1/chat/completions",
 		strings.NewReader(body))
 	Expect(err).NotTo(HaveOccurred())
 	req.Header.Set("Authorization", "Bearer "+key)
 	req.Header.Set("Content-Type", "application/json")
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := httpClient.Do(req)
 	Expect(err).NotTo(HaveOccurred(), "The gateway did not answer.")
-	_ = resp.Body.Close()
-	return resp.StatusCode
+	defer func() { _ = resp.Body.Close() }()
+	var e struct {
+		Error struct {
+			Type string `json:"type"`
+		} `json:"error"`
+	}
+	_ = json.NewDecoder(resp.Body).Decode(&e)
+	return resp.StatusCode, e.Error.Type
 }
 
 // tokenClient is a client that uses only token. It has no client certificate.
 func tokenClient(token string) *kubernetes.Clientset {
 	cfg := rest.AnonymousClientConfig(restCfg)
 	cfg.BearerToken = token
+	cfg.Timeout = callTimeout
 	cs, err := kubernetes.NewForConfig(cfg)
 	Expect(err).NotTo(HaveOccurred())
 	return cs
 }
 
 // canListPods sends a SelfSubjectAccessReview with token, as "kubectl auth can-i list pods" does.
-// answered is false if the API server did not answer or did not refuse the token.
-func canListPods(token string) (allowed, answered bool) {
+func canListPods(token string) (bool, error) {
 	ssar := &authzv1.SelfSubjectAccessReview{Spec: authzv1.SelfSubjectAccessReviewSpec{
 		ResourceAttributes: &authzv1.ResourceAttributes{Namespace: runNS, Verb: "list", Resource: "pods"},
 	}}
 	res, err := tokenClient(token).AuthorizationV1().SelfSubjectAccessReviews().Create(ctx, ssar,
 		metav1.CreateOptions{})
 	if err != nil {
-		return false, apierrors.IsUnauthorized(err) || apierrors.IsForbidden(err)
+		return false, err
 	}
-	return res.Status.Allowed, true
+	return res.Status.Allowed, nil
 }
 
 // largestCall returns the largest spend of one call with the key, from the gateway spend logs.
@@ -297,7 +402,7 @@ func largestCall(keyHash string) float64 {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, gatewayURL+"/spend/logs?api_key="+keyHash, nil)
 	Expect(err).NotTo(HaveOccurred())
 	req.Header.Set("Authorization", "Bearer "+masterKey)
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := httpClient.Do(req)
 	Expect(err).NotTo(HaveOccurred(), "The gateway did not answer.")
 	defer func() { _ = resp.Body.Close() }()
 	Expect(resp.StatusCode).To(Equal(http.StatusOK))

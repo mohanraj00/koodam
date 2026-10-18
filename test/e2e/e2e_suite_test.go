@@ -54,6 +54,8 @@ const (
 	release = "koodam"
 	// gatewayPort is the local port that forwards to the bundled LiteLLM Service.
 	gatewayPort = "14000"
+	// callTimeout is the limit for each network call of the test.
+	callTimeout = 10 * time.Second
 )
 
 var (
@@ -67,6 +69,7 @@ var (
 	masterKey   string
 	gatewayURL  = "http://127.0.0.1:" + gatewayPort
 	portForward *exec.Cmd
+	httpClient  = &http.Client{Timeout: callTimeout}
 )
 
 // TestE2E installs the chart with the bundled gateway on kind and runs the residual access tests.
@@ -86,6 +89,7 @@ var _ = BeforeSuite(func() {
 
 	restCfg, err = ctrl.GetConfig()
 	Expect(err).NotTo(HaveOccurred())
+	restCfg.Timeout = callTimeout
 	scheme := runtime.NewScheme()
 	Expect(clientgoscheme.AddToScheme(scheme)).To(Succeed())
 	Expect(corev1alpha1.AddToScheme(scheme)).To(Succeed())
@@ -115,16 +119,14 @@ var _ = BeforeSuite(func() {
 	_, err = utils.Run(exec.Command("helm", "upgrade", "--install", release, "charts/koodam",
 		"-n", systemNS, "-f", "charts/koodam/values-bundled.yaml",
 		"--set", "image.repository="+managerImage[:i], "--set", "image.tag="+managerImage[i+1:],
+		"--set", "metrics.enabled=true",
 		"--wait", "--timeout", "10m"))
 	Expect(err).NotTo(HaveOccurred(), "Failed to install the chart")
 
 	By("forwarding a local port to the bundled gateway")
-	portForward = exec.Command("kubectl", "-n", systemNS, "port-forward",
-		"svc/"+release+"-litellm", gatewayPort+":4000")
-	portForward.Stdout, portForward.Stderr = GinkgoWriter, GinkgoWriter
-	Expect(portForward.Start()).To(Succeed())
+	portForward = forward(release+"-litellm", gatewayPort+":4000")
 	Eventually(func() int {
-		resp, err := http.Get(gatewayURL + "/health/readiness")
+		resp, err := httpClient.Get(gatewayURL + "/health/readiness")
 		if err != nil {
 			return 0
 		}
@@ -132,6 +134,14 @@ var _ = BeforeSuite(func() {
 		return resp.StatusCode
 	}, 2*time.Minute, time.Second).Should(Equal(http.StatusOK))
 })
+
+// forward starts "kubectl port-forward" to the Service svc in systemNS. The caller stops it.
+func forward(svc, ports string) *exec.Cmd {
+	cmd := exec.Command("kubectl", "-n", systemNS, "port-forward", "svc/"+svc, ports)
+	cmd.Stdout, cmd.Stderr = GinkgoWriter, GinkgoWriter
+	Expect(cmd.Start()).To(Succeed())
+	return cmd
+}
 
 var _ = AfterSuite(func() {
 	if portForward != nil && portForward.Process != nil {
