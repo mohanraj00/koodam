@@ -158,7 +158,11 @@ HELM ?= helm
 CHART ?= charts/koodam
 
 .PHONY: helm-sync
+# LONG_RELEASE is a release name with the Helm maximum of 53 characters.
+LONG_RELEASE ?= koodam-production-controller-eu-west-1-aaaaaaaaaaaaa
+
 helm-sync: manifests ## Copy the CRD and the RBAC rules from config/ into the Helm chart.
+	rm -f $(CHART)/crds/*.yaml $(CHART)/files/*.yaml
 	cp config/crd/bases/*.yaml $(CHART)/crds/
 	cp config/rbac/role.yaml $(CHART)/files/manager-role.yaml
 	cp config/rbac/agent_ceiling_role.yaml $(CHART)/files/agent-ceiling-role.yaml
@@ -174,6 +178,8 @@ helm-check: helm-sync ## Fail if the Helm chart is not in sync with config/, the
 	"$(HELM)" template koodam $(CHART) --namespace koodam-system > /dev/null
 	"$(HELM)" template koodam $(CHART) --namespace koodam-system -f $(CHART)/values-ollama.yaml > /dev/null
 	"$(HELM)" template koodam $(CHART) --namespace koodam-system --set metrics.enabled=true > /dev/null
+	"$(HELM)" template $(LONG_RELEASE) $(CHART) --namespace koodam-system --set metrics.enabled=true | \
+		awk '/^kind: Service$$/{s=1} s && /^  name:/{if (length($$2) > 63) {print "The Service name " $$2 " is too long."; exit 1}; s=0}'
 
 ##@ Deployment
 
