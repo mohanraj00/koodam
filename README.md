@@ -29,6 +29,22 @@ spec:
 - A Job that gets the key and the token. Nothing else is mounted.
 - After the run: the key is blocked, the credentials are deleted, and `kubectl get agents` shows the spend.
 
+## One run, one command
+
+```sh
+koodam run -f agent.yaml --wait
+```
+
+This creates the Agent, waits for the revoke and shows the spend. The other commands:
+
+```sh
+koodam get [NAME]        # phase, model, budget, spend
+koodam spend [NAME]      # budget, spend, calls and tokens
+koodam delete NAME       # the controller revokes the key first
+```
+
+Build it with `go build -o bin/koodam ./cmd/koodam`. It uses your kubeconfig, and `-n`, `--context` and `--kubeconfig` work as in kubectl.
+
 ## Plan
 
 | Version | Adds |
