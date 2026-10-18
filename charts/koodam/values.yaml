@@ -1,0 +1,51 @@
+# The controller image. Build it with "make docker-build IMG=<image>".
+image:
+  repository: controller
+  tag: latest
+  pullPolicy: IfNotPresent
+imagePullSecrets: []
+
+# Use 1 replica. The controller uses leader election, so more replicas are standby replicas.
+replicaCount: 1
+leaderElection: true
+
+serviceAccount:
+  # The ServiceAccount name. If empty, the chart uses "<fullname>-controller-manager".
+  name: ""
+
+# The LiteLLM gateway. Each Agent gets a key from this gateway.
+gateway:
+  # The gateway mode. "existing" is the only mode now: the chart uses a gateway that you install.
+  # A later chart version can add a bundled gateway with its own values under "bundled".
+  mode: existing
+  # The LiteLLM admin address that the controller uses. This value is necessary.
+  url: http://litellm.koodam-system.svc:4000
+  # The gateway address for the agent pods. If empty, the agent pods use "url".
+  agentUrl: ""
+  # The Secret with the LiteLLM master key. You make this Secret before the install.
+  # The chart does not make it and does not read it.
+  masterKeySecret:
+    name: koodam-gateway
+    key: master-key
+
+# The time that the controller adds to deadlineSeconds for the key TTL.
+keyGrace: 1m
+
+# The metrics endpoint (HTTPS). If true, the chart adds the metrics Service and the
+# metrics-auth ClusterRole (tokenreviews and subjectaccessreviews, verb create).
+metrics:
+  enabled: false
+  port: 8443
+
+resources:
+  limits:
+    cpu: 500m
+    memory: 128Mi
+  requests:
+    cpu: 10m
+    memory: 64Mi
+
+podAnnotations: {}
+nodeSelector: {}
+tolerations: []
+affinity: {}

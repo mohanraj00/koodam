@@ -1,0 +1,109 @@
+{{- if ne .Values.gateway.mode "existing" }}
+{{- fail "gateway.mode must be \"existing\". The bundled gateway is not in this chart version." }}
+{{- end }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "koodam.fullname" . }}-controller-manager
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "koodam.labels" . | nindent 4 }}
+    control-plane: controller-manager
+spec:
+  replicas: {{ .Values.replicaCount }}
+  selector:
+    matchLabels:
+      {{- include "koodam.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      annotations:
+        kubectl.kubernetes.io/default-container: manager
+        {{- with .Values.podAnnotations }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+      labels:
+        {{- include "koodam.selectorLabels" . | nindent 8 }}
+    spec:
+      serviceAccountName: {{ include "koodam.serviceAccountName" . }}
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      securityContext:
+        runAsNonRoot: true
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+      - name: manager
+        image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+        imagePullPolicy: {{ .Values.image.pullPolicy }}
+        command:
+        - /manager
+        args:
+        {{- if .Values.metrics.enabled }}
+        - --metrics-bind-address=:{{ .Values.metrics.port }}
+        {{- end }}
+        {{- if .Values.leaderElection }}
+        - --leader-elect
+        {{- end }}
+        - --health-probe-bind-address=:8081
+        - --gateway-url={{ required "gateway.url is necessary" .Values.gateway.url }}
+        - --gateway-master-key-file=/etc/koodam/gateway/master-key
+        {{- with .Values.gateway.agentUrl }}
+        - --agent-gateway-url={{ . }}
+        {{- end }}
+        - --key-grace={{ .Values.keyGrace }}
+        ports:
+        - containerPort: 8081
+          name: health
+          protocol: TCP
+        {{- if .Values.metrics.enabled }}
+        - containerPort: {{ .Values.metrics.port }}
+          name: metrics
+          protocol: TCP
+        {{- end }}
+        securityContext:
+          readOnlyRootFilesystem: true
+          allowPrivilegeEscalation: false
+          capabilities:
+            drop:
+            - ALL
+        livenessProbe:
+          httpGet:
+            path: /healthz
+            port: 8081
+          initialDelaySeconds: 15
+          periodSeconds: 20
+        readinessProbe:
+          httpGet:
+            path: /readyz
+            port: 8081
+          initialDelaySeconds: 5
+          periodSeconds: 10
+        resources:
+          {{- toYaml .Values.resources | nindent 10 }}
+        volumeMounts:
+        - name: gateway
+          mountPath: /etc/koodam/gateway
+          readOnly: true
+      volumes:
+      # The master key is a file, never a flag value or an environment variable.
+      - name: gateway
+        secret:
+          secretName: {{ .Values.gateway.masterKeySecret.name }}
+          items:
+          - key: {{ .Values.gateway.masterKeySecret.key }}
+            path: master-key
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      terminationGracePeriodSeconds: 10

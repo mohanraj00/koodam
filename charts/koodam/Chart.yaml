@@ -1,0 +1,11 @@
+apiVersion: v2
+name: koodam
+description: The Koodam controller and the Agent CRD. The controller uses an existing LiteLLM gateway.
+type: application
+version: 0.1.0
+appVersion: "0.1.0"
+home: https://github.com/mohanraj00/koodam
+sources:
+- https://github.com/mohanraj00/koodam
+annotations:
+  licenses: Apache-2.0

@@ -152,6 +152,29 @@ build-installer: manifests generate kustomize ## Generate a consolidated YAML wi
 	cd config/manager && "$(KUSTOMIZE)" edit set image controller=${IMG}
 	"$(KUSTOMIZE)" build config/default > dist/install.yaml
 
+##@ Helm
+
+HELM ?= helm
+CHART ?= charts/koodam
+
+.PHONY: helm-sync
+helm-sync: manifests ## Copy the CRD and the RBAC rules from config/ into the Helm chart.
+	cp config/crd/bases/*.yaml $(CHART)/crds/
+	cp config/rbac/role.yaml $(CHART)/files/manager-role.yaml
+	cp config/rbac/agent_ceiling_role.yaml $(CHART)/files/agent-ceiling-role.yaml
+	cp config/rbac/leader_election_role.yaml $(CHART)/files/leader-election-role.yaml
+	cp config/rbac/metrics_auth_role.yaml $(CHART)/files/metrics-auth-role.yaml
+
+.PHONY: helm-check
+helm-check: helm-sync ## Fail if the Helm chart is not in sync with config/, then lint and render the chart.
+	@git diff --exit-code -- $(CHART) || { echo "The chart is not in sync with config/. Run 'make helm-sync'."; exit 1; }
+	@test -z "$$(git ls-files --others --exclude-standard -- $(CHART))" || { echo "The chart has new files. Run 'make helm-sync' and add them."; exit 1; }
+	"$(HELM)" lint --strict $(CHART)
+	"$(HELM)" lint --strict $(CHART) -f $(CHART)/values-ollama.yaml
+	"$(HELM)" template koodam $(CHART) --namespace koodam-system > /dev/null
+	"$(HELM)" template koodam $(CHART) --namespace koodam-system -f $(CHART)/values-ollama.yaml > /dev/null
+	"$(HELM)" template koodam $(CHART) --namespace koodam-system --set metrics.enabled=true > /dev/null
+
 ##@ Deployment
 
 ifndef ignore-not-found

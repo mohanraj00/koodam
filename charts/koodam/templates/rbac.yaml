@@ -1,0 +1,101 @@
+{{- $fullname := include "koodam.fullname" . -}}
+# The rules that the reconciler needs. They come from config/rbac/role.yaml (controller-gen).
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ $fullname }}-manager-role
+  labels:
+    {{- include "koodam.labels" . | nindent 4 }}
+rules:
+{{ include "koodam.rules" (dict "ctx" . "file" "files/manager-role.yaml") }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: {{ $fullname }}-manager-rolebinding
+  labels:
+    {{- include "koodam.labels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: {{ $fullname }}-manager-role
+subjects:
+{{ include "koodam.subject" . }}
+---
+# The ceiling for the run Roles. The controller holds these rules, so that it can grant them.
+# They come from config/rbac/agent_ceiling_role.yaml.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ $fullname }}-agent-ceiling
+  labels:
+    {{- include "koodam.labels" . | nindent 4 }}
+rules:
+{{ include "koodam.rules" (dict "ctx" . "file" "files/agent-ceiling-role.yaml") }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: {{ $fullname }}-agent-ceiling
+  labels:
+    {{- include "koodam.labels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: {{ $fullname }}-agent-ceiling
+subjects:
+{{ include "koodam.subject" . }}
+{{- if .Values.leaderElection }}
+---
+# The leader election rules, in the release namespace only.
+# They come from config/rbac/leader_election_role.yaml.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ $fullname }}-leader-election-role
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "koodam.labels" . | nindent 4 }}
+rules:
+{{ include "koodam.rules" (dict "ctx" . "file" "files/leader-election-role.yaml") }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ $fullname }}-leader-election-rolebinding
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "koodam.labels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: {{ $fullname }}-leader-election-role
+subjects:
+{{ include "koodam.subject" . }}
+{{- end }}
+{{- if .Values.metrics.enabled }}
+---
+# The metrics endpoint uses these rules to authenticate and authorize a scrape.
+# They come from config/rbac/metrics_auth_role.yaml.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ $fullname }}-metrics-auth-role
+  labels:
+    {{- include "koodam.labels" . | nindent 4 }}
+rules:
+{{ include "koodam.rules" (dict "ctx" . "file" "files/metrics-auth-role.yaml") }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: {{ $fullname }}-metrics-auth-rolebinding
+  labels:
+    {{- include "koodam.labels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: {{ $fullname }}-metrics-auth-role
+subjects:
+{{ include "koodam.subject" . }}
+{{- end }}

@@ -1,0 +1,18 @@
+# An example for an existing LiteLLM that serves a local Ollama model, as in the stage 2 spike.
+# The sample Agent (config/samples/core_v1alpha1_agent.yaml) uses the model alias "local-agent".
+# The LiteLLM config must have this alias. For example:
+#
+#   model_list:
+#   - model_name: local-agent
+#     litellm_params:
+#       model: ollama_chat/qwen3:1.7b
+#       api_base: http://host.docker.internal:11434
+#
+# LiteLLM must have a database, because the controller makes keys and reads the spend.
+# Install LiteLLM in the namespace "litellm" with the Service "litellm" on port 4000.
+gateway:
+  mode: existing
+  url: http://litellm.litellm.svc:4000
+  masterKeySecret:
+    name: koodam-gateway
+    key: master-key
