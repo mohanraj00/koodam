@@ -35,11 +35,12 @@ spec:
 koodam run -f agent.yaml --wait
 ```
 
-This creates the Agent, waits for the revoke and shows the spend. The other commands:
+This creates the Agent, shows the pod log, waits for the revoke and shows the spend. The other commands:
 
 ```sh
 koodam get [NAME]        # phase, model, budget, spend
 koodam spend [NAME]      # budget, spend, calls and tokens
+koodam logs NAME         # the pod log of the run
 koodam delete NAME       # the controller revokes the key first
 ```
 

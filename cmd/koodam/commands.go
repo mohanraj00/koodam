@@ -23,10 +23,12 @@ import (
 	"io"
 	"os"
 	"regexp"
+	"slices"
 	"text/tabwriter"
 	"time"
 
 	"github.com/spf13/cobra"
+	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -39,6 +41,8 @@ import (
 )
 
 const (
+	// agentLabel is on the pods of an Agent. It must match internal/controller.
+	agentLabel = "koodam.dev/agent"
 	// condRevoked is true when the controller blocked the key and wrote the usage.
 	condRevoked = "Revoked"
 )
@@ -52,7 +56,7 @@ func runCmd(conn connect) *cobra.Command {
 	var timeout time.Duration
 	cmd := &cobra.Command{
 		Use:   "run -f AGENT.yaml",
-		Short: "Create an Agent. With --wait, wait for the end of the run and show the spend",
+		Short: "Create an Agent. With --wait, show the pod log and the spend at the end",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			e, err := conn()
@@ -86,7 +90,7 @@ func runCmd(conn connect) *cobra.Command {
 		},
 	}
 	cmd.Flags().StringVarP(&file, "filename", "f", "", "the Agent YAML file")
-	cmd.Flags().BoolVar(&follow, "wait", false, "wait for the revoke and show the spend")
+	cmd.Flags().BoolVar(&follow, "wait", false, "show the pod log, wait for the revoke and show the spend")
 	cmd.Flags().DurationVar(&timeout, "timeout", time.Hour, "the maximum time for --wait")
 	_ = cmd.MarkFlagRequired("filename")
 	return cmd
@@ -149,10 +153,32 @@ func (c *cleanError) Error() string {
 	return msg + ")"
 }
 
-// follow waits for the revoke and shows the spend. It returns an error if the run failed.
+// follow shows the pod log, then waits for the revoke and shows the spend.
+// It returns an error if the run failed.
 func (e *env) follow(ctx context.Context, out io.Writer, name string) error {
-	var a *corev1alpha1.Agent
+	var pod *corev1.Pod
 	err := wait.PollUntilContextCancel(ctx, e.poll, true, func(ctx context.Context) (bool, error) {
+		a, err := e.agent(ctx, name)
+		if err != nil {
+			return false, err
+		}
+		if pod, err = e.pod(ctx, name); err != nil && !errors.Is(err, errNoPod) {
+			return false, err
+		}
+		// The log is available after the pod starts. A run can also end before its pod starts.
+		started := pod != nil && pod.Status.Phase != corev1.PodPending
+		return started || ended(a), nil
+	})
+	if err != nil {
+		return fmt.Errorf("wait for the pod: %w", err)
+	}
+	if pod != nil && pod.Status.Phase != corev1.PodPending {
+		if err := e.streamLog(ctx, out, pod.Name, true); err != nil {
+			return err
+		}
+	}
+	var a *corev1alpha1.Agent
+	err = wait.PollUntilContextCancel(ctx, e.poll, true, func(ctx context.Context) (bool, error) {
 		var err error
 		a, err = e.agent(ctx, name)
 		return err == nil && ended(a), err
@@ -186,6 +212,36 @@ func (e *env) agent(ctx context.Context, name string) (*corev1alpha1.Agent, erro
 	a := &corev1alpha1.Agent{}
 	err := e.kube.Get(ctx, types.NamespacedName{Namespace: e.namespace, Name: name}, a)
 	return a, apiError("get the Agent", err)
+}
+
+// errNoPod is the error when the Agent's Job has no pod.
+var errNoPod = errors.New("the Job has no pod")
+
+// pod finds the newest pod of the Agent's Job.
+func (e *env) pod(ctx context.Context, name string) (*corev1.Pod, error) {
+	pods := &corev1.PodList{}
+	if err := e.kube.List(ctx, pods, client.InNamespace(e.namespace),
+		client.MatchingLabels{agentLabel: name}); err != nil {
+		return nil, apiError("list the pods", err)
+	}
+	if len(pods.Items) == 0 {
+		return nil, fmt.Errorf("agent/%s: %w", name, errNoPod)
+	}
+	newest := slices.MaxFunc(pods.Items, func(x, y corev1.Pod) int {
+		return x.CreationTimestamp.Compare(y.CreationTimestamp.Time)
+	})
+	return &newest, nil
+}
+
+func (e *env) streamLog(ctx context.Context, out io.Writer, pod string, follow bool) error {
+	opts := &corev1.PodLogOptions{Follow: follow}
+	rc, err := e.clientset.CoreV1().Pods(e.namespace).GetLogs(pod, opts).Stream(ctx)
+	if err != nil {
+		return apiError("read the log of pod "+pod, err)
+	}
+	defer func() { _ = rc.Close() }()
+	_, err = io.Copy(out, rc)
+	return err
 }
 
 // getCmd makes "get" or, if spend is true, "spend". Both show the phase, the budget and the usage.
@@ -241,6 +297,28 @@ func printAgents(out io.Writer, agents []corev1alpha1.Agent, spend bool) {
 		}
 	}
 	_ = w.Flush()
+}
+
+func logsCmd(conn connect) *cobra.Command {
+	var follow bool
+	cmd := &cobra.Command{
+		Use:   "logs NAME",
+		Short: "Show the pod log of the Agent's Job",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			e, err := conn()
+			if err != nil {
+				return err
+			}
+			pod, err := e.pod(cmd.Context(), args[0])
+			if err != nil {
+				return err
+			}
+			return e.streamLog(cmd.Context(), cmd.OutOrStdout(), pod.Name, follow)
+		},
+	}
+	cmd.Flags().BoolVarP(&follow, "follow", "f", false, "stream the log until the pod stops")
+	return cmd
 }
 
 func deleteCmd(conn connect) *cobra.Command {

@@ -25,11 +25,13 @@ import (
 	"testing"
 	"time"
 
+	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/util/validation/field"
+	kubefake "k8s.io/client-go/kubernetes/fake"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
@@ -41,6 +43,8 @@ import (
 const (
 	testNS   = "dev"
 	testName = "fix-tests"
+	// fakeLog is the log body of each pod in the fake clientset.
+	fakeLog = "fake logs"
 )
 
 const manifest = `apiVersion: core.koodam.dev/v1alpha1
@@ -63,10 +67,18 @@ func testAgent(phase corev1alpha1.AgentPhase, usage *corev1alpha1.AgentUsage) *c
 	}
 }
 
+func testPod() *corev1.Pod {
+	return &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{Name: "kd-fix-tests-abcde", Namespace: testNS,
+			Labels: map[string]string{agentLabel: testName}},
+		Status: corev1.PodStatus{Phase: corev1.PodRunning},
+	}
+}
+
 // run runs the koodam command with args against the fake client kube.
 func run(t *testing.T, kube client.WithWatch, args ...string) (string, error) {
 	t.Helper()
-	e := &env{kube: kube, namespace: testNS, poll: time.Millisecond}
+	e := &env{kube: kube, clientset: kubefake.NewClientset(testPod()), namespace: testNS, poll: time.Millisecond}
 	root := newRoot(func() (*env, error) { return e, nil })
 	out := &bytes.Buffer{}
 	root.SetOut(out)
@@ -192,6 +204,7 @@ func TestAPIErrorsDoNotShowValues(t *testing.T) {
 		}
 		for _, args := range [][]string{
 			{"run", "-f", writeManifest(t, manifest)}, {"delete", testName}, {"get", testName}, {"spend"},
+			{"logs", testName},
 		} {
 			_, err := run(t, newKube(t, funcs), args...)
 			if err == nil {
@@ -214,7 +227,7 @@ func TestRunRefusesAnotherKind(t *testing.T) {
 	}
 }
 
-func TestRunWaitShowsTheSpend(t *testing.T) {
+func TestRunWaitShowsTheLogAndTheSpend(t *testing.T) {
 	// The interceptor does the work of the controller: the run ends and the usage is written.
 	funcs := &interceptor.Funcs{Create: func(ctx context.Context, c client.WithWatch, o client.Object,
 		opts ...client.CreateOption) error {
@@ -227,11 +240,12 @@ func TestRunWaitShowsTheSpend(t *testing.T) {
 		}
 		return c.Create(ctx, o, opts...)
 	}}
-	out, err := run(t, newKube(t, funcs), "run", "-f", writeManifest(t, manifest), "--wait")
+	out, err := run(t, newKube(t, funcs, testPod()), "run", "-f", writeManifest(t, manifest), "--wait")
 	if err != nil {
 		t.Fatal(err)
 	}
-	wantAll(t, out, "agent/fix-tests Succeeded", "spend 0.25 of 2, 3 calls", "revoke: The spend did not settle")
+	wantAll(t, out, fakeLog, "agent/fix-tests Succeeded", "spend 0.25 of 2, 3 calls",
+		"revoke: The spend did not settle")
 }
 
 func TestGetAndSpendShowThePhaseTheBudgetAndTheUsage(t *testing.T) {
@@ -250,6 +264,17 @@ func TestGetAndSpendShowThePhaseTheBudgetAndTheUsage(t *testing.T) {
 	wantAll(t, out, "BUDGET", "FAILED", testName, "Succeeded", "0.5")
 	if _, err := run(t, kube, "get", "missing"); err == nil {
 		t.Error("get did not fail for a missing Agent")
+	}
+}
+
+func TestLogsShowsThePodLog(t *testing.T) {
+	out, err := run(t, newKube(t, nil, testAgent(corev1alpha1.AgentRunning, nil), testPod()), "logs", testName)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantAll(t, out, fakeLog)
+	if _, err := run(t, newKube(t, nil), "logs", testName); err == nil {
+		t.Error("logs did not fail for an Agent without a pod")
 	}
 }
 
