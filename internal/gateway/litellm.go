@@ -146,10 +146,30 @@ func (l *LiteLLM) do(ctx context.Context, method, path string, body any, secret 
 
 func (l *LiteLLM) exists(ctx context.Context, value string) (bool, error) {
 	err := l.do(ctx, http.MethodGet, "/key/info?key="+url.QueryEscape(hashKey(value)), nil, value, nil)
-	if he, ok := errors.AsType[*HTTPError](err); ok && (he.Status == http.StatusNotFound || he.Status == http.StatusBadRequest) {
+	if keyMissing(err) {
 		return false, nil
 	}
 	return err == nil, err
+}
+
+// keyMissing is true only for a LiteLLM error about the key. A wrong route gives the
+// FastAPI body {"detail":"Not Found"}, and a proxy can give HTML. Both are not proof
+// that the key is missing, so a revoke fails closed.
+func keyMissing(err error) bool {
+	he, ok := errors.AsType[*HTTPError](err)
+	if !ok || (he.Status != http.StatusNotFound && he.Status != http.StatusBadRequest) {
+		return false
+	}
+	var body map[string]json.RawMessage
+	if json.Unmarshal([]byte(he.Body), &body) != nil {
+		return false
+	}
+	d, hasDetail := body["detail"]
+	if hasDetail && string(d) == `"Not Found"` {
+		return false
+	}
+	_, hasError := body["error"]
+	return hasDetail || hasError
 }
 
 // CreateKey implements Gateway.
@@ -181,8 +201,8 @@ func (l *LiteLLM) CreateKey(ctx context.Context, s KeySpec) error {
 // BlockKey implements Gateway.
 func (l *LiteLLM) BlockKey(ctx context.Context, value string) error {
 	err := l.do(ctx, http.MethodPost, "/key/block", map[string]string{"key": value}, value, nil)
-	if he, ok := errors.AsType[*HTTPError](err); ok && he.Status == http.StatusNotFound {
-		// A 404 can also come from a wrong route or a proxy. Success only if the key is not there.
+	if keyMissing(err) {
+		// Success only if /key/info also says that the key is not there.
 		found, e := l.exists(ctx, value)
 		if e != nil {
 			return e
@@ -214,7 +234,7 @@ func (l *LiteLLM) Usage(ctx context.Context, value string) (Usage, error) {
 	var last *float64
 	// need is the count of equal reads after the first read that cover SpendSettle.
 	need := max(1, int((l.SpendSettle+l.SpendPoll-1)/max(l.SpendPoll, 1)))
-	stable := 0
+	stable, settled := 0, true
 	deadline := time.Now().Add(l.SpendWait)
 	for {
 		var ki keyInfo
@@ -232,6 +252,7 @@ func (l *LiteLLM) Usage(ctx context.Context, value string) (Usage, error) {
 			break
 		}
 		if time.Now().After(deadline) {
+			settled = false
 			break
 		}
 		select {
@@ -256,6 +277,9 @@ func (l *LiteLLM) Usage(ctx context.Context, value string) (Usage, error) {
 		u.Calls++
 		u.InputTokens += x.PromptTokens
 		u.OutputTokens += x.CompletionTokens
+	}
+	if !settled {
+		return u, ErrSpendNotSettled
 	}
 	return u, nil
 }

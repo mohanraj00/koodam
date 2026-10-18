@@ -21,8 +21,13 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"errors"
 	"time"
 )
+
+// ErrSpendNotSettled is the Usage error when the spend did not settle in the wait time.
+// Usage also returns the count that it read, which can be low.
+var ErrSpendNotSettled = errors.New("gateway: spend did not settle")
 
 // KeySpec is the key for one run. The caller makes Value with NewKeyValue and saves it
 // before CreateKey, so that a retry after a crash uses the same key.
@@ -48,9 +53,11 @@ type Usage struct {
 type Gateway interface {
 	// CreateKey makes the key. If the key already exists, CreateKey returns nil.
 	CreateKey(ctx context.Context, spec KeySpec) error
-	// BlockKey stops all later calls with the key. A blocked or missing key returns nil.
+	// BlockKey stops all later calls with the key. A blocked key returns nil. A missing key
+	// returns nil only if the gateway says that the key is missing.
 	BlockKey(ctx context.Context, value string) error
 	// Usage waits until the spend is stable and returns the count for the key.
+	// If the spend does not settle, it returns the count and ErrSpendNotSettled.
 	Usage(ctx context.Context, value string) (Usage, error)
 }
 

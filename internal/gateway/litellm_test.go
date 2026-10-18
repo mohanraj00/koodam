@@ -39,6 +39,8 @@ type fake struct {
 	logs     []spendLog
 	rawInURL bool
 	echoKey  bool
+	// noRoutes makes /key/block and /key/info return the FastAPI 404 for a wrong route.
+	noRoutes bool
 	// blockNotFound makes /key/block return 404 for all keys.
 	blockNotFound bool
 	// echoMaster makes each response an error that contains the Authorization header.
@@ -77,18 +79,30 @@ func (f *fake) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		f.keys[h] = b
 		_, _ = w.Write([]byte(`{}`))
 	case "/key/block":
+		if f.noRoutes {
+			w.WriteHeader(http.StatusNotFound)
+			_, _ = w.Write([]byte(`{"detail":"Not Found"}`))
+			return
+		}
 		var b map[string]string
 		_ = json.NewDecoder(r.Body).Decode(&b)
 		h := hashKey(b["key"])
 		if _, ok := f.keys[h]; !ok || f.blockNotFound {
 			w.WriteHeader(http.StatusNotFound)
+			_, _ = w.Write([]byte(`{"error":{"message":"key not found"}}`))
 			return
 		}
 		f.blocked[h] = true
 		_, _ = w.Write([]byte(`{}`))
 	case "/key/info":
+		if f.noRoutes {
+			w.WriteHeader(http.StatusNotFound)
+			_, _ = w.Write([]byte(`{"detail":"Not Found"}`))
+			return
+		}
 		if _, ok := f.keys[r.URL.Query().Get("key")]; !ok {
 			w.WriteHeader(http.StatusNotFound)
+			_, _ = w.Write([]byte(`{"error":{"message":"key not found"}}`))
 			return
 		}
 		s := 0.0
@@ -105,6 +119,7 @@ func (f *fake) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		_ = json.NewEncoder(w).Encode(f.logs)
 	default:
 		w.WriteHeader(http.StatusNotFound)
+		_, _ = w.Write([]byte(`{"detail":"Not Found"}`))
 	}
 }
 
@@ -194,6 +209,32 @@ func TestBlockKeyFailsOn404WhenTheKeyExists(t *testing.T) {
 	}
 	if err := l.BlockKey(ctx, s.Value); err == nil {
 		t.Fatal("a 404 for a key that exists must fail")
+	}
+}
+
+func TestBlockKeyFailsOnARoute404(t *testing.T) {
+	f := newFake()
+	f.noRoutes = true
+	l, stop := client(f)
+	defer stop()
+	if err := l.BlockKey(context.Background(), "sk-kd-missing"); err == nil {
+		t.Fatal("a route 404 must not count as a revoke")
+	}
+}
+
+func TestUsageReportsSpendNotSettled(t *testing.T) {
+	f := newFake()
+	f.spend = []float64{0.01, 0.02, 0.03, 0.04, 0.05}
+	l, stop := client(f)
+	defer stop()
+	l.SpendWait = 2 * time.Millisecond
+	s := spec(t)
+	ctx := context.Background()
+	if err := l.CreateKey(ctx, s); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := l.Usage(ctx, s.Value); !errors.Is(err, ErrSpendNotSettled) {
+		t.Fatalf("got %v, want ErrSpendNotSettled", err)
 	}
 }
 

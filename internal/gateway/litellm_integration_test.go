@@ -38,7 +38,8 @@ func TestLiteLLMLive(t *testing.T) {
 		t.Fatal(err)
 	}
 	l := NewLiteLLM(base, strings.TrimSpace(string(master)))
-	l.SpendWait = 10 * time.Second
+	// The test gateway uses proxy_batch_write_at: 1, as in the stage 2 spike.
+	l.SpendSettle, l.SpendWait = 3*time.Second, 10*time.Second
 	ctx := context.Background()
 	s := spec(t)
 	s.Alias = "kd-live-" + s.Value[len(s.Value)-8:]
@@ -55,6 +56,10 @@ func TestLiteLLMLive(t *testing.T) {
 	}
 	if err := l.BlockKey(ctx, s.Value); err != nil {
 		t.Fatal(err)
+	}
+	// This checks that the missing-key error of this LiteLLM version passes keyMissing.
+	if err := l.BlockKey(ctx, "sk-kd-missing-"+s.Value[len(s.Value)-8:]); err != nil {
+		t.Fatalf("block of a missing key: %v", err)
 	}
 	req, _ := http.NewRequestWithContext(ctx, http.MethodPost, l.BaseURL+"/v1/chat/completions",
 		strings.NewReader(`{"model":"`+s.Model+`","max_tokens":1,"messages":[{"role":"user","content":"x"}]}`))
