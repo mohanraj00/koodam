@@ -32,6 +32,11 @@ jobs:
       - name: Verify kind installation
         run: kind version
 
+      - name: Setup Helm
+        uses: azure/setup-helm@9bc31f4ebc9c6b171d7bfbaa5d006ae7abdb4310 # v5.0.1
+        with:
+          version: v4.2.3
+
       - name: Running Test e2e
         run: |
           go mod tidy
