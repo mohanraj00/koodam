@@ -113,6 +113,13 @@ var _ = Describe("Agent usage with a real gateway", func() {
 			_ = k8sClient.Delete(context.Background(), &corev1alpha1.Agent{
 				ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: key.Namespace}})
 		})
+		DeferCleanup(func() {
+			// Block the key also when the spec fails before the revoke. This runs before the delete.
+			a := &corev1alpha1.Agent{}
+			if k8sClient.Get(context.Background(), key, a) == nil && a.Status.KeyHash != "" {
+				Expect(gw.BlockKey(context.Background(), a.Status.KeyHash)).To(Succeed(), "the cleanup could not block the key")
+			}
+		})
 		r := &AgentReconciler{Client: k8sClient, Scheme: k8sClient.Scheme(), APIReader: k8sClient,
 			Gateway: gw, GatewayURL: gw.BaseURL, Grace: time.Minute}
 		reconcileOnce := func() {
@@ -146,6 +153,25 @@ var _ = Describe("Agent usage with a real gateway", func() {
 			Expect(resp.StatusCode).To(Equal(http.StatusOK), "the model call failed")
 		}
 
+		// spendLogs reads the gateway log by the key hash. The key value is not in the URL.
+		spendLogs := func() []liveSpendLog {
+			req, err := http.NewRequestWithContext(ctx, http.MethodGet,
+				gw.BaseURL+"/spend/logs?api_key="+url.QueryEscape(gateway.HashKey(runKey)), nil)
+			Expect(err).NotTo(HaveOccurred())
+			req.Header.Set("Authorization", "Bearer "+gw.MasterKey)
+			resp, err := gw.HTTP.Do(req)
+			Expect(err).NotTo(HaveOccurred())
+			defer func() { _ = resp.Body.Close() }()
+			Expect(resp.StatusCode).To(Equal(http.StatusOK))
+			var rows []liveSpendLog
+			Expect(json.NewDecoder(resp.Body).Decode(&rows)).To(Succeed())
+			return rows
+		}
+		// The gateway writes the log in batches. Wait for all the calls before the revoke, so the
+		// settle window starts after the writes.
+		Eventually(func() int { return len(spendLogs()) }).WithTimeout(30*time.Second).
+			WithPolling(time.Second).Should(Equal(calls), "the gateway log has one row for each call")
+
 		By("ending the Job and revoking the key")
 		endRunJob(ctx, run, batchv1.JobComplete)
 		reconcileOnce()
@@ -155,17 +181,7 @@ var _ = Describe("Agent usage with a real gateway", func() {
 		Expect(a.Status.Usage).NotTo(BeNil())
 
 		By("reading the gateway log by the key hash")
-		req, err := http.NewRequestWithContext(ctx, http.MethodGet,
-			gw.BaseURL+"/spend/logs?api_key="+url.QueryEscape(gateway.HashKey(runKey)), nil)
-		Expect(err).NotTo(HaveOccurred())
-		req.Header.Set("Authorization", "Bearer "+gw.MasterKey)
-		resp, err := gw.HTTP.Do(req)
-		Expect(err).NotTo(HaveOccurred())
-		defer func() { _ = resp.Body.Close() }()
-		Expect(resp.StatusCode).To(Equal(http.StatusOK))
-		var rows []liveSpendLog
-		Expect(json.NewDecoder(resp.Body).Decode(&rows)).To(Succeed())
-
+		rows := spendLogs()
 		want := corev1alpha1.AgentUsage{}
 		var spend float64
 		for _, x := range rows {
@@ -190,11 +206,12 @@ var _ = Describe("Agent usage with a real gateway", func() {
 		Expect(gotSpend).To(BeNumerically("~", spend, 1e-9))
 
 		By("keeping the key value out of the log and the events")
-		Expect(logs.String()).NotTo(ContainSubstring(runKey), "a key value is in the log")
+		// Use booleans: a matcher with the key would show the key in the failure message.
+		Expect(strings.Contains(logs.String(), runKey)).To(BeFalse(), "a key value is in the log")
 		events := &corev1.EventList{}
 		Expect(k8sClient.List(ctx, events, client.InNamespace(key.Namespace))).To(Succeed())
 		for _, e := range events.Items {
-			Expect(e.Message).NotTo(ContainSubstring(runKey), "a key value is in an event")
+			Expect(strings.Contains(e.Message, runKey)).To(BeFalse(), "a key value is in an event")
 		}
 	})
 })

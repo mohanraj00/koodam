@@ -20,6 +20,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"strings"
 	"sync"
 	"time"
 
@@ -180,13 +181,14 @@ var _ = Describe("Agent Controller", func() {
 
 	AfterEach(func() {
 		for _, v := range gw.created {
-			Expect(logs.String()).NotTo(ContainSubstring(v.Value), "a key value is in the log")
+			// Use booleans: a matcher with the key would show the key in the failure message.
+			Expect(strings.Contains(logs.String(), v.Value)).To(BeFalse(), "a key value is in the log")
 		}
 		events := &corev1.EventList{}
 		Expect(k8sClient.List(ctx, events, client.InNamespace(ns))).To(Succeed())
 		for _, e := range events.Items {
 			for _, v := range gw.created {
-				Expect(e.Message).NotTo(ContainSubstring(v.Value), "a key value is in an event")
+				Expect(strings.Contains(e.Message, v.Value)).To(BeFalse(), "a key value is in an event")
 			}
 		}
 	})
