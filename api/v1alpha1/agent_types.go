@@ -1,0 +1,160 @@
+/*
+Copyright 2026 Mohan Raj.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
+
+package v1alpha1
+
+import (
+	rbacv1 "k8s.io/api/rbac/v1"
+	"k8s.io/apimachinery/pkg/api/resource"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
+)
+
+// AgentSpec is what the agent needs. The controller makes a gateway key with a budget and a TTL,
+// a ServiceAccount with a Role, and then a Job. When the Job ends or the Agent is deleted, the
+// controller revokes all of it and writes the spend to the status.
+type AgentSpec struct {
+	// Image is the agent container image.
+	// +required
+	Image string `json:"image"`
+
+	// Command is the entrypoint of the agent container.
+	// +required
+	// +kubebuilder:validation:MinItems=1
+	Command []string `json:"command"`
+
+	// Env is added to the agent container, after the credentials that the controller supplies.
+	// +optional
+	Env map[string]string `json:"env,omitempty"`
+
+	// Model is the gateway model name. The key permits only this model.
+	// +required
+	// +kubebuilder:validation:MinLength=1
+	Model string `json:"model"`
+
+	// Budget is the maximum spend of the run, in the currency of the gateway price table.
+	// The gateway refuses calls after the budget.
+	// +required
+	Budget resource.Quantity `json:"budget"`
+
+	// User is the person or the team that owns the run. It goes into the key metadata.
+	// +optional
+	User string `json:"user,omitempty"`
+
+	// DeadlineSeconds stops the Job. The key TTL is this value plus a grace period.
+	// +optional
+	// +kubebuilder:default=900
+	// +kubebuilder:validation:Minimum=1
+	DeadlineSeconds int64 `json:"deadlineSeconds,omitempty"`
+
+	// Rules are the RBAC rules of the run Role, in the namespace of the Agent only.
+	// +optional
+	Rules []rbacv1.PolicyRule `json:"rules,omitempty"`
+}
+
+// AgentPhase is the lifecycle phase of an Agent.
+// +kubebuilder:validation:Enum=Pending;Running;Succeeded;Failed
+type AgentPhase string
+
+const (
+	AgentPending   AgentPhase = "Pending"
+	AgentRunning   AgentPhase = "Running"
+	AgentSucceeded AgentPhase = "Succeeded"
+	AgentFailed    AgentPhase = "Failed"
+)
+
+// AgentUsage is the gateway count for the key of the run, from successful calls only.
+type AgentUsage struct {
+	// Spend is the total spend of the key, as a decimal string.
+	Spend string `json:"spend,omitempty"`
+	// Calls is the count of successful calls.
+	Calls int64 `json:"calls,omitempty"`
+	// FailedCalls is the count of refused or failed calls.
+	FailedCalls int64 `json:"failedCalls,omitempty"`
+	// InputTokens and OutputTokens are the sums over the successful calls.
+	InputTokens  int64 `json:"inputTokens,omitempty"`
+	OutputTokens int64 `json:"outputTokens,omitempty"`
+}
+
+// AgentStatus is the observed state of an Agent.
+type AgentStatus struct {
+	// Phase is the lifecycle phase.
+	// +optional
+	Phase AgentPhase `json:"phase,omitempty"`
+
+	// Job is the name of the run Job.
+	// +optional
+	Job string `json:"job,omitempty"`
+
+	// KeyAlias identifies the gateway key. The key value is never in the status.
+	// +optional
+	KeyAlias string `json:"keyAlias,omitempty"`
+
+	// RevokedAt is the time when the controller blocked the key and deleted the credentials.
+	// +optional
+	RevokedAt *metav1.Time `json:"revokedAt,omitempty"`
+
+	// Usage is the gateway count after the revoke.
+	// +optional
+	Usage *AgentUsage `json:"usage,omitempty"`
+
+	// Conditions: Provisioned, Revoked.
+	// +listType=map
+	// +listMapKey=type
+	// +optional
+	Conditions []metav1.Condition `json:"conditions,omitempty"`
+}
+
+// +kubebuilder:object:root=true
+// +kubebuilder:subresource:status
+// +kubebuilder:printcolumn:name="Phase",type=string,JSONPath=`.status.phase`
+// +kubebuilder:printcolumn:name="Model",type=string,JSONPath=`.spec.model`
+// +kubebuilder:printcolumn:name="Budget",type=string,JSONPath=`.spec.budget`
+// +kubebuilder:printcolumn:name="Spend",type=string,JSONPath=`.status.usage.spend`
+// +kubebuilder:printcolumn:name="Age",type=date,JSONPath=`.metadata.creationTimestamp`
+
+// Agent is one agent run with its own credentials.
+type Agent struct {
+	metav1.TypeMeta `json:",inline"`
+
+	// metadata is a standard object metadata
+	// +optional
+	metav1.ObjectMeta `json:"metadata,omitzero"`
+
+	// spec defines the desired state of Agent
+	// +required
+	Spec AgentSpec `json:"spec"`
+
+	// status defines the observed state of Agent
+	// +optional
+	Status AgentStatus `json:"status,omitzero"`
+}
+
+// +kubebuilder:object:root=true
+
+// AgentList contains a list of Agent
+type AgentList struct {
+	metav1.TypeMeta `json:",inline"`
+	metav1.ListMeta `json:"metadata,omitzero"`
+	Items           []Agent `json:"items"`
+}
+
+func init() {
+	SchemeBuilder.Register(func(s *runtime.Scheme) error {
+		s.AddKnownTypes(SchemeGroupVersion, &Agent{}, &AgentList{})
+		return nil
+	})
+}
