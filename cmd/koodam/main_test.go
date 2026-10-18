@@ -25,9 +25,11 @@ import (
 	"testing"
 	"time"
 
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/util/validation/field"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
@@ -152,6 +154,23 @@ func TestRunDoesNotShowValuesFromAnInvalidFile(t *testing.T) {
 			t.Errorf("the error is not sanitized: %v", err)
 		}
 	}
+}
+
+func TestRunDoesNotShowValuesFromAnAPIError(t *testing.T) {
+	const marker = "MARKER-user:password"
+	funcs := &interceptor.Funcs{Create: func(context.Context, client.WithWatch, client.Object,
+		...client.CreateOption) error {
+		return apierrors.NewInvalid(corev1alpha1.GroupVersion.WithKind("Agent").GroupKind(), testName,
+			field.ErrorList{field.Invalid(field.NewPath("metadata", "labels"), marker, "bad "+marker)})
+	}}
+	_, err := run(t, newKube(t, funcs), "run", "-f", writeManifest(t, manifest))
+	if err == nil {
+		t.Fatal("run did not return the API error")
+	}
+	if strings.Contains(err.Error(), marker) {
+		t.Errorf("the error shows a value from the manifest: %v", err)
+	}
+	wantAll(t, err.Error(), "Invalid", testName, "metadata.labels")
 }
 
 func TestRunRefusesAnotherKind(t *testing.T) {

@@ -23,6 +23,7 @@ import (
 	"io"
 	"os"
 	"regexp"
+	"strings"
 	"text/tabwriter"
 	"time"
 
@@ -72,7 +73,7 @@ func runCmd(conn connect) *cobra.Command {
 				return fmt.Errorf("agent/%s exists in namespace %s: delete it or use a new name", a.Name, a.Namespace)
 			}
 			if err != nil {
-				return fmt.Errorf("create the Agent: %w", err)
+				return apiError("create the Agent", err)
 			}
 			out := cmd.OutOrStdout()
 			_, _ = fmt.Fprintf(out, "agent/%s created\n", a.Name)
@@ -113,6 +114,31 @@ func readAgent(file, namespace string) (*corev1alpha1.Agent, error) {
 		a.Namespace = namespace
 	}
 	return a, nil
+}
+
+// apiError gives the reason, the kind, the name and the field paths of an API server error.
+// It drops the status message and the cause messages, because they can hold values from the
+// manifest, for example a label value.
+func apiError(op string, err error) error {
+	var status apierrors.APIStatus
+	if !errors.As(err, &status) {
+		return fmt.Errorf("%s: %w", op, err)
+	}
+	st := status.Status()
+	msg := fmt.Sprintf("%s: %s", op, apierrors.ReasonForError(err))
+	if d := st.Details; d != nil {
+		msg += fmt.Sprintf(" (%s %s)", d.Kind, d.Name)
+		fields := make([]string, 0, len(d.Causes))
+		for _, c := range d.Causes {
+			if c.Field != "" {
+				fields = append(fields, c.Field)
+			}
+		}
+		if len(fields) > 0 {
+			msg += ": check " + strings.Join(fields, ", ")
+		}
+	}
+	return errors.New(msg)
 }
 
 // follow waits for the revoke and shows the spend. It returns an error if the run failed.
