@@ -29,6 +29,13 @@ import (
 	corev1alpha1 "github.com/mohanraj00/koodam/api/v1alpha1"
 )
 
+// Rule words for the tests.
+const (
+	verbGet    = "get"
+	resPods    = "pods"
+	resSecrets = "secrets"
+)
+
 func TestCeilingMatchesTheClusterRole(t *testing.T) {
 	data, err := os.ReadFile("../../config/rbac/agent_ceiling_role.yaml")
 	if err != nil {
@@ -53,15 +60,15 @@ func TestInvalid(t *testing.T) {
 		rules []rbacv1.PolicyRule
 		bad   bool
 	}{
-		{"a-ok", []rbacv1.PolicyRule{rule(core, []string{"pods", "pods/log"}, []string{"get", "list"})}, false},
+		{"a-ok", []rbacv1.PolicyRule{rule(core, []string{resPods, "pods/log"}, []string{verbGet, "list"})}, false},
 		{"no-rules", nil, false},
-		{"secrets", []rbacv1.PolicyRule{rule(core, []string{"secrets"}, []string{"get"})}, true},
-		{"star-verb", []rbacv1.PolicyRule{rule(core, []string{"pods"}, []string{"*"})}, true},
-		{"star-resource", []rbacv1.PolicyRule{rule(core, []string{"*"}, []string{"get"})}, true},
-		{"apps", []rbacv1.PolicyRule{rule([]string{"apps"}, []string{"pods"}, []string{"get"})}, true},
-		{"no-group", []rbacv1.PolicyRule{rule(nil, []string{"pods"}, []string{"get"})}, true},
-		{"delete", []rbacv1.PolicyRule{rule(core, []string{"pods"}, []string{"delete"})}, true},
-		{"url", []rbacv1.PolicyRule{{Verbs: []string{"get"}, NonResourceURLs: []string{"/"}}}, true},
+		{resSecrets, []rbacv1.PolicyRule{rule(core, []string{resSecrets}, []string{verbGet})}, true},
+		{"star-verb", []rbacv1.PolicyRule{rule(core, []string{resPods}, []string{"*"})}, true},
+		{"star-resource", []rbacv1.PolicyRule{rule(core, []string{"*"}, []string{verbGet})}, true},
+		{"apps", []rbacv1.PolicyRule{rule([]string{"apps"}, []string{resPods}, []string{verbGet})}, true},
+		{"no-group", []rbacv1.PolicyRule{rule(nil, []string{resPods}, []string{verbGet})}, true},
+		{"delete", []rbacv1.PolicyRule{rule(core, []string{resPods}, []string{"delete"})}, true},
+		{"url", []rbacv1.PolicyRule{{Verbs: []string{verbGet}, NonResourceURLs: []string{"/"}}}, true},
 		{strings.Repeat("n", 61), nil, true},
 	} {
 		a := &corev1alpha1.Agent{ObjectMeta: metav1.ObjectMeta{Name: c.name},

@@ -170,7 +170,7 @@ var _ = Describe("Agent Controller", func() {
 			Spec: corev1alpha1.AgentSpec{
 				Image: "registry.k8s.io/pause:3.10", Command: []string{"/pause"}, Model: "local-agent",
 				Budget: resource.MustParse("1.5"), DeadlineSeconds: 600, Env: map[string]string{"TASK": "t1"},
-				Rules: []rbacv1.PolicyRule{{APIGroups: []string{""}, Resources: []string{"pods"}, Verbs: []string{"list"}}},
+				Rules: []rbacv1.PolicyRule{{APIGroups: []string{""}, Resources: []string{resPods}, Verbs: []string{"list"}}},
 			},
 		})).To(Succeed())
 	})
@@ -282,7 +282,7 @@ var _ = Describe("Agent Controller", func() {
 
 	It("fails a rule outside the ceiling before it makes a key", func() {
 		a := agent()
-		a.Spec.Rules = []rbacv1.PolicyRule{{APIGroups: []string{""}, Resources: []string{"secrets"}, Verbs: []string{"get"}}}
+		a.Spec.Rules = []rbacv1.PolicyRule{{APIGroups: []string{""}, Resources: []string{resSecrets}, Verbs: []string{verbGet}}}
 		Expect(k8sClient.Update(ctx, a)).To(Succeed())
 		reconcileOnce(newReconciler())
 		a = agent()
@@ -295,7 +295,7 @@ var _ = Describe("Agent Controller", func() {
 
 	It("keeps an object with the run name from a different owner", func() {
 		other := &rbacv1.Role{ObjectMeta: metav1.ObjectMeta{Name: "kd-" + name, Namespace: ns},
-			Rules: []rbacv1.PolicyRule{{APIGroups: []string{""}, Resources: []string{"secrets"}, Verbs: []string{"get"}}}}
+			Rules: []rbacv1.PolicyRule{{APIGroups: []string{""}, Resources: []string{resSecrets}, Verbs: []string{verbGet}}}}
 		Expect(k8sClient.Create(ctx, other)).To(Succeed())
 		reconcileOnce(newReconciler())
 		a := agent()
