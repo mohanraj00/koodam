@@ -39,6 +39,10 @@ type fake struct {
 	logs     []spendLog
 	rawInURL bool
 	echoKey  bool
+	// blockNotFound makes /key/block return 404 for all keys.
+	blockNotFound bool
+	// echoMaster makes each response an error that contains the Authorization header.
+	echoMaster bool
 }
 
 const testModel = "local-agent"
@@ -50,6 +54,11 @@ func (f *fake) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	defer f.mu.Unlock()
 	if r.Header.Get("Authorization") != "Bearer master" {
 		w.WriteHeader(http.StatusUnauthorized)
+		return
+	}
+	if f.echoMaster {
+		w.WriteHeader(http.StatusUnauthorized)
+		_, _ = w.Write([]byte(`{"error":"bad token ` + r.Header.Get("Authorization") + `"}`))
 		return
 	}
 	if strings.Contains(r.URL.RawQuery, "sk-kd-") {
@@ -71,7 +80,7 @@ func (f *fake) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		var b map[string]string
 		_ = json.NewDecoder(r.Body).Decode(&b)
 		h := hashKey(b["key"])
-		if _, ok := f.keys[h]; !ok {
+		if _, ok := f.keys[h]; !ok || f.blockNotFound {
 			w.WriteHeader(http.StatusNotFound)
 			return
 		}
@@ -102,7 +111,7 @@ func (f *fake) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 func client(f *fake) (*LiteLLM, func()) {
 	srv := httptest.NewServer(f)
 	l := NewLiteLLM(srv.URL+"/", "master")
-	l.RetryDelay, l.SpendPoll, l.SpendWait = time.Millisecond, time.Millisecond, time.Second
+	l.RetryDelay, l.SpendPoll, l.SpendSettle, l.SpendWait = time.Millisecond, time.Millisecond, 3*time.Millisecond, time.Second
 	return l, srv.Close
 }
 
@@ -156,6 +165,72 @@ func TestErrorsDoNotContainTheKey(t *testing.T) {
 	}
 	if strings.Contains(err.Error(), s.Value) || !strings.Contains(err.Error(), "[key]") {
 		t.Fatalf("error not redacted: %v", err)
+	}
+}
+
+func TestErrorsDoNotContainTheMasterKey(t *testing.T) {
+	f := newFake()
+	f.echoMaster = true
+	l, stop := client(f)
+	defer stop()
+	err := l.CreateKey(context.Background(), spec(t))
+	if err == nil {
+		t.Fatal("want an error")
+	}
+	if strings.Contains(strings.ReplaceAll(err.Error(), "[master key]", ""), "master") {
+		t.Fatalf("error not redacted: %v", err)
+	}
+}
+
+func TestBlockKeyFailsOn404WhenTheKeyExists(t *testing.T) {
+	f := newFake()
+	f.blockNotFound = true
+	l, stop := client(f)
+	defer stop()
+	s := spec(t)
+	ctx := context.Background()
+	if err := l.CreateKey(ctx, s); err != nil {
+		t.Fatal(err)
+	}
+	if err := l.BlockKey(ctx, s.Value); err == nil {
+		t.Fatal("a 404 for a key that exists must fail")
+	}
+}
+
+func TestRedirectsAreNotFollowed(t *testing.T) {
+	var hits int
+	dst := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { hits++ }))
+	defer dst.Close()
+	src := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, dst.URL+r.URL.Path, http.StatusTemporaryRedirect)
+	}))
+	defer src.Close()
+	l := NewLiteLLM(src.URL, "master")
+	l.Retries = 0
+	if err := l.BlockKey(context.Background(), "sk-kd-x"); err == nil {
+		t.Fatal("want an error for a redirect")
+	}
+	if hits != 0 {
+		t.Fatal("the redirect was followed")
+	}
+}
+
+func TestUsageWaitsForSettleAfterLateBatch(t *testing.T) {
+	f := newFake()
+	f.spend = []float64{0, 0, 0.03, 0.03}
+	l, stop := client(f)
+	defer stop()
+	s := spec(t)
+	ctx := context.Background()
+	if err := l.CreateKey(ctx, s); err != nil {
+		t.Fatal(err)
+	}
+	u, err := l.Usage(ctx, s.Value)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if u.Spend != 0.03 {
+		t.Fatalf("got spend %v, want 0.03", u.Spend)
 	}
 }
 

@@ -42,19 +42,25 @@ type LiteLLM struct {
 	// Retries is the count of tries again after a connection error. HTTP errors are not retried.
 	Retries    int
 	RetryDelay time.Duration
-	// SpendPoll and SpendWait control the wait for a stable spend.
-	// LiteLLM writes the spend in batches, so the first read can be low.
-	SpendPoll time.Duration
-	SpendWait time.Duration
+	// SpendPoll, SpendSettle and SpendWait control the wait for a stable spend.
+	// LiteLLM writes the spend in batches, so the first reads can be low or 0.
+	// The spend is stable when it does not change for SpendSettle. SpendSettle must be
+	// longer than proxy_batch_write_at on the gateway. SpendWait is the maximum wait.
+	SpendPoll   time.Duration
+	SpendSettle time.Duration
+	SpendWait   time.Duration
 }
 
 // NewLiteLLM returns a client with the defaults from the stage 2 spike.
 func NewLiteLLM(baseURL, masterKey string) *LiteLLM {
 	return &LiteLLM{
 		BaseURL: strings.TrimRight(baseURL, "/"), MasterKey: masterKey,
-		HTTP:    &http.Client{Timeout: 30 * time.Second},
+		// Do not follow redirects: a 307 or 308 sends the POST body with the key to the new URL.
+		HTTP: &http.Client{Timeout: 30 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error {
+			return http.ErrUseLastResponse
+		}},
 		Retries: 4, RetryDelay: 2 * time.Second,
-		SpendPoll: 3 * time.Second, SpendWait: 40 * time.Second,
+		SpendPoll: 3 * time.Second, SpendSettle: 12 * time.Second, SpendWait: 40 * time.Second,
 	}
 }
 
@@ -74,7 +80,7 @@ func hashKey(value string) string {
 	return hex.EncodeToString(h[:])
 }
 
-// do sends one request. secret is removed from any error text.
+// do sends one request. secret and the master key are removed from any error text.
 func (l *LiteLLM) do(ctx context.Context, method, path string, body any, secret string, out any) error {
 	var payload []byte
 	if body != nil {
@@ -86,6 +92,9 @@ func (l *LiteLLM) do(ctx context.Context, method, path string, body any, secret 
 	redact := func(s string) string {
 		if secret != "" {
 			s = strings.ReplaceAll(s, secret, "[key]")
+		}
+		if l.MasterKey != "" {
+			s = strings.ReplaceAll(s, l.MasterKey, "[master key]")
 		}
 		return s
 	}
@@ -173,6 +182,14 @@ func (l *LiteLLM) CreateKey(ctx context.Context, s KeySpec) error {
 func (l *LiteLLM) BlockKey(ctx context.Context, value string) error {
 	err := l.do(ctx, http.MethodPost, "/key/block", map[string]string{"key": value}, value, nil)
 	if he, ok := errors.AsType[*HTTPError](err); ok && he.Status == http.StatusNotFound {
+		// A 404 can also come from a wrong route or a proxy. Success only if the key is not there.
+		found, e := l.exists(ctx, value)
+		if e != nil {
+			return e
+		}
+		if found {
+			return err
+		}
 		return nil
 	}
 	return err
@@ -195,6 +212,9 @@ type spendLog struct {
 func (l *LiteLLM) Usage(ctx context.Context, value string) (Usage, error) {
 	q := url.QueryEscape(hashKey(value))
 	var last *float64
+	// need is the count of equal reads after the first read that cover SpendSettle.
+	need := max(1, int((l.SpendSettle+l.SpendPoll-1)/max(l.SpendPoll, 1)))
+	stable := 0
 	deadline := time.Now().Add(l.SpendWait)
 	for {
 		var ki keyInfo
@@ -203,9 +223,14 @@ func (l *LiteLLM) Usage(ctx context.Context, value string) (Usage, error) {
 		}
 		s := ki.Info.Spend
 		if s != nil && last != nil && *s == *last {
-			break
+			stable++
+		} else {
+			stable = 0
 		}
 		last = s
+		if stable >= need {
+			break
+		}
 		if time.Now().After(deadline) {
 			break
 		}
