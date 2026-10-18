@@ -251,9 +251,10 @@ func TestRunRefusesAnotherKind(t *testing.T) {
 	}
 }
 
-func TestRunWaitShowsTheLogAndTheSpend(t *testing.T) {
-	// The interceptor does the work of the controller: the run ends and the usage is written.
-	funcs := &interceptor.Funcs{Create: func(ctx context.Context, c client.WithWatch, o client.Object,
+// runEnds gives an interceptor that does the work of the controller: on create, the run ends
+// and the usage is written.
+func runEnds() *interceptor.Funcs {
+	return &interceptor.Funcs{Create: func(ctx context.Context, c client.WithWatch, o client.Object,
 		opts ...client.CreateOption) error {
 		if a, ok := o.(*corev1alpha1.Agent); ok {
 			a.UID, a.Status.Job = agentUID, testJob
@@ -265,6 +266,10 @@ func TestRunWaitShowsTheLogAndTheSpend(t *testing.T) {
 		}
 		return c.Create(ctx, o, opts...)
 	}}
+}
+
+func TestRunWaitShowsTheLogAndTheSpend(t *testing.T) {
+	funcs := runEnds()
 	out, err := run(t, newKube(t, funcs, testJobObject(), testPod()), "run", "-f", writeManifest(t, manifest), "--wait")
 	if err != nil {
 		t.Fatal(err)
@@ -354,6 +359,36 @@ func TestLogsFollowWaitsForThePod(t *testing.T) {
 	wantAll(t, out, fakeLog)
 	if lists != 3 {
 		t.Errorf("logs -f did not wait for the pod: %d empty lists", lists)
+	}
+}
+
+func TestTheLogStreamHasNoDeadlineFromTheTimeout(t *testing.T) {
+	funcs := runEnds()
+	for _, args := range [][]string{
+		{"logs", testName, "-f", "--timeout", "1m"},
+		{"run", "-f", writeManifest(t, manifest), "--wait", "--timeout", "1m"},
+	} {
+		objs := []client.Object{testJobObject(), testPod()}
+		if args[0] == "logs" {
+			objs = append(objs, testAgent(corev1alpha1.AgentRunning, nil))
+		}
+		streams := 0
+		e := &env{kube: newKube(t, funcs, objs...), clientset: kubefake.NewClientset(), namespace: testNS,
+			poll: time.Millisecond, onStream: func(ctx context.Context) {
+				streams++
+				if _, ok := ctx.Deadline(); ok {
+					t.Errorf("%v: the log stream has a deadline", args)
+				}
+			}}
+		root := newRoot(func() (*env, error) { return e, nil })
+		root.SetOut(&bytes.Buffer{})
+		root.SetArgs(args)
+		if err := root.ExecuteContext(context.Background()); err != nil {
+			t.Fatal(err)
+		}
+		if streams != 1 {
+			t.Errorf("%v: %d log streams, not 1", args, streams)
+		}
 	}
 }
 

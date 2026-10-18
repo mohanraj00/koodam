@@ -19,6 +19,7 @@ limitations under the License.
 package main
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"time"
@@ -41,6 +42,8 @@ type env struct {
 	namespace string
 	// poll is the interval between two reads of the cluster.
 	poll time.Duration
+	// onStream, if set, gets the context of each log stream. Tests use it.
+	onStream func(ctx context.Context)
 }
 
 // connect makes an env from the kubeconfig flags.
