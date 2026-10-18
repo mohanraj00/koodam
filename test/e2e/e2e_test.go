@@ -20,6 +20,7 @@ limitations under the License.
 package e2e
 
 import (
+	"context"
 	"crypto/tls"
 	"encoding/json"
 	"fmt"
@@ -61,6 +62,8 @@ const (
 	mockModel = "mock-1"
 	// residualWait is the time after the end of a run when the test probes the credentials.
 	residualWait = 30 * time.Second
+	// probeWindow is the time after residualWait in which all the probes must complete.
+	probeWindow = 5 * time.Second
 	// controllerSelector selects the controller pod of the release.
 	controllerSelector = "control-plane=controller-manager,app.kubernetes.io/instance=" + release
 	// metricsName is the name of the test ServiceAccount, ClusterRole and ClusterRoleBinding
@@ -121,9 +124,9 @@ var _ = Describe("Residual access", Ordered, func() {
 		r := start(a)
 
 		By("checking that the run credentials work while the run is live")
-		code, _ := modelCall(r.key)
+		code, _ := modelCall(ctx, r.key)
 		Expect(code).To(Equal(http.StatusOK), "The run key did not work during the run.")
-		allowed, err := canListPods(r.token)
+		allowed, err := canListPods(ctx, r.token)
 		Expect(err == nil && allowed).To(BeTrue(), "The run token could not list pods during the run.")
 
 		expectNoAccess(a, r, jobEnd(a))
@@ -297,29 +300,33 @@ func expectSucceeded(a *corev1alpha1.Agent) {
 	Expect(a.Status.Usage).NotTo(BeNil())
 }
 
-// expectNoAccess probes the run credentials 30 s after end. It fails if that time is past.
+// expectNoAccess probes the run credentials 30 s after end. All the probes share a deadline
+// 5 s after that time. A probe that does not complete before the deadline fails the test.
 func expectNoAccess(a *corev1alpha1.Agent, r run, end time.Time) {
+	By("calling the model with the master key, as a control")
+	code, _ := modelCall(ctx, masterKey)
+	Expect(code).To(Equal(http.StatusOK), "The control call with the master key did not work.")
+
 	By("waiting until 30 s after the end of the run")
 	wait := time.Until(end.Add(residualWait))
 	Expect(wait > 0).To(BeTrue(), "The test saw the end of the run more than 30 s late.")
 	time.Sleep(wait)
-
-	By("calling the model with the master key, as a control")
-	code, _ := modelCall(masterKey)
-	Expect(code).To(Equal(http.StatusOK), "The control call with the master key did not work.")
+	deadline := end.Add(residualWait + probeWindow)
+	pctx, cancel := context.WithDeadline(ctx, deadline)
+	defer cancel()
 
 	By("calling the model with the run key")
-	code, errType := modelCall(r.key)
+	code, errType := modelCall(pctx, r.key)
 	Expect(code == http.StatusUnauthorized && errType == "auth_error").To(BeTrue(), fmt.Sprintf(
 		"The gateway did not refuse the run key as a key that is not valid: status %d, error type %q.",
 		code, errType))
 
 	By("calling the API with the run token")
-	_, err := tokenClient(r.token).CoreV1().Pods(runNS).List(ctx, metav1.ListOptions{})
+	_, err := tokenClient(r.token).CoreV1().Pods(runNS).List(pctx, metav1.ListOptions{})
 	Expect(apierrors.IsUnauthorized(err)).To(BeTrue(), "The API server did not refuse the run token.")
 
 	By("asking the API server if the run token can list pods")
-	allowed, err := canListPods(r.token)
+	allowed, err := canListPods(pctx, r.token)
 	Expect(apierrors.IsUnauthorized(err) && !allowed).To(BeTrue(),
 		"The access review with the run token did not get a 401.")
 
@@ -327,37 +334,38 @@ func expectNoAccess(a *corev1alpha1.Agent, r run, end time.Time) {
 	sel := []client.ListOption{client.InNamespace(runNS), client.MatchingLabels{agentLabel: a.Name}}
 	for _, l := range []client.ObjectList{&corev1.SecretList{}, &corev1.ServiceAccountList{},
 		&rbacv1.RoleList{}, &rbacv1.RoleBindingList{}} {
-		Expect(k8s.List(ctx, l, sel...)).To(Succeed())
+		Expect(k8s.List(pctx, l, sel...)).To(Succeed())
 		Expect(meta.LenList(l)).To(BeZero(), fmt.Sprintf("A %T item of the run exists after the run.", l))
 	}
 	// The controller keeps the Job of a run that ended, and its pods, until the Agent is deleted.
 	// They must be stopped and must hold no credential.
 	jobs := &batchv1.JobList{}
-	Expect(k8s.List(ctx, jobs, sel...)).To(Succeed())
+	Expect(k8s.List(pctx, jobs, sel...)).To(Succeed())
 	for _, j := range jobs.Items {
 		_, ended := jobEnded(&j)
 		Expect(ended && j.Status.Active == 0).To(BeTrue(), "A Job of the run did not stop.")
 	}
 	pods := &corev1.PodList{}
-	Expect(k8s.List(ctx, pods, sel...)).To(Succeed())
+	Expect(k8s.List(pctx, pods, sel...)).To(Succeed())
 	for _, p := range pods.Items {
 		Expect(p.Status.Phase).To(BeElementOf(corev1.PodSucceeded, corev1.PodFailed), "A pod of the run did not stop.")
 		for _, c := range p.Spec.Containers {
 			for _, e := range c.EnvFrom {
 				if e.SecretRef != nil {
-					err := k8s.Get(ctx, client.ObjectKey{Namespace: runNS, Name: e.SecretRef.Name}, &corev1.Secret{})
+					err := k8s.Get(pctx, client.ObjectKey{Namespace: runNS, Name: e.SecretRef.Name}, &corev1.Secret{})
 					Expect(apierrors.IsNotFound(err)).To(BeTrue(), "A Secret of a run pod exists after the run.")
 				}
 			}
 		}
 	}
+	Expect(time.Now().Before(deadline)).To(BeTrue(), "The probes did not complete before the deadline.")
 }
 
 // modelCall calls the mock model through the gateway with key. It returns the HTTP status and the
 // error type of the answer. It does not print the key or the response body.
-func modelCall(key string) (int, string) {
+func modelCall(c context.Context, key string) (int, string) {
 	body := `{"model":"` + mockModel + `","messages":[{"role":"user","content":"probe"}]}`
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, gatewayURL+"/v1/chat/completions",
+	req, err := http.NewRequestWithContext(c, http.MethodPost, gatewayURL+"/v1/chat/completions",
 		strings.NewReader(body))
 	Expect(err).NotTo(HaveOccurred())
 	req.Header.Set("Authorization", "Bearer "+key)
@@ -385,11 +393,11 @@ func tokenClient(token string) *kubernetes.Clientset {
 }
 
 // canListPods sends a SelfSubjectAccessReview with token, as "kubectl auth can-i list pods" does.
-func canListPods(token string) (bool, error) {
+func canListPods(c context.Context, token string) (bool, error) {
 	ssar := &authzv1.SelfSubjectAccessReview{Spec: authzv1.SelfSubjectAccessReviewSpec{
 		ResourceAttributes: &authzv1.ResourceAttributes{Namespace: runNS, Verb: "list", Resource: "pods"},
 	}}
-	res, err := tokenClient(token).AuthorizationV1().SelfSubjectAccessReviews().Create(ctx, ssar,
+	res, err := tokenClient(token).AuthorizationV1().SelfSubjectAccessReviews().Create(c, ssar,
 		metav1.CreateOptions{})
 	if err != nil {
 		return false, err
