@@ -5,28 +5,46 @@ metadata:
   name: manager-role
 rules:
 - apiGroups:
-  - core.koodam.dev
+  - ""
   resources:
-  - agents
+  - secrets
+  - serviceaccounts
+  verbs:
+  - create
+  - delete
+  - get
+- apiGroups:
+  - batch
+  resources:
+  - jobs
   verbs:
   - create
   - delete
   - get
   - list
-  - patch
+  - watch
+- apiGroups:
+  - core.koodam.dev
+  resources:
+  - agents
+  verbs:
+  - get
+  - list
   - update
   - watch
 - apiGroups:
   - core.koodam.dev
   resources:
   - agents/finalizers
+  - agents/status
   verbs:
   - update
 - apiGroups:
-  - core.koodam.dev
+  - rbac.authorization.k8s.io
   resources:
-  - agents/status
+  - rolebindings
+  - roles
   verbs:
+  - create
+  - delete
   - get
-  - patch
-  - update

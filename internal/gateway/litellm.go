@@ -77,9 +77,19 @@ func (e *HTTPError) Error() string {
 	return fmt.Sprintf("litellm %s: HTTP %d: %s", e.Path, e.Status, e.Body)
 }
 
-func hashKey(value string) string {
+// HashKey returns the SHA-256 hash of a key value. LiteLLM accepts the hash to find, block and
+// count a key, but it refuses the hash for model calls.
+func HashKey(value string) string {
 	h := sha256.Sum256([]byte(value))
 	return hex.EncodeToString(h[:])
+}
+
+// hashOf returns the hash of a key value. A hash stays the same.
+func hashOf(key string) string {
+	if strings.HasPrefix(key, "sk-") {
+		return HashKey(key)
+	}
+	return key
 }
 
 // do sends one request. secret and the master key are removed from any error text.
@@ -150,9 +160,9 @@ func (l *LiteLLM) do(ctx context.Context, method, path string, body any, secret 
 // keyField is the name of the key field in LiteLLM requests and errors.
 const keyField = "key"
 
-func (l *LiteLLM) exists(ctx context.Context, value string) (bool, error) {
+func (l *LiteLLM) exists(ctx context.Context, key string) (bool, error) {
 	var ki keyInfo
-	err := l.do(ctx, http.MethodGet, "/key/info?key="+url.QueryEscape(hashKey(value)), nil, value, &ki)
+	err := l.do(ctx, http.MethodGet, "/key/info?key="+url.QueryEscape(hashOf(key)), nil, key, &ki)
 	if keyMissing(err) {
 		return false, nil
 	}
@@ -213,11 +223,11 @@ func (l *LiteLLM) CreateKey(ctx context.Context, s KeySpec) error {
 }
 
 // BlockKey implements Gateway.
-func (l *LiteLLM) BlockKey(ctx context.Context, value string) error {
-	err := l.do(ctx, http.MethodPost, "/key/block", map[string]string{keyField: value}, value, nil)
+func (l *LiteLLM) BlockKey(ctx context.Context, key string) error {
+	err := l.do(ctx, http.MethodPost, "/key/block", map[string]string{keyField: hashOf(key)}, key, nil)
 	if keyMissing(err) {
 		// Success only if /key/info also says that the key is not there.
-		found, e := l.exists(ctx, value)
+		found, e := l.exists(ctx, key)
 		if e != nil {
 			return e
 		}
@@ -244,8 +254,8 @@ type spendLog struct {
 }
 
 // Usage implements Gateway.
-func (l *LiteLLM) Usage(ctx context.Context, value string) (Usage, error) {
-	q := url.QueryEscape(hashKey(value))
+func (l *LiteLLM) Usage(ctx context.Context, key string) (Usage, error) {
+	q := url.QueryEscape(hashOf(key))
 	var last *float64
 	// need is the count of equal reads after the first read that cover SpendSettle.
 	need := max(1, int((l.SpendSettle+l.SpendPoll-1)/max(l.SpendPoll, 1)))
@@ -253,7 +263,11 @@ func (l *LiteLLM) Usage(ctx context.Context, value string) (Usage, error) {
 	deadline := time.Now().Add(l.SpendWait)
 	for {
 		var ki keyInfo
-		if err := l.do(ctx, http.MethodGet, "/key/info?key="+q, nil, value, &ki); err != nil {
+		err := l.do(ctx, http.MethodGet, "/key/info?key="+q, nil, key, &ki)
+		if keyMissing(err) {
+			return Usage{}, fmt.Errorf("%w: %w", ErrKeyNotFound, err)
+		}
+		if err != nil {
 			return Usage{}, err
 		}
 		s := ki.Info.Spend
@@ -277,7 +291,7 @@ func (l *LiteLLM) Usage(ctx context.Context, value string) (Usage, error) {
 		}
 	}
 	var logs []spendLog
-	if err := l.do(ctx, http.MethodGet, "/spend/logs?api_key="+q, nil, value, &logs); err != nil {
+	if err := l.do(ctx, http.MethodGet, "/spend/logs?api_key="+q, nil, key, &logs); err != nil {
 		return Usage{}, err
 	}
 	u := Usage{}

@@ -80,7 +80,7 @@ func (f *fake) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	case "/key/generate":
 		var b map[string]any
 		_ = json.NewDecoder(r.Body).Decode(&b)
-		h := hashKey(b["key"].(string))
+		h := HashKey(b["key"].(string))
 		if _, ok := f.keys[h]; ok || f.echoKey {
 			w.WriteHeader(http.StatusBadRequest)
 			_, _ = w.Write([]byte(`{"error":"duplicate key ` + b["key"].(string) + `"}`))
@@ -96,7 +96,7 @@ func (f *fake) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 		var b map[string]string
 		_ = json.NewDecoder(r.Body).Decode(&b)
-		h := hashKey(b["key"])
+		h := hashOf(b["key"])
 		if _, ok := f.keys[h]; !ok || f.blockNotFound {
 			w.WriteHeader(http.StatusNotFound)
 			_, _ = w.Write([]byte(notFoundBody))
@@ -162,7 +162,7 @@ func TestCreateKeySendsBudgetModelAndTTL(t *testing.T) {
 	if err := l.CreateKey(context.Background(), s); err != nil {
 		t.Fatal(err)
 	}
-	b := f.keys[hashKey(s.Value)]
+	b := f.keys[HashKey(s.Value)]
 	if b["duration"] != "960s" || b["max_budget"] != 0.5 || b["key_alias"] != "kd-uid" {
 		t.Fatalf("body %v", b)
 	}
@@ -249,7 +249,7 @@ func TestBlockKeySucceedsForAMissingKey(t *testing.T) {
 
 func TestBlockKeySucceedsForADeletedKey(t *testing.T) {
 	f := newFake()
-	f.deleted[hashKey("sk-kd-deleted")] = true
+	f.deleted[HashKey("sk-kd-deleted")] = true
 	l, stop := client(f)
 	defer stop()
 	if err := l.BlockKey(context.Background(), "sk-kd-deleted"); err != nil {
@@ -340,7 +340,7 @@ func TestBlockKey(t *testing.T) {
 	if err := l.BlockKey(ctx, s.Value); err != nil {
 		t.Fatal(err)
 	}
-	if !f.blocked[hashKey(s.Value)] {
+	if !f.blocked[HashKey(s.Value)] {
 		t.Fatal("key not blocked")
 	}
 	if err := l.BlockKey(ctx, "sk-kd-missing"); err != nil {
@@ -401,5 +401,35 @@ func TestRetryOnConnectionErrorOnly(t *testing.T) {
 	}
 	if calls != 1 {
 		t.Fatalf("an HTTP error was retried: %d calls", calls)
+	}
+}
+
+func TestBlockKeyAndUsageByHash(t *testing.T) {
+	f := newFake()
+	f.spend = []float64{0.1, 0.1}
+	l, stop := client(f)
+	defer stop()
+	s := spec(t)
+	ctx := context.Background()
+	if err := l.CreateKey(ctx, s); err != nil {
+		t.Fatal(err)
+	}
+	h := HashKey(s.Value)
+	if err := l.BlockKey(ctx, h); err != nil {
+		t.Fatal(err)
+	}
+	if !f.blocked[h] {
+		t.Fatal("key not blocked by its hash")
+	}
+	if _, err := l.Usage(ctx, h); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestUsageReportsAMissingKey(t *testing.T) {
+	l, stop := client(newFake())
+	defer stop()
+	if _, err := l.Usage(context.Background(), HashKey("sk-kd-missing")); !errors.Is(err, ErrKeyNotFound) {
+		t.Fatalf("got %v, want ErrKeyNotFound", err)
 	}
 }
