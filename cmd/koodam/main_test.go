@@ -122,6 +122,38 @@ func TestRunCreatesTheAgent(t *testing.T) {
 	}
 }
 
+func TestRunRefusesANamespaceThatDoesNotAgreeWithTheFlag(t *testing.T) {
+	body := strings.Replace(manifest, "name: fix-tests", "name: fix-tests\n  namespace: prod", 1)
+	_, err := run(t, newKube(t, nil), "-n", testNS, "run", "-f", writeManifest(t, body))
+	if err == nil || !strings.Contains(err.Error(), "does not agree") {
+		t.Fatalf("run did not refuse the namespace: %v", err)
+	}
+}
+
+func TestRunRefusesAnAgentThatExists(t *testing.T) {
+	kube := newKube(t, nil, testAgent(corev1alpha1.AgentSucceeded, nil))
+	_, err := run(t, kube, "run", "-f", writeManifest(t, manifest))
+	if err == nil || !strings.Contains(err.Error(), "agent/fix-tests exists") {
+		t.Fatalf("run did not refuse an Agent that exists: %v", err)
+	}
+}
+
+func TestRunDoesNotShowValuesFromAnInvalidFile(t *testing.T) {
+	const marker = "MARKER-7f3a"
+	for _, body := range []string{
+		strings.Replace(manifest, `budget: "2"`, "budget: "+marker, 1),
+		strings.Replace(manifest, "model: local-agent", "model: [\""+marker+"\"", 1),
+		strings.Replace(manifest, "image: example/agent:1", "image: {"+marker+": 1}", 1),
+		// The strict decode puts an unknown key in the error.
+		strings.Replace(manifest, "image: example/agent:1", "image: example/agent:1\n  "+marker+": x", 1),
+	} {
+		_, err := run(t, newKube(t, nil), "run", "-f", writeManifest(t, body))
+		if err == nil || strings.Contains(err.Error(), marker) || !strings.Contains(err.Error(), "not a valid") {
+			t.Errorf("the error is not sanitized: %v", err)
+		}
+	}
+}
+
 func TestRunRefusesAnotherKind(t *testing.T) {
 	body := strings.Replace(manifest, "kind: Agent", "kind: Pod", 1)
 	if _, err := run(t, newKube(t, nil), "run", "-f", writeManifest(t, body)); err == nil {
@@ -137,7 +169,8 @@ func TestRunWaitShowsTheSpend(t *testing.T) {
 			a.Status.Phase = corev1alpha1.AgentSucceeded
 			a.Status.Usage = &corev1alpha1.AgentUsage{Spend: "0.25", Calls: 3, InputTokens: 10, OutputTokens: 20}
 			a.Status.Conditions = []metav1.Condition{{Type: condRevoked, Status: metav1.ConditionTrue,
-				Reason: "JobComplete", LastTransitionTime: metav1.Now()}}
+				Reason: "JobComplete", Message: "The spend did not settle, so the usage can be low.",
+				LastTransitionTime: metav1.Now()}}
 		}
 		return c.Create(ctx, o, opts...)
 	}}
@@ -145,7 +178,7 @@ func TestRunWaitShowsTheSpend(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	wantAll(t, out, "agent/fix-tests Succeeded", "spend 0.25 of 2, 3 calls")
+	wantAll(t, out, "agent/fix-tests Succeeded", "spend 0.25 of 2, 3 calls", "revoke: The spend did not settle")
 }
 
 func TestGetAndSpendShowThePhaseTheBudgetAndTheUsage(t *testing.T) {

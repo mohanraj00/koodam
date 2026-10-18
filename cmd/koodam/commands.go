@@ -22,6 +22,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"regexp"
 	"text/tabwriter"
 	"time"
 
@@ -41,6 +42,9 @@ const (
 	condRevoked = "Revoked"
 )
 
+// yamlLine finds the line number in a YAML decode error.
+var yamlLine = regexp.MustCompile(`line (\d+)`)
+
 func runCmd(conn connect) *cobra.Command {
 	var file string
 	var follow bool
@@ -58,9 +62,16 @@ func runCmd(conn connect) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			// The flags give the namespace only if the file has none.
+			// As in kubectl, an explicit -n must agree with the namespace in the file.
+			if ns, _ := cmd.Flags().GetString("namespace"); cmd.Flags().Changed("namespace") && ns != a.Namespace {
+				return fmt.Errorf("the namespace in %s (%s) does not agree with -n %s", file, a.Namespace, ns)
+			}
 			e.namespace = a.Namespace
-			if err := e.kube.Create(cmd.Context(), a); err != nil {
+			err = e.kube.Create(cmd.Context(), a)
+			if apierrors.IsAlreadyExists(err) {
+				return fmt.Errorf("agent/%s exists in namespace %s: delete it or use a new name", a.Name, a.Namespace)
+			}
+			if err != nil {
 				return fmt.Errorf("create the Agent: %w", err)
 			}
 			out := cmd.OutOrStdout()
@@ -87,7 +98,13 @@ func readAgent(file, namespace string) (*corev1alpha1.Agent, error) {
 	}
 	a := &corev1alpha1.Agent{}
 	if err := yaml.UnmarshalStrict(data, a); err != nil {
-		return nil, fmt.Errorf("read %s: %w", file, err)
+		// The decode error can hold a value from the file, and the file can hold a credential.
+		// Thus give only the line number.
+		msg := fmt.Sprintf("%s is not a valid Agent manifest", file)
+		if m := yamlLine.FindStringSubmatch(err.Error()); m != nil {
+			msg += " (line " + m[1] + ")"
+		}
+		return nil, errors.New(msg)
 	}
 	if a.Kind != "Agent" || a.APIVersion != corev1alpha1.GroupVersion.String() {
 		return nil, fmt.Errorf("%s is not an %s Agent", file, corev1alpha1.GroupVersion)
@@ -115,6 +132,10 @@ func (e *env) follow(ctx context.Context, out io.Writer, name string) error {
 			u.Spend, a.Spec.Budget.String(), u.Calls, u.FailedCalls, u.InputTokens, u.OutputTokens)
 	} else {
 		_, _ = fmt.Fprintln(out, "spend unknown: the gateway gave no usage")
+	}
+	// The message tells if the spend did not settle, so that the usage can be low.
+	if c := meta.FindStatusCondition(a.Status.Conditions, condRevoked); c != nil && c.Message != "" {
+		_, _ = fmt.Fprintf(out, "revoke: %s\n", c.Message)
 	}
 	if a.Status.Phase == corev1alpha1.AgentFailed {
 		return errors.New("the run failed")
