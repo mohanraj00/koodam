@@ -20,30 +20,59 @@ limitations under the License.
 package e2e
 
 import (
+	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"fmt"
-	"os"
+	"net/http"
 	"os/exec"
+	"strings"
 	"testing"
+	"time"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
+	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/client-go/kubernetes"
+	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
+	"k8s.io/client-go/rest"
+	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 
+	corev1alpha1 "github.com/mohanraj00/koodam/api/v1alpha1"
 	"github.com/mohanraj00/koodam/test/utils"
 )
 
-var (
-	// managerImage is the manager image to be built and loaded for testing.
-	managerImage = "example.com/koodam:v0.0.1"
-	// shouldCleanupCertManager tracks whether CertManager was installed by this suite.
-	shouldCleanupCertManager = false
+const (
+	// systemNS has the controller and the bundled gateway.
+	systemNS = "koodam-system"
+	// runNS has the test Agents.
+	runNS = "koodam-e2e"
+	// release is the Helm release name. The chart names the LiteLLM Service "<release>-litellm".
+	release = "koodam"
+	// gatewayPort is the local port that forwards to the bundled LiteLLM Service.
+	gatewayPort = "14000"
+	// callTimeout is the limit for each network call of the test.
+	callTimeout = 10 * time.Second
 )
 
-// TestE2E runs the e2e test suite to validate the solution in an isolated environment.
-// The default setup requires Kind and CertManager.
-//
-// To enable kubectl kuberc (use custom kubectl configurations), set: KUBECTL_KUBERC=true
-// By default, kuberc is disabled to ensure consistent test behavior across different environments.
-// To skip CertManager installation, set: CERT_MANAGER_INSTALL_SKIP=true
+var (
+	// managerImage is the manager image that the suite builds and loads into kind.
+	managerImage = "example.com/koodam:v0.0.1"
+	ctx          = context.Background()
+	restCfg      *rest.Config
+	k8s          client.Client
+	clientset    *kubernetes.Clientset
+	// masterKey is the gateway master key. The suite makes it and never prints it.
+	masterKey   string
+	gatewayURL  = "http://127.0.0.1:" + gatewayPort
+	portForward *exec.Cmd
+	httpClient  = &http.Client{Timeout: callTimeout}
+)
+
+// TestE2E installs the chart with the bundled gateway on kind and runs the residual access tests.
 func TestE2E(t *testing.T) {
 	RegisterFailHandler(Fail)
 	_, _ = fmt.Fprintf(GinkgoWriter, "Starting koodam e2e test suite\n")
@@ -52,68 +81,72 @@ func TestE2E(t *testing.T) {
 
 var _ = BeforeSuite(func() {
 	By("building the manager image")
-	cmd := exec.Command("make", "docker-build", fmt.Sprintf("IMG=%s", managerImage))
-	_, err := utils.Run(cmd)
-	ExpectWithOffset(1, err).NotTo(HaveOccurred(), "Failed to build the manager image")
+	_, err := utils.Run(exec.Command("make", "docker-build", "IMG="+managerImage))
+	Expect(err).NotTo(HaveOccurred(), "Failed to build the manager image")
 
-	// TODO(user): If you want to change the e2e test vendor from Kind,
-	// ensure the image is built and available, then remove the following block.
-	By("loading the manager image on Kind")
-	err = utils.LoadImageToKindClusterWithName(managerImage)
-	ExpectWithOffset(1, err).NotTo(HaveOccurred(), "Failed to load the manager image into Kind")
+	By("loading the manager image on kind")
+	Expect(utils.LoadImageToKindClusterWithName(managerImage)).To(Succeed())
 
-	configureKubectlKubeRC()
-	setupCertManager()
+	restCfg, err = ctrl.GetConfig()
+	Expect(err).NotTo(HaveOccurred())
+	restCfg.Timeout = callTimeout
+	scheme := runtime.NewScheme()
+	Expect(clientgoscheme.AddToScheme(scheme)).To(Succeed())
+	Expect(corev1alpha1.AddToScheme(scheme)).To(Succeed())
+	k8s, err = client.New(restCfg, client.Options{Scheme: scheme})
+	Expect(err).NotTo(HaveOccurred())
+	clientset, err = kubernetes.NewForConfig(restCfg)
+	Expect(err).NotTo(HaveOccurred())
+
+	By("making the namespaces")
+	for _, ns := range []string{systemNS, runNS} {
+		err := k8s.Create(ctx, &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: ns}})
+		Expect(client.IgnoreAlreadyExists(err)).To(Succeed())
+	}
+
+	By("making the master key Secret with a random key")
+	b := make([]byte, 24)
+	_, err = rand.Read(b)
+	Expect(err).NotTo(HaveOccurred())
+	masterKey = "sk-" + hex.EncodeToString(b)
+	s := &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: "koodam-gateway", Namespace: systemNS}}
+	Expect(client.IgnoreNotFound(k8s.Delete(ctx, s))).To(Succeed())
+	s.StringData = map[string]string{"master-key": masterKey}
+	Expect(k8s.Create(ctx, s)).To(Succeed(), "Failed to make the master key Secret")
+
+	By("installing the chart with the bundled gateway")
+	i := strings.LastIndex(managerImage, ":")
+	_, err = utils.Run(exec.Command("helm", "upgrade", "--install", release, "charts/koodam",
+		"-n", systemNS, "-f", "charts/koodam/values-bundled.yaml",
+		"--set", "image.repository="+managerImage[:i], "--set", "image.tag="+managerImage[i+1:],
+		"--set", "metrics.enabled=true",
+		"--wait", "--timeout", "10m"))
+	Expect(err).NotTo(HaveOccurred(), "Failed to install the chart")
+
+	By("forwarding a local port to the bundled gateway")
+	portForward = forward(release+"-litellm", gatewayPort+":4000")
+	Eventually(func() int {
+		resp, err := httpClient.Get(gatewayURL + "/health/readiness")
+		if err != nil {
+			return 0
+		}
+		_ = resp.Body.Close()
+		return resp.StatusCode
+	}, 2*time.Minute, time.Second).Should(Equal(http.StatusOK))
 })
+
+// forward starts "kubectl port-forward" to the Service svc in systemNS. The caller stops it.
+func forward(svc, ports string) *exec.Cmd {
+	cmd := exec.Command("kubectl", "-n", systemNS, "port-forward", "svc/"+svc, ports)
+	cmd.Stdout, cmd.Stderr = GinkgoWriter, GinkgoWriter
+	Expect(cmd.Start()).To(Succeed())
+	return cmd
+}
 
 var _ = AfterSuite(func() {
-	teardownCertManager()
+	if portForward != nil && portForward.Process != nil {
+		_ = portForward.Process.Kill()
+	}
+	By("uninstalling the chart")
+	_, _ = utils.Run(exec.Command("helm", "uninstall", release, "-n", systemNS))
 })
-
-// Disable kubectl kuberc by default for test isolation.
-// This prevents local kubectl configurations from affecting test behavior.
-// To enable kuberc, set: KUBECTL_KUBERC=true
-func configureKubectlKubeRC() {
-	if os.Getenv("KUBECTL_KUBERC") != "true" {
-		By("disabling kubectl kuberc for test isolation")
-		err := os.Setenv("KUBECTL_KUBERC", "false")
-		ExpectWithOffset(1, err).NotTo(HaveOccurred(), "Failed to disable kubectl kuberc")
-		_, _ = fmt.Fprintf(GinkgoWriter,
-			"kubectl kuberc disabled for consistent test behavior (override with KUBECTL_KUBERC=true)\n")
-	} else {
-		_, _ = fmt.Fprintf(GinkgoWriter, "kubectl kuberc enabled (KUBECTL_KUBERC=true)\n")
-	}
-}
-
-// setupCertManager installs CertManager if needed for webhook tests.
-// Skips installation if CERT_MANAGER_INSTALL_SKIP=true or if already present.
-func setupCertManager() {
-	if os.Getenv("CERT_MANAGER_INSTALL_SKIP") == "true" {
-		_, _ = fmt.Fprintf(GinkgoWriter, "Skipping CertManager installation (CERT_MANAGER_INSTALL_SKIP=true)\n")
-		return
-	}
-
-	By("checking if CertManager is already installed")
-	if utils.IsCertManagerCRDsInstalled() {
-		_, _ = fmt.Fprintf(GinkgoWriter, "CertManager is already installed. Skipping installation.\n")
-		return
-	}
-
-	// Mark for cleanup before installation to handle interruptions and partial installs.
-	shouldCleanupCertManager = true
-
-	By("installing CertManager")
-	Expect(utils.InstallCertManager()).To(Succeed(), "Failed to install CertManager")
-}
-
-// teardownCertManager uninstalls CertManager if it was installed by setupCertManager.
-// This ensures we only remove what we installed.
-func teardownCertManager() {
-	if !shouldCleanupCertManager {
-		_, _ = fmt.Fprintf(GinkgoWriter, "Skipping CertManager cleanup (not installed by this suite)\n")
-		return
-	}
-
-	By("uninstalling CertManager")
-	utils.UninstallCertManager()
-}
