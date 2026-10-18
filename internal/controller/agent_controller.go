@@ -20,6 +20,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/http"
 	"reflect"
 	"slices"
 	"strconv"
@@ -82,8 +83,8 @@ type AgentReconciler struct {
 	Grace time.Duration
 }
 
-// +kubebuilder:rbac:groups=core.koodam.dev,resources=agents,verbs=get;list;watch;create;update;patch;delete
-// +kubebuilder:rbac:groups=core.koodam.dev,resources=agents/status,verbs=get;update;patch
+// +kubebuilder:rbac:groups=core.koodam.dev,resources=agents,verbs=get;list;watch;update
+// +kubebuilder:rbac:groups=core.koodam.dev,resources=agents/status,verbs=update
 // +kubebuilder:rbac:groups=core.koodam.dev,resources=agents/finalizers,verbs=update
 // +kubebuilder:rbac:groups=batch,resources=jobs,verbs=get;list;watch;create;delete
 // +kubebuilder:rbac:groups="",resources=secrets,verbs=get;create;delete
@@ -115,6 +116,10 @@ func (r *AgentReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl
 		}
 		if err != nil {
 			return ctrl.Result{}, err
+		}
+		if !metav1.IsControlledBy(job, a) {
+			// A different Job has the run name. Its result is not the result of this run.
+			return ctrl.Result{}, r.fail(ctx, a, corev1alpha1.AgentFailed, "NameConflict")
 		}
 		if phase, reason, done := jobEnd(job); done {
 			return ctrl.Result{}, r.fail(ctx, a, phase, reason)
@@ -157,6 +162,18 @@ func invalid(a *corev1alpha1.Agent) string {
 		}
 	}
 	return ""
+}
+
+// permanent is true for an API error that a retry cannot fix: a 4xx status other than a
+// conflict, a timeout or a rate limit.
+func permanent(err error) bool {
+	var s apierrors.APIStatus
+	if !errors.As(err, &s) {
+		return false
+	}
+	code := s.Status().Code
+	return code >= 400 && code < 500 && code != http.StatusConflict &&
+		code != http.StatusRequestTimeout && code != http.StatusTooManyRequests
 }
 
 func runMeta(a *corev1alpha1.Agent) metav1.ObjectMeta {
@@ -291,7 +308,7 @@ func (r *AgentReconciler) provision(ctx context.Context, a *corev1alpha1.Agent) 
 				log.Info("An object with the run name is not from this Agent", "kind", fmt.Sprintf("%T", o))
 				return r.fail(ctx, a, corev1alpha1.AgentFailed, "NameConflict")
 			}
-		case apierrors.IsForbidden(err), apierrors.IsInvalid(err):
+		case permanent(err):
 			log.Info("The API server refused the run", "kind", fmt.Sprintf("%T", o), "reason", err.Error())
 			return r.fail(ctx, a, corev1alpha1.AgentFailed, "Refused")
 		case err != nil:

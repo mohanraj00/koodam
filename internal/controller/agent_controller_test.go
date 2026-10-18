@@ -350,4 +350,22 @@ var _ = Describe("Agent Controller", func() {
 		err := k8sClient.Get(ctx, key(), &corev1alpha1.Agent{})
 		Expect(apierrors.IsNotFound(err)).To(BeTrue(), "the finalizer is removed")
 	})
+
+	It("fails the run when a different Job has the run name", func() {
+		r := newReconciler()
+		reconcileOnce(r)
+		Expect(k8sClient.Delete(ctx, &batchv1.Job{ObjectMeta: metav1.ObjectMeta{Name: "kd-" + name, Namespace: ns}},
+			client.PropagationPolicy(metav1.DeletePropagationBackground))).To(Succeed())
+		other := runJob(agent())
+		other.OwnerReferences = nil
+		Expect(k8sClient.Create(ctx, other)).To(Succeed())
+		reconcileOnce(r)
+		a := agent()
+		Expect(a.Status.Phase).To(Equal(corev1alpha1.AgentFailed))
+		Expect(meta.FindStatusCondition(a.Status.Conditions, condRevoked).Reason).To(Equal("NameConflict"))
+		Expect(gw.blocked).To(Equal([]string{a.Status.KeyHash}))
+		job := &batchv1.Job{}
+		Expect(exists(job)).To(BeTrue(), "the controller does not delete a Job that it does not own")
+		Expect(job.UID).To(Equal(other.UID))
+	})
 })

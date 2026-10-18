@@ -28,26 +28,16 @@ rules:
   resources:
   - agents
   verbs:
-  - create
-  - delete
   - get
   - list
-  - patch
   - update
   - watch
 - apiGroups:
   - core.koodam.dev
   resources:
   - agents/finalizers
-  verbs:
-  - update
-- apiGroups:
-  - core.koodam.dev
-  resources:
   - agents/status
   verbs:
-  - get
-  - patch
   - update
 - apiGroups:
   - rbac.authorization.k8s.io

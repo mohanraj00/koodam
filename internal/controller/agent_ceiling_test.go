@@ -17,13 +17,16 @@ limitations under the License.
 package controller
 
 import (
+	"errors"
 	"os"
 	"reflect"
 	"strings"
 	"testing"
 
 	rbacv1 "k8s.io/api/rbac/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 	"sigs.k8s.io/yaml"
 
 	corev1alpha1 "github.com/mohanraj00/koodam/api/v1alpha1"
@@ -75,6 +78,27 @@ func TestInvalid(t *testing.T) {
 			Spec: corev1alpha1.AgentSpec{Rules: c.rules}}
 		if got := invalid(a) != ""; got != c.bad {
 			t.Errorf("%s: invalid is %v, want %v", c.name, got, c.bad)
+		}
+	}
+}
+
+func TestPermanent(t *testing.T) {
+	gr := schema.GroupResource{Group: "batch", Resource: "jobs"}
+	for _, c := range []struct {
+		err  error
+		want bool
+	}{
+		{apierrors.NewRequestEntityTooLargeError("too large"), true},
+		{apierrors.NewForbidden(gr, "kd-a", errors.New("no")), true},
+		{apierrors.NewBadRequest("bad"), true},
+		{apierrors.NewConflict(gr, "kd-a", errors.New("changed")), false},
+		{apierrors.NewTooManyRequests("slow down", 1), false},
+		{apierrors.NewTimeoutError("timeout", 1), false},
+		{apierrors.NewInternalError(errors.New("down")), false},
+		{errors.New("connection refused"), false},
+	} {
+		if got := permanent(c.err); got != c.want {
+			t.Errorf("permanent(%v) is %v, want %v", c.err, got, c.want)
 		}
 	}
 }
