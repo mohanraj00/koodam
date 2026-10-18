@@ -147,6 +147,9 @@ func (l *LiteLLM) do(ctx context.Context, method, path string, body any, secret 
 	return fmt.Errorf("litellm %s: %w", strings.SplitN(path, "?", 2)[0], lastErr)
 }
 
+// keyField is the name of the key field in LiteLLM requests and errors.
+const keyField = "key"
+
 func (l *LiteLLM) exists(ctx context.Context, value string) (bool, error) {
 	var ki keyInfo
 	err := l.do(ctx, http.MethodGet, "/key/info?key="+url.QueryEscape(hashKey(value)), nil, value, &ki)
@@ -180,7 +183,7 @@ func isKeyNotFound(data []byte) bool {
 	if json.Unmarshal(data, &body) != nil || body.Error == nil {
 		return false
 	}
-	return body.Error.Type == "not_found_error" && body.Error.Param == "key"
+	return body.Error.Type == "not_found_error" && body.Error.Param == keyField
 }
 
 // CreateKey implements Gateway.
@@ -193,7 +196,7 @@ func (l *LiteLLM) CreateKey(ctx context.Context, s KeySpec) error {
 		md[k] = v
 	}
 	body := map[string]any{
-		"key": s.Value, "key_alias": s.Alias, "models": []string{s.Model},
+		keyField: s.Value, "key_alias": s.Alias, "models": []string{s.Model},
 		"max_budget": s.Budget, "duration": fmt.Sprintf("%ds", int64(s.TTL/time.Second)), "metadata": md,
 	}
 	err := l.do(ctx, http.MethodPost, "/key/generate", body, s.Value, nil)
@@ -211,7 +214,7 @@ func (l *LiteLLM) CreateKey(ctx context.Context, s KeySpec) error {
 
 // BlockKey implements Gateway.
 func (l *LiteLLM) BlockKey(ctx context.Context, value string) error {
-	err := l.do(ctx, http.MethodPost, "/key/block", map[string]string{"key": value}, value, nil)
+	err := l.do(ctx, http.MethodPost, "/key/block", map[string]string{keyField: value}, value, nil)
 	if keyMissing(err) {
 		// Success only if /key/info also says that the key is not there.
 		found, e := l.exists(ctx, value)
