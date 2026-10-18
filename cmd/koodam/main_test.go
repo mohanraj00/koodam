@@ -19,6 +19,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -49,10 +50,14 @@ const (
 	// fakeLog is the log body of each pod in the fake clientset.
 	fakeLog = "fake logs"
 	testJob = "kd-fix-tests"
-	// cmdLogs is the name of the logs command.
-	cmdLogs  = "logs"
-	agentUID = types.UID("agent-uid")
-	jobUID   = types.UID("job-uid")
+	// cmdLogs and cmdRun are command names.
+	cmdLogs = "logs"
+	cmdRun  = "run"
+	// flagWait and flagTimeout are the flags of the waits.
+	flagWait    = "--wait"
+	flagTimeout = "--timeout"
+	agentUID    = types.UID("agent-uid")
+	jobUID      = types.UID("job-uid")
 )
 
 const manifest = `apiVersion: core.koodam.dev/v1alpha1
@@ -151,7 +156,7 @@ func wantAll(t *testing.T, out string, parts ...string) {
 
 func TestRunCreatesTheAgent(t *testing.T) {
 	kube := newKube(t, nil)
-	out, err := run(t, kube, "run", "-f", writeManifest(t, manifest))
+	out, err := run(t, kube, cmdRun, "-f", writeManifest(t, manifest))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -164,7 +169,7 @@ func TestRunCreatesTheAgent(t *testing.T) {
 
 func TestRunRefusesANamespaceThatDoesNotAgreeWithTheFlag(t *testing.T) {
 	body := strings.Replace(manifest, "name: fix-tests", "name: fix-tests\n  namespace: prod", 1)
-	_, err := run(t, newKube(t, nil), "-n", testNS, "run", "-f", writeManifest(t, body))
+	_, err := run(t, newKube(t, nil), "-n", testNS, cmdRun, "-f", writeManifest(t, body))
 	if err == nil || !strings.Contains(err.Error(), "does not agree") {
 		t.Fatalf("run did not refuse the namespace: %v", err)
 	}
@@ -172,7 +177,7 @@ func TestRunRefusesANamespaceThatDoesNotAgreeWithTheFlag(t *testing.T) {
 
 func TestRunRefusesAnAgentThatExists(t *testing.T) {
 	kube := newKube(t, nil, testAgent(corev1alpha1.AgentSucceeded, nil))
-	_, err := run(t, kube, "run", "-f", writeManifest(t, manifest))
+	_, err := run(t, kube, cmdRun, "-f", writeManifest(t, manifest))
 	if err == nil || !strings.Contains(err.Error(), "agent/fix-tests exists") {
 		t.Fatalf("run did not refuse an Agent that exists: %v", err)
 	}
@@ -187,7 +192,7 @@ func TestRunDoesNotShowValuesFromAnInvalidFile(t *testing.T) {
 		// The strict decode puts an unknown key in the error.
 		strings.Replace(manifest, "image: example/agent:1", "image: example/agent:1\n  "+marker+": x", 1),
 	} {
-		_, err := run(t, newKube(t, nil), "run", "-f", writeManifest(t, body))
+		_, err := run(t, newKube(t, nil), cmdRun, "-f", writeManifest(t, body))
 		if err == nil || strings.Contains(err.Error(), marker) || !strings.Contains(err.Error(), "not a valid") {
 			t.Errorf("the error is not sanitized: %v", err)
 		}
@@ -229,7 +234,7 @@ func TestAPIErrorsDoNotShowValues(t *testing.T) {
 			},
 		}
 		for _, args := range [][]string{
-			{"run", "-f", writeManifest(t, manifest)}, {"delete", testName}, {"get", testName}, {"spend"},
+			{cmdRun, "-f", writeManifest(t, manifest)}, {"delete", testName}, {"get", testName}, {"spend"},
 			{cmdLogs, testName},
 		} {
 			_, err := run(t, newKube(t, funcs), args...)
@@ -248,7 +253,7 @@ func TestAPIErrorsDoNotShowValues(t *testing.T) {
 
 func TestRunRefusesAnotherKind(t *testing.T) {
 	body := strings.Replace(manifest, "kind: Agent", "kind: Pod", 1)
-	if _, err := run(t, newKube(t, nil), "run", "-f", writeManifest(t, body)); err == nil {
+	if _, err := run(t, newKube(t, nil), cmdRun, "-f", writeManifest(t, body)); err == nil {
 		t.Fatal("run accepted a manifest that is not an Agent")
 	}
 }
@@ -272,7 +277,7 @@ func runEnds() *interceptor.Funcs {
 
 func TestRunWaitShowsTheLogAndTheSpend(t *testing.T) {
 	funcs := runEnds()
-	out, err := run(t, newKube(t, funcs, testJobObject(), testPod()), "run", "-f", writeManifest(t, manifest), "--wait")
+	out, err := run(t, newKube(t, funcs, testJobObject(), testPod()), cmdRun, "-f", writeManifest(t, manifest), flagWait)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -285,7 +290,7 @@ func TestRunWaitShowsTheLogAndTheSpend(t *testing.T) {
 		return action.GetSubresource() == "log", nil, markerErrors()[1]
 	})
 	kube := newKube(t, funcs, testJobObject(), testPod())
-	out, err = runWith(t, kube, cs, "run", "-f", writeManifest(t, manifest), "--wait")
+	out, err = runWith(t, kube, cs, cmdRun, "-f", writeManifest(t, manifest), flagWait)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -367,8 +372,8 @@ func TestLogsFollowWaitsForThePod(t *testing.T) {
 func TestTheLogStreamHasNoDeadlineFromTheTimeout(t *testing.T) {
 	funcs := runEnds()
 	for _, args := range [][]string{
-		{cmdLogs, testName, "-f", "--timeout", "1m"},
-		{"run", "-f", writeManifest(t, manifest), "--wait", "--timeout", "1m"},
+		{cmdLogs, testName, "-f", flagTimeout, "1m"},
+		{cmdRun, "-f", writeManifest(t, manifest), flagWait, flagTimeout, "1m"},
 	} {
 		objs := []client.Object{testJobObject(), testPod()}
 		if args[0] == cmdLogs {
@@ -376,11 +381,13 @@ func TestTheLogStreamHasNoDeadlineFromTheTimeout(t *testing.T) {
 		}
 		streams := 0
 		e := &env{kube: newKube(t, funcs, objs...), clientset: kubefake.NewClientset(), namespace: testNS,
-			poll: time.Millisecond, onStream: func(ctx context.Context) {
+			poll: time.Millisecond,
+			stream: func(ctx context.Context, _, _ string, _ *corev1.PodLogOptions) (io.ReadCloser, error) {
 				streams++
 				if _, ok := ctx.Deadline(); ok {
 					t.Errorf("%v: the log stream has a deadline", args)
 				}
+				return io.NopCloser(strings.NewReader(fakeLog)), nil
 			}}
 		root := newRoot(func() (*env, error) { return e, nil })
 		root.SetOut(&bytes.Buffer{})
@@ -394,9 +401,48 @@ func TestTheLogStreamHasNoDeadlineFromTheTimeout(t *testing.T) {
 	}
 }
 
+func TestAStalledLogOpenStopsAtTheTimeout(t *testing.T) {
+	// The fake open blocks until its context ends, as a stalled HTTP request does.
+	stalled := func(ctx context.Context, _, _ string, _ *corev1.PodLogOptions) (io.ReadCloser, error) {
+		<-ctx.Done()
+		return nil, ctx.Err()
+	}
+	for _, args := range [][]string{
+		{cmdLogs, testName, "-f", flagTimeout, "50ms"},
+		{cmdRun, "-f", writeManifest(t, manifest), flagWait, flagTimeout, "50ms"},
+	} {
+		objs := []client.Object{testJobObject(), testPod()}
+		if args[0] == cmdLogs {
+			objs = append(objs, testAgent(corev1alpha1.AgentRunning, nil))
+		}
+		e := &env{kube: newKube(t, runEnds(), objs...), clientset: kubefake.NewClientset(), namespace: testNS,
+			poll: time.Millisecond, stream: stalled}
+		root := newRoot(func() (*env, error) { return e, nil })
+		out := &bytes.Buffer{}
+		root.SetOut(out)
+		root.SetErr(out)
+		root.SetArgs(args)
+		start := time.Now()
+		err := root.ExecuteContext(context.Background())
+		if time.Since(start) > 5*time.Second {
+			t.Errorf("%v did not stop at the timeout", args)
+		}
+		if args[0] == cmdLogs {
+			if err == nil {
+				t.Errorf("logs -f did not fail on a stalled open")
+			}
+			continue
+		}
+		if err != nil {
+			t.Fatal(err)
+		}
+		wantAll(t, out.String(), "warning: read the pod log", "spend 0.25 of 2, 3 calls")
+	}
+}
+
 func TestDeleteWaitsUntilTheAgentIsGone(t *testing.T) {
 	kube := newKube(t, nil, testAgent(corev1alpha1.AgentRunning, nil))
-	out, err := run(t, kube, "delete", testName, "--wait")
+	out, err := run(t, kube, "delete", testName, flagWait)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -407,7 +453,7 @@ func TestDeleteWaitStopsAtTheTimeout(t *testing.T) {
 	// The finalizer stays because no controller runs, so the Agent does not go.
 	a := testAgent(corev1alpha1.AgentRunning, nil)
 	a.Finalizers = []string{"koodam.dev/revoke"}
-	_, err := run(t, newKube(t, nil, a), "delete", testName, "--wait", "--timeout", "20ms")
+	_, err := run(t, newKube(t, nil, a), "delete", testName, flagWait, flagTimeout, "20ms")
 	if err == nil {
 		t.Fatal("delete --wait did not stop at the timeout")
 	}

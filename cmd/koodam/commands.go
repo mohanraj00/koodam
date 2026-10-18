@@ -264,11 +264,55 @@ func (e *env) openLog(ctx, streamCtx context.Context, a *corev1alpha1.Agent, fol
 		return nil, errNotStarted
 	}
 	opts := &corev1.PodLogOptions{Follow: follow}
-	if e.onStream != nil {
-		e.onStream(streamCtx)
+	// The open runs in a goroutine, so the end of ctx stops a stalled open. The stream that the
+	// open gives has a child of streamCtx, without the wait deadline.
+	openCtx, cancelOpen := context.WithCancel(streamCtx)
+	type opened struct {
+		rc  io.ReadCloser
+		err error
 	}
-	rc, err := e.clientset.CoreV1().Pods(a.Namespace).GetLogs(pod.Name, opts).Stream(streamCtx)
-	return rc, apiError("read the pod log", err)
+	done := make(chan opened, 1)
+	go func() {
+		rc, err := e.openStream(openCtx, a.Namespace, pod.Name, opts)
+		done <- opened{rc, err}
+	}()
+	select {
+	case o := <-done:
+		if o.err != nil {
+			cancelOpen()
+			return nil, apiError("read the pod log", o.err)
+		}
+		return &cancelCloser{ReadCloser: o.rc, cancel: cancelOpen}, nil
+	case <-ctx.Done():
+		cancelOpen()
+		go func() {
+			// The open can succeed after the wait ends. Close that stream.
+			if o := <-done; o.rc != nil {
+				_ = o.rc.Close()
+			}
+		}()
+		return nil, fmt.Errorf("read the pod log: %w", ctx.Err())
+	}
+}
+
+// openStream opens the pod log stream with ctx.
+func (e *env) openStream(ctx context.Context, ns, pod string, opts *corev1.PodLogOptions) (io.ReadCloser, error) {
+	if e.stream != nil {
+		return e.stream(ctx, ns, pod, opts)
+	}
+	return e.clientset.CoreV1().Pods(ns).GetLogs(pod, opts).Stream(ctx)
+}
+
+// cancelCloser cancels the context of the stream when the stream closes.
+type cancelCloser struct {
+	io.ReadCloser
+	cancel context.CancelFunc
+}
+
+func (c *cancelCloser) Close() error {
+	err := c.ReadCloser.Close()
+	c.cancel()
+	return err
 }
 
 // waitLog opens the pod log when the pod starts. It tries again until waitCtx ends or the run

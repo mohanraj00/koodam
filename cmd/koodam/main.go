@@ -21,10 +21,12 @@ package main
 import (
 	"context"
 	"fmt"
+	"io"
 	"os"
 	"time"
 
 	"github.com/spf13/cobra"
+	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/kubernetes"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
@@ -42,8 +44,8 @@ type env struct {
 	namespace string
 	// poll is the interval between two reads of the cluster.
 	poll time.Duration
-	// onStream, if set, gets the context of each log stream. Tests use it.
-	onStream func(ctx context.Context)
+	// stream, if set, opens the pod log instead of the clientset. Tests use it.
+	stream func(ctx context.Context, ns, pod string, opts *corev1.PodLogOptions) (io.ReadCloser, error)
 }
 
 // connect makes an env from the kubeconfig flags.
