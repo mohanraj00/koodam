@@ -20,6 +20,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"strings"
 	"sync"
 	"time"
 
@@ -86,6 +87,27 @@ func (g *fakeGateway) Usage(context.Context, string) (gateway.Usage, error) {
 	return gateway.Usage{Spend: 0.25, Calls: 3, FailedCalls: 1, InputTokens: 100, OutputTokens: 20}, nil
 }
 
+// endRunJob writes an end status to the run Job, as the Job controller does. envtest has no Job controller.
+func endRunJob(ctx context.Context, run types.NamespacedName, t batchv1.JobConditionType) {
+	job := &batchv1.Job{}
+	Expect(k8sClient.Get(ctx, run, job)).To(Succeed())
+	now := metav1.Now()
+	job.Status.StartTime = &now
+	if t == batchv1.JobComplete {
+		job.Status.CompletionTime = &now
+		job.Status.Succeeded = 1
+		job.Status.Conditions = append(job.Status.Conditions, batchv1.JobCondition{
+			Type: batchv1.JobSuccessCriteriaMet, Status: corev1.ConditionTrue, LastTransitionTime: now})
+	} else {
+		job.Status.Failed = 1
+		job.Status.Conditions = append(job.Status.Conditions, batchv1.JobCondition{
+			Type: batchv1.JobFailureTarget, Status: corev1.ConditionTrue, LastTransitionTime: now})
+	}
+	job.Status.Conditions = append(job.Status.Conditions, batchv1.JobCondition{
+		Type: t, Status: corev1.ConditionTrue, LastTransitionTime: now})
+	Expect(k8sClient.Status().Update(ctx, job)).To(Succeed())
+}
+
 var _ = Describe("Agent Controller", func() {
 	const ns = "default"
 	var (
@@ -118,25 +140,7 @@ var _ = Describe("Agent Controller", func() {
 		Expect(err).NotTo(HaveOccurred())
 		return true
 	}
-	endJob := func(t batchv1.JobConditionType) {
-		job := &batchv1.Job{}
-		Expect(k8sClient.Get(ctx, run(), job)).To(Succeed())
-		now := metav1.Now()
-		job.Status.StartTime = &now
-		if t == batchv1.JobComplete {
-			job.Status.CompletionTime = &now
-			job.Status.Succeeded = 1
-			job.Status.Conditions = append(job.Status.Conditions, batchv1.JobCondition{
-				Type: batchv1.JobSuccessCriteriaMet, Status: corev1.ConditionTrue, LastTransitionTime: now})
-		} else {
-			job.Status.Failed = 1
-			job.Status.Conditions = append(job.Status.Conditions, batchv1.JobCondition{
-				Type: batchv1.JobFailureTarget, Status: corev1.ConditionTrue, LastTransitionTime: now})
-		}
-		job.Status.Conditions = append(job.Status.Conditions, batchv1.JobCondition{
-			Type: t, Status: corev1.ConditionTrue, LastTransitionTime: now})
-		Expect(k8sClient.Status().Update(ctx, job)).To(Succeed())
-	}
+	endJob := func(t batchv1.JobConditionType) { endRunJob(ctx, run(), t) }
 	expectRevoked := func(phase corev1alpha1.AgentPhase) {
 		Expect(gw.accessAtBlock).To(BeTrue(), "the key must be blocked before the access is deleted")
 		Expect(gw.blocked).To(Equal([]string{gateway.HashKey(gw.created[0].Value)}))
@@ -177,13 +181,14 @@ var _ = Describe("Agent Controller", func() {
 
 	AfterEach(func() {
 		for _, v := range gw.created {
-			Expect(logs.String()).NotTo(ContainSubstring(v.Value), "a key value is in the log")
+			// Use booleans: a matcher with the key would show the key in the failure message.
+			Expect(strings.Contains(logs.String(), v.Value)).To(BeFalse(), "a key value is in the log")
 		}
 		events := &corev1.EventList{}
 		Expect(k8sClient.List(ctx, events, client.InNamespace(ns))).To(Succeed())
 		for _, e := range events.Items {
 			for _, v := range gw.created {
-				Expect(e.Message).NotTo(ContainSubstring(v.Value), "a key value is in an event")
+				Expect(strings.Contains(e.Message, v.Value)).To(BeFalse(), "a key value is in an event")
 			}
 		}
 	})
