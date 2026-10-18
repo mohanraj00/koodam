@@ -47,8 +47,10 @@ const (
 	testNS   = "dev"
 	testName = "fix-tests"
 	// fakeLog is the log body of each pod in the fake clientset.
-	fakeLog  = "fake logs"
-	testJob  = "kd-fix-tests"
+	fakeLog = "fake logs"
+	testJob = "kd-fix-tests"
+	// cmdLogs is the name of the logs command.
+	cmdLogs  = "logs"
 	agentUID = types.UID("agent-uid")
 	jobUID   = types.UID("job-uid")
 )
@@ -228,7 +230,7 @@ func TestAPIErrorsDoNotShowValues(t *testing.T) {
 		}
 		for _, args := range [][]string{
 			{"run", "-f", writeManifest(t, manifest)}, {"delete", testName}, {"get", testName}, {"spend"},
-			{"logs", testName},
+			{cmdLogs, testName},
 		} {
 			_, err := run(t, newKube(t, funcs), args...)
 			if err == nil {
@@ -314,12 +316,12 @@ func TestGetAndSpendShowThePhaseTheBudgetAndTheUsage(t *testing.T) {
 
 func TestLogsShowsThePodLog(t *testing.T) {
 	out, err := run(t, newKube(t, nil, testAgent(corev1alpha1.AgentRunning, nil), testJobObject(), testPod()),
-		"logs", testName)
+		cmdLogs, testName)
 	if err != nil {
 		t.Fatal(err)
 	}
 	wantAll(t, out, fakeLog)
-	if _, err := run(t, newKube(t, nil), "logs", testName); err == nil {
+	if _, err := run(t, newKube(t, nil), cmdLogs, testName); err == nil {
 		t.Error("logs did not fail for an Agent without a pod")
 	}
 }
@@ -352,7 +354,7 @@ func TestLogsFollowWaitsForThePod(t *testing.T) {
 		return c.List(ctx, l, opts...)
 	}}
 	kube := newKube(t, funcs, testAgent(corev1alpha1.AgentRunning, nil), testJobObject(), testPod())
-	out, err := run(t, kube, "logs", testName, "-f")
+	out, err := run(t, kube, cmdLogs, testName, "-f")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -365,11 +367,11 @@ func TestLogsFollowWaitsForThePod(t *testing.T) {
 func TestTheLogStreamHasNoDeadlineFromTheTimeout(t *testing.T) {
 	funcs := runEnds()
 	for _, args := range [][]string{
-		{"logs", testName, "-f", "--timeout", "1m"},
+		{cmdLogs, testName, "-f", "--timeout", "1m"},
 		{"run", "-f", writeManifest(t, manifest), "--wait", "--timeout", "1m"},
 	} {
 		objs := []client.Object{testJobObject(), testPod()}
-		if args[0] == "logs" {
+		if args[0] == cmdLogs {
 			objs = append(objs, testAgent(corev1alpha1.AgentRunning, nil))
 		}
 		streams := 0
