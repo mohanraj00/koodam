@@ -1,0 +1,112 @@
+{{- if eq .Values.gateway.mode "bundled" }}
+{{- $pg := .Values.gateway.bundled.postgres }}
+{{- $name := printf "%s-postgres" (include "koodam.fullname" .) }}
+{{- if not $pg.passwordSecret.name }}
+{{- /* Keep the password of an existing Secret. Else make a random password. Do not print it. */}}
+{{- $old := lookup "v1" "Secret" .Release.Namespace $name }}
+{{- $password := randAlphaNum 32 | b64enc }}
+{{- if and $old $old.data (hasKey $old.data $pg.passwordSecret.key) }}
+{{- $password = index $old.data $pg.passwordSecret.key }}
+{{- end }}
+apiVersion: v1
+kind: Secret
+metadata:
+  name: {{ $name }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "koodam.labels" . | nindent 4 }}
+type: Opaque
+data:
+  {{ $pg.passwordSecret.key }}: {{ $password }}
+---
+{{- end }}
+{{- if $pg.persistence.enabled }}
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ $name }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "koodam.labels" . | nindent 4 }}
+spec:
+  accessModes:
+  - ReadWriteOnce
+  {{- with $pg.persistence.storageClassName }}
+  storageClassName: {{ . }}
+  {{- end }}
+  resources:
+    requests:
+      storage: {{ $pg.persistence.size }}
+---
+{{- end }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ $name }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "koodam.labels" . | nindent 4 }}
+spec:
+  replicas: 1
+  # Stop the old pod before the new pod starts, because the two pods use the same data.
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      {{- include "koodam.gatewaySelector" (list . "postgres") | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "koodam.gatewaySelector" (list . "postgres") | nindent 8 }}
+    spec:
+      containers:
+      - name: postgres
+        image: {{ $pg.image }}
+        env:
+        - name: POSTGRES_USER
+          value: litellm
+        - name: POSTGRES_DB
+          value: litellm
+        - name: POSTGRES_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: {{ include "koodam.postgresSecret" . }}
+              key: {{ $pg.passwordSecret.key }}
+        - name: PGDATA
+          value: /var/lib/postgresql/data/pgdata
+        ports:
+        - containerPort: 5432
+          name: postgres
+        readinessProbe:
+          exec:
+            command: [pg_isready, -U, litellm, -d, litellm]
+          periodSeconds: 5
+        resources:
+          {{- toYaml $pg.resources | nindent 10 }}
+        volumeMounts:
+        - name: data
+          mountPath: /var/lib/postgresql/data
+      volumes:
+      - name: data
+        {{- if $pg.persistence.enabled }}
+        persistentVolumeClaim:
+          claimName: {{ $name }}
+        {{- else }}
+        emptyDir: {}
+        {{- end }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ $name }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "koodam.labels" . | nindent 4 }}
+spec:
+  ports:
+  - name: postgres
+    port: 5432
+    targetPort: postgres
+  selector:
+    {{- include "koodam.gatewaySelector" (list . "postgres") | nindent 4 }}
+{{- end }}

@@ -1,0 +1,117 @@
+{{- define "koodam.litellmConfig" -}}
+{{- $b := .Values.gateway.bundled -}}
+{{- if or $b.litellm.modelList $b.mock.enabled -}}
+model_list:
+{{- with $b.litellm.modelList }}
+{{ toYaml . }}
+{{- end }}
+{{- if $b.mock.enabled }}
+# LiteLLM answers with mock_response and calculates the spend from the cost per token.
+- model_name: {{ $b.mock.modelName | quote }}
+  litellm_params:
+    model: {{ printf "openai/%s" $b.mock.modelName | quote }}
+    api_key: not-used
+    mock_response: {{ $b.mock.response | quote }}
+    input_cost_per_token: {{ $b.mock.inputCostPerToken }}
+    output_cost_per_token: {{ $b.mock.outputCostPerToken }}
+{{- end }}
+{{- else -}}
+model_list: []
+{{- end }}
+general_settings:
+  master_key: os.environ/LITELLM_MASTER_KEY
+  database_url: os.environ/DATABASE_URL
+  proxy_batch_write_at: {{ $b.litellm.batchWriteSeconds }}
+{{- end -}}
+{{- if eq .Values.gateway.mode "bundled" }}
+{{- $b := .Values.gateway.bundled }}
+{{- $name := printf "%s-litellm" (include "koodam.fullname" .) }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ $name }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "koodam.labels" . | nindent 4 }}
+data:
+  config.yaml: |
+    {{- include "koodam.litellmConfig" . | nindent 4 }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ $name }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "koodam.labels" . | nindent 4 }}
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      {{- include "koodam.gatewaySelector" (list . "litellm") | nindent 6 }}
+  template:
+    metadata:
+      annotations:
+        # Restart LiteLLM when the config changes.
+        checksum/config: {{ include "koodam.litellmConfig" . | sha256sum }}
+      labels:
+        {{- include "koodam.gatewaySelector" (list . "litellm") | nindent 8 }}
+    spec:
+      containers:
+      - name: litellm
+        image: {{ $b.litellm.image }}
+        args: [--config, /etc/litellm/config.yaml, --port, "4000"]
+        env:
+        - name: LITELLM_MASTER_KEY
+          valueFrom:
+            secretKeyRef:
+              name: {{ .Values.gateway.masterKeySecret.name }}
+              key: {{ .Values.gateway.masterKeySecret.key }}
+        - name: POSTGRES_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: {{ include "koodam.postgresSecret" . }}
+              key: {{ $b.postgres.passwordSecret.key }}
+        # Kubernetes puts the password into the URL. The password value is not in the pod spec.
+        - name: DATABASE_URL
+          value: {{ printf "postgresql://litellm:$(POSTGRES_PASSWORD)@%s-postgres.%s.svc:5432/litellm" (include "koodam.fullname" .) .Release.Namespace }}
+        ports:
+        - containerPort: 4000
+          name: http
+        readinessProbe:
+          httpGet:
+            path: /health/readiness
+            port: http
+          periodSeconds: 5
+        livenessProbe:
+          httpGet:
+            path: /health/liveliness
+            port: http
+          initialDelaySeconds: 60
+          periodSeconds: 20
+        resources:
+          {{- toYaml $b.litellm.resources | nindent 10 }}
+        volumeMounts:
+        - name: config
+          mountPath: /etc/litellm
+          readOnly: true
+      volumes:
+      - name: config
+        configMap:
+          name: {{ $name }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ $name }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "koodam.labels" . | nindent 4 }}
+spec:
+  ports:
+  - name: http
+    port: 4000
+    targetPort: http
+  selector:
+    {{- include "koodam.gatewaySelector" (list . "litellm") | nindent 4 }}
+{{- end }}

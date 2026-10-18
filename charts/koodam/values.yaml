@@ -15,18 +15,55 @@ serviceAccount:
 
 # The LiteLLM gateway. Each Agent gets a key from this gateway.
 gateway:
-  # The gateway mode. "existing" is the only mode now: the chart uses a gateway that you install.
-  # A later chart version can add a bundled gateway with its own values under "bundled".
+  # The gateway mode:
+  # - "existing": the chart uses a gateway that you install. Set "url".
+  # - "bundled": the chart installs LiteLLM and PostgreSQL. Refer to values-bundled.yaml.
   mode: existing
-  # The LiteLLM admin address that the controller uses. This value is necessary.
+  # The LiteLLM admin address that the controller uses in the existing mode.
+  # In the bundled mode, the controller uses the bundled LiteLLM Service and ignores this value.
   url: http://litellm.koodam-system.svc:4000
-  # The gateway address for the agent pods. If empty, the agent pods use "url".
+  # The gateway address for the agent pods. If empty, the agent pods use the controller address.
   agentUrl: ""
   # The Secret with the LiteLLM master key. You make this Secret before the install.
-  # The chart does not make it and does not read it.
+  # The chart does not make it and does not read it. In the bundled mode, LiteLLM also uses it.
   masterKeySecret:
     name: koodam-gateway
     key: master-key
+  # The values for the bundled mode only.
+  bundled:
+    litellm:
+      # LiteLLM uses the MIT License. Use the image with the database support.
+      image: ghcr.io/berriai/litellm-database:v1.104.2
+      # The time in seconds between the spend writes to the database.
+      batchWriteSeconds: 1
+      # The LiteLLM model_list. Each Agent model must be an alias in this list.
+      # Helm writes small floats as "1e-06". Do not set a cost per token here.
+      modelList: []
+      resources: {}
+    # A model that LiteLLM answers itself (mock_response), with no model server.
+    # The cost per token makes the spend more than zero. Use it for tests only.
+    mock:
+      enabled: false
+      modelName: mock-1
+      response: "mock answer"
+      # Write the costs as strings, so that Helm keeps the number format.
+      inputCostPerToken: "0.000001"
+      outputCostPerToken: "0.000002"
+    postgres:
+      # PostgreSQL uses the PostgreSQL License.
+      image: docker.io/library/postgres:16-alpine
+      # The Secret with the database password. If name is empty, the chart makes the
+      # Secret "<fullname>-postgres" with a random password and keeps the password on upgrade.
+      # Use only URL-safe characters in a password that you supply.
+      passwordSecret:
+        name: ""
+        key: password
+      # If persistence.enabled is false, the data is in an emptyDir. A new pod starts with no data.
+      persistence:
+        enabled: false
+        size: 1Gi
+        storageClassName: ""
+      resources: {}
 
 # The time that the controller adds to deadlineSeconds for the key TTL.
 keyGrace: 1m

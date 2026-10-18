@@ -1,0 +1,23 @@
+# An example for the bundled gateway: the chart installs LiteLLM and PostgreSQL.
+# Make the master key Secret "koodam-gateway" before the install. The chart makes the
+# PostgreSQL password Secret.
+#
+# The mock model "mock-1" needs no model server. LiteLLM answers it and records a spend
+# that is more than zero. For a real model, add it to modelList. For example:
+#
+#   modelList:
+#   - model_name: local-agent
+#     litellm_params:
+#       model: ollama_chat/qwen3:1.7b
+#       api_base: http://host.docker.internal:11434
+gateway:
+  mode: bundled
+  masterKeySecret:
+    name: koodam-gateway
+    key: master-key
+  bundled:
+    mock:
+      enabled: true
+    postgres:
+      persistence:
+        enabled: false

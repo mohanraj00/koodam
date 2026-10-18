@@ -44,3 +44,24 @@ from config/rbac, so the chart has the same rules as the generated RBAC. Do not 
   name: {{ include "koodam.serviceAccountName" . }}
   namespace: {{ .Release.Namespace }}
 {{- end -}}
+
+{{/* The controller gateway address. In the bundled mode, it is the bundled LiteLLM Service. */}}
+{{- define "koodam.gatewayUrl" -}}
+{{- if eq .Values.gateway.mode "bundled" -}}
+{{- printf "http://%s-litellm.%s.svc:4000" (include "koodam.fullname" .) .Release.Namespace -}}
+{{- else -}}
+{{- required "gateway.url is necessary in the existing mode." .Values.gateway.url -}}
+{{- end -}}
+{{- end -}}
+
+{{/* The name of the Secret with the PostgreSQL password. */}}
+{{- define "koodam.postgresSecret" -}}
+{{- default (printf "%s-postgres" (include "koodam.fullname" .)) .Values.gateway.bundled.postgres.passwordSecret.name -}}
+{{- end -}}
+
+{{/* The labels of a bundled gateway component. The argument is (list $ "<component>"). */}}
+{{- define "koodam.gatewaySelector" -}}
+app.kubernetes.io/name: {{ (index . 0).Chart.Name }}
+app.kubernetes.io/instance: {{ (index . 0).Release.Name }}
+app.kubernetes.io/component: {{ index . 1 }}
+{{- end -}}
