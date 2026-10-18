@@ -1,0 +1,33 @@
+name: Helm
+
+on:
+  push:
+  pull_request:
+
+permissions: {}
+
+jobs:
+  chart:
+    permissions:
+      contents: read
+    name: Lint and render the chart
+    runs-on: ubuntu-latest
+    steps:
+      - name: Clone the code
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      - name: Setup Go
+        uses: actions/setup-go@4b73464bb391d4059bd26b0524d20df3927bd417 # v6.3.0
+        with:
+          go-version-file: go.mod
+
+      - name: Setup Helm
+        uses: azure/setup-helm@9bc31f4ebc9c6b171d7bfbaa5d006ae7abdb4310 # v5.0.1
+        with:
+          version: v4.2.3
+
+      # The check fails if the chart CRD or the chart RBAC is not the same as config/.
+      - name: Check the chart
+        run: make helm-check
