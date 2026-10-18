@@ -23,13 +23,13 @@ import (
 	"io"
 	"os"
 	"regexp"
-	"strings"
 	"text/tabwriter"
 	"time"
 
 	"github.com/spf13/cobra"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/wait"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -116,29 +116,37 @@ func readAgent(file, namespace string) (*corev1alpha1.Agent, error) {
 	return a, nil
 }
 
-// apiError gives the reason, the kind, the name and the field paths of an API server error.
-// It drops the status message and the cause messages, because they can hold values from the
-// manifest, for example a label value.
+// apiError cleans an error from the API server. It keeps only the reason, the HTTP code and the
+// kind. The status message, the name and the causes can hold values from the manifest or from
+// the stored object, so the error never shows them. If err is nil, apiError returns nil.
 func apiError(op string, err error) error {
 	var status apierrors.APIStatus
-	if !errors.As(err, &status) {
-		return fmt.Errorf("%s: %w", op, err)
+	if err == nil || !errors.As(err, &status) {
+		return err
 	}
 	st := status.Status()
-	msg := fmt.Sprintf("%s: %s", op, apierrors.ReasonForError(err))
-	if d := st.Details; d != nil {
-		msg += fmt.Sprintf(" (%s %s)", d.Kind, d.Name)
-		fields := make([]string, 0, len(d.Causes))
-		for _, c := range d.Causes {
-			if c.Field != "" {
-				fields = append(fields, c.Field)
-			}
-		}
-		if len(fields) > 0 {
-			msg += ": check " + strings.Join(fields, ", ")
-		}
+	clean := metav1.Status{Status: st.Status, Reason: apierrors.ReasonForError(err), Code: st.Code}
+	if st.Details != nil {
+		clean.Details = &metav1.StatusDetails{Group: st.Details.Group, Kind: st.Details.Kind}
 	}
-	return errors.New(msg)
+	return &cleanError{op: op, status: clean}
+}
+
+// cleanError is an API server error without values. It keeps the status, so that
+// apierrors.IsNotFound and the other checks work.
+type cleanError struct {
+	op     string
+	status metav1.Status
+}
+
+func (c *cleanError) Status() metav1.Status { return c.status }
+
+func (c *cleanError) Error() string {
+	msg := fmt.Sprintf("%s: %s (HTTP %d", c.op, c.status.Reason, c.status.Code)
+	if d := c.status.Details; d != nil && d.Kind != "" {
+		msg += ", " + d.Kind
+	}
+	return msg + ")"
 }
 
 // follow waits for the revoke and shows the spend. It returns an error if the run failed.
@@ -177,7 +185,7 @@ func ended(a *corev1alpha1.Agent) bool {
 func (e *env) agent(ctx context.Context, name string) (*corev1alpha1.Agent, error) {
 	a := &corev1alpha1.Agent{}
 	err := e.kube.Get(ctx, types.NamespacedName{Namespace: e.namespace, Name: name}, a)
-	return a, err
+	return a, apiError("get the Agent", err)
 }
 
 // getCmd makes "get" or, if spend is true, "spend". Both show the phase, the budget and the usage.
@@ -199,7 +207,7 @@ func getCmd(conn connect, spend bool) *cobra.Command {
 				}
 				list.Items = append(list.Items, *a)
 			} else if err := e.kube.List(cmd.Context(), list, client.InNamespace(e.namespace)); err != nil {
-				return err
+				return apiError("list the Agents", err)
 			}
 			printAgents(cmd.OutOrStdout(), list.Items, spend)
 			return nil
@@ -250,7 +258,7 @@ func deleteCmd(conn connect) *cobra.Command {
 			a := &corev1alpha1.Agent{}
 			a.Name, a.Namespace = args[0], e.namespace
 			if err := e.kube.Delete(cmd.Context(), a); err != nil {
-				return err
+				return apiError("delete the Agent", err)
 			}
 			out := cmd.OutOrStdout()
 			_, _ = fmt.Fprintf(out, "agent/%s deleted\n", a.Name)

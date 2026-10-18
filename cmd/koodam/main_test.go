@@ -156,21 +156,55 @@ func TestRunDoesNotShowValuesFromAnInvalidFile(t *testing.T) {
 	}
 }
 
-func TestRunDoesNotShowValuesFromAnAPIError(t *testing.T) {
-	const marker = "MARKER-user:password"
-	funcs := &interceptor.Funcs{Create: func(context.Context, client.WithWatch, client.Object,
-		...client.CreateOption) error {
-		return apierrors.NewInvalid(corev1alpha1.GroupVersion.WithKind("Agent").GroupKind(), testName,
-			field.ErrorList{field.Invalid(field.NewPath("metadata", "labels"), marker, "bad "+marker)})
-	}}
-	_, err := run(t, newKube(t, funcs), "run", "-f", writeManifest(t, manifest))
-	if err == nil {
-		t.Fatal("run did not return the API error")
+// marker is a harmless value that a test puts in each part of an API server error.
+const marker = "MARKER-user:password"
+
+func markerErrors() []error {
+	gk := corev1alpha1.GroupVersion.WithKind("Agent").GroupKind()
+	return []error{
+		// The marker is in the name, the field path, the value and the detail.
+		apierrors.NewInvalid(gk, marker, field.ErrorList{
+			field.Invalid(field.NewPath("metadata", "labels").Key(marker), marker, "bad "+marker)}),
+		// An admission webhook can echo stored values in the message.
+		&apierrors.StatusError{ErrStatus: metav1.Status{Status: metav1.StatusFailure, Code: 400,
+			Reason: metav1.StatusReasonBadRequest, Message: "admission webhook denied " + marker,
+			Details: &metav1.StatusDetails{Name: marker, Kind: "Agent",
+				Causes: []metav1.StatusCause{{Field: marker, Message: marker}}}}},
 	}
-	if strings.Contains(err.Error(), marker) {
-		t.Errorf("the error shows a value from the manifest: %v", err)
+}
+
+func TestAPIErrorsDoNotShowValues(t *testing.T) {
+	for _, apiErr := range markerErrors() {
+		fail := func() error { return apiErr }
+		funcs := &interceptor.Funcs{
+			Create: func(context.Context, client.WithWatch, client.Object, ...client.CreateOption) error {
+				return fail()
+			},
+			Delete: func(context.Context, client.WithWatch, client.Object, ...client.DeleteOption) error {
+				return fail()
+			},
+			Get: func(context.Context, client.WithWatch, client.ObjectKey, client.Object, ...client.GetOption) error {
+				return fail()
+			},
+			List: func(context.Context, client.WithWatch, client.ObjectList, ...client.ListOption) error {
+				return fail()
+			},
+		}
+		for _, args := range [][]string{
+			{"run", "-f", writeManifest(t, manifest)}, {"delete", testName}, {"get", testName}, {"spend"},
+		} {
+			_, err := run(t, newKube(t, funcs), args...)
+			if err == nil {
+				t.Fatalf("%v did not return the API error", args)
+			}
+			if strings.Contains(err.Error(), marker) {
+				t.Errorf("%v shows a value from the API error: %v", args, err)
+			}
+			if !strings.Contains(err.Error(), string(apierrors.ReasonForError(apiErr))) {
+				t.Errorf("%v does not show the reason: %v", args, err)
+			}
+		}
 	}
-	wantAll(t, err.Error(), "Invalid", testName, "metadata.labels")
 }
 
 func TestRunRefusesAnotherKind(t *testing.T) {
