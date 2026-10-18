@@ -63,6 +63,12 @@ var _ = Describe("Manager", Ordered, func() {
 		_, err = utils.Run(cmd)
 		Expect(err).NotTo(HaveOccurred(), "Failed to label namespace with restricted policy")
 
+		By("creating the gateway Secret with a value that is not a real key")
+		cmd = exec.Command("kubectl", "create", "secret", "generic", "koodam-gateway", "-n", namespace,
+			"--from-literal=master-key=e2e-placeholder")
+		_, err = utils.Run(cmd)
+		Expect(err).NotTo(HaveOccurred(), "Failed to create the gateway Secret")
+
 		By("installing CRDs")
 		cmd = exec.Command("make", "install")
 		_, err = utils.Run(cmd)

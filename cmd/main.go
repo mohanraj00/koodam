@@ -20,6 +20,8 @@ import (
 	"crypto/tls"
 	"flag"
 	"os"
+	"strings"
+	"time"
 
 	// Import all Kubernetes client auth plugins (e.g. Azure, GCP, OIDC, etc.)
 	// to ensure that exec-entrypoint and run can make use of them.
@@ -37,6 +39,7 @@ import (
 
 	corev1alpha1 "github.com/mohanraj00/koodam/api/v1alpha1"
 	"github.com/mohanraj00/koodam/internal/controller"
+	"github.com/mohanraj00/koodam/internal/gateway"
 	// +kubebuilder:scaffold:imports
 )
 
@@ -62,6 +65,8 @@ func main() {
 	var probeAddr string
 	var secureMetrics bool
 	var enableHTTP2 bool
+	var gatewayURL, gatewayKeyFile, agentGatewayURL string
+	var keyGrace time.Duration
 	var tlsOpts []func(*tls.Config)
 	flag.StringVar(&metricsAddr, "metrics-bind-address", "0", "The address the metrics endpoint binds to. "+
 		"Use :8443 for HTTPS or :8080 for HTTP, or leave as 0 to disable the metrics service.")
@@ -85,6 +90,12 @@ func main() {
 	opts := zap.Options{
 		Development: true,
 	}
+	flag.StringVar(&gatewayURL, "gateway-url", "", "The LiteLLM admin address that the controller uses.")
+	flag.StringVar(&gatewayKeyFile, "gateway-master-key-file", "",
+		"The file with the LiteLLM master key. The key is never a flag value.")
+	flag.StringVar(&agentGatewayURL, "agent-gateway-url", "",
+		"The gateway address for the agent pods. The default is the value of --gateway-url.")
+	flag.DurationVar(&keyGrace, "key-grace", time.Minute, "The time that is added to deadlineSeconds for the key TTL.")
 	opts.BindFlags(flag.CommandLine)
 	flag.Parse()
 
@@ -182,9 +193,25 @@ func main() {
 		os.Exit(1)
 	}
 
+	if gatewayURL == "" || gatewayKeyFile == "" {
+		setupLog.Error(nil, "The flags --gateway-url and --gateway-master-key-file are required")
+		os.Exit(1)
+	}
+	masterKey, err := os.ReadFile(gatewayKeyFile)
+	if err != nil {
+		setupLog.Error(err, "Failed to read the gateway master key file")
+		os.Exit(1)
+	}
+	if agentGatewayURL == "" {
+		agentGatewayURL = gatewayURL
+	}
 	if err := (&controller.AgentReconciler{
-		Client: mgr.GetClient(),
-		Scheme: mgr.GetScheme(),
+		Client:     mgr.GetClient(),
+		Scheme:     mgr.GetScheme(),
+		APIReader:  mgr.GetAPIReader(),
+		Gateway:    gateway.NewLiteLLM(gatewayURL, strings.TrimSpace(string(masterKey))),
+		GatewayURL: strings.TrimRight(agentGatewayURL, "/"),
+		Grace:      keyGrace,
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "Failed to create controller", "controller", "agent")
 		os.Exit(1)
