@@ -516,6 +516,19 @@ func (r *AgentReconciler) writeUsage(ctx context.Context, a *corev1alpha1.Agent,
 // deleteEndedJob deletes the Job of a revoked run JobTTL seconds after the Job ends. The controller
 // deletes the Job only after it recorded the result. If the end time is in the future, it requeues.
 func (r *AgentReconciler) deleteEndedJob(ctx context.Context, a *corev1alpha1.Agent) (ctrl.Result, error) {
+	// The cache has the run Jobs. Read the API server only if the cache has a Job of this Agent.
+	job := &batchv1.Job{}
+	err := r.Get(ctx, types.NamespacedName{Namespace: a.Namespace, Name: runName(a)}, job)
+	if apierrors.IsNotFound(err) {
+		return ctrl.Result{}, nil
+	}
+	if err != nil {
+		return ctrl.Result{}, err
+	}
+	if !metav1.IsControlledBy(job, a) {
+		return ctrl.Result{}, nil
+	}
+	// The revoke always sets revokedAt. completedAt is empty if the Job ended with no end time.
 	end := a.Status.CompletedAt
 	if end == nil {
 		end = a.Status.RevokedAt
@@ -529,15 +542,6 @@ func (r *AgentReconciler) deleteEndedJob(ctx context.Context, a *corev1alpha1.Ag
 	}
 	if wait := time.Until(end.Add(time.Duration(ttl) * time.Second)); wait > 0 {
 		return ctrl.Result{RequeueAfter: wait}, nil
-	}
-	// The cache has the run Jobs. Read the API server only if the cache has the Job.
-	job := &batchv1.Job{}
-	err := r.Get(ctx, types.NamespacedName{Namespace: a.Namespace, Name: runName(a)}, job)
-	if apierrors.IsNotFound(err) {
-		return ctrl.Result{}, nil
-	}
-	if err != nil {
-		return ctrl.Result{}, err
 	}
 	return ctrl.Result{}, r.deleteOwned(ctx, a, &batchv1.Job{})
 }

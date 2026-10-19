@@ -281,8 +281,18 @@ var _ = Describe("Agent Controller", func() {
 		Expect(err).NotTo(HaveOccurred())
 		Expect(res.RequeueAfter).To(BeNumerically("~", DefaultJobTTLSeconds*time.Second, time.Minute))
 
-		By("deleting the Job when the TTL is in the past")
+		By("using revokedAt when there is no completedAt")
+		r.JobTTL = 3600
 		a := agent()
+		a.Status.CompletedAt = nil
+		a.Status.RevokedAt = &metav1.Time{Time: time.Now().Add(-30 * time.Minute)}
+		Expect(k8sClient.Status().Update(ctx, a)).To(Succeed())
+		res, err = r.Reconcile(ctx, reconcile.Request{NamespacedName: key()})
+		Expect(err).NotTo(HaveOccurred())
+		Expect(res.RequeueAfter).To(BeNumerically("~", 30*time.Minute, time.Minute))
+
+		By("deleting the Job when the TTL is in the past")
+		a = agent()
 		a.Status.CompletedAt = &metav1.Time{Time: time.Now().Add(-25 * time.Hour)}
 		Expect(k8sClient.Status().Update(ctx, a)).To(Succeed())
 		res, err = r.Reconcile(ctx, reconcile.Request{NamespacedName: key()})
@@ -291,8 +301,13 @@ var _ = Describe("Agent Controller", func() {
 		Expect(exists(&batchv1.Job{})).To(BeFalse())
 		Expect(agent().Status.Phase).To(Equal(corev1alpha1.AgentSucceeded), "the result stays")
 
-		By("doing nothing when the Job is gone")
-		reconcileOnce(r)
+		By("doing nothing and not requeueing when the Job is gone, also before the TTL")
+		a = agent()
+		a.Status.CompletedAt = &metav1.Time{Time: time.Now()}
+		Expect(k8sClient.Status().Update(ctx, a)).To(Succeed())
+		res, err = r.Reconcile(ctx, reconcile.Request{NamespacedName: key()})
+		Expect(err).NotTo(HaveOccurred())
+		Expect(res.RequeueAfter).To(BeZero())
 		Expect(gw.blocked).To(HaveLen(1))
 	})
 
@@ -478,5 +493,12 @@ var _ = Describe("Agent Controller", func() {
 		job := &batchv1.Job{}
 		Expect(exists(job)).To(BeTrue(), "the controller does not delete a Job that it does not own")
 		Expect(job.UID).To(Equal(other.UID))
+
+		By("keeping the Job of a different owner after the TTL")
+		a = agent()
+		a.Status.RevokedAt = &metav1.Time{Time: time.Now().Add(-2 * time.Hour)}
+		Expect(k8sClient.Status().Update(ctx, a)).To(Succeed())
+		reconcileOnce(r)
+		Expect(exists(&batchv1.Job{})).To(BeTrue())
 	})
 })
