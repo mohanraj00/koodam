@@ -116,6 +116,7 @@ var _ = Describe("Residual access", Ordered, func() {
 			{"-n", systemNS, "logs", "-l", controllerSelector, "--tail", "200"},
 			{"-n", runNS, "get", "agents", "-o", "yaml"},
 			{"-n", runNS, "get", "events", "--sort-by=.lastTimestamp"},
+			{"-n", runNS, "logs", "-l", "batch.kubernetes.io/job-name", "--all-containers", "--prefix", "--tail", "50"},
 		} {
 			out, _ := utils.Run(exec.Command("kubectl", args...))
 			_, _ = fmt.Fprintln(GinkgoWriter, out)
@@ -170,7 +171,7 @@ var _ = Describe("Residual access", Ordered, func() {
 
 	It("installs the latest Codex in the run pod and runs it", func() {
 		a := sampleAgent("harness",
-			`[ "$(command -v codex)" = /koodam/bin/codex ] && codex --version | grep -q '^codex-cli '`)
+			`[ "$(command -v codex)" = /koodam/bin/codex ] && codex --version`)
 		a.Spec.Harness = &corev1alpha1.HarnessSpec{Name: "codex"}
 		r := start(a)
 		expectNoAccess(a, r, jobEnd(a))

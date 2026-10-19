@@ -39,7 +39,7 @@ spec:
     libc: glibc        # optional, glibc or musl. Claude Code only
 ```
 
-An init container downloads the binary from the vendor when the pod starts and checks its sha256. The binary is in `/koodam/bin`, first on the `PATH`. Koodam does not keep or redistribute the binary. The pod needs egress to `downloads.claude.ai` (Claude Code) or to `api.github.com` and `github.com` (Codex).
+An init container downloads the binary from the vendor when the pod starts and checks its sha256. The binary is in `/koodam/bin`, first on the `PATH`. If the Agent `env` has a `PATH`, Koodam does not change it, so put `/koodam/bin` in it. Koodam does not keep or redistribute the binary. The pod needs egress to `downloads.claude.ai` (Claude Code) or to `api.github.com` and `github.com` (Codex).
 
 ## One run, one command
 

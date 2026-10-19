@@ -65,7 +65,8 @@ type AgentSpec struct {
 	Rules []rbacv1.PolicyRule `json:"rules,omitempty"`
 
 	// Harness installs a coding harness binary in the pod before the agent starts. The binary is
-	// in /koodam/bin, which is first on the PATH of the agent container.
+	// in /koodam/bin, which is first on the PATH of the agent container. If Env has a PATH, the
+	// controller does not change it, so that PATH must contain /koodam/bin.
 	// +optional
 	Harness *HarnessSpec `json:"harness,omitempty"`
 }
@@ -80,7 +81,7 @@ type HarnessSpec struct {
 
 	// Version pins the harness version. If it is empty, the pod gets the latest version.
 	// +optional
-	// +kubebuilder:validation:Pattern=`^[0-9]+\.[0-9]+\.[0-9]+$`
+	// +kubebuilder:validation:Pattern=`^([0-9]+\.[0-9]+\.[0-9]+)?$`
 	Version string `json:"version,omitempty"`
 
 	// Libc is the C library of the agent image. It selects the Claude Code build. The Codex
