@@ -155,6 +155,12 @@ spec:
           status:
             description: status defines the observed state of Agent
             properties:
+              completedAt:
+                description: |-
+                  CompletedAt is the end time of the run Job. For a failed Job, it is the time of the Failed
+                  condition. The controller sets it one time only.
+                format: date-time
+                type: string
               conditions:
                 description: 'Conditions: Provisioned, Revoked.'
                 items:
@@ -239,6 +245,11 @@ spec:
               revokedAt:
                 description: RevokedAt is the time when the controller blocked the
                   key and deleted the credentials.
+                format: date-time
+                type: string
+              startedAt:
+                description: StartedAt is the start time of the run Job. The controller
+                  sets it one time only.
                 format: date-time
                 type: string
               usage:

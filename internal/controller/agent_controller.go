@@ -121,8 +121,14 @@ func (r *AgentReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl
 			// A different Job has the run name. Its result is not the result of this run.
 			return ctrl.Result{}, r.fail(ctx, a, corev1alpha1.AgentFailed, "NameConflict")
 		}
-		if phase, reason, done := jobEnd(job); done {
+		phase, reason, done := jobEnd(job)
+		changed := setJobTimes(a, job)
+		if done {
+			// fail writes the times in the same status update as the end phase, before the revoke.
 			return ctrl.Result{}, r.fail(ctx, a, phase, reason)
+		}
+		if changed {
+			return ctrl.Result{}, r.Status().Update(ctx, a)
 		}
 		return ctrl.Result{}, nil
 	default:
@@ -145,6 +151,37 @@ func jobEnd(job *batchv1.Job) (corev1alpha1.AgentPhase, string, bool) {
 		}
 	}
 	return "", "", false
+}
+
+// setJobTimes copies the start time and the end time of the Job to the Agent status. It sets
+// each time one time only. It returns true if it changed the status.
+func setJobTimes(a *corev1alpha1.Agent, job *batchv1.Job) bool {
+	changed := false
+	if a.Status.StartedAt == nil && job.Status.StartTime != nil {
+		a.Status.StartedAt = job.Status.StartTime.DeepCopy()
+		changed = true
+	}
+	if a.Status.CompletedAt == nil {
+		if end := jobEndTime(job); end != nil {
+			a.Status.CompletedAt = end
+			changed = true
+		}
+	}
+	return changed
+}
+
+// jobEndTime returns the completion time of the Job. For a failed Job, it returns the time of
+// the Failed condition. It returns nil if the Job did not end.
+func jobEndTime(job *batchv1.Job) *metav1.Time {
+	if job.Status.CompletionTime != nil {
+		return job.Status.CompletionTime.DeepCopy()
+	}
+	for _, c := range job.Status.Conditions {
+		if c.Type == batchv1.JobFailed && c.Status == corev1.ConditionTrue {
+			return c.LastTransitionTime.DeepCopy()
+		}
+	}
+	return nil
 }
 
 // invalid returns a message if the controller cannot make the run. It does no API call.
