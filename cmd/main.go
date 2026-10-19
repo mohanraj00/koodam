@@ -67,7 +67,7 @@ func main() {
 	var probeAddr string
 	var secureMetrics bool
 	var enableHTTP2 bool
-	var gatewayURL, gatewayKeyFile, agentGatewayURL string
+	var gatewayURL, gatewayKeyFile, agentGatewayURL, installerImage string
 	var keyGrace time.Duration
 	var jobTTLSeconds int
 	var tlsOpts []func(*tls.Config)
@@ -102,6 +102,8 @@ func main() {
 	flag.IntVar(&jobTTLSeconds, "job-ttl-seconds", controller.DefaultJobTTLSeconds,
 		"The time in seconds that the controller keeps a run Job and its pods after the Job ends. "+
 			"The value must be from 60 to 2147483647.")
+	flag.StringVar(&installerImage, "installer-image", "",
+		"The image with /harness-install, for an Agent with a harness. The chart gives the manager image.")
 	opts.BindFlags(flag.CommandLine)
 	flag.Parse()
 
@@ -217,13 +219,14 @@ func main() {
 		agentGatewayURL = gatewayURL
 	}
 	if err := (&controller.AgentReconciler{
-		Client:     mgr.GetClient(),
-		Scheme:     mgr.GetScheme(),
-		APIReader:  mgr.GetAPIReader(),
-		Gateway:    gateway.NewLiteLLM(gatewayURL, strings.TrimSpace(string(masterKey))),
-		GatewayURL: strings.TrimRight(agentGatewayURL, "/"),
-		Grace:      keyGrace,
-		JobTTL:     int32(jobTTLSeconds),
+		Client:         mgr.GetClient(),
+		Scheme:         mgr.GetScheme(),
+		APIReader:      mgr.GetAPIReader(),
+		Gateway:        gateway.NewLiteLLM(gatewayURL, strings.TrimSpace(string(masterKey))),
+		GatewayURL:     strings.TrimRight(agentGatewayURL, "/"),
+		Grace:          keyGrace,
+		InstallerImage: installerImage,
+		JobTTL:         int32(jobTTLSeconds),
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "Failed to create controller", "controller", "agent")
 		os.Exit(1)
