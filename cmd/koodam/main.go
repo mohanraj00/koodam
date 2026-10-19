@@ -14,17 +14,21 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-// Command koodam runs and inspects Agents. It reads only the Agent.
+// Command koodam runs and inspects Agents. It reads only the Agent, its pods and the pod log.
 // It never reads the key Secret.
 package main
 
 import (
+	"context"
 	"fmt"
+	"io"
 	"os"
 	"time"
 
 	"github.com/spf13/cobra"
+	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/client-go/kubernetes"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
 	_ "k8s.io/client-go/plugin/pkg/client/auth"
 	"k8s.io/client-go/tools/clientcmd"
@@ -36,9 +40,12 @@ import (
 // env is the connection to the cluster that each command uses.
 type env struct {
 	kube      client.Client
+	clientset kubernetes.Interface
 	namespace string
 	// poll is the interval between two reads of the cluster.
 	poll time.Duration
+	// stream, if set, opens the pod log instead of the clientset. Tests use it.
+	stream func(ctx context.Context, ns, pod string, opts *corev1.PodLogOptions) (io.ReadCloser, error)
 }
 
 // connect makes an env from the kubeconfig flags.
@@ -65,7 +72,7 @@ func newRoot(conn connect) *cobra.Command {
 	if conn == nil {
 		conn = func() (*env, error) { return kubeEnv(rules, overrides) }
 	}
-	root.AddCommand(runCmd(conn), getCmd(conn, false), getCmd(conn, true), deleteCmd(conn))
+	root.AddCommand(runCmd(conn), getCmd(conn, false), getCmd(conn, true), logsCmd(conn), deleteCmd(conn))
 	return root
 }
 
@@ -90,5 +97,9 @@ func kubeEnv(rules *clientcmd.ClientConfigLoadingRules, overrides *clientcmd.Con
 	if err != nil {
 		return nil, err
 	}
-	return &env{kube: kube, namespace: ns, poll: 2 * time.Second}, nil
+	cs, err := kubernetes.NewForConfig(cfg)
+	if err != nil {
+		return nil, err
+	}
+	return &env{kube: kube, clientset: cs, namespace: ns, poll: 2 * time.Second}, nil
 }

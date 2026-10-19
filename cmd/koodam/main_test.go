@@ -19,18 +19,24 @@ package main
 import (
 	"bytes"
 	"context"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
+	batchv1 "k8s.io/api/batch/v1"
+	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/validation/field"
+	kubefake "k8s.io/client-go/kubernetes/fake"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
+	k8stesting "k8s.io/client-go/testing"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
@@ -41,6 +47,17 @@ import (
 const (
 	testNS   = "dev"
 	testName = "fix-tests"
+	// fakeLog is the log body of each pod in the fake clientset.
+	fakeLog = "fake logs"
+	testJob = "kd-fix-tests"
+	// cmdLogs and cmdRun are command names.
+	cmdLogs = "logs"
+	cmdRun  = "run"
+	// flagWait and flagTimeout are the flags of the waits.
+	flagWait    = "--wait"
+	flagTimeout = "--timeout"
+	agentUID    = types.UID("agent-uid")
+	jobUID      = types.UID("job-uid")
 )
 
 const manifest = `apiVersion: core.koodam.dev/v1alpha1
@@ -56,17 +73,43 @@ spec:
 
 func testAgent(phase corev1alpha1.AgentPhase, usage *corev1alpha1.AgentUsage) *corev1alpha1.Agent {
 	return &corev1alpha1.Agent{
-		ObjectMeta: metav1.ObjectMeta{Name: testName, Namespace: testNS},
+		ObjectMeta: metav1.ObjectMeta{Name: testName, Namespace: testNS, UID: agentUID},
 		Spec: corev1alpha1.AgentSpec{Image: "example/agent:1", Command: []string{"sh"}, Model: "local-agent",
 			Budget: resource.MustParse("2")},
-		Status: corev1alpha1.AgentStatus{Phase: phase, KeyAlias: "koodam-dev-fix-tests", Usage: usage},
+		Status: corev1alpha1.AgentStatus{Phase: phase, Job: testJob, KeyAlias: "koodam-dev-fix-tests", Usage: usage},
+	}
+}
+
+// owner gives a controller reference to o with the UID uid.
+func owner(kind, name string, uid types.UID) []metav1.OwnerReference {
+	return []metav1.OwnerReference{{Kind: kind, Name: name, UID: uid, Controller: new(true)}}
+}
+
+// testJobObject is the Agent's Job. The Agent controls it.
+func testJobObject() *batchv1.Job {
+	return &batchv1.Job{ObjectMeta: metav1.ObjectMeta{Name: testJob, Namespace: testNS, UID: jobUID,
+		OwnerReferences: owner("Agent", testName, agentUID)}}
+}
+
+// testPod is a started pod of the Agent's Job.
+func testPod() *corev1.Pod {
+	return &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{Name: "kd-fix-tests-abcde", Namespace: testNS,
+			Labels: map[string]string{agentLabel: testName}, OwnerReferences: owner("Job", testJob, jobUID)},
+		Status: corev1.PodStatus{Phase: corev1.PodRunning},
 	}
 }
 
 // run runs the koodam command with args against the fake client kube.
 func run(t *testing.T, kube client.WithWatch, args ...string) (string, error) {
 	t.Helper()
-	e := &env{kube: kube, namespace: testNS, poll: time.Millisecond}
+	return runWith(t, kube, kubefake.NewClientset(), args...)
+}
+
+// runWith is run with the fake clientset cs for the pod log.
+func runWith(t *testing.T, kube client.WithWatch, cs *kubefake.Clientset, args ...string) (string, error) {
+	t.Helper()
+	e := &env{kube: kube, clientset: cs, namespace: testNS, poll: time.Millisecond}
 	root := newRoot(func() (*env, error) { return e, nil })
 	out := &bytes.Buffer{}
 	root.SetOut(out)
@@ -113,7 +156,7 @@ func wantAll(t *testing.T, out string, parts ...string) {
 
 func TestRunCreatesTheAgent(t *testing.T) {
 	kube := newKube(t, nil)
-	out, err := run(t, kube, "run", "-f", writeManifest(t, manifest))
+	out, err := run(t, kube, cmdRun, "-f", writeManifest(t, manifest))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -126,7 +169,7 @@ func TestRunCreatesTheAgent(t *testing.T) {
 
 func TestRunRefusesANamespaceThatDoesNotAgreeWithTheFlag(t *testing.T) {
 	body := strings.Replace(manifest, "name: fix-tests", "name: fix-tests\n  namespace: prod", 1)
-	_, err := run(t, newKube(t, nil), "-n", testNS, "run", "-f", writeManifest(t, body))
+	_, err := run(t, newKube(t, nil), "-n", testNS, cmdRun, "-f", writeManifest(t, body))
 	if err == nil || !strings.Contains(err.Error(), "does not agree") {
 		t.Fatalf("run did not refuse the namespace: %v", err)
 	}
@@ -134,7 +177,7 @@ func TestRunRefusesANamespaceThatDoesNotAgreeWithTheFlag(t *testing.T) {
 
 func TestRunRefusesAnAgentThatExists(t *testing.T) {
 	kube := newKube(t, nil, testAgent(corev1alpha1.AgentSucceeded, nil))
-	_, err := run(t, kube, "run", "-f", writeManifest(t, manifest))
+	_, err := run(t, kube, cmdRun, "-f", writeManifest(t, manifest))
 	if err == nil || !strings.Contains(err.Error(), "agent/fix-tests exists") {
 		t.Fatalf("run did not refuse an Agent that exists: %v", err)
 	}
@@ -149,7 +192,7 @@ func TestRunDoesNotShowValuesFromAnInvalidFile(t *testing.T) {
 		// The strict decode puts an unknown key in the error.
 		strings.Replace(manifest, "image: example/agent:1", "image: example/agent:1\n  "+marker+": x", 1),
 	} {
-		_, err := run(t, newKube(t, nil), "run", "-f", writeManifest(t, body))
+		_, err := run(t, newKube(t, nil), cmdRun, "-f", writeManifest(t, body))
 		if err == nil || strings.Contains(err.Error(), marker) || !strings.Contains(err.Error(), "not a valid") {
 			t.Errorf("the error is not sanitized: %v", err)
 		}
@@ -191,7 +234,8 @@ func TestAPIErrorsDoNotShowValues(t *testing.T) {
 			},
 		}
 		for _, args := range [][]string{
-			{"run", "-f", writeManifest(t, manifest)}, {"delete", testName}, {"get", testName}, {"spend"},
+			{cmdRun, "-f", writeManifest(t, manifest)}, {"delete", testName}, {"get", testName}, {"spend"},
+			{cmdLogs, testName},
 		} {
 			_, err := run(t, newKube(t, funcs), args...)
 			if err == nil {
@@ -209,16 +253,18 @@ func TestAPIErrorsDoNotShowValues(t *testing.T) {
 
 func TestRunRefusesAnotherKind(t *testing.T) {
 	body := strings.Replace(manifest, "kind: Agent", "kind: Pod", 1)
-	if _, err := run(t, newKube(t, nil), "run", "-f", writeManifest(t, body)); err == nil {
+	if _, err := run(t, newKube(t, nil), cmdRun, "-f", writeManifest(t, body)); err == nil {
 		t.Fatal("run accepted a manifest that is not an Agent")
 	}
 }
 
-func TestRunWaitShowsTheSpend(t *testing.T) {
-	// The interceptor does the work of the controller: the run ends and the usage is written.
-	funcs := &interceptor.Funcs{Create: func(ctx context.Context, c client.WithWatch, o client.Object,
+// runEnds gives an interceptor that does the work of the controller: on create, the run ends
+// and the usage is written.
+func runEnds() *interceptor.Funcs {
+	return &interceptor.Funcs{Create: func(ctx context.Context, c client.WithWatch, o client.Object,
 		opts ...client.CreateOption) error {
 		if a, ok := o.(*corev1alpha1.Agent); ok {
+			a.UID, a.Status.Job = agentUID, testJob
 			a.Status.Phase = corev1alpha1.AgentSucceeded
 			a.Status.Usage = &corev1alpha1.AgentUsage{Spend: "0.25", Calls: 3, InputTokens: 10, OutputTokens: 20}
 			a.Status.Conditions = []metav1.Condition{{Type: condRevoked, Status: metav1.ConditionTrue,
@@ -227,11 +273,31 @@ func TestRunWaitShowsTheSpend(t *testing.T) {
 		}
 		return c.Create(ctx, o, opts...)
 	}}
-	out, err := run(t, newKube(t, funcs), "run", "-f", writeManifest(t, manifest), "--wait")
+}
+
+func TestRunWaitShowsTheLogAndTheSpend(t *testing.T) {
+	funcs := runEnds()
+	out, err := run(t, newKube(t, funcs, testJobObject(), testPod()), cmdRun, "-f", writeManifest(t, manifest), flagWait)
 	if err != nil {
 		t.Fatal(err)
 	}
-	wantAll(t, out, "agent/fix-tests Succeeded", "spend 0.25 of 2, 3 calls", "revoke: The spend did not settle")
+	wantAll(t, out, fakeLog, "agent/fix-tests Succeeded", "spend 0.25 of 2, 3 calls",
+		"revoke: The spend did not settle")
+
+	// A log error is a warning without values, and the spend still shows.
+	cs := kubefake.NewClientset()
+	cs.PrependReactor("get", "pods", func(action k8stesting.Action) (bool, runtime.Object, error) {
+		return action.GetSubresource() == "log", nil, markerErrors()[1]
+	})
+	kube := newKube(t, funcs, testJobObject(), testPod())
+	out, err = runWith(t, kube, cs, cmdRun, "-f", writeManifest(t, manifest), flagWait)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantAll(t, out, "warning: read the pod log: BadRequest", "spend 0.25 of 2, 3 calls")
+	if strings.Contains(out, marker) || strings.Contains(out, testPod().Name) {
+		t.Errorf("the log warning shows a value or the pod name:\n%s", out)
+	}
 }
 
 func TestGetAndSpendShowThePhaseTheBudgetAndTheUsage(t *testing.T) {
@@ -253,9 +319,130 @@ func TestGetAndSpendShowThePhaseTheBudgetAndTheUsage(t *testing.T) {
 	}
 }
 
+func TestLogsShowsThePodLog(t *testing.T) {
+	out, err := run(t, newKube(t, nil, testAgent(corev1alpha1.AgentRunning, nil), testJobObject(), testPod()),
+		cmdLogs, testName)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantAll(t, out, fakeLog)
+	if _, err := run(t, newKube(t, nil), cmdLogs, testName); err == nil {
+		t.Error("logs did not fail for an Agent without a pod")
+	}
+}
+
+func TestPodIsFromTheCurrentJobOnly(t *testing.T) {
+	// The other pod is newer and has the Agent label, but another Job controls it.
+	other := testPod()
+	other.Name, other.OwnerReferences = "copied-label", owner("Job", testJob, "old-job-uid")
+	other.CreationTimestamp = metav1.NewTime(time.Now().Add(time.Hour))
+	a := testAgent(corev1alpha1.AgentRunning, nil)
+	e := &env{kube: newKube(t, nil, a, testJobObject(), testPod(), other), namespace: testNS}
+	pod, err := e.pod(context.Background(), a)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if pod.Name != testPod().Name {
+		t.Errorf("pod gave %s, not the pod of the current Job", pod.Name)
+	}
+}
+
+func TestLogsFollowWaitsForThePod(t *testing.T) {
+	// The first pod lists are empty, as before the Job makes the pod.
+	lists := 0
+	funcs := &interceptor.Funcs{List: func(ctx context.Context, c client.WithWatch, l client.ObjectList,
+		opts ...client.ListOption) error {
+		if _, ok := l.(*corev1.PodList); ok && lists < 3 {
+			lists++
+			return nil
+		}
+		return c.List(ctx, l, opts...)
+	}}
+	kube := newKube(t, funcs, testAgent(corev1alpha1.AgentRunning, nil), testJobObject(), testPod())
+	out, err := run(t, kube, cmdLogs, testName, "-f")
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantAll(t, out, fakeLog)
+	if lists != 3 {
+		t.Errorf("logs -f did not wait for the pod: %d empty lists", lists)
+	}
+}
+
+func TestTheLogStreamHasNoDeadlineFromTheTimeout(t *testing.T) {
+	funcs := runEnds()
+	for _, args := range [][]string{
+		{cmdLogs, testName, "-f", flagTimeout, "1m"},
+		{cmdRun, "-f", writeManifest(t, manifest), flagWait, flagTimeout, "1m"},
+	} {
+		objs := []client.Object{testJobObject(), testPod()}
+		if args[0] == cmdLogs {
+			objs = append(objs, testAgent(corev1alpha1.AgentRunning, nil))
+		}
+		streams := 0
+		e := &env{kube: newKube(t, funcs, objs...), clientset: kubefake.NewClientset(), namespace: testNS,
+			poll: time.Millisecond,
+			stream: func(ctx context.Context, _, _ string, _ *corev1.PodLogOptions) (io.ReadCloser, error) {
+				streams++
+				if _, ok := ctx.Deadline(); ok {
+					t.Errorf("%v: the log stream has a deadline", args)
+				}
+				return io.NopCloser(strings.NewReader(fakeLog)), nil
+			}}
+		root := newRoot(func() (*env, error) { return e, nil })
+		root.SetOut(&bytes.Buffer{})
+		root.SetArgs(args)
+		if err := root.ExecuteContext(context.Background()); err != nil {
+			t.Fatal(err)
+		}
+		if streams != 1 {
+			t.Errorf("%v: %d log streams, not 1", args, streams)
+		}
+	}
+}
+
+func TestAStalledLogOpenStopsAtTheTimeout(t *testing.T) {
+	// The fake open blocks until its context ends, as a stalled HTTP request does.
+	stalled := func(ctx context.Context, _, _ string, _ *corev1.PodLogOptions) (io.ReadCloser, error) {
+		<-ctx.Done()
+		return nil, ctx.Err()
+	}
+	for _, args := range [][]string{
+		{cmdLogs, testName, "-f", flagTimeout, "50ms"},
+		{cmdRun, "-f", writeManifest(t, manifest), flagWait, flagTimeout, "50ms"},
+	} {
+		objs := []client.Object{testJobObject(), testPod()}
+		if args[0] == cmdLogs {
+			objs = append(objs, testAgent(corev1alpha1.AgentRunning, nil))
+		}
+		e := &env{kube: newKube(t, runEnds(), objs...), clientset: kubefake.NewClientset(), namespace: testNS,
+			poll: time.Millisecond, stream: stalled}
+		root := newRoot(func() (*env, error) { return e, nil })
+		out := &bytes.Buffer{}
+		root.SetOut(out)
+		root.SetErr(out)
+		root.SetArgs(args)
+		start := time.Now()
+		err := root.ExecuteContext(context.Background())
+		if time.Since(start) > 5*time.Second {
+			t.Errorf("%v did not stop at the timeout", args)
+		}
+		if args[0] == cmdLogs {
+			if err == nil {
+				t.Errorf("logs -f did not fail on a stalled open")
+			}
+			continue
+		}
+		if err != nil {
+			t.Fatal(err)
+		}
+		wantAll(t, out.String(), "warning: read the pod log", "spend 0.25 of 2, 3 calls")
+	}
+}
+
 func TestDeleteWaitsUntilTheAgentIsGone(t *testing.T) {
 	kube := newKube(t, nil, testAgent(corev1alpha1.AgentRunning, nil))
-	out, err := run(t, kube, "delete", testName, "--wait")
+	out, err := run(t, kube, "delete", testName, flagWait)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -266,7 +453,7 @@ func TestDeleteWaitStopsAtTheTimeout(t *testing.T) {
 	// The finalizer stays because no controller runs, so the Agent does not go.
 	a := testAgent(corev1alpha1.AgentRunning, nil)
 	a.Finalizers = []string{"koodam.dev/revoke"}
-	_, err := run(t, newKube(t, nil, a), "delete", testName, "--wait", "--timeout", "20ms")
+	_, err := run(t, newKube(t, nil, a), "delete", testName, flagWait, flagTimeout, "20ms")
 	if err == nil {
 		t.Fatal("delete --wait did not stop at the timeout")
 	}
