@@ -86,7 +86,7 @@ func newVendor(t *testing.T) *vendor {
 		case "/claude/latest":
 			_, _ = fmt.Fprint(w, v.latest)
 		case "/claude/2.1.3/manifest.json":
-			_, _ = fmt.Fprintf(w, `{"version":pinned,"platforms":{"linux-x64":{"checksum":%q},`+
+			_, _ = fmt.Fprintf(w, `{"version":"2.1.3","platforms":{"linux-x64":{"checksum":%q},`+
 				`"linux-arm64-musl":{"checksum":%q}}}`, v.claudeSum, v.claudeSum)
 		case "/claude/2.1.3/linux-x64/claude", "/claude/2.1.3/linux-arm64-musl/claude":
 			_, _ = w.Write(v.claude)
