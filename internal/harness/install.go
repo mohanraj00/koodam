@@ -29,7 +29,9 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	neturl "net/url"
 	"os"
+	"path"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -41,10 +43,11 @@ const (
 	Codex      = "codex"
 )
 
-// The vendor addresses.
+// The vendor addresses. A Codex asset URL must start with CodexDownload.
 const (
-	ClaudeBase = "https://downloads.claude.ai/claude-code-releases"
-	CodexAPI   = "https://api.github.com/repos/openai/codex/releases"
+	ClaudeBase    = "https://downloads.claude.ai/claude-code-releases"
+	CodexAPI      = "https://api.github.com/repos/openai/codex/releases"
+	CodexDownload = "https://github.com/openai/codex/releases/download/"
 )
 
 // The GOARCH values with a harness build.
@@ -53,8 +56,9 @@ const (
 	arm64 = "arm64"
 )
 
-// maxBinary is the size limit of a download and of an extracted binary.
-const maxBinary = 1 << 30
+// maxBinary is the size limit of a download and of an extracted binary. The emptyDir of the run
+// pod also has a size limit. It is a variable for the tests.
+var maxBinary int64 = 1 << 30
 
 var versionRE = regexp.MustCompile(`^[0-9]+\.[0-9]+\.[0-9]+$`)
 
@@ -63,10 +67,11 @@ func ValidVersion(v string) bool { return versionRE.MatchString(v) }
 
 // Installer downloads a harness binary. Arch is a GOARCH value.
 type Installer struct {
-	HTTP       *http.Client
-	ClaudeBase string
-	CodexAPI   string
-	Arch       string
+	HTTP          *http.Client
+	ClaudeBase    string
+	CodexAPI      string
+	CodexDownload string
+	Arch          string
 }
 
 // Install puts the binary of the harness in dir and returns the version. An empty version is
@@ -74,6 +79,9 @@ type Installer struct {
 func (in *Installer) Install(ctx context.Context, name, version, libc, dir string) (string, error) {
 	if version != "" && !ValidVersion(version) {
 		return "", fmt.Errorf("the version %q is not of the form 1.2.3", version)
+	}
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return "", err
 	}
 	switch name {
 	case ClaudeCode:
@@ -167,27 +175,41 @@ func (in *Installer) codex(ctx context.Context, version, dir string) (string, er
 		if !ok {
 			return "", fmt.Errorf("the codex asset %s has no sha256 digest", a.Name)
 		}
-		archive := filepath.Join(dir, ".codex.tar.gz")
-		defer func() { _ = os.Remove(archive) }()
-		if err := in.download(ctx, a.URL, sum, archive); err != nil {
-			return "", err
+		if !strings.HasPrefix(a.URL, in.CodexDownload) {
+			return "", fmt.Errorf("the codex asset %s is not at %s", a.Name, in.CodexDownload)
 		}
-		if err := extract(archive, bin, filepath.Join(dir, "codex")); err != nil {
-			return "", err
-		}
-		return got, nil
+		return got, in.codexArchive(ctx, a.URL, sum, bin, dir)
 	}
 	return "", fmt.Errorf("the codex release %s has no asset %s.tar.gz", rel.Tag, bin)
 }
 
-// get reads a small response body, to the limit.
+// codexArchive downloads and checks the archive, then extracts the binary. It removes the archive.
+func (in *Installer) codexArchive(ctx context.Context, url, sum, bin, dir string) error {
+	tmp, err := os.CreateTemp(dir, ".codex-*.tar.gz")
+	if err != nil {
+		return err
+	}
+	archive := tmp.Name()
+	_ = tmp.Close()
+	defer func() { _ = os.Remove(archive) }()
+	if err := in.download(ctx, url, sum, archive); err != nil {
+		return err
+	}
+	return extract(archive, bin, filepath.Join(dir, "codex"))
+}
+
+// get reads a small response body. A body larger than the limit is an error.
 func (in *Installer) get(ctx context.Context, url string, limit int64) ([]byte, error) {
 	body, err := in.open(ctx, url)
 	if err != nil {
 		return nil, err
 	}
 	defer func() { _ = body.Close() }()
-	return io.ReadAll(io.LimitReader(body, limit))
+	b, err := io.ReadAll(io.LimitReader(body, limit+1))
+	if err == nil && int64(len(b)) > limit {
+		err = fmt.Errorf("GET %s: the response is larger than %d bytes", url, limit)
+	}
+	return b, err
 }
 
 func (in *Installer) open(ctx context.Context, url string) (io.ReadCloser, error) {
@@ -195,9 +217,20 @@ func (in *Installer) open(ctx context.Context, url string) (io.ReadCloser, error
 	if err != nil {
 		return nil, err
 	}
-	resp, err := in.HTTP.Do(req)
+	req.Header.Set("User-Agent", "koodam-harness-install")
+	hc := in.HTTP
+	if hc == nil {
+		hc = http.DefaultClient
+	}
+	resp, err := hc.Do(req)
 	if err != nil {
-		return nil, err
+		// A url.Error has the URL of the last redirect, which can have a signed query. Show the
+		// first URL only.
+		var ue *neturl.Error
+		if errors.As(err, &ue) {
+			err = ue.Err
+		}
+		return nil, fmt.Errorf("GET %s: %w", url, err)
 	}
 	if resp.StatusCode != http.StatusOK {
 		_ = resp.Body.Close()
@@ -213,12 +246,13 @@ func (in *Installer) download(ctx context.Context, url, sum, dst string) error {
 		return err
 	}
 	defer func() { _ = body.Close() }()
-	return writeChecked(io.LimitReader(body, maxBinary+1), sum, dst)
+	return writeChecked(io.LimitReader(body, maxBinary+1), sum, -1, dst)
 }
 
 // writeChecked writes r to a temporary file. It renames the file to dst only after the check.
-// An empty sum skips the check. Use it only for a file from an archive that was checked.
-func writeChecked(r io.Reader, sum, dst string) error {
+// An empty sum skips the check. Use it only for a file from an archive that was checked. If size
+// is not -1, the file must have that size.
+func writeChecked(r io.Reader, sum string, size int64, dst string) error {
 	tmp, err := os.CreateTemp(filepath.Dir(dst), ".download-*")
 	if err != nil {
 		return err
@@ -234,6 +268,9 @@ func writeChecked(r io.Reader, sum, dst string) error {
 	}
 	if n > maxBinary {
 		return fmt.Errorf("the download for %s is larger than %d bytes", filepath.Base(dst), maxBinary)
+	}
+	if size != -1 && n != size {
+		return fmt.Errorf("%s has %d bytes, not %d", filepath.Base(dst), n, size)
 	}
 	if got := hex.EncodeToString(h.Sum(nil)); sum != "" && !strings.EqualFold(got, sum) {
 		return fmt.Errorf("the sha256 of %s is %s, not %s", filepath.Base(dst), got, sum)
@@ -255,7 +292,9 @@ func extract(archive, bin, dst string) error {
 	if err != nil {
 		return err
 	}
-	tr := tar.NewReader(zr)
+	defer func() { _ = zr.Close() }()
+	// The limit stops an archive that expands to much more than its binary.
+	tr := tar.NewReader(io.LimitReader(zr, 2*maxBinary))
 	for {
 		hdr, err := tr.Next()
 		if errors.Is(err, io.EOF) {
@@ -264,12 +303,12 @@ func extract(archive, bin, dst string) error {
 		if err != nil {
 			return err
 		}
-		if hdr.Typeflag != tar.TypeReg || filepath.Base(hdr.Name) != bin {
+		if hdr.Typeflag != tar.TypeReg || path.Base(hdr.Name) != bin {
 			continue
 		}
-		if hdr.Size > maxBinary {
-			return fmt.Errorf("the file %s is larger than %d bytes", bin, maxBinary)
+		if hdr.Size <= 0 || hdr.Size > maxBinary {
+			return fmt.Errorf("the file %s has %d bytes", bin, hdr.Size)
 		}
-		return writeChecked(io.LimitReader(tr, hdr.Size), "", dst)
+		return writeChecked(tr, "", hdr.Size, dst)
 	}
 }

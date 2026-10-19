@@ -70,6 +70,8 @@ type vendor struct {
 	codex      []byte
 	codexSum   string
 	codexTag   string
+	codexURL   string
+	status     int
 	requests   []string
 	srv        *httptest.Server
 	installDir string
@@ -82,6 +84,10 @@ func newVendor(t *testing.T) *vendor {
 	v.codexSum = "sha256:" + sum(v.codex)
 	v.srv = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		v.requests = append(v.requests, r.URL.Path)
+		if v.status != 0 {
+			w.WriteHeader(v.status)
+			return
+		}
 		switch r.URL.Path {
 		case "/claude/latest":
 			_, _ = fmt.Fprint(w, v.latest)
@@ -93,7 +99,7 @@ func newVendor(t *testing.T) *vendor {
 		case "/codex/latest", "/codex/tags/rust-v0.9.1":
 			_, _ = fmt.Fprintf(w, `{"tag_name":%q,"assets":[{"name":"codex-x86_64-unknown-linux-musl.zst"},`+
 				`{"name":"codex-x86_64-unknown-linux-musl.tar.gz","browser_download_url":%q,"digest":%q}]}`,
-				v.codexTag, v.srv.URL+"/dl/codex.tar.gz", v.codexSum)
+				v.codexTag, v.codexURL, v.codexSum)
 		case "/dl/codex.tar.gz":
 			_, _ = w.Write(v.codex)
 		default:
@@ -101,13 +107,14 @@ func newVendor(t *testing.T) *vendor {
 		}
 	}))
 	t.Cleanup(v.srv.Close)
+	v.codexURL = v.srv.URL + "/dl/codex.tar.gz"
 	v.installDir = t.TempDir()
 	return v
 }
 
 func (v *vendor) install(arch, name, version, libc string) (string, error) {
 	in := &Installer{HTTP: v.srv.Client(), ClaudeBase: v.srv.URL + "/claude", CodexAPI: v.srv.URL + "/codex",
-		Arch: arch}
+		CodexDownload: v.srv.URL + "/dl/", Arch: arch}
 	return in.Install(context.Background(), name, version, libc, v.installDir)
 }
 
@@ -242,5 +249,41 @@ func TestCodexBadRelease(t *testing.T) {
 	}
 	if _, err := v.install(amd64, "aider", "", ""); err == nil {
 		t.Fatal("an unknown harness did not fail")
+	}
+}
+
+func TestBadResponses(t *testing.T) {
+	for _, c := range []struct {
+		name    string
+		harness string
+		edit    func(*vendor)
+		want    string
+	}{
+		{"a server error", ClaudeCode, func(v *vendor) { v.status = http.StatusInternalServerError }, "500"},
+		{"a large latest file", ClaudeCode, func(v *vendor) { v.latest = strings.Repeat("9", 65) },
+			"larger than 64 bytes"},
+		{"a binary over the limit", ClaudeCode, func(*vendor) { maxBinary = 4 }, "larger than 4 bytes"},
+		{"an asset on a different host", Codex, func(v *vendor) { v.codexURL = "http://169.254.169.254/x" },
+			"is not at"},
+		{"a truncated archive", Codex, func(v *vendor) {
+			v.codex = v.codex[:len(v.codex)/2]
+			v.codexSum = "sha256:" + sum(v.codex)
+		}, "unexpected EOF"},
+		{"an empty binary", Codex, func(v *vendor) {
+			v.codex = tgz(t, "codex-x86_64-unknown-linux-musl", nil)
+			v.codexSum = "sha256:" + sum(v.codex)
+		}, "has 0 bytes"},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			defer func(m int64) { maxBinary = m }(maxBinary)
+			v := newVendor(t)
+			c.edit(v)
+			if _, err := v.install(amd64, c.harness, "", ""); err == nil || !strings.Contains(err.Error(), c.want) {
+				t.Fatalf("install error = %v, want %q", err, c.want)
+			}
+			if f := v.files(t); len(f) != 0 {
+				t.Fatalf("a failed install left %v", f)
+			}
+		})
 	}
 }

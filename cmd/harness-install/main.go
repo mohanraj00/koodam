@@ -44,7 +44,7 @@ func main() {
 	ctx, cancel := context.WithTimeout(context.Background(), *timeout)
 	defer cancel()
 	in := &harness.Installer{HTTP: http.DefaultClient, ClaudeBase: harness.ClaudeBase, CodexAPI: harness.CodexAPI,
-		Arch: runtime.GOARCH}
+		CodexDownload: harness.CodexDownload, Arch: runtime.GOARCH}
 	got, err := in.Install(ctx, *name, *version, *libc, *dir)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "harness-install: %s: %v\n", *name, err)
