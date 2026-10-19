@@ -19,6 +19,7 @@ package main
 import (
 	"crypto/tls"
 	"flag"
+	"fmt"
 	"math"
 	"os"
 	"strings"
@@ -100,7 +101,7 @@ func main() {
 	flag.DurationVar(&keyGrace, "key-grace", time.Minute, "The time that is added to deadlineSeconds for the key TTL.")
 	flag.IntVar(&jobTTLSeconds, "job-ttl-seconds", controller.DefaultJobTTLSeconds,
 		"The time in seconds that Kubernetes keeps a run Job and its pods after the Job ends. "+
-			"The minimum is 60.")
+			"The value must be from 60 to 2147483647.")
 	opts.BindFlags(flag.CommandLine)
 	flag.Parse()
 
@@ -208,7 +209,8 @@ func main() {
 		os.Exit(1)
 	}
 	if jobTTLSeconds < controller.MinJobTTLSeconds || jobTTLSeconds > math.MaxInt32 {
-		setupLog.Error(nil, "The flag --job-ttl-seconds must be 60 or more", "value", jobTTLSeconds)
+		setupLog.Error(fmt.Errorf("--job-ttl-seconds=%d is out of range", jobTTLSeconds),
+			"The flag --job-ttl-seconds must be from 60 to 2147483647")
 		os.Exit(1)
 	}
 	if agentGatewayURL == "" {

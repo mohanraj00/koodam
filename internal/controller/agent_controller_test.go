@@ -262,12 +262,21 @@ var _ = Describe("Agent Controller", func() {
 		Expect(gw.blocked).To(HaveLen(1))
 	})
 
-	It("revokes and reads the spend when the TTL deleted the Job", func() {
+	It("uses the default TTL when the reconciler has no TTL", func() {
+		reconcileOnce(newReconciler())
+		Expect(*runJob(agent(), 0).Spec.TTLSecondsAfterFinished).To(Equal(int32(DefaultJobTTLSeconds)))
+		Expect(*runJob(agent(), -1).Spec.TTLSecondsAfterFinished).To(Equal(int32(DefaultJobTTLSeconds)))
+	})
+
+	It("revokes and reads the spend when the TTL deleted a finished Job", func() {
 		r := newReconciler()
 		reconcileOnce(r)
+		By("ending the Job and deleting it before the controller sees the end, as the TTL controller can")
+		endJob(batchv1.JobComplete)
 		Expect(k8sClient.Delete(ctx, &batchv1.Job{ObjectMeta: metav1.ObjectMeta{Name: "kd-" + name, Namespace: ns}},
 			client.PropagationPolicy(metav1.DeletePropagationBackground))).To(Succeed())
 		reconcileOnce(r)
+		// expectRevoked checks the gateway call order: the block comes before the usage read.
 		expectRevoked(corev1alpha1.AgentFailed)
 		Expect(meta.FindStatusCondition(agent().Status.Conditions, condRevoked).Reason).To(Equal("JobMissing"))
 	})

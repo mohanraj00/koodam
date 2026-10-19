@@ -383,7 +383,12 @@ func (r *AgentReconciler) secret(a *corev1alpha1.Agent, key string) *corev1.Secr
 }
 
 // runJob makes the run Job. ttl is the time in seconds that Kubernetes keeps the Job after it ends.
+// If ttl is 0 or less, runJob uses DefaultJobTTLSeconds. A TTL of 0 lets Kubernetes delete the Job
+// before the controller reads its end.
 func runJob(a *corev1alpha1.Agent, ttl int32) *batchv1.Job {
+	if ttl <= 0 {
+		ttl = DefaultJobTTLSeconds
+	}
 	name := runName(a)
 	env := make([]corev1.EnvVar, 0, len(a.Spec.Env))
 	for k, v := range a.Spec.Env {
