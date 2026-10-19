@@ -372,7 +372,7 @@ func getCmd(conn connect, spend bool) *cobra.Command {
 
 // timeText gives the time in UTC as RFC 3339, or "-" if there is no time.
 func timeText(t *metav1.Time) string {
-	if t == nil {
+	if t == nil || t.IsZero() {
 		return "-"
 	}
 	return t.UTC().Format(time.RFC3339)

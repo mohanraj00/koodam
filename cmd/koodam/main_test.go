@@ -323,11 +323,15 @@ func TestGetAndSpendShowThePhaseTheBudgetAndTheUsage(t *testing.T) {
 }
 
 func TestGetShowsADashForATimeThatIsNotSet(t *testing.T) {
-	out, err := run(t, newKube(t, nil, testAgent(corev1alpha1.AgentRunning, nil)), "get", testName)
+	agent := testAgent(corev1alpha1.AgentRunning, nil)
+	started := metav1.NewTime(time.Date(2026, 10, 18, 9, 0, 0, 0, time.UTC))
+	agent.Status.StartedAt = &started
+	out, err := run(t, newKube(t, nil, agent), "get", testName)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := strings.Count(out, " - "); got < 2 {
+	wantAll(t, out, "2026-10-18T09:00:00Z")
+	if got := strings.Count(out, " - "); got != 2 {
 		t.Errorf("get shows %d dashes, want a dash for the spend and for the end time:\n%s", got, out)
 	}
 }
