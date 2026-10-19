@@ -92,7 +92,10 @@ func endRunJob(ctx context.Context, run types.NamespacedName, t batchv1.JobCondi
 	job := &batchv1.Job{}
 	Expect(k8sClient.Get(ctx, run, job)).To(Succeed())
 	now := metav1.Now()
-	job.Status.StartTime = &now
+	if job.Status.StartTime == nil {
+		// The API server refuses a change to a start time that is set.
+		job.Status.StartTime = &now
+	}
 	if t == batchv1.JobComplete {
 		job.Status.CompletionTime = &now
 		job.Status.Succeeded = 1
@@ -264,6 +267,61 @@ var _ = Describe("Agent Controller", func() {
 		endJob(batchv1.JobFailed)
 		reconcileOnce(r)
 		expectRevoked(corev1alpha1.AgentFailed)
+	})
+
+	It("writes the start time and the end time of the Job one time only", func() {
+		r := newReconciler()
+		reconcileOnce(r)
+		Expect(agent().Status.StartedAt).To(BeNil())
+
+		job := &batchv1.Job{}
+		Expect(k8sClient.Get(ctx, run(), job)).To(Succeed())
+		jobStart := metav1.NewTime(time.Now().Add(-time.Hour).Truncate(time.Second))
+		job.Status.StartTime = &jobStart
+		Expect(k8sClient.Status().Update(ctx, job)).To(Succeed())
+		reconcileOnce(r)
+		a := agent()
+		Expect(a.Status.StartedAt).NotTo(BeNil())
+		Expect(a.Status.StartedAt.Equal(&jobStart)).To(BeTrue())
+		Expect(a.Status.CompletedAt).To(BeNil())
+
+		By("keeping a start time that is set when it is not the Job start time")
+		start := metav1.NewTime(jobStart.Add(-time.Minute))
+		a.Status.StartedAt = &start
+		Expect(k8sClient.Status().Update(ctx, a)).To(Succeed())
+		reconcileOnce(r)
+		Expect(agent().Status.StartedAt.Equal(&start)).To(BeTrue())
+
+		endJob(batchv1.JobComplete)
+		Expect(k8sClient.Get(ctx, run(), job)).To(Succeed())
+		reconcileOnce(r)
+		expectRevoked(corev1alpha1.AgentSucceeded)
+		a = agent()
+		Expect(a.Status.StartedAt.Equal(&start)).To(BeTrue())
+		Expect(a.Status.CompletedAt).NotTo(BeNil())
+		Expect(a.Status.CompletedAt.Equal(job.Status.CompletionTime)).To(BeTrue())
+
+		By("keeping both times on a later reconcile")
+		done := *a.Status.CompletedAt
+		reconcileOnce(r)
+		a = agent()
+		Expect(a.Status.StartedAt.Equal(&start)).To(BeTrue())
+		Expect(a.Status.CompletedAt.Equal(&done)).To(BeTrue())
+	})
+
+	It("writes the time of the Failed condition as the end time of a failed Job", func() {
+		r := newReconciler()
+		reconcileOnce(r)
+		endJob(batchv1.JobFailed)
+		job := &batchv1.Job{}
+		Expect(k8sClient.Get(ctx, run(), job)).To(Succeed())
+		reconcileOnce(r)
+		a := agent()
+		Expect(a.Status.StartedAt.Equal(job.Status.StartTime)).To(BeTrue())
+		Expect(a.Status.CompletedAt).NotTo(BeNil())
+		failed := job.Status.Conditions[len(job.Status.Conditions)-1]
+		Expect(failed.Type).To(Equal(batchv1.JobFailed))
+		Expect(a.Status.CompletedAt.Equal(&failed.LastTransitionTime)).To(BeTrue())
 	})
 
 	It("revokes when the Agent is deleted during a run", func() {

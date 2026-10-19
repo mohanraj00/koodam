@@ -109,6 +109,15 @@ type AgentStatus struct {
 	// +optional
 	KeyHash string `json:"keyHash,omitempty"`
 
+	// StartedAt is the start time of the run Job. The controller sets it one time only.
+	// +optional
+	StartedAt *metav1.Time `json:"startedAt,omitempty"`
+
+	// CompletedAt is the end time of the run Job. For a failed Job, it is the time of the Failed
+	// condition. The controller sets it one time only.
+	// +optional
+	CompletedAt *metav1.Time `json:"completedAt,omitempty"`
+
 	// RevokedAt is the time when the controller blocked the key and deleted the credentials.
 	// +optional
 	RevokedAt *metav1.Time `json:"revokedAt,omitempty"`

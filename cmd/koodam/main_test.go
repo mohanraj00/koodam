@@ -301,13 +301,16 @@ func TestRunWaitShowsTheLogAndTheSpend(t *testing.T) {
 }
 
 func TestGetAndSpendShowThePhaseTheBudgetAndTheUsage(t *testing.T) {
-	kube := newKube(t, nil, testAgent(corev1alpha1.AgentSucceeded,
-		&corev1alpha1.AgentUsage{Spend: "0.5", Calls: 4, FailedCalls: 1}))
+	a := testAgent(corev1alpha1.AgentSucceeded, &corev1alpha1.AgentUsage{Spend: "0.5", Calls: 4, FailedCalls: 1})
+	a.Status.StartedAt = &metav1.Time{Time: time.Date(2026, 10, 18, 9, 0, 0, 0, time.UTC)}
+	a.Status.CompletedAt = &metav1.Time{Time: time.Date(2026, 10, 18, 9, 4, 30, 0, time.UTC)}
+	kube := newKube(t, nil, a)
 	out, err := run(t, kube, "get")
 	if err != nil {
 		t.Fatal(err)
 	}
-	wantAll(t, out, "PHASE", testName, "Succeeded", "local-agent", "0.5", "koodam-dev-fix-tests")
+	wantAll(t, out, "PHASE", "STARTED", "COMPLETED", testName, "Succeeded", "local-agent", "0.5",
+		"2026-10-18T09:00:00Z", "2026-10-18T09:04:30Z", "koodam-dev-fix-tests")
 
 	out, err = run(t, kube, "spend", testName)
 	if err != nil {
@@ -316,6 +319,20 @@ func TestGetAndSpendShowThePhaseTheBudgetAndTheUsage(t *testing.T) {
 	wantAll(t, out, "BUDGET", "FAILED", testName, "Succeeded", "0.5")
 	if _, err := run(t, kube, "get", "missing"); err == nil {
 		t.Error("get did not fail for a missing Agent")
+	}
+}
+
+func TestGetShowsADashForATimeThatIsNotSet(t *testing.T) {
+	agent := testAgent(corev1alpha1.AgentRunning, nil)
+	started := metav1.NewTime(time.Date(2026, 10, 18, 9, 0, 0, 0, time.UTC))
+	agent.Status.StartedAt = &started
+	out, err := run(t, newKube(t, nil, agent), "get", testName)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantAll(t, out, "2026-10-18T09:00:00Z")
+	if got := strings.Count(out, " - "); got != 2 {
+		t.Errorf("get shows %d dashes, want a dash for the spend and for the end time:\n%s", got, out)
 	}
 }
 
