@@ -120,6 +120,11 @@ const (
 	installerCmd   = "/harness-install"
 )
 
+// installArgs is the init container command that the controller must make.
+func installArgs(name, version, libc string) []string {
+	return []string{installerCmd, "-harness", name, "-version", version, "-libc", libc, "-dir", harnessDir}
+}
+
 var _ = Describe("Agent Controller", func() {
 	const ns = "default"
 	var (
@@ -282,8 +287,7 @@ var _ = Describe("Agent Controller", func() {
 		Expect(pod.InitContainers).To(HaveLen(1))
 		ic := pod.InitContainers[0]
 		Expect(ic.Image).To(Equal(installerImage))
-		Expect(ic.Command).To(Equal([]string{installerCmd, "-harness", claudeName, "-version", "2.1.3",
-			"-libc", "glibc", "-dir", harnessDir}), "the CRD default for libc is glibc")
+		Expect(ic.Command).To(Equal(installArgs(claudeName, "2.1.3", "glibc")), "the CRD default for libc is glibc")
 		Expect(ic.Env).To(BeEmpty())
 		Expect(ic.EnvFrom).To(BeEmpty(), "the installer gets no credential")
 		Expect(*ic.SecurityContext.RunAsNonRoot).To(BeTrue())
@@ -304,8 +308,7 @@ var _ = Describe("Agent Controller", func() {
 		reconcileOnce(r)
 		job := &batchv1.Job{}
 		Expect(exists(job)).To(BeTrue())
-		Expect(job.Spec.Template.Spec.InitContainers[0].Command).To(Equal([]string{installerCmd,
-			"-harness", codexName, "-version", "", "-libc", "glibc", "-dir", harnessDir}),
+		Expect(job.Spec.Template.Spec.InitContainers[0].Command).To(Equal(installArgs(codexName, "", "glibc")),
 			"an empty version is the latest version")
 		Expect(job.Spec.Template.Spec.Containers[0].Env).To(Equal([]corev1.EnvVar{
 			{Name: pathEnv, Value: "/opt/bin:/koodam/bin"}}))
@@ -318,8 +321,7 @@ var _ = Describe("Agent Controller", func() {
 		reconcileOnce(r)
 		job := &batchv1.Job{}
 		Expect(exists(job)).To(BeTrue())
-		Expect(job.Spec.Template.Spec.InitContainers[0].Command).To(Equal([]string{installerCmd,
-			"-harness", claudeName, "-version", "", "-libc", "musl", "-dir", harnessDir}))
+		Expect(job.Spec.Template.Spec.InitContainers[0].Command).To(Equal(installArgs(claudeName, "", "musl")))
 	})
 
 	It("fails an Agent with a harness if the controller has no installer image", func() {
