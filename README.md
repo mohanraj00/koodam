@@ -48,7 +48,7 @@ Build it with `go build -o bin/koodam ./cmd/koodam`. It uses your kubeconfig, an
 
 For `koodam logs` and `run --wait`, the CLI user needs `get` on jobs, `list` on pods and `get` on pods/log in the namespace. The Agent viewer and editor ClusterRoles do not give them.
 
-Kubernetes deletes a finished Job and its pod after 24 h (the chart value `jobTTLSeconds`). After that, `koodam logs` has no log. The Agent keeps the status and the spend. If the controller is down for longer than the TTL after the end, the Agent gets `Failed` with the reason `JobMissing`, but the key is still blocked and the spend is still read.
+The controller deletes a finished Job and its pod 24 h after the end (the chart value `jobTTLSeconds`). After that, `koodam logs` has no log. The Agent keeps the status and the spend. The controller records the result before it deletes the Job, so a controller restart does not lose the result. If the controller is down, finished Jobs stay until it starts again.
 
 ## Install
 

@@ -53,10 +53,9 @@ const (
 	// keyField is the Secret field with the key value.
 	keyField = "ANTHROPIC_AUTH_TOKEN"
 
-	// DefaultJobTTLSeconds is the default ttlSecondsAfterFinished of a run Job (24 h).
+	// DefaultJobTTLSeconds is the default time that the controller keeps a run Job after it ends (24 h).
 	DefaultJobTTLSeconds = 86400
-	// MinJobTTLSeconds is the minimum ttlSecondsAfterFinished. With a lower value, Kubernetes can
-	// delete the Job before the controller reads its end. The run then fails with JobMissing.
+	// MinJobTTLSeconds is the minimum Job TTL. It gives a user the time to read the pod log.
 	MinJobTTLSeconds = 60
 
 	condProvisioned = "Provisioned"
@@ -87,8 +86,8 @@ type AgentReconciler struct {
 	GatewayURL string
 	// Grace is added to deadlineSeconds to give the key TTL.
 	Grace time.Duration
-	// JobTTL is the ttlSecondsAfterFinished of each run Job. Kubernetes deletes the Job and its
-	// pods this number of seconds after the Job ends.
+	// JobTTL is the time in seconds that the controller keeps a run Job and its pods after the Job
+	// ends. If it is 0 or less, the controller uses DefaultJobTTLSeconds.
 	JobTTL int32
 }
 
@@ -109,6 +108,9 @@ func (r *AgentReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl
 	}
 	ended := a.Status.Phase == corev1alpha1.AgentSucceeded || a.Status.Phase == corev1alpha1.AgentFailed
 	if (ended || !a.DeletionTimestamp.IsZero()) && !controllerutil.ContainsFinalizer(a, finalizer) {
+		if ended && a.DeletionTimestamp.IsZero() {
+			return r.deleteEndedJob(ctx, a)
+		}
 		return ctrl.Result{}, nil
 	}
 	switch {
@@ -340,7 +342,7 @@ func (r *AgentReconciler) provision(ctx context.Context, a *corev1alpha1.Agent) 
 			RoleRef:  rbacv1.RoleRef{APIGroup: rbacv1.GroupName, Kind: "Role", Name: name},
 			Subjects: []rbacv1.Subject{{Kind: rbacv1.ServiceAccountKind, Name: name, Namespace: a.Namespace}},
 		},
-		runJob(a, r.JobTTL),
+		runJob(a),
 	}
 	for _, o := range objs {
 		err := r.Create(ctx, o)
@@ -382,13 +384,9 @@ func (r *AgentReconciler) secret(a *corev1alpha1.Agent, key string) *corev1.Secr
 	}}
 }
 
-// runJob makes the run Job. ttl is the time in seconds that Kubernetes keeps the Job after it ends.
-// If ttl is 0 or less, runJob uses DefaultJobTTLSeconds. A TTL of 0 lets Kubernetes delete the Job
-// before the controller reads its end.
-func runJob(a *corev1alpha1.Agent, ttl int32) *batchv1.Job {
-	if ttl <= 0 {
-		ttl = DefaultJobTTLSeconds
-	}
+// runJob makes the run Job. The Job has no ttlSecondsAfterFinished. If Kubernetes deletes the Job
+// while the controller is down, the result of the run is lost. Thus deleteEndedJob deletes it.
+func runJob(a *corev1alpha1.Agent) *batchv1.Job {
 	name := runName(a)
 	env := make([]corev1.EnvVar, 0, len(a.Spec.Env))
 	for k, v := range a.Spec.Env {
@@ -397,8 +395,6 @@ func runJob(a *corev1alpha1.Agent, ttl int32) *batchv1.Job {
 	return &batchv1.Job{ObjectMeta: runMeta(a), Spec: batchv1.JobSpec{
 		BackoffLimit:          new(int32(0)),
 		ActiveDeadlineSeconds: new(a.Spec.DeadlineSeconds),
-		// The TTL starts when the Job ends. The controller blocks the key when it sees the end.
-		TTLSecondsAfterFinished: new(ttl),
 		Template: corev1.PodTemplateSpec{
 			ObjectMeta: metav1.ObjectMeta{Labels: map[string]string{agentLabel: a.Name}},
 			Spec: corev1.PodSpec{
@@ -515,6 +511,39 @@ func (r *AgentReconciler) writeUsage(ctx context.Context, a *corev1alpha1.Agent,
 		ObservedGeneration: a.Generation,
 	})
 	return r.Status().Update(ctx, a)
+}
+
+// deleteEndedJob deletes the Job of a revoked run JobTTL seconds after the Job ends. The controller
+// deletes the Job only after it recorded the result. If the end time is in the future, it requeues.
+func (r *AgentReconciler) deleteEndedJob(ctx context.Context, a *corev1alpha1.Agent) (ctrl.Result, error) {
+	// The cache has the run Jobs. Read the API server only if the cache has a Job of this Agent.
+	job := &batchv1.Job{}
+	err := r.Get(ctx, types.NamespacedName{Namespace: a.Namespace, Name: runName(a)}, job)
+	if apierrors.IsNotFound(err) {
+		return ctrl.Result{}, nil
+	}
+	if err != nil {
+		return ctrl.Result{}, err
+	}
+	if !metav1.IsControlledBy(job, a) {
+		return ctrl.Result{}, nil
+	}
+	// The revoke always sets revokedAt. completedAt is empty if the Job ended with no end time.
+	end := a.Status.CompletedAt
+	if end == nil {
+		end = a.Status.RevokedAt
+	}
+	if end == nil {
+		return ctrl.Result{}, nil
+	}
+	ttl := r.JobTTL
+	if ttl <= 0 {
+		ttl = DefaultJobTTLSeconds
+	}
+	if wait := time.Until(end.Add(time.Duration(ttl) * time.Second)); wait > 0 {
+		return ctrl.Result{RequeueAfter: wait}, nil
+	}
+	return ctrl.Result{}, r.deleteOwned(ctx, a, &batchv1.Job{})
 }
 
 // SetupWithManager sets up the controller with the Manager.
