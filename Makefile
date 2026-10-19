@@ -167,16 +167,22 @@ helm-sync: manifests ## Copy the CRD and the RBAC rules from config/ into the He
 	cp config/rbac/leader_election_role.yaml $(CHART)/files/leader-election-role.yaml
 	cp config/rbac/metrics_auth_role.yaml $(CHART)/files/metrics-auth-role.yaml
 
+# HELM_GATEWAY_URL is a gateway address for the render checks of the existing mode.
+HELM_GATEWAY_URL ?= http://litellm.example.svc:4000
+
 .PHONY: helm-check
 helm-check: helm-sync ## Fail if the Helm chart is not in sync with config/, then lint and render the chart.
 	@git diff --exit-code -- $(CHART) || { echo "The chart is not in sync with config/. Run 'make helm-sync'."; exit 1; }
 	@test -z "$$(git ls-files --others --exclude-standard -- $(CHART))" || { echo "The chart has new files. Run 'make helm-sync' and add them."; exit 1; }
-	"$(HELM)" lint --strict $(CHART)
+	"$(HELM)" lint --strict $(CHART) --set gateway.url=$(HELM_GATEWAY_URL)
 	"$(HELM)" lint --strict $(CHART) -f $(CHART)/values-ollama.yaml
 	"$(HELM)" lint --strict $(CHART) -f $(CHART)/values-bundled.yaml
-	"$(HELM)" template koodam $(CHART) --namespace koodam-system > /dev/null
+	"$(HELM)" template koodam $(CHART) --namespace koodam-system --set gateway.url=$(HELM_GATEWAY_URL) > /dev/null
+	@out="$$( "$(HELM)" template koodam $(CHART) --namespace koodam-system 2>&1 )" && \
+		{ echo "The existing mode must fail if gateway.url is empty."; exit 1; }; \
+		echo "$$out" | grep -q "gateway.url is necessary" || { echo "$$out"; exit 1; }
 	"$(HELM)" template koodam $(CHART) --namespace koodam-system -f $(CHART)/values-ollama.yaml > /dev/null
-	"$(HELM)" template koodam $(CHART) --namespace koodam-system --set metrics.enabled=true > /dev/null
+	"$(HELM)" template koodam $(CHART) --namespace koodam-system --set metrics.enabled=true --set gateway.url=$(HELM_GATEWAY_URL) > /dev/null
 	"$(HELM)" template koodam $(CHART) --namespace koodam-system -f $(CHART)/values-bundled.yaml > /dev/null
 	"$(HELM)" template koodam $(CHART) --namespace koodam-system -f $(CHART)/values-bundled.yaml \
 		--set gateway.bundled.postgres.persistence.enabled=true --set gateway.bundled.postgres.passwordSecret.name=pg > /dev/null

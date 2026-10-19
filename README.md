@@ -48,6 +48,18 @@ Build it with `go build -o bin/koodam ./cmd/koodam`. It uses your kubeconfig, an
 
 For `koodam logs` and `run --wait`, the CLI user needs `get` on jobs, `list` on pods and `get` on pods/log in the namespace. The Agent viewer and editor ClusterRoles do not give them.
 
+## Install
+
+The Helm chart installs the controller and the `Agent` CRD. The controller image is `ghcr.io/mohanraj00/koodam`. The chart uses an existing LiteLLM gateway, or it installs its own:
+
+```sh
+kubectl create namespace koodam-system
+kubectl -n koodam-system create secret generic koodam-gateway --from-file=master-key=./master-key
+helm install koodam charts/koodam -n koodam-system -f charts/koodam/values-bundled.yaml
+```
+
+With an existing gateway, pass `--set gateway.url=<address>`. It has no default, and the install stops without it. [charts/koodam/README.md](charts/koodam/README.md) has the steps.
+
 ## Plan
 
 | Version | Adds |
