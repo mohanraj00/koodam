@@ -111,6 +111,20 @@ func endRunJob(ctx context.Context, run types.NamespacedName, t batchv1.JobCondi
 	Expect(k8sClient.Status().Update(ctx, job)).To(Succeed())
 }
 
+// The names in the harness tests.
+const (
+	codexName      = "codex"
+	claudeName     = "claude-code"
+	pathEnv        = "PATH"
+	installerImage = "ghcr.io/mohanraj00/koodam:test"
+	installerCmd   = "/harness-install"
+)
+
+// installArgs is the init container command that the controller must make.
+func installArgs(name, version, libc string) []string {
+	return []string{installerCmd, "-harness", name, "-version", version, "-libc", libc, "-dir", harnessDir}
+}
+
 var _ = Describe("Agent Controller", func() {
 	const ns = "default"
 	var (
@@ -238,6 +252,8 @@ var _ = Describe("Agent Controller", func() {
 		c := job.Spec.Template.Spec.Containers[0]
 		Expect(c.EnvFrom[0].SecretRef.Name).To(Equal("kd-" + name))
 		Expect(c.Env).To(Equal([]corev1.EnvVar{{Name: "TASK", Value: "t1"}}))
+		Expect(job.Spec.Template.Spec.InitContainers).To(BeEmpty(), "no harness, so no installer")
+		Expect(job.Spec.Template.Spec.Volumes).To(BeEmpty())
 		for _, o := range []client.Object{sec, role, job} {
 			Expect(o.GetLabels()).To(HaveKeyWithValue(agentLabel, name))
 			Expect(metav1.IsControlledBy(o, a)).To(BeTrue())
@@ -247,6 +263,89 @@ var _ = Describe("Agent Controller", func() {
 		reconcileOnce(newReconciler())
 		Expect(gw.created).To(HaveLen(1))
 		Expect(gw.blocked).To(BeEmpty())
+	})
+
+	setHarness := func(h *corev1alpha1.HarnessSpec, env map[string]string) {
+		a := agent()
+		a.Spec.Harness = h
+		if env != nil {
+			a.Spec.Env = env
+		}
+		Expect(k8sClient.Update(ctx, a)).To(Succeed())
+	}
+
+	It("adds an init container that installs the harness", func() {
+		setHarness(&corev1alpha1.HarnessSpec{Name: claudeName, Version: "2.1.3"}, nil)
+		r := newReconciler()
+		r.InstallerImage = installerImage
+		reconcileOnce(r)
+		job := &batchv1.Job{}
+		Expect(exists(job)).To(BeTrue())
+		pod := job.Spec.Template.Spec
+		Expect(pod.Volumes).To(HaveLen(1))
+		Expect(pod.Volumes[0].EmptyDir).NotTo(BeNil())
+		Expect(pod.InitContainers).To(HaveLen(1))
+		ic := pod.InitContainers[0]
+		Expect(ic.Image).To(Equal(installerImage))
+		Expect(ic.Command).To(Equal(installArgs(claudeName, "2.1.3", "glibc")), "the CRD default for libc is glibc")
+		Expect(ic.Env).To(BeEmpty())
+		Expect(ic.EnvFrom).To(BeEmpty(), "the installer gets no credential")
+		Expect(*ic.SecurityContext.RunAsNonRoot).To(BeTrue())
+		Expect(*ic.SecurityContext.ReadOnlyRootFilesystem).To(BeTrue())
+		Expect(*ic.SecurityContext.AllowPrivilegeEscalation).To(BeFalse())
+		Expect(ic.VolumeMounts).To(Equal([]corev1.VolumeMount{{Name: pod.Volumes[0].Name, MountPath: harnessDir}}))
+		c := pod.Containers[0]
+		Expect(c.VolumeMounts).To(Equal([]corev1.VolumeMount{
+			{Name: pod.Volumes[0].Name, MountPath: harnessDir, ReadOnly: true}}))
+		Expect(c.Env).To(ContainElement(corev1.EnvVar{Name: pathEnv, Value: harnessPath}))
+		Expect(harnessPath).To(HavePrefix("/koodam/bin:"))
+	})
+
+	It("keeps the PATH from the Agent env", func() {
+		setHarness(&corev1alpha1.HarnessSpec{Name: codexName}, map[string]string{pathEnv: "/opt/bin:/koodam/bin"})
+		r := newReconciler()
+		r.InstallerImage = installerImage
+		reconcileOnce(r)
+		job := &batchv1.Job{}
+		Expect(exists(job)).To(BeTrue())
+		Expect(job.Spec.Template.Spec.InitContainers[0].Command).To(Equal(installArgs(codexName, "", "glibc")),
+			"an empty version is the latest version")
+		Expect(job.Spec.Template.Spec.Containers[0].Env).To(Equal([]corev1.EnvVar{
+			{Name: pathEnv, Value: "/opt/bin:/koodam/bin"}}))
+	})
+
+	It("gives the musl libc to the installer", func() {
+		setHarness(&corev1alpha1.HarnessSpec{Name: claudeName, Libc: "musl"}, nil)
+		r := newReconciler()
+		r.InstallerImage = installerImage
+		reconcileOnce(r)
+		job := &batchv1.Job{}
+		Expect(exists(job)).To(BeTrue())
+		Expect(job.Spec.Template.Spec.InitContainers[0].Command).To(Equal(installArgs(claudeName, "", "musl")))
+	})
+
+	It("fails an Agent with a harness if the controller has no installer image", func() {
+		setHarness(&corev1alpha1.HarnessSpec{Name: codexName}, nil)
+		reconcileOnce(newReconciler())
+		a := agent()
+		Expect(a.Status.Phase).To(Equal(corev1alpha1.AgentFailed))
+		c := meta.FindStatusCondition(a.Status.Conditions, condProvisioned)
+		Expect(c).NotTo(BeNil())
+		Expect(c.Reason).To(Equal("Invalid"))
+		Expect(gw.created).To(BeEmpty(), "no key for an Agent that cannot run")
+		Expect(exists(&batchv1.Job{})).To(BeFalse())
+	})
+
+	It("refuses a harness version that is not of the form 1.2.3", func() {
+		a := agent()
+		a.Spec.Harness = &corev1alpha1.HarnessSpec{Name: codexName, Version: "1.2.3; rm -rf /"}
+		Expect(k8sClient.Update(ctx, a)).NotTo(Succeed())
+		a = agent()
+		a.Spec.Harness = &corev1alpha1.HarnessSpec{Name: "aider"}
+		Expect(k8sClient.Update(ctx, a)).NotTo(Succeed())
+		a = agent()
+		a.Spec.Harness = &corev1alpha1.HarnessSpec{Name: codexName, Libc: "uclibc"}
+		Expect(k8sClient.Update(ctx, a)).NotTo(Succeed())
 	})
 
 	It("revokes when the Job ends", func() {
@@ -482,7 +581,7 @@ var _ = Describe("Agent Controller", func() {
 		reconcileOnce(r)
 		Expect(k8sClient.Delete(ctx, &batchv1.Job{ObjectMeta: metav1.ObjectMeta{Name: "kd-" + name, Namespace: ns}},
 			client.PropagationPolicy(metav1.DeletePropagationBackground))).To(Succeed())
-		other := runJob(agent())
+		other := runJob(agent(), "")
 		other.OwnerReferences = nil
 		Expect(k8sClient.Create(ctx, other)).To(Succeed())
 		reconcileOnce(r)

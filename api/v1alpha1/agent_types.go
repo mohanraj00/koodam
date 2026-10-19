@@ -63,6 +63,33 @@ type AgentSpec struct {
 	// Rules are the RBAC rules of the run Role, in the namespace of the Agent only.
 	// +optional
 	Rules []rbacv1.PolicyRule `json:"rules,omitempty"`
+
+	// Harness installs a coding harness binary in the pod before the agent starts. The binary is
+	// in /koodam/bin, which is first on the PATH of the agent container. If Env has a PATH, the
+	// controller does not change it, so that PATH must contain /koodam/bin.
+	// +optional
+	Harness *HarnessSpec `json:"harness,omitempty"`
+}
+
+// HarnessSpec selects the harness binary. An init container downloads it from the vendor and
+// checks its sha256. Koodam does not keep or redistribute a harness binary.
+type HarnessSpec struct {
+	// Name is the harness. The binary is claude for claude-code and codex for codex.
+	// +required
+	// +kubebuilder:validation:Enum=claude-code;codex
+	Name string `json:"name"`
+
+	// Version pins the harness version. If it is empty, the pod gets the latest version.
+	// +optional
+	// +kubebuilder:validation:Pattern=`^([0-9]+\.[0-9]+\.[0-9]+)?$`
+	Version string `json:"version,omitempty"`
+
+	// Libc is the C library of the agent image. It selects the Claude Code build. The Codex
+	// build is static.
+	// +optional
+	// +kubebuilder:default=glibc
+	// +kubebuilder:validation:Enum=glibc;musl
+	Libc string `json:"libc,omitempty"`
 }
 
 // AgentPhase is the lifecycle phase of an Agent.

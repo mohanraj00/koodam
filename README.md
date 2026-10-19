@@ -29,6 +29,18 @@ spec:
 - A Job that gets the key and the token. Nothing else is mounted.
 - After the run: the key is blocked, the credentials are deleted, and `kubectl get agents` shows the spend.
 
+To run Claude Code or Codex, add a harness. The image does not need to contain it:
+
+```yaml
+spec:
+  harness:
+    name: codex        # or claude-code
+    version: 0.163.0   # optional. With no version, the pod gets the latest version
+    libc: glibc        # optional, glibc or musl. Claude Code only
+```
+
+An init container downloads the binary from the vendor when the pod starts and checks its sha256. The binary is in `/koodam/bin`, first on the `PATH`. If the Agent `env` has a `PATH`, Koodam does not change it, so put `/koodam/bin` in it. Koodam does not keep or redistribute the binary. The pod needs egress to `downloads.claude.ai` (Claude Code) or to `api.github.com` and `github.com` (Codex).
+
 ## One run, one command
 
 ```sh

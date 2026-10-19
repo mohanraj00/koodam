@@ -32,6 +32,7 @@ import (
 	"k8s.io/apimachinery/pkg/api/equality"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
+	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
@@ -86,6 +87,9 @@ type AgentReconciler struct {
 	GatewayURL string
 	// Grace is added to deadlineSeconds to give the key TTL.
 	Grace time.Duration
+	// InstallerImage has /harness-install. The run pod uses it as an init container if the Agent
+	// has a harness. If it is empty, an Agent with a harness fails.
+	InstallerImage string
 	// JobTTL is the time in seconds that the controller keeps a run Job and its pods after the Job
 	// ends. If it is 0 or less, the controller uses DefaultJobTTLSeconds.
 	JobTTL int32
@@ -283,7 +287,11 @@ func (r *AgentReconciler) sameRun(ctx context.Context, a *corev1alpha1.Agent, wa
 
 func (r *AgentReconciler) provision(ctx context.Context, a *corev1alpha1.Agent) error {
 	log := logf.FromContext(ctx)
-	if msg := invalid(a); msg != "" {
+	msg := invalid(a)
+	if msg == "" && a.Spec.Harness != nil && r.InstallerImage == "" {
+		msg = "The controller has no installer image, so it cannot install a harness."
+	}
+	if msg != "" {
 		log.Info("The Agent is not valid", "reason", msg)
 		meta.SetStatusCondition(&a.Status.Conditions, metav1.Condition{
 			Type: condProvisioned, Status: metav1.ConditionFalse, Reason: "Invalid", Message: msg,
@@ -342,7 +350,7 @@ func (r *AgentReconciler) provision(ctx context.Context, a *corev1alpha1.Agent) 
 			RoleRef:  rbacv1.RoleRef{APIGroup: rbacv1.GroupName, Kind: "Role", Name: name},
 			Subjects: []rbacv1.Subject{{Kind: rbacv1.ServiceAccountKind, Name: name, Namespace: a.Namespace}},
 		},
-		runJob(a),
+		runJob(a, r.InstallerImage),
 	}
 	for _, o := range objs {
 		err := r.Create(ctx, o)
@@ -386,28 +394,64 @@ func (r *AgentReconciler) secret(a *corev1alpha1.Agent, key string) *corev1.Secr
 
 // runJob makes the run Job. The Job has no ttlSecondsAfterFinished. If Kubernetes deletes the Job
 // while the controller is down, the result of the run is lost. Thus deleteEndedJob deletes it.
-func runJob(a *corev1alpha1.Agent) *batchv1.Job {
+func runJob(a *corev1alpha1.Agent, installerImage string) *batchv1.Job {
 	name := runName(a)
-	env := make([]corev1.EnvVar, 0, len(a.Spec.Env))
+	env := make([]corev1.EnvVar, 0, len(a.Spec.Env)+1)
 	for k, v := range a.Spec.Env {
 		env = append(env, corev1.EnvVar{Name: k, Value: v})
+	}
+	pod := corev1.PodSpec{
+		RestartPolicy:      corev1.RestartPolicyNever,
+		ServiceAccountName: name,
+		Containers: []corev1.Container{{
+			Name: "agent", Image: a.Spec.Image, Command: a.Spec.Command, Env: env,
+			EnvFrom: []corev1.EnvFromSource{{SecretRef: &corev1.SecretEnvSource{
+				LocalObjectReference: corev1.LocalObjectReference{Name: name}}}},
+		}},
+	}
+	if h := a.Spec.Harness; h != nil {
+		addHarness(&pod, h, installerImage)
 	}
 	return &batchv1.Job{ObjectMeta: runMeta(a), Spec: batchv1.JobSpec{
 		BackoffLimit:          new(int32(0)),
 		ActiveDeadlineSeconds: new(a.Spec.DeadlineSeconds),
 		Template: corev1.PodTemplateSpec{
 			ObjectMeta: metav1.ObjectMeta{Labels: map[string]string{agentLabel: a.Name}},
-			Spec: corev1.PodSpec{
-				RestartPolicy:      corev1.RestartPolicyNever,
-				ServiceAccountName: name,
-				Containers: []corev1.Container{{
-					Name: "agent", Image: a.Spec.Image, Command: a.Spec.Command, Env: env,
-					EnvFrom: []corev1.EnvFromSource{{SecretRef: &corev1.SecretEnvSource{
-						LocalObjectReference: corev1.LocalObjectReference{Name: name}}}},
-				}},
-			},
+			Spec:       pod,
 		},
 	}}
+}
+
+// harnessDir is the folder of the harness binary in the run pod.
+const harnessDir = "/koodam/bin"
+
+// harnessPath is the PATH of the agent container if the Agent has a harness and no PATH in its env.
+const harnessPath = harnessDir + ":/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+
+// addHarness adds an init container that downloads the harness binary into an emptyDir. The
+// agent container mounts the emptyDir read-only. The init container has no credential env.
+func addHarness(pod *corev1.PodSpec, h *corev1alpha1.HarnessSpec, image string) {
+	const vol = "harness"
+	limit := resource.MustParse("1Gi")
+	pod.Volumes = append(pod.Volumes, corev1.Volume{Name: vol, VolumeSource: corev1.VolumeSource{
+		EmptyDir: &corev1.EmptyDirVolumeSource{SizeLimit: &limit}}})
+	pod.InitContainers = append(pod.InitContainers, corev1.Container{
+		Name: vol, Image: image,
+		Command: []string{"/harness-install", "-harness", h.Name, "-version", h.Version, "-libc", h.Libc,
+			"-dir", harnessDir},
+		VolumeMounts: []corev1.VolumeMount{{Name: vol, MountPath: harnessDir}},
+		SecurityContext: &corev1.SecurityContext{
+			RunAsNonRoot: new(true), RunAsUser: new(int64(65532)), AllowPrivilegeEscalation: new(false),
+			ReadOnlyRootFilesystem: new(true),
+			Capabilities:           &corev1.Capabilities{Drop: []corev1.Capability{"ALL"}},
+			SeccompProfile:         &corev1.SeccompProfile{Type: corev1.SeccompProfileTypeRuntimeDefault},
+		},
+	})
+	c := &pod.Containers[0]
+	c.VolumeMounts = append(c.VolumeMounts, corev1.VolumeMount{Name: vol, MountPath: harnessDir, ReadOnly: true})
+	if !slices.ContainsFunc(c.Env, func(e corev1.EnvVar) bool { return e.Name == "PATH" }) {
+		c.Env = append(c.Env, corev1.EnvVar{Name: "PATH", Value: harnessPath})
+	}
 }
 
 // fail writes the end phase and the reason before the revoke. A retry then continues the revoke
