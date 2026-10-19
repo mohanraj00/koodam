@@ -47,6 +47,12 @@ const (
 	CodexAPI   = "https://api.github.com/repos/openai/codex/releases"
 )
 
+// The GOARCH values with a harness build.
+const (
+	amd64 = "amd64"
+	arm64 = "arm64"
+)
+
 // maxBinary is the size limit of a download and of an extracted binary.
 const maxBinary = 1 << 30
 
@@ -79,7 +85,7 @@ func (in *Installer) Install(ctx context.Context, name, version, libc, dir strin
 }
 
 func (in *Installer) claude(ctx context.Context, version, libc, dir string) (string, error) {
-	arch := map[string]string{"amd64": "x64", "arm64": "arm64"}[in.Arch]
+	arch := map[string]string{amd64: "x64", arm64: "arm64"}[in.Arch]
 	if arch == "" {
 		return "", fmt.Errorf("claude-code has no build for %s", in.Arch)
 	}
@@ -125,7 +131,7 @@ func (in *Installer) claude(ctx context.Context, version, libc, dir string) (str
 }
 
 func (in *Installer) codex(ctx context.Context, version, dir string) (string, error) {
-	arch := map[string]string{"amd64": "x86_64", "arm64": "aarch64"}[in.Arch]
+	arch := map[string]string{amd64: "x86_64", arm64: "aarch64"}[in.Arch]
 	if arch == "" {
 		return "", fmt.Errorf("codex has no build for %s", in.Arch)
 	}

@@ -32,6 +32,8 @@ import (
 	"testing"
 )
 
+const pinned = "2.1.3"
+
 func sum(b []byte) string { s := sha256.Sum256(b); return hex.EncodeToString(s[:]) }
 
 func tgz(t *testing.T, name string, body []byte) []byte {
@@ -84,7 +86,7 @@ func newVendor(t *testing.T) *vendor {
 		case "/claude/latest":
 			_, _ = fmt.Fprint(w, v.latest)
 		case "/claude/2.1.3/manifest.json":
-			_, _ = fmt.Fprintf(w, `{"version":"2.1.3","platforms":{"linux-x64":{"checksum":%q},`+
+			_, _ = fmt.Fprintf(w, `{"version":pinned,"platforms":{"linux-x64":{"checksum":%q},`+
 				`"linux-arm64-musl":{"checksum":%q}}}`, v.claudeSum, v.claudeSum)
 		case "/claude/2.1.3/linux-x64/claude", "/claude/2.1.3/linux-arm64-musl/claude":
 			_, _ = w.Write(v.claude)
@@ -116,7 +118,7 @@ func (v *vendor) files(t *testing.T) []string {
 	if err != nil {
 		t.Fatal(err)
 	}
-	var names []string
+	names := make([]string, 0, len(es))
 	for _, e := range es {
 		names = append(names, e.Name())
 	}
@@ -143,8 +145,8 @@ func expectBinary(t *testing.T, path string, want []byte) {
 
 func TestClaudeLatest(t *testing.T) {
 	v := newVendor(t)
-	got, err := v.install("amd64", ClaudeCode, "", "")
-	if err != nil || got != "2.1.3" {
+	got, err := v.install(amd64, ClaudeCode, "", "")
+	if err != nil || got != pinned {
 		t.Fatalf("install = %q, %v", got, err)
 	}
 	expectBinary(t, filepath.Join(v.installDir, "claude"), v.claude)
@@ -155,8 +157,8 @@ func TestClaudeLatest(t *testing.T) {
 
 func TestClaudePinnedMusl(t *testing.T) {
 	v := newVendor(t)
-	got, err := v.install("arm64", ClaudeCode, "2.1.3", "musl")
-	if err != nil || got != "2.1.3" {
+	got, err := v.install(arm64, ClaudeCode, pinned, "musl")
+	if err != nil || got != pinned {
 		t.Fatalf("install = %q, %v", got, err)
 	}
 	for _, p := range v.requests {
@@ -170,7 +172,7 @@ func TestClaudePinnedMusl(t *testing.T) {
 func TestClaudeChecksumMismatch(t *testing.T) {
 	v := newVendor(t)
 	v.claudeSum = sum([]byte("a different binary"))
-	if _, err := v.install("amd64", ClaudeCode, "", ""); err == nil || !strings.Contains(err.Error(), "sha256") {
+	if _, err := v.install(amd64, ClaudeCode, "", ""); err == nil || !strings.Contains(err.Error(), "sha256") {
 		t.Fatalf("install error = %v, want a sha256 error", err)
 	}
 	if f := v.files(t); len(f) != 0 {
@@ -182,12 +184,12 @@ func TestClaudeBadInput(t *testing.T) {
 	v := newVendor(t)
 	v.latest = "2.1.3/../../x"
 	for _, c := range []struct{ arch, version, libc, want string }{
-		{"amd64", "", "", "latest claude-code version"},
-		{"amd64", "1.2.3;rm", "", "not of the form"},
-		{"386", "2.1.3", "", "no build"},
-		{"amd64", "2.1.3", "uclibc", "libc"},
-		{"amd64", "2.1.4", "", "404"},
-		{"arm64", "2.1.3", "", "no checksum for linux-arm64"},
+		{amd64, "", "", "latest claude-code version"},
+		{amd64, "1.2.3;rm", "", "not of the form"},
+		{"386", pinned, "", "no build"},
+		{amd64, pinned, "uclibc", "libc"},
+		{amd64, "2.1.4", "", "404"},
+		{arm64, pinned, "", "no checksum for linux-arm64"},
 	} {
 		if _, err := v.install(c.arch, ClaudeCode, c.version, c.libc); err == nil || !strings.Contains(err.Error(), c.want) {
 			t.Errorf("install(%s, %q, %q) error = %v, want %q", c.arch, c.version, c.libc, err, c.want)
@@ -198,7 +200,7 @@ func TestClaudeBadInput(t *testing.T) {
 func TestCodex(t *testing.T) {
 	for _, version := range []string{"", "0.9.1"} {
 		v := newVendor(t)
-		got, err := v.install("amd64", Codex, version, "")
+		got, err := v.install(amd64, Codex, version, "")
 		if err != nil || got != "0.9.1" {
 			t.Fatalf("install(%q) = %q, %v", version, got, err)
 		}
@@ -226,7 +228,7 @@ func TestCodexBadRelease(t *testing.T) {
 		t.Run(c.name, func(t *testing.T) {
 			v := newVendor(t)
 			c.edit(v)
-			if _, err := v.install("amd64", Codex, "", ""); err == nil || !strings.Contains(err.Error(), c.want) {
+			if _, err := v.install(amd64, Codex, "", ""); err == nil || !strings.Contains(err.Error(), c.want) {
 				t.Fatalf("install error = %v, want %q", err, c.want)
 			}
 			if f := v.files(t); len(f) != 0 {
@@ -235,10 +237,10 @@ func TestCodexBadRelease(t *testing.T) {
 		})
 	}
 	v := newVendor(t)
-	if _, err := v.install("arm64", Codex, "", ""); err == nil || !strings.Contains(err.Error(), "no asset") {
+	if _, err := v.install(arm64, Codex, "", ""); err == nil || !strings.Contains(err.Error(), "no asset") {
 		t.Fatalf("install error = %v, want no asset", err)
 	}
-	if _, err := v.install("amd64", "aider", "", ""); err == nil {
+	if _, err := v.install(amd64, "aider", "", ""); err == nil {
 		t.Fatal("an unknown harness did not fail")
 	}
 }
