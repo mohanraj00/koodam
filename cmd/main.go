@@ -19,6 +19,7 @@ package main
 import (
 	"crypto/tls"
 	"flag"
+	"math"
 	"os"
 	"strings"
 	"time"
@@ -67,6 +68,7 @@ func main() {
 	var enableHTTP2 bool
 	var gatewayURL, gatewayKeyFile, agentGatewayURL string
 	var keyGrace time.Duration
+	var jobTTLSeconds int
 	var tlsOpts []func(*tls.Config)
 	flag.StringVar(&metricsAddr, "metrics-bind-address", "0", "The address the metrics endpoint binds to. "+
 		"Use :8443 for HTTPS or :8080 for HTTP, or leave as 0 to disable the metrics service.")
@@ -96,6 +98,9 @@ func main() {
 	flag.StringVar(&agentGatewayURL, "agent-gateway-url", "",
 		"The gateway address for the agent pods. The default is the value of --gateway-url.")
 	flag.DurationVar(&keyGrace, "key-grace", time.Minute, "The time that is added to deadlineSeconds for the key TTL.")
+	flag.IntVar(&jobTTLSeconds, "job-ttl-seconds", controller.DefaultJobTTLSeconds,
+		"The time in seconds that Kubernetes keeps a run Job and its pods after the Job ends. "+
+			"The minimum is 60.")
 	opts.BindFlags(flag.CommandLine)
 	flag.Parse()
 
@@ -202,6 +207,10 @@ func main() {
 		setupLog.Error(err, "Failed to read the gateway master key file")
 		os.Exit(1)
 	}
+	if jobTTLSeconds < controller.MinJobTTLSeconds || jobTTLSeconds > math.MaxInt32 {
+		setupLog.Error(nil, "The flag --job-ttl-seconds must be 60 or more", "value", jobTTLSeconds)
+		os.Exit(1)
+	}
 	if agentGatewayURL == "" {
 		agentGatewayURL = gatewayURL
 	}
@@ -212,6 +221,7 @@ func main() {
 		Gateway:    gateway.NewLiteLLM(gatewayURL, strings.TrimSpace(string(masterKey))),
 		GatewayURL: strings.TrimRight(agentGatewayURL, "/"),
 		Grace:      keyGrace,
+		JobTTL:     int32(jobTTLSeconds),
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "Failed to create controller", "controller", "agent")
 		os.Exit(1)

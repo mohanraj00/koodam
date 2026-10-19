@@ -124,7 +124,7 @@ var _ = Describe("Agent Controller", func() {
 	run := func() types.NamespacedName { return types.NamespacedName{Namespace: ns, Name: "kd-" + name} }
 	newReconciler := func() *AgentReconciler {
 		return &AgentReconciler{Client: k8sClient, Scheme: k8sClient.Scheme(), APIReader: k8sClient,
-			Gateway: gw, GatewayURL: "http://gw.test:4000", Grace: time.Minute}
+			Gateway: gw, GatewayURL: "http://gw.test:4000", Grace: time.Minute, JobTTL: 3600}
 	}
 	reconcileOnce := func(r *AgentReconciler) {
 		_, err := r.Reconcile(ctx, reconcile.Request{NamespacedName: key()})
@@ -234,6 +234,7 @@ var _ = Describe("Agent Controller", func() {
 		Expect(exists(job)).To(BeTrue())
 		Expect(*job.Spec.BackoffLimit).To(BeZero())
 		Expect(*job.Spec.ActiveDeadlineSeconds).To(Equal(int64(600)))
+		Expect(*job.Spec.TTLSecondsAfterFinished).To(Equal(int32(3600)), "the TTL comes from the flag")
 		c := job.Spec.Template.Spec.Containers[0]
 		Expect(c.EnvFrom[0].SecretRef.Name).To(Equal("kd-" + name))
 		Expect(c.Env).To(Equal([]corev1.EnvVar{{Name: "TASK", Value: "t1"}}))
@@ -259,6 +260,16 @@ var _ = Describe("Agent Controller", func() {
 		By("doing nothing after the revoke")
 		reconcileOnce(r)
 		Expect(gw.blocked).To(HaveLen(1))
+	})
+
+	It("revokes and reads the spend when the TTL deleted the Job", func() {
+		r := newReconciler()
+		reconcileOnce(r)
+		Expect(k8sClient.Delete(ctx, &batchv1.Job{ObjectMeta: metav1.ObjectMeta{Name: "kd-" + name, Namespace: ns}},
+			client.PropagationPolicy(metav1.DeletePropagationBackground))).To(Succeed())
+		reconcileOnce(r)
+		expectRevoked(corev1alpha1.AgentFailed)
+		Expect(meta.FindStatusCondition(agent().Status.Conditions, condRevoked).Reason).To(Equal("JobMissing"))
 	})
 
 	It("revokes a failed Job as Failed", func() {
@@ -419,7 +430,7 @@ var _ = Describe("Agent Controller", func() {
 		reconcileOnce(r)
 		Expect(k8sClient.Delete(ctx, &batchv1.Job{ObjectMeta: metav1.ObjectMeta{Name: "kd-" + name, Namespace: ns}},
 			client.PropagationPolicy(metav1.DeletePropagationBackground))).To(Succeed())
-		other := runJob(agent())
+		other := runJob(agent(), r.JobTTL)
 		other.OwnerReferences = nil
 		Expect(k8sClient.Create(ctx, other)).To(Succeed())
 		reconcileOnce(r)

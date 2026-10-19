@@ -1,6 +1,9 @@
 {{- if not (has .Values.gateway.mode (list "existing" "bundled")) }}
 {{- fail "gateway.mode must be \"existing\" or \"bundled\"." }}
 {{- end }}
+{{- if lt (int .Values.jobTTLSeconds) 60 }}
+{{- fail "jobTTLSeconds must be 60 or more." }}
+{{- end }}
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -53,6 +56,7 @@ spec:
         - --agent-gateway-url={{ . }}
         {{- end }}
         - --key-grace={{ .Values.keyGrace }}
+        - --job-ttl-seconds={{ int .Values.jobTTLSeconds }}
         ports:
         - containerPort: 8081
           name: health
