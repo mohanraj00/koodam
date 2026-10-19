@@ -226,8 +226,7 @@ func (in *Installer) open(ctx context.Context, url string) (io.ReadCloser, error
 	if err != nil {
 		// A url.Error has the URL of the last redirect, which can have a signed query. Show the
 		// first URL only.
-		var ue *neturl.Error
-		if errors.As(err, &ue) {
+		if ue, ok := errors.AsType[*neturl.Error](err); ok {
 			err = ue.Err
 		}
 		return nil, fmt.Errorf("GET %s: %w", url, err)
