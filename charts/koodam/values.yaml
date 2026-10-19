@@ -94,8 +94,9 @@ gateway:
 # The time that the controller adds to deadlineSeconds for the key TTL.
 keyGrace: 1m
 
-# The time in seconds that Kubernetes keeps a run Job and its pods after the Job ends.
+# The time in seconds that the controller keeps a run Job and its pods after the Job ends.
 # The pod keeps the log, so "koodam logs" works for this time. The Agent keeps the result.
+# If the controller is down, the Jobs stay until it starts again.
 # The value must be from 60 to 2147483647. The default is 86400 (24 h).
 jobTTLSeconds: 86400
 

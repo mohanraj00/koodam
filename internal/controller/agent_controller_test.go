@@ -234,7 +234,7 @@ var _ = Describe("Agent Controller", func() {
 		Expect(exists(job)).To(BeTrue())
 		Expect(*job.Spec.BackoffLimit).To(BeZero())
 		Expect(*job.Spec.ActiveDeadlineSeconds).To(Equal(int64(600)))
-		Expect(*job.Spec.TTLSecondsAfterFinished).To(Equal(int32(3600)), "the TTL comes from the flag")
+		Expect(job.Spec.TTLSecondsAfterFinished).To(BeNil(), "the controller deletes the Job, not Kubernetes")
 		c := job.Spec.Template.Spec.Containers[0]
 		Expect(c.EnvFrom[0].SecretRef.Name).To(Equal("kd-" + name))
 		Expect(c.Env).To(Equal([]corev1.EnvVar{{Name: "TASK", Value: "t1"}}))
@@ -262,20 +262,44 @@ var _ = Describe("Agent Controller", func() {
 		Expect(gw.blocked).To(HaveLen(1))
 	})
 
-	It("uses the default TTL when the reconciler has no TTL", func() {
+	It("deletes the Job of a revoked run after the TTL from the end time", func() {
 		r := newReconciler()
-		r.JobTTL = 0
 		reconcileOnce(r)
-		job := &batchv1.Job{}
-		Expect(exists(job)).To(BeTrue())
-		Expect(*job.Spec.TTLSecondsAfterFinished).To(Equal(int32(DefaultJobTTLSeconds)))
-		Expect(*runJob(agent(), -1).Spec.TTLSecondsAfterFinished).To(Equal(int32(DefaultJobTTLSeconds)))
+		endJob(batchv1.JobComplete)
+		reconcileOnce(r)
+		expectRevoked(corev1alpha1.AgentSucceeded)
+
+		By("keeping the Job and requeueing before the TTL")
+		res, err := r.Reconcile(ctx, reconcile.Request{NamespacedName: key()})
+		Expect(err).NotTo(HaveOccurred())
+		Expect(res.RequeueAfter).To(BeNumerically("~", time.Hour, time.Minute))
+		Expect(exists(&batchv1.Job{})).To(BeTrue())
+
+		By("using the default TTL when the reconciler has no TTL")
+		r.JobTTL = 0
+		res, err = r.Reconcile(ctx, reconcile.Request{NamespacedName: key()})
+		Expect(err).NotTo(HaveOccurred())
+		Expect(res.RequeueAfter).To(BeNumerically("~", DefaultJobTTLSeconds*time.Second, time.Minute))
+
+		By("deleting the Job when the TTL is in the past")
+		a := agent()
+		a.Status.CompletedAt = &metav1.Time{Time: time.Now().Add(-25 * time.Hour)}
+		Expect(k8sClient.Status().Update(ctx, a)).To(Succeed())
+		res, err = r.Reconcile(ctx, reconcile.Request{NamespacedName: key()})
+		Expect(err).NotTo(HaveOccurred())
+		Expect(res.RequeueAfter).To(BeZero())
+		Expect(exists(&batchv1.Job{})).To(BeFalse())
+		Expect(agent().Status.Phase).To(Equal(corev1alpha1.AgentSucceeded), "the result stays")
+
+		By("doing nothing when the Job is gone")
+		reconcileOnce(r)
+		Expect(gw.blocked).To(HaveLen(1))
 	})
 
-	It("revokes and reads the spend when the TTL deleted a finished Job", func() {
+	It("revokes and reads the spend when a different tool deleted a finished Job", func() {
 		r := newReconciler()
 		reconcileOnce(r)
-		By("ending the Job and deleting it before the controller sees the end, as the TTL controller can")
+		By("ending the Job and deleting it before the controller sees the end")
 		endJob(batchv1.JobComplete)
 		Expect(k8sClient.Delete(ctx, &batchv1.Job{ObjectMeta: metav1.ObjectMeta{Name: "kd-" + name, Namespace: ns}},
 			client.PropagationPolicy(metav1.DeletePropagationBackground))).To(Succeed())
@@ -443,7 +467,7 @@ var _ = Describe("Agent Controller", func() {
 		reconcileOnce(r)
 		Expect(k8sClient.Delete(ctx, &batchv1.Job{ObjectMeta: metav1.ObjectMeta{Name: "kd-" + name, Namespace: ns}},
 			client.PropagationPolicy(metav1.DeletePropagationBackground))).To(Succeed())
-		other := runJob(agent(), r.JobTTL)
+		other := runJob(agent())
 		other.OwnerReferences = nil
 		Expect(k8sClient.Create(ctx, other)).To(Succeed())
 		reconcileOnce(r)

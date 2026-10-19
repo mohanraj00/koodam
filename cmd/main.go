@@ -100,7 +100,7 @@ func main() {
 		"The gateway address for the agent pods. The default is the value of --gateway-url.")
 	flag.DurationVar(&keyGrace, "key-grace", time.Minute, "The time that is added to deadlineSeconds for the key TTL.")
 	flag.IntVar(&jobTTLSeconds, "job-ttl-seconds", controller.DefaultJobTTLSeconds,
-		"The time in seconds that Kubernetes keeps a run Job and its pods after the Job ends. "+
+		"The time in seconds that the controller keeps a run Job and its pods after the Job ends. "+
 			"The value must be from 60 to 2147483647.")
 	opts.BindFlags(flag.CommandLine)
 	flag.Parse()
