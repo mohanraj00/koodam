@@ -58,7 +58,7 @@ kubectl -n koodam-system create secret generic koodam-gateway --from-file=master
 helm install koodam charts/koodam -n koodam-system -f charts/koodam/values-bundled.yaml
 ```
 
-With an existing gateway, set `--set gateway.url=<address>`. It has no default, and the install stops without it. [charts/koodam/README.md](charts/koodam/README.md) has the steps.
+With an existing gateway, pass `--set gateway.url=<address>`. It has no default, and the install stops without it. [charts/koodam/README.md](charts/koodam/README.md) has the steps.
 
 ## Plan
 
