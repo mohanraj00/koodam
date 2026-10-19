@@ -1,7 +1,7 @@
-# The controller image. Build it with "make docker-build IMG=<image>".
+# The controller image. If the tag is empty, the chart uses the chart appVersion.
 image:
-  repository: controller
-  tag: latest
+  repository: ghcr.io/mohanraj00/koodam
+  tag: ""
   pullPolicy: IfNotPresent
 imagePullSecrets: []
 
@@ -20,8 +20,9 @@ gateway:
   # - "bundled": the chart installs LiteLLM and PostgreSQL. Refer to values-bundled.yaml.
   mode: existing
   # The LiteLLM admin address that the controller uses in the existing mode.
+  # The existing mode has no default. If this value is empty, the install fails.
   # In the bundled mode, the controller uses the bundled LiteLLM Service and ignores this value.
-  url: http://litellm.koodam-system.svc:4000
+  url: ""
   # The gateway address for the agent pods. If empty, the agent pods use the controller address.
   agentUrl: ""
   # The Secret with the LiteLLM master key. You make this Secret before the install.

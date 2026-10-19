@@ -32,13 +32,14 @@ This chart installs the Koodam controller and the Agent CRD. The controller uses
      --from-file=master-key=./master-key
    ```
 
-5. Install the chart. Set the gateway address in `gateway.url`:
+5. Install the chart. Set the gateway address in `gateway.url`. The existing mode has no default address. If `gateway.url` is empty, the install fails. `values-ollama.yaml` sets the address:
 
    ```sh
    helm install koodam charts/koodam -n koodam-system \
-     -f charts/koodam/values-ollama.yaml \
-     --set image.repository=<image> --set image.tag=<tag>
+     -f charts/koodam/values-ollama.yaml
    ```
+
+   Without `values-ollama.yaml`, add `--set gateway.url=<address>`.
 
 6. Apply the sample Agent and examine its status:
 
@@ -54,8 +55,7 @@ This chart installs the Koodam controller and the Agent CRD. The controller uses
 
    ```sh
    helm install koodam charts/koodam -n koodam-system \
-     -f charts/koodam/values-bundled.yaml \
-     --set image.repository=<image> --set image.tag=<tag>
+     -f charts/koodam/values-bundled.yaml
    ```
 
 3. Set the `model` of your Agent to `mock-1`, or add your models to `gateway.bundled.litellm.modelList`.
@@ -73,13 +73,23 @@ The PostgreSQL data is in an `emptyDir` by default. If the pod stops, the keys a
 
 Licenses: LiteLLM uses the MIT License. PostgreSQL uses the PostgreSQL License.
 
+## The controller image
+
+The controller image is `ghcr.io/mohanraj00/koodam`. If `image.tag` is empty, the chart uses the chart `appVersion` as the tag. To use an image that you build, set `image.repository` and `image.tag`:
+
+```sh
+make docker-build IMG=<image>:<tag>
+helm install koodam charts/koodam -n koodam-system -f charts/koodam/values-bundled.yaml \
+  --set image.repository=<image> --set image.tag=<tag>
+```
+
 ## Values
 
 | Value | Default | Description |
 | --- | --- | --- |
-| `image.repository`, `image.tag` | `controller`, `latest` | The controller image. |
+| `image.repository`, `image.tag` | `ghcr.io/mohanraj00/koodam`, empty | The controller image. If the tag is empty, the chart uses the chart `appVersion`. |
 | `gateway.mode` | `existing` | `existing` or `bundled`. |
-| `gateway.url` | `http://litellm.koodam-system.svc:4000` | The LiteLLM admin address for the controller. The bundled mode ignores it. |
+| `gateway.url` | empty | The LiteLLM admin address for the controller. The existing mode needs it. The bundled mode ignores it. |
 | `gateway.agentUrl` | empty | The gateway address for the agent pods. If empty, the pods use `gateway.url`. |
 | `gateway.masterKeySecret.name`, `.key` | `koodam-gateway`, `master-key` | The Secret with the master key. |
 | `gateway.bundled.litellm.image` | `ghcr.io/berriai/litellm-database:v1.104.2` | The LiteLLM image. |
