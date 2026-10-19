@@ -263,8 +263,12 @@ var _ = Describe("Agent Controller", func() {
 	})
 
 	It("uses the default TTL when the reconciler has no TTL", func() {
-		reconcileOnce(newReconciler())
-		Expect(*runJob(agent(), 0).Spec.TTLSecondsAfterFinished).To(Equal(int32(DefaultJobTTLSeconds)))
+		r := newReconciler()
+		r.JobTTL = 0
+		reconcileOnce(r)
+		job := &batchv1.Job{}
+		Expect(exists(job)).To(BeTrue())
+		Expect(*job.Spec.TTLSecondsAfterFinished).To(Equal(int32(DefaultJobTTLSeconds)))
 		Expect(*runJob(agent(), -1).Spec.TTLSecondsAfterFinished).To(Equal(int32(DefaultJobTTLSeconds)))
 	})
 
