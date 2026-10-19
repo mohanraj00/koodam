@@ -53,6 +53,12 @@ const (
 	// keyField is the Secret field with the key value.
 	keyField = "ANTHROPIC_AUTH_TOKEN"
 
+	// DefaultJobTTLSeconds is the default ttlSecondsAfterFinished of a run Job (24 h).
+	DefaultJobTTLSeconds = 86400
+	// MinJobTTLSeconds is the minimum ttlSecondsAfterFinished. With a lower value, Kubernetes can
+	// delete the Job before the controller reads its end. The run then fails with JobMissing.
+	MinJobTTLSeconds = 60
+
 	condProvisioned = "Provisioned"
 	condRevoked     = "Revoked"
 )
@@ -81,6 +87,9 @@ type AgentReconciler struct {
 	GatewayURL string
 	// Grace is added to deadlineSeconds to give the key TTL.
 	Grace time.Duration
+	// JobTTL is the ttlSecondsAfterFinished of each run Job. Kubernetes deletes the Job and its
+	// pods this number of seconds after the Job ends.
+	JobTTL int32
 }
 
 // +kubebuilder:rbac:groups=core.koodam.dev,resources=agents,verbs=get;list;watch;update
@@ -331,7 +340,7 @@ func (r *AgentReconciler) provision(ctx context.Context, a *corev1alpha1.Agent) 
 			RoleRef:  rbacv1.RoleRef{APIGroup: rbacv1.GroupName, Kind: "Role", Name: name},
 			Subjects: []rbacv1.Subject{{Kind: rbacv1.ServiceAccountKind, Name: name, Namespace: a.Namespace}},
 		},
-		runJob(a),
+		runJob(a, r.JobTTL),
 	}
 	for _, o := range objs {
 		err := r.Create(ctx, o)
@@ -373,7 +382,13 @@ func (r *AgentReconciler) secret(a *corev1alpha1.Agent, key string) *corev1.Secr
 	}}
 }
 
-func runJob(a *corev1alpha1.Agent) *batchv1.Job {
+// runJob makes the run Job. ttl is the time in seconds that Kubernetes keeps the Job after it ends.
+// If ttl is 0 or less, runJob uses DefaultJobTTLSeconds. A TTL of 0 lets Kubernetes delete the Job
+// before the controller reads its end.
+func runJob(a *corev1alpha1.Agent, ttl int32) *batchv1.Job {
+	if ttl <= 0 {
+		ttl = DefaultJobTTLSeconds
+	}
 	name := runName(a)
 	env := make([]corev1.EnvVar, 0, len(a.Spec.Env))
 	for k, v := range a.Spec.Env {
@@ -382,6 +397,8 @@ func runJob(a *corev1alpha1.Agent) *batchv1.Job {
 	return &batchv1.Job{ObjectMeta: runMeta(a), Spec: batchv1.JobSpec{
 		BackoffLimit:          new(int32(0)),
 		ActiveDeadlineSeconds: new(a.Spec.DeadlineSeconds),
+		// The TTL starts when the Job ends. The controller blocks the key when it sees the end.
+		TTLSecondsAfterFinished: new(ttl),
 		Template: corev1.PodTemplateSpec{
 			ObjectMeta: metav1.ObjectMeta{Labels: map[string]string{agentLabel: a.Name}},
 			Spec: corev1.PodSpec{

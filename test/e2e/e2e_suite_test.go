@@ -26,6 +26,7 @@ import (
 	"fmt"
 	"net/http"
 	"os/exec"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -119,7 +120,7 @@ var _ = BeforeSuite(func() {
 	_, err = utils.Run(exec.Command("helm", "upgrade", "--install", release, "charts/koodam",
 		"-n", systemNS, "-f", "charts/koodam/values-bundled.yaml",
 		"--set", "image.repository="+managerImage[:i], "--set", "image.tag="+managerImage[i+1:],
-		"--set", "metrics.enabled=true",
+		"--set", "metrics.enabled=true", "--set", "jobTTLSeconds="+strconv.Itoa(jobTTL),
 		"--wait", "--timeout", "10m"))
 	Expect(err).NotTo(HaveOccurred(), "Failed to install the chart")
 

@@ -100,6 +100,7 @@ helm install koodam charts/koodam -n koodam-system -f charts/koodam/values-bundl
 | `gateway.bundled.postgres.passwordSecret.name`, `.key` | empty, `password` | The Secret with the database password. If empty, the chart makes it. |
 | `gateway.bundled.postgres.persistence.enabled` | `false` | Use a PVC, not an `emptyDir`. |
 | `keyGrace` | `1m` | The time that the controller adds to `deadlineSeconds` for the key TTL. |
+| `jobTTLSeconds` | `86400` | The time in seconds that Kubernetes keeps a run Job and its pods (and the log) after the Job ends. The value must be from `60` to `2147483647`. |
 | `leaderElection` | `true` | Use leader election. |
 | `metrics.enabled` | `false` | Add the HTTPS metrics endpoint and its RBAC. |
 

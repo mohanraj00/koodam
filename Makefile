@@ -177,7 +177,15 @@ helm-check: helm-sync ## Fail if the Helm chart is not in sync with config/, the
 	"$(HELM)" lint --strict $(CHART) --set gateway.url=$(HELM_GATEWAY_URL)
 	"$(HELM)" lint --strict $(CHART) -f $(CHART)/values-ollama.yaml
 	"$(HELM)" lint --strict $(CHART) -f $(CHART)/values-bundled.yaml
-	"$(HELM)" template koodam $(CHART) --namespace koodam-system --set gateway.url=$(HELM_GATEWAY_URL) > /dev/null
+	"$(HELM)" template koodam $(CHART) --namespace koodam-system --set gateway.url=$(HELM_GATEWAY_URL) | \
+		grep -q -- "--job-ttl-seconds=86400$$" || { echo "The Deployment does not have --job-ttl-seconds=86400."; exit 1; }
+	"$(HELM)" template koodam $(CHART) --namespace koodam-system --set gateway.url=$(HELM_GATEWAY_URL) \
+		--set jobTTLSeconds=3600 | grep -q -- "--job-ttl-seconds=3600$$" || { echo "The chart ignores jobTTLSeconds."; exit 1; }
+	@for v in 0 2147483648; do \
+		out="$$( "$(HELM)" template koodam $(CHART) --namespace koodam-system --set gateway.url=$(HELM_GATEWAY_URL) \
+		--set jobTTLSeconds=$$v 2>&1 )" && { echo "The chart must refuse jobTTLSeconds=$$v."; exit 1; }; \
+		echo "$$out" | grep -q "jobTTLSeconds must be from 60 to 2147483647" || { echo "$$out"; exit 1; }; \
+	done
 	@out="$$( "$(HELM)" template koodam $(CHART) --namespace koodam-system 2>&1 )" && \
 		{ echo "The existing mode must fail if gateway.url is empty."; exit 1; }; \
 		echo "$$out" | grep -q "gateway.url is necessary" || { echo "$$out"; exit 1; }

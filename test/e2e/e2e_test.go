@@ -70,6 +70,9 @@ const (
 	// for the metrics scrape.
 	metricsName = "koodam-e2e-metrics"
 	metricsPort = "18443"
+	// jobTTL is the chart value jobTTLSeconds for the test. It is not the default, so the test
+	// shows that the value gets to the Job. The test does not wait for the TTL.
+	jobTTL = 3600
 )
 
 // call is a shell command that calls the model with the run key and prints the HTTP status.
@@ -122,6 +125,12 @@ var _ = Describe("Residual access", Ordered, func() {
 	It("runs the sample Agent to Succeeded and leaves no access", func() {
 		a := sampleAgent("normal", callsScript(3, 15))
 		r := start(a)
+
+		By("checking that the run Job has the TTL from the chart value")
+		job := &batchv1.Job{}
+		Expect(k8s.Get(ctx, client.ObjectKey{Namespace: runNS, Name: a.Status.Job}, job)).To(Succeed())
+		Expect(job.Spec.TTLSecondsAfterFinished).NotTo(BeNil(), "The run Job has no TTL.")
+		Expect(*job.Spec.TTLSecondsAfterFinished).To(Equal(int32(jobTTL)))
 
 		By("checking that the run credentials work while the run is live")
 		code, _ := modelCall(ctx, r.key)
@@ -337,7 +346,7 @@ func expectNoAccess(a *corev1alpha1.Agent, r run, end time.Time) {
 		Expect(k8s.List(pctx, l, sel...)).To(Succeed())
 		Expect(meta.LenList(l)).To(BeZero(), fmt.Sprintf("A %T item of the run exists after the run.", l))
 	}
-	// The controller keeps the Job of a run that ended, and its pods, until the Agent is deleted.
+	// Kubernetes keeps the Job of a run that ended, and its pods, until the Job TTL or the Agent delete.
 	// They must be stopped and must hold no credential.
 	jobs := &batchv1.JobList{}
 	Expect(k8s.List(pctx, jobs, sel...)).To(Succeed())

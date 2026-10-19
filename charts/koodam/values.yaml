@@ -94,6 +94,11 @@ gateway:
 # The time that the controller adds to deadlineSeconds for the key TTL.
 keyGrace: 1m
 
+# The time in seconds that Kubernetes keeps a run Job and its pods after the Job ends.
+# The pod keeps the log, so "koodam logs" works for this time. The Agent keeps the result.
+# The value must be from 60 to 2147483647. The default is 86400 (24 h).
+jobTTLSeconds: 86400
+
 # The metrics endpoint (HTTPS). If true, the chart adds the metrics Service and the
 # metrics-auth ClusterRole (tokenreviews and subjectaccessreviews, verb create).
 metrics:

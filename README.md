@@ -48,6 +48,8 @@ Build it with `go build -o bin/koodam ./cmd/koodam`. It uses your kubeconfig, an
 
 For `koodam logs` and `run --wait`, the CLI user needs `get` on jobs, `list` on pods and `get` on pods/log in the namespace. The Agent viewer and editor ClusterRoles do not give them.
 
+Kubernetes deletes a finished Job and its pod after 24 h (the chart value `jobTTLSeconds`). After that, `koodam logs` has no log. The Agent keeps the status and the spend. If the controller is down for longer than the TTL after the end, the Agent gets `Failed` with the reason `JobMissing`, but the key is still blocked and the spend is still read.
+
 ## Install
 
 The Helm chart installs the controller and the `Agent` CRD. The controller image is `ghcr.io/mohanraj00/koodam`. The chart uses an existing LiteLLM gateway, or it installs its own:
