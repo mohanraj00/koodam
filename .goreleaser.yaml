@@ -1,0 +1,57 @@
+# GoReleaser (MIT) builds the koodam CLI for a release tag vX.Y.Z.
+# .github/workflows/release.yml runs it. A dry run uses "release --snapshot --clean".
+version: 2
+
+project_name: koodam
+
+before:
+  hooks:
+    - go mod download
+
+builds:
+  - id: koodam
+    main: ./cmd/koodam
+    binary: koodam
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - linux
+      - darwin
+    goarch:
+      - amd64
+      - arm64
+    flags:
+      - -trimpath
+    ldflags:
+      - -s -w
+    mod_timestamp: "{{ .CommitTimestamp }}"
+
+archives:
+  - id: koodam
+    ids:
+      - koodam
+    formats:
+      - tar.gz
+    # Example: koodam_0.1.0_linux_amd64.tar.gz
+    name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+    files:
+      - LICENSE
+      - README.md
+
+checksum:
+  name_template: checksums.txt
+  algorithm: sha256
+
+snapshot:
+  version_template: "{{ incpatch .Version }}-snapshot"
+
+# GitHub writes the release notes from the merged PRs.
+changelog:
+  use: github-native
+
+release:
+  github:
+    owner: mohanraj00
+    name: koodam
+  # A tag with a suffix (for example v0.1.0-rc.1) makes a prerelease.
+  prerelease: auto
