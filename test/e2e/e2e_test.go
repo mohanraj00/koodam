@@ -104,11 +104,9 @@ case "$c" in 200) sleep ` + pause + ` ;; 4*) exit 0 ;; *) exit 1 ;; esac
 done
 exit 1`
 
-// codexScript runs Codex with a model provider for the gateway. Codex does not read
-// OPENAI_BASE_URL, and it uses only the Responses API.
-const codexScript = `cd /tmp && codex exec --skip-git-repo-check -m "$ANTHROPIC_MODEL" -c model_provider=koodam ` +
-	`-c "model_providers.koodam={name=\"koodam\",base_url=\"$OPENAI_BASE_URL\",env_key=\"OPENAI_API_KEY\",` +
-	`wire_api=\"responses\"}" 'Say hi.' </dev/null`
+// codexScript runs Codex with no provider args. The controller gives Codex the model and a
+// model provider for the gateway in /etc/codex/config.toml.
+const codexScript = `cd /tmp && codex exec --skip-git-repo-check 'Say hi.' </dev/null`
 
 // run has the credentials of a live run. The test never prints them.
 type run struct {
