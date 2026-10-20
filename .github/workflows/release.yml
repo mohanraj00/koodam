@@ -60,9 +60,15 @@ jobs:
       # The binary must show the snapshot version, not "dev". This shows that the ldflags set it.
       - name: Check the CLI version
         run: |
-          out="$(dist/koodam_linux_amd64*/koodam version)"
+          set -- dist/koodam_linux_amd64*/koodam
+          test "$#" -eq 1 && test -x "$1"
+          out="$("$1" version)"
           echo "$out"
-          test "$out" != "koodam dev"
+          case "$out" in
+            "koodam dev" | "koodam ") exit 1 ;;
+            "koodam "*) ;;
+            *) exit 1 ;;
+          esac
 
       - name: Setup Helm
         uses: azure/setup-helm@9bc31f4ebc9c6b171d7bfbaa5d006ae7abdb4310 # v5.0.1
