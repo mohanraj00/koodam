@@ -163,7 +163,9 @@ func makeFakeUpstream() {
 			Template: corev1.PodTemplateSpec{ObjectMeta: metav1.ObjectMeta{Labels: labels}, Spec: corev1.PodSpec{
 				Containers: []corev1.Container{{
 					Name: "fake", Image: pythonImage, Command: []string{"python", "-u", "/app/fake.py"},
-					Ports:        []corev1.ContainerPort{{ContainerPort: 8080}},
+					Ports: []corev1.ContainerPort{{ContainerPort: 8080}},
+					ReadinessProbe: &corev1.Probe{PeriodSeconds: 1, ProbeHandler: corev1.ProbeHandler{
+						HTTPGet: &corev1.HTTPGetAction{Path: "/", Port: intstr.FromInt32(8080)}}},
 					VolumeMounts: []corev1.VolumeMount{{Name: "app", MountPath: "/app"}},
 				}},
 				Volumes: []corev1.Volume{{Name: "app", VolumeSource: corev1.VolumeSource{

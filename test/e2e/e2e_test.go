@@ -26,9 +26,11 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -118,20 +120,7 @@ var _ = Describe("Residual access", Ordered, func() {
 	SetDefaultEventuallyTimeout(5 * time.Minute)
 	SetDefaultEventuallyPollingInterval(time.Second)
 
-	AfterEach(func() {
-		if !CurrentSpecReport().Failed() {
-			return
-		}
-		for _, args := range [][]string{
-			{"-n", systemNS, "logs", "-l", controllerSelector, "--tail", "200"},
-			{"-n", runNS, "get", "agents", "-o", "yaml"},
-			{"-n", runNS, "get", "events", "--sort-by=.lastTimestamp"},
-			{"-n", runNS, "logs", "-l", "batch.kubernetes.io/job-name", "--all-containers", "--prefix", "--tail", "50"},
-		} {
-			out, _ := utils.Run(exec.Command("kubectl", args...))
-			_, _ = fmt.Fprintln(GinkgoWriter, out)
-		}
-	})
+	AfterEach(dumpOnFailure)
 
 	It("runs the sample Agent to Succeeded and leaves no access", func() {
 		a := sampleAgent("normal", callsScript(3, 15))
@@ -179,19 +168,6 @@ var _ = Describe("Residual access", Ordered, func() {
 		expectSucceeded(a)
 	})
 
-	It("runs Claude Code through the gateway and leaves no access", func() {
-		a := harnessAgent("claude", "claude-code", mockModel, `claude -p 'Say hi.' --model "$ANTHROPIC_MODEL"`)
-		a.Spec.Env = map[string]string{"CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "1"}
-		expectHarnessRun(a)
-	})
-
-	// This is the only Codex run of the suite. The installer reads the GitHub API with no token,
-	// and that API has a low rate limit (#36).
-	It("runs Codex through the gateway and leaves no access", func() {
-		a := harnessAgent("codex", "codex", codexModel, codexScript)
-		expectHarnessRun(a)
-	})
-
 	It("stops a budget run with an overspend of not more than the largest call", func() {
 		a := sampleAgent("budget", budgetScript)
 		a.Spec.Budget = resource.MustParse("0.0001")
@@ -209,6 +185,28 @@ var _ = Describe("Residual access", Ordered, func() {
 			spend, budget, largest, a.Status.Usage.Calls)
 		Expect(spend).To(BeNumerically(">=", budget), "The gateway refused a call before the budget.")
 		Expect(spend-budget).To(BeNumerically("<=", largest), "The overspend is more than the largest call.")
+	})
+})
+
+// The harness runs check the residual access, the harness in the status and the key, and the
+// usage of each harness.
+var _ = Describe("Harness runs", Ordered, func() {
+	SetDefaultEventuallyTimeout(5 * time.Minute)
+	SetDefaultEventuallyPollingInterval(time.Second)
+
+	AfterEach(dumpOnFailure)
+
+	It("runs Claude Code through the gateway", func() {
+		a := harnessAgent("claude-run", "claude-code", mockModel, `claude -p 'Say hi.' --model "$ANTHROPIC_MODEL"`)
+		a.Spec.Env = map[string]string{"CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "1"}
+		expectHarnessRun(a)
+	})
+
+	// This is the only Codex run of the suite. The installer reads the GitHub API with no token,
+	// and that API has a low rate limit (#36).
+	It("runs Codex through the gateway", func() {
+		a := harnessAgent("codex-run", "codex", codexModel, codexScript)
+		expectHarnessRun(a)
 	})
 })
 
@@ -261,6 +259,23 @@ var _ = Describe("Metrics", func() {
 	})
 })
 
+// dumpOnFailure writes the controller log, the Agents, the events and the run logs if the spec
+// failed.
+func dumpOnFailure() {
+	if !CurrentSpecReport().Failed() {
+		return
+	}
+	for _, args := range [][]string{
+		{"-n", systemNS, "logs", "-l", controllerSelector, "--tail", "200"},
+		{"-n", runNS, "get", "agents", "-o", "yaml"},
+		{"-n", runNS, "get", "events", "--sort-by=.lastTimestamp"},
+		{"-n", runNS, "logs", "-l", "batch.kubernetes.io/job-name", "--all-containers", "--prefix", "--tail", "50"},
+	} {
+		out, _ := utils.Run(exec.Command("kubectl", args...))
+		_, _ = fmt.Fprintln(GinkgoWriter, out)
+	}
+}
+
 // sampleAgent reads config/samples/core_v1alpha1_agent.yaml and changes it to run script with the
 // mock model in runNS. The budget, the deadline and the rules stay as in the sample.
 func sampleAgent(name, script string) *corev1alpha1.Agent {
@@ -298,26 +313,33 @@ func expectHarnessRun(a *corev1alpha1.Agent) {
 	Expect(err).NotTo(HaveOccurred())
 	Expect(out).To(MatchRegexp(`harness-install: ` + h + ` [0-9]+\.[0-9]+\.[0-9]+ is in /koodam/bin`))
 
-	By("checking that kubectl get shows the harness")
-	out, err = utils.Run(exec.Command("kubectl", "-n", runNS, "get", "agent", a.Name, "--no-headers",
-		"-o", "custom-columns=HARNESS:.spec.harness.name"))
-	Expect(err).NotTo(HaveOccurred())
-	Expect(strings.TrimSpace(out)).To(Equal(h))
+	By("checking that the HARNESS column of kubectl get shows the harness")
 	out, err = utils.Run(exec.Command("kubectl", "-n", runNS, "get", "agent", a.Name))
 	Expect(err).NotTo(HaveOccurred())
-	Expect(out).To(And(ContainSubstring("HARNESS"), ContainSubstring(h)))
+	lines := strings.Split(strings.TrimSpace(out), "\n")
+	Expect(lines).To(HaveLen(2), "kubectl get did not show 1 Agent.")
+	// NAME, PHASE and MODEL come before HARNESS and are never empty, so the fields stay in line.
+	head, row := strings.Fields(lines[0]), strings.Fields(lines[1])
+	col := slices.Index(head, "HARNESS")
+	Expect(col).To(BeNumerically(">", 0), "kubectl get has no HARNESS column.")
+	Expect(len(row)).To(BeNumerically(">", col))
+	Expect(row[col]).To(Equal(h))
 
 	By("checking that the blocked key has the harness in its metadata")
 	info := keyInfo(a.Status.KeyHash)
 	Expect(info.Metadata["harness"]).To(Equal(h))
 	Expect(info.Blocked).To(BeTrue(), "The gateway did not block the key "+a.Status.KeyAlias+".")
 
-	By("checking the usage of the run")
+	// The usage is from the spend logs of the run key. A call to the model that did not go
+	// through the gateway with this key is not in it. Thus calls > 0 proves the gateway path.
+	By("checking the usage of the run key")
 	u := a.Status.Usage
 	_, _ = fmt.Fprintf(GinkgoWriter, "harness %s, key %s: calls %d, failed calls %d, tokens %d/%d, spend %s\n",
 		h, a.Status.KeyAlias, u.Calls, u.FailedCalls, u.InputTokens, u.OutputTokens, u.Spend)
 	Expect(u.Calls).To(BeNumerically(">", 0), "The gateway has no call of the "+h+" run.")
+	Expect(u.FailedCalls).To(BeZero(), "The gateway has failed calls of the "+h+" run.")
 	Expect(u.InputTokens).To(BeNumerically(">", 0), "The gateway has no input tokens of the "+h+" run.")
+	Expect(u.OutputTokens).To(BeNumerically(">", 0), "The gateway has no output tokens of the "+h+" run.")
 }
 
 // start makes the Agent, waits until the run is live, and gets the key and a ServiceAccount token.
@@ -368,8 +390,13 @@ func jobEnd(a *corev1alpha1.Agent) time.Time {
 }
 
 // expectSucceeded checks that the Agent is Succeeded, with the Revoked condition and the usage.
+// The controller writes the usage and the Revoked condition in the same status update, so the
+// test waits for the condition and then reads the usage.
 func expectSucceeded(a *corev1alpha1.Agent) {
-	Expect(k8s.Get(ctx, client.ObjectKeyFromObject(a), a)).To(Succeed())
+	Eventually(func() bool {
+		_ = k8s.Get(ctx, client.ObjectKeyFromObject(a), a)
+		return meta.IsStatusConditionTrue(a.Status.Conditions, "Revoked")
+	}, time.Minute).Should(BeTrue(), "The Agent has no true Revoked condition.")
 	Expect(a.Status.Phase).To(Equal(corev1alpha1.AgentSucceeded))
 	Expect(meta.IsStatusConditionTrue(a.Status.Conditions, "Revoked")).To(BeTrue())
 	Expect(a.Status.Usage).NotTo(BeNil())
@@ -488,7 +515,7 @@ type gatewayKey struct {
 
 // keyInfo reads the key with keyHash from the gateway with the master key.
 func keyInfo(keyHash string) gatewayKey {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, gatewayURL+"/key/info?key="+keyHash, nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, gatewayURL+"/key/info?key="+url.QueryEscape(keyHash), nil)
 	Expect(err).NotTo(HaveOccurred())
 	req.Header.Set("Authorization", "Bearer "+masterKey)
 	resp, err := httpClient.Do(req)
