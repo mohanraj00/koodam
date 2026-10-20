@@ -22,12 +22,14 @@ import (
 	"compress/gzip"
 	"context"
 	"crypto/sha256"
+	"encoding/base64"
 	"encoding/hex"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -62,26 +64,39 @@ func tgz(t *testing.T, name string, body []byte) []byte {
 	return buf.Bytes()
 }
 
-// vendor serves a Claude Code release 2.1.3 and a Codex release rust-v0.9.1.
+// vendor serves a Claude Code release 2.1.3, a Codex release rust-v0.9.1 and a Rekor log.
 type vendor struct {
 	latest     string
 	claude     []byte
 	claudeSum  string
 	codex      []byte
-	codexSum   string
-	codexTag   string
-	codexURL   string
+	codexBin   []byte
+	location   string
+	bundle     string
+	noBundle   bool
+	bundleSum  string
+	rekorSum   string
+	kind       string
 	status     int
 	requests   []string
 	srv        *httptest.Server
 	installDir string
 }
 
+const codexRel = "/dl/rust-v0.9.1/codex-x86_64-unknown-linux-musl"
+
+// entry returns a Rekor log entry in base64.
+func (v *vendor) entry(hash string) string {
+	return base64.StdEncoding.EncodeToString(fmt.Appendf(nil, `{"apiVersion":"0.0.1","kind":%q,`+
+		`"spec":{"data":{"hash":{"algorithm":"sha256","value":%q}}}}`, v.kind, hash))
+}
+
 func newVendor(t *testing.T) *vendor {
-	v := &vendor{latest: "2.1.3\n", claude: []byte("claude binary"), codexTag: "rust-v0.9.1"}
+	v := &vendor{latest: "2.1.3\n", claude: []byte("claude binary"), codexBin: []byte("codex binary"),
+		location: "https://github.com/openai/codex/releases/tag/rust-v0.9.1", kind: "hashedrekord"}
 	v.claudeSum = sum(v.claude)
-	v.codex = tgz(t, "codex-x86_64-unknown-linux-musl", []byte("codex binary"))
-	v.codexSum = "sha256:" + sum(v.codex)
+	v.codex = tgz(t, "codex-x86_64-unknown-linux-musl", v.codexBin)
+	v.bundleSum, v.rekorSum = sum(v.codexBin), sum(v.codexBin)
 	v.srv = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		v.requests = append(v.requests, r.URL.Path)
 		if v.status != 0 {
@@ -96,25 +111,41 @@ func newVendor(t *testing.T) *vendor {
 				`"linux-arm64-musl":{"checksum":%q}}}`, v.claudeSum, v.claudeSum)
 		case "/claude/2.1.3/linux-x64/claude", "/claude/2.1.3/linux-arm64-musl/claude":
 			_, _ = w.Write(v.claude)
-		case "/codex/latest", "/codex/tags/rust-v0.9.1":
-			_, _ = fmt.Fprintf(w, `{"tag_name":%q,"assets":[{"name":"codex-x86_64-unknown-linux-musl.zst"},`+
-				`{"name":"codex-x86_64-unknown-linux-musl.tar.gz","browser_download_url":%q,"digest":%q}]}`,
-				v.codexTag, v.codexURL, v.codexSum)
-		case "/dl/codex.tar.gz":
+		case "/gh/latest":
+			if v.location != "" {
+				w.Header().Set("Location", v.location)
+			}
+			w.WriteHeader(http.StatusFound)
+		case codexRel + ".sigstore":
+			if v.noBundle {
+				http.NotFound(w, r)
+				return
+			}
+			if v.bundle == "" {
+				v.bundle = fmt.Sprintf(`{"base64Signature":"x","cert":"x","rekorBundle":`+
+					`{"Payload":{"body":%q,"logIndex":42}}}`, v.entry(v.bundleSum))
+			}
+			_, _ = fmt.Fprint(w, v.bundle)
+		case codexRel + ".tar.gz":
 			_, _ = w.Write(v.codex)
+		case "/rekor/api/v1/log/entries":
+			if r.URL.Query().Get("logIndex") != "42" {
+				http.NotFound(w, r)
+				return
+			}
+			_, _ = fmt.Fprintf(w, `{"108e9186":{"body":%q,"logIndex":42}}`, v.entry(v.rekorSum))
 		default:
 			http.NotFound(w, r)
 		}
 	}))
 	t.Cleanup(v.srv.Close)
-	v.codexURL = v.srv.URL + "/dl/codex.tar.gz"
 	v.installDir = t.TempDir()
 	return v
 }
 
 func (v *vendor) install(arch, name, version, libc string) (string, error) {
-	in := &Installer{HTTP: v.srv.Client(), ClaudeBase: v.srv.URL + "/claude", CodexAPI: v.srv.URL + "/codex",
-		CodexDownload: v.srv.URL + "/dl/", Arch: arch}
+	in := &Installer{HTTP: v.srv.Client(), ClaudeBase: v.srv.URL + "/claude", CodexLatest: v.srv.URL + "/gh/latest",
+		CodexDownload: v.srv.URL + "/dl/", Rekor: v.srv.URL + "/rekor", Arch: arch}
 	return in.Install(context.Background(), name, version, libc, v.installDir)
 }
 
@@ -211,9 +242,12 @@ func TestCodex(t *testing.T) {
 		if err != nil || got != "0.9.1" {
 			t.Fatalf("install(%q) = %q, %v", version, got, err)
 		}
-		expectBinary(t, filepath.Join(v.installDir, "codex"), []byte("codex binary"))
+		expectBinary(t, filepath.Join(v.installDir, "codex"), v.codexBin)
 		if f := v.files(t); len(f) != 1 {
 			t.Fatalf("the install folder has %v, want only codex", f)
+		}
+		if version != "" && slices.Contains(v.requests, "/gh/latest") {
+			t.Fatal("a pinned version read /latest")
 		}
 	}
 }
@@ -224,13 +258,22 @@ func TestCodexBadRelease(t *testing.T) {
 		edit func(*vendor)
 		want string
 	}{
-		{"digest mismatch", func(v *vendor) { v.codexSum = "sha256:" + sum([]byte("x")) }, "sha256"},
-		{"no digest", func(v *vendor) { v.codexSum = "" }, "no sha256 digest"},
-		{"bad tag", func(v *vendor) { v.codexTag = "rust-v0.9.1-alpha" }, "not the expected version"},
-		{"no binary in the archive", func(v *vendor) {
-			v.codex = tgz(t, "other", []byte("x"))
-			v.codexSum = "sha256:" + sum(v.codex)
-		}, "no file codex-x86_64-unknown-linux-musl"},
+		{"wrong archive sha256", func(v *vendor) { v.bundleSum, v.rekorSum = sum([]byte("x")), sum([]byte("x")) },
+			"the sha256 of codex is"},
+		{"bundle hash mismatch with Rekor", func(v *vendor) { v.rekorSum = sum([]byte("x")) },
+			"the Rekor entry 42 has the sha256"},
+		{"missing bundle", func(v *vendor) { v.noBundle = true }, "codex 0.9.1 codex-x86_64-unknown-linux-musl"},
+		{"no log index", func(v *vendor) { v.bundle = `{"rekorBundle":{"Payload":{"body":""}}}` },
+			"no Rekor log index"},
+		{"not a hashedrekord", func(v *vendor) { v.kind = "intoto" }, "not a hashedrekord"},
+		{"a short sha256", func(v *vendor) { v.bundleSum = "abc" }, "not a hashedrekord"},
+		{"bad tag", func(v *vendor) { v.location += "-alpha" },
+			"not of the form rust-v1.2.3"},
+		{"bad Location path", func(v *vendor) { v.location = "https://github.com/openai/codex/releases" },
+			"not a redirect to a codex release tag"},
+		{"no Location", func(v *vendor) { v.location = "" }, "not a redirect"},
+		{"no binary in the archive", func(v *vendor) { v.codex = tgz(t, "other", []byte("x")) },
+			"no file codex-x86_64-unknown-linux-musl"},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			v := newVendor(t)
@@ -244,8 +287,8 @@ func TestCodexBadRelease(t *testing.T) {
 		})
 	}
 	v := newVendor(t)
-	if _, err := v.install(arm64, Codex, "", ""); err == nil || !strings.Contains(err.Error(), "no asset") {
-		t.Fatalf("install error = %v, want no asset", err)
+	if _, err := v.install(arm64, Codex, "", ""); err == nil || !strings.Contains(err.Error(), "aarch64") {
+		t.Fatalf("install error = %v, want no aarch64 bundle", err)
 	}
 	if _, err := v.install(amd64, "aider", "", ""); err == nil {
 		t.Fatal("an unknown harness did not fail")
@@ -263,15 +306,11 @@ func TestBadResponses(t *testing.T) {
 		{"a large latest file", ClaudeCode, func(v *vendor) { v.latest = strings.Repeat("9", 65) },
 			"larger than 64 bytes"},
 		{"a binary over the limit", ClaudeCode, func(*vendor) { maxBinary = 4 }, "larger than 4 bytes"},
-		{"an asset on a different host", Codex, func(v *vendor) { v.codexURL = "http://169.254.169.254/x" },
-			"is not at"},
 		{"a truncated archive", Codex, func(v *vendor) {
 			v.codex = v.codex[:len(v.codex)/2]
-			v.codexSum = "sha256:" + sum(v.codex)
 		}, "unexpected EOF"},
 		{"an empty binary", Codex, func(v *vendor) {
 			v.codex = tgz(t, "codex-x86_64-unknown-linux-musl", nil)
-			v.codexSum = "sha256:" + sum(v.codex)
 		}, "has 0 bytes"},
 	} {
 		t.Run(c.name, func(t *testing.T) {
