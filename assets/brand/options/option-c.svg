@@ -1,12 +1,12 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="Koodam mark, option C">
   <title>Koodam: a K with a cluster of hexagon pods at work in its open side</title>
   <defs><clipPath id="c"><rect x="0" y="6" width="64" height="52"/></clipPath></defs>
-  <g stroke="#16213A" stroke-width="12" clip-path="url(#c)">
+  <g stroke="#16213A" stroke-width="8" clip-path="url(#c)">
     <path d="M14 0 V64"/>
     <path d="M14 42 L56 0"/>
-    <path d="M26 32 L62 68"/>
+    <path d="M24 32 L58 66"/>
   </g>
-  <polygon points="47.00,31.00 43.54,29.00 43.54,25.00 47.00,23.00 50.46,25.00 50.46,29.00" fill="#16213A"/>
-  <polygon points="54.60,31.00 51.14,29.00 51.14,25.00 54.60,23.00 58.06,25.00 58.06,29.00" fill="#F5A524"/>
-  <polygon points="50.80,37.60 47.34,35.60 47.34,31.60 50.80,29.60 54.26,31.60 54.26,35.60" fill="#16213A"/>
+  <polygon points="44.00,32.70 39.93,30.35 39.93,25.65 44.00,23.30 48.07,25.65 48.07,30.35" fill="#16213A"/>
+  <polygon points="52.66,32.70 48.59,30.35 48.59,25.65 52.66,23.30 56.73,25.65 56.73,30.35" fill="#F5A524"/>
+  <polygon points="48.33,40.20 44.26,37.85 44.26,33.15 48.33,30.80 52.40,33.15 52.40,37.85" fill="#16213A"/>
 </svg>
