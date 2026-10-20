@@ -37,6 +37,9 @@ import (
 	corev1alpha1 "github.com/mohanraj00/koodam/api/v1alpha1"
 )
 
+// version is the version of the CLI. GoReleaser sets it with -X main.version.
+var version = "dev"
+
 // env is the connection to the cluster that each command uses.
 type env struct {
 	kube      client.Client
@@ -63,7 +66,9 @@ func newRoot(conn connect) *cobra.Command {
 		Use:          "koodam",
 		Short:        "Run an Agent and read its phase, log and spend",
 		SilenceUsage: true,
+		Version:      version,
 	}
+	root.SetVersionTemplate("koodam {{.Version}}\n")
 	rules := clientcmd.NewDefaultClientConfigLoadingRules()
 	overrides := &clientcmd.ConfigOverrides{}
 	root.PersistentFlags().StringVar(&rules.ExplicitPath, "kubeconfig", "", "path to the kubeconfig file")
@@ -72,8 +77,21 @@ func newRoot(conn connect) *cobra.Command {
 	if conn == nil {
 		conn = func() (*env, error) { return kubeEnv(rules, overrides) }
 	}
-	root.AddCommand(runCmd(conn), getCmd(conn, false), getCmd(conn, true), logsCmd(conn), deleteCmd(conn))
+	root.AddCommand(runCmd(conn), getCmd(conn, false), getCmd(conn, true), logsCmd(conn), deleteCmd(conn), versionCmd())
 	return root
+}
+
+// versionCmd prints the version of the CLI. It does not connect to the cluster.
+func versionCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "version",
+		Short: "Show the version of the CLI",
+		Args:  cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			_, err := fmt.Fprintf(cmd.OutOrStdout(), "koodam %s\n", version)
+			return err
+		},
+	}
 }
 
 func kubeEnv(rules *clientcmd.ClientConfigLoadingRules, overrides *clientcmd.ConfigOverrides) (*env, error) {

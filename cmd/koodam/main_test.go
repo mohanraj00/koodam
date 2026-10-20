@@ -120,6 +120,31 @@ func runWith(t *testing.T, kube client.WithWatch, cs *kubefake.Clientset, args .
 	return out.String(), err
 }
 
+// TestVersion checks that "version" and "--version" print the version and do not connect.
+func TestVersion(t *testing.T) {
+	old := version
+	version = "1.2.3"
+	t.Cleanup(func() { version = old })
+	want := "koodam 1.2.3\n"
+	for _, args := range [][]string{{"version"}, {"--version"}} {
+		t.Run(strings.Join(args, " "), func(t *testing.T) {
+			root := newRoot(func() (*env, error) {
+				t.Fatalf("%v connected to the cluster", args)
+				return nil, nil
+			})
+			out := &bytes.Buffer{}
+			root.SetOut(out)
+			root.SetArgs(args)
+			if err := root.Execute(); err != nil {
+				t.Fatalf("%v: %v", args, err)
+			}
+			if out.String() != want {
+				t.Errorf("%v: got %q, want %q", args, out.String(), want)
+			}
+		})
+	}
+}
+
 func newKube(t *testing.T, funcs *interceptor.Funcs, objs ...client.Object) client.WithWatch {
 	t.Helper()
 	scheme := runtime.NewScheme()
