@@ -378,12 +378,19 @@ func timeText(t *metav1.Time) string {
 	return t.UTC().Format(time.RFC3339)
 }
 
+func harnessText(h *corev1alpha1.HarnessSpec) string {
+	if h == nil {
+		return "-"
+	}
+	return h.Name
+}
+
 func printAgents(out io.Writer, agents []corev1alpha1.Agent, spend bool) {
 	w := tabwriter.NewWriter(out, 0, 4, 2, ' ', 0)
 	if spend {
 		_, _ = fmt.Fprintln(w, "NAME\tPHASE\tBUDGET\tSPEND\tCALLS\tFAILED\tINPUT\tOUTPUT")
 	} else {
-		_, _ = fmt.Fprintln(w, "NAME\tPHASE\tMODEL\tBUDGET\tSPEND\tSTARTED\tCOMPLETED\tKEY ALIAS")
+		_, _ = fmt.Fprintln(w, "NAME\tPHASE\tMODEL\tHARNESS\tBUDGET\tSPEND\tSTARTED\tCOMPLETED\tKEY ALIAS")
 	}
 	for _, a := range agents {
 		u := a.Status.Usage
@@ -394,8 +401,8 @@ func printAgents(out io.Writer, agents []corev1alpha1.Agent, spend bool) {
 			_, _ = fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%d\t%d\t%d\t%d\n", a.Name, a.Status.Phase,
 				a.Spec.Budget.String(), u.Spend, u.Calls, u.FailedCalls, u.InputTokens, u.OutputTokens)
 		} else {
-			_, _ = fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n", a.Name, a.Status.Phase, a.Spec.Model,
-				a.Spec.Budget.String(), u.Spend, timeText(a.Status.StartedAt), timeText(a.Status.CompletedAt),
+			_, _ = fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n", a.Name, a.Status.Phase, a.Spec.Model,
+				harnessText(a.Spec.Harness), a.Spec.Budget.String(), u.Spend, timeText(a.Status.StartedAt), timeText(a.Status.CompletedAt),
 				a.Status.KeyAlias)
 		}
 	}

@@ -332,12 +332,14 @@ func (r *AgentReconciler) provision(ctx context.Context, a *corev1alpha1.Agent) 
 			return err
 		}
 	}
+	md := map[string]string{"uid": string(a.UID), "namespace": a.Namespace, "agent": a.Name, "user": a.Spec.User}
+	if a.Spec.Harness != nil {
+		// The gateway can then group the spend by harness.
+		md["harness"] = a.Spec.Harness.Name
+	}
 	err = r.Gateway.CreateKey(ctx, gateway.KeySpec{
 		Value: key, Alias: alias, Model: a.Spec.Model, Budget: a.Spec.Budget.AsApproximateFloat64(),
-		TTL: time.Duration(a.Spec.DeadlineSeconds)*time.Second + r.Grace,
-		Metadata: map[string]string{
-			"uid": string(a.UID), "namespace": a.Namespace, "agent": a.Name, "user": a.Spec.User,
-		},
+		TTL: time.Duration(a.Spec.DeadlineSeconds)*time.Second + r.Grace, Metadata: md,
 	})
 	if err != nil {
 		return err
