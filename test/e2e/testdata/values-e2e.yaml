@@ -1,0 +1,15 @@
+# The e2e tests add this file after values-bundled.yaml. The model "fake-responses" sends the
+# calls to the fake upstream in fake_responses.py. Codex uses only the Responses API stream, and
+# the LiteLLM mock_response cannot stream it. The costs are strings, so that Helm keeps the
+# number format.
+gateway:
+  bundled:
+    litellm:
+      modelList:
+      - model_name: fake-responses
+        litellm_params:
+          model: openai/fake-responses
+          api_base: http://fake-upstream.koodam-system.svc:8080/v1
+          api_key: not-used
+          input_cost_per_token: "0.000001"
+          output_cost_per_token: "0.000002"

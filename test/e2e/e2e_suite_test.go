@@ -25,7 +25,9 @@ import (
 	"encoding/hex"
 	"fmt"
 	"net/http"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"testing"
@@ -33,9 +35,11 @@ import (
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
+	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/util/intstr"
 	"k8s.io/client-go/kubernetes"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
 	"k8s.io/client-go/rest"
@@ -57,6 +61,10 @@ const (
 	gatewayPort = "14000"
 	// callTimeout is the limit for each network call of the test.
 	callTimeout = 10 * time.Second
+	// fakeUpstream is the name of the fake upstream model. testdata/values-e2e.yaml has its URL.
+	fakeUpstream = "fake-upstream"
+	// pythonImage runs testdata/fake_responses.py.
+	pythonImage = "docker.io/library/python:3.13-alpine"
 )
 
 var (
@@ -115,10 +123,14 @@ var _ = BeforeSuite(func() {
 	s.StringData = map[string]string{"master-key": masterKey}
 	Expect(k8s.Create(ctx, s)).To(Succeed(), "Failed to make the master key Secret")
 
+	By("making the fake upstream model for the Codex calls")
+	makeFakeUpstream()
+
 	By("installing the chart with the bundled gateway")
 	i := strings.LastIndex(managerImage, ":")
 	_, err = utils.Run(exec.Command("helm", "upgrade", "--install", release, "charts/koodam",
 		"-n", systemNS, "-f", "charts/koodam/values-bundled.yaml",
+		"-f", "test/e2e/testdata/values-e2e.yaml",
 		"--set", "image.repository="+managerImage[:i], "--set", "image.tag="+managerImage[i+1:],
 		"--set", "metrics.enabled=true", "--set", "jobTTLSeconds="+strconv.Itoa(jobTTL),
 		"--wait", "--timeout", "10m"))
@@ -135,6 +147,40 @@ var _ = BeforeSuite(func() {
 		return resp.StatusCode
 	}, 2*time.Minute, time.Second).Should(Equal(http.StatusOK))
 })
+
+// makeFakeUpstream runs testdata/fake_responses.py in systemNS behind the Service fakeUpstream.
+func makeFakeUpstream() {
+	dir, err := utils.GetProjectDir()
+	Expect(err).NotTo(HaveOccurred())
+	src, err := os.ReadFile(filepath.Join(dir, "test", "e2e", "testdata", "fake_responses.py"))
+	Expect(err).NotTo(HaveOccurred())
+	labels := map[string]string{"app": fakeUpstream}
+	om := metav1.ObjectMeta{Name: fakeUpstream, Namespace: systemNS, Labels: labels}
+	objs := []client.Object{
+		&corev1.ConfigMap{ObjectMeta: om, Data: map[string]string{"fake.py": string(src)}},
+		&appsv1.Deployment{ObjectMeta: om, Spec: appsv1.DeploymentSpec{
+			Selector: &metav1.LabelSelector{MatchLabels: labels},
+			Template: corev1.PodTemplateSpec{ObjectMeta: metav1.ObjectMeta{Labels: labels}, Spec: corev1.PodSpec{
+				Containers: []corev1.Container{{
+					Name: "fake", Image: pythonImage, Command: []string{"python", "-u", "/app/fake.py"},
+					Ports:        []corev1.ContainerPort{{ContainerPort: 8080}},
+					VolumeMounts: []corev1.VolumeMount{{Name: "app", MountPath: "/app"}},
+				}},
+				Volumes: []corev1.Volume{{Name: "app", VolumeSource: corev1.VolumeSource{
+					ConfigMap: &corev1.ConfigMapVolumeSource{LocalObjectReference: corev1.LocalObjectReference{
+						Name: fakeUpstream}}}}},
+			}},
+		}},
+		&corev1.Service{ObjectMeta: om, Spec: corev1.ServiceSpec{Selector: labels,
+			Ports: []corev1.ServicePort{{Port: 8080, TargetPort: intstr.FromInt32(8080)}}}},
+	}
+	for _, o := range objs {
+		Expect(client.IgnoreAlreadyExists(k8s.Create(ctx, o))).To(Succeed())
+	}
+	_, err = utils.Run(exec.Command("kubectl", "-n", systemNS, "rollout", "status",
+		"deployment/"+fakeUpstream, "--timeout", "5m"))
+	Expect(err).NotTo(HaveOccurred(), "The fake upstream did not start.")
+}
 
 // forward starts "kubectl port-forward" to the Service svc in systemNS. The caller stops it.
 func forward(svc, ports string) *exec.Cmd {

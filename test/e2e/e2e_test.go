@@ -60,6 +60,10 @@ const (
 	curlImage = "docker.io/curlimages/curl:8.11.1"
 	// mockModel is the bundled mock model. Its calls have a spend that is more than zero.
 	mockModel = "mock-1"
+	// harnessImage runs the harness Agents. It has glibc for the Claude Code build.
+	harnessImage = "docker.io/library/debian:bookworm-slim"
+	// codexModel sends the calls to the fake upstream. See testdata/values-e2e.yaml.
+	codexModel = "fake-responses"
 	// residualWait is the time after the end of a run when the test probes the credentials.
 	residualWait = 30 * time.Second
 	// probeWindow is the time after residualWait in which all the probes must complete.
@@ -97,6 +101,12 @@ c=$(` + call + `)
 case "$c" in 200) sleep ` + pause + ` ;; 4*) exit 0 ;; *) exit 1 ;; esac
 done
 exit 1`
+
+// codexScript runs Codex with a model provider for the gateway. Codex does not read
+// OPENAI_BASE_URL, and it uses only the Responses API.
+const codexScript = `cd /tmp && codex exec --skip-git-repo-check -m "$ANTHROPIC_MODEL" -c model_provider=koodam ` +
+	`-c "model_providers.koodam={name=\"koodam\",base_url=\"$OPENAI_BASE_URL\",env_key=\"OPENAI_API_KEY\",` +
+	`wire_api=\"responses\"}" 'Say hi.' </dev/null`
 
 // run has the credentials of a live run. The test never prints them.
 type run struct {
@@ -169,18 +179,17 @@ var _ = Describe("Residual access", Ordered, func() {
 		expectSucceeded(a)
 	})
 
-	It("installs the latest Codex in the run pod and runs it", func() {
-		a := sampleAgent("harness",
-			`[ "$(command -v codex)" = /koodam/bin/codex ] && codex --version`)
-		a.Spec.Harness = &corev1alpha1.HarnessSpec{Name: "codex"}
-		r := start(a)
-		expectNoAccess(a, r, jobEnd(a))
-		expectSucceeded(a)
+	It("runs Claude Code through the gateway and leaves no access", func() {
+		a := harnessAgent("claude", "claude-code", mockModel, `claude -p 'Say hi.' --model "$ANTHROPIC_MODEL"`)
+		a.Spec.Env = map[string]string{"CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "1"}
+		expectHarnessRun(a)
+	})
 
-		By("checking that the installer checked and installed a version")
-		out, err := utils.Run(exec.Command("kubectl", "-n", runNS, "logs", "job/"+a.Status.Job, "-c", "harness"))
-		Expect(err).NotTo(HaveOccurred())
-		Expect(out).To(MatchRegexp(`harness-install: codex [0-9]+\.[0-9]+\.[0-9]+ is in /koodam/bin`))
+	// This is the only Codex run of the suite. The installer reads the GitHub API with no token,
+	// and that API has a low rate limit (#36).
+	It("runs Codex through the gateway and leaves no access", func() {
+		a := harnessAgent("codex", "codex", codexModel, codexScript)
+		expectHarnessRun(a)
 	})
 
 	It("stops a budget run with an overspend of not more than the largest call", func() {
@@ -266,6 +275,49 @@ func sampleAgent(name, script string) *corev1alpha1.Agent {
 	a.Spec.Image, a.Spec.Model = curlImage, mockModel
 	a.Spec.Command = []string{"sh", "-c", script}
 	return a
+}
+
+// harnessAgent is a sample Agent that installs the latest version of harness and runs script.
+func harnessAgent(name, harness, model, script string) *corev1alpha1.Agent {
+	a := sampleAgent(name, script)
+	a.Spec.Image, a.Spec.Model = harnessImage, model
+	a.Spec.Harness = &corev1alpha1.HarnessSpec{Name: harness}
+	return a
+}
+
+// expectHarnessRun runs the harness Agent a to Succeeded. It checks the residual access, the
+// installer log, the harness in "kubectl get" and in the key metadata, and the usage.
+func expectHarnessRun(a *corev1alpha1.Agent) {
+	h := a.Spec.Harness.Name
+	r := start(a)
+	expectNoAccess(a, r, jobEnd(a))
+	expectSucceeded(a)
+
+	By("checking that the installer checked and installed a version")
+	out, err := utils.Run(exec.Command("kubectl", "-n", runNS, "logs", "job/"+a.Status.Job, "-c", "harness"))
+	Expect(err).NotTo(HaveOccurred())
+	Expect(out).To(MatchRegexp(`harness-install: ` + h + ` [0-9]+\.[0-9]+\.[0-9]+ is in /koodam/bin`))
+
+	By("checking that kubectl get shows the harness")
+	out, err = utils.Run(exec.Command("kubectl", "-n", runNS, "get", "agent", a.Name, "--no-headers",
+		"-o", "custom-columns=HARNESS:.spec.harness.name"))
+	Expect(err).NotTo(HaveOccurred())
+	Expect(strings.TrimSpace(out)).To(Equal(h))
+	out, err = utils.Run(exec.Command("kubectl", "-n", runNS, "get", "agent", a.Name))
+	Expect(err).NotTo(HaveOccurred())
+	Expect(out).To(And(ContainSubstring("HARNESS"), ContainSubstring(h)))
+
+	By("checking that the blocked key has the harness in its metadata")
+	info := keyInfo(a.Status.KeyHash)
+	Expect(info.Metadata["harness"]).To(Equal(h))
+	Expect(info.Blocked).To(BeTrue(), "The gateway did not block the key "+a.Status.KeyAlias+".")
+
+	By("checking the usage of the run")
+	u := a.Status.Usage
+	_, _ = fmt.Fprintf(GinkgoWriter, "harness %s, key %s: calls %d, failed calls %d, tokens %d/%d, spend %s\n",
+		h, a.Status.KeyAlias, u.Calls, u.FailedCalls, u.InputTokens, u.OutputTokens, u.Spend)
+	Expect(u.Calls).To(BeNumerically(">", 0), "The gateway has no call of the "+h+" run.")
+	Expect(u.InputTokens).To(BeNumerically(">", 0), "The gateway has no input tokens of the "+h+" run.")
 }
 
 // start makes the Agent, waits until the run is live, and gets the key and a ServiceAccount token.
@@ -426,6 +478,28 @@ func canListPods(c context.Context, token string) (bool, error) {
 		return false, err
 	}
 	return res.Status.Allowed, nil
+}
+
+// gatewayKey is the part of the gateway /key/info answer that the test reads.
+type gatewayKey struct {
+	Metadata map[string]any `json:"metadata"`
+	Blocked  bool           `json:"blocked"`
+}
+
+// keyInfo reads the key with keyHash from the gateway with the master key.
+func keyInfo(keyHash string) gatewayKey {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, gatewayURL+"/key/info?key="+keyHash, nil)
+	Expect(err).NotTo(HaveOccurred())
+	req.Header.Set("Authorization", "Bearer "+masterKey)
+	resp, err := httpClient.Do(req)
+	Expect(err).NotTo(HaveOccurred(), "The gateway did not answer.")
+	defer func() { _ = resp.Body.Close() }()
+	Expect(resp.StatusCode).To(Equal(http.StatusOK))
+	var ki struct {
+		Info gatewayKey `json:"info"`
+	}
+	Expect(json.NewDecoder(resp.Body).Decode(&ki)).To(Succeed())
+	return ki.Info
 }
 
 // largestCall returns the largest spend of one call with the key, from the gateway spend logs.
