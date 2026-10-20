@@ -19,6 +19,7 @@ package harness
 import (
 	"archive/tar"
 	"bytes"
+	"cmp"
 	"compress/gzip"
 	"context"
 	"crypto/sha256"
@@ -66,18 +67,23 @@ func tgz(t *testing.T, name string, body []byte) []byte {
 
 // vendor serves a Claude Code release 2.1.3, a Codex release rust-v0.9.1 and a Rekor log.
 type vendor struct {
-	latest     string
-	claude     []byte
-	claudeSum  string
-	codex      []byte
-	codexBin   []byte
-	location   string
-	bundle     string
-	noBundle   bool
-	bundleSum  string
-	rekorSum   string
-	kind       string
-	status     int
+	latest    string
+	claude    []byte
+	claudeSum string
+	codex     []byte
+	codexBin  []byte
+	location  string
+	bundle    string
+	noBundle  bool
+	bundleSum string
+	rekorSum  string
+	kind      string
+	status    int
+	// latestStatus and archiveStatus replace the usual status of /gh/latest and the archive.
+	latestStatus  int
+	archiveStatus int
+	// rekor replaces the Rekor response. %[1]s in it is the entry with rekorSum.
+	rekor      string
 	requests   []string
 	srv        *httptest.Server
 	installDir string
@@ -115,7 +121,7 @@ func newVendor(t *testing.T) *vendor {
 			if v.location != "" {
 				w.Header().Set("Location", v.location)
 			}
-			w.WriteHeader(http.StatusFound)
+			w.WriteHeader(cmp.Or(v.latestStatus, http.StatusFound))
 		case codexRel + ".sigstore":
 			if v.noBundle {
 				http.NotFound(w, r)
@@ -127,13 +133,17 @@ func newVendor(t *testing.T) *vendor {
 			}
 			_, _ = fmt.Fprint(w, v.bundle)
 		case codexRel + ".tar.gz":
+			if v.archiveStatus != 0 {
+				w.WriteHeader(v.archiveStatus)
+				return
+			}
 			_, _ = w.Write(v.codex)
 		case "/rekor/api/v1/log/entries":
 			if r.URL.Query().Get("logIndex") != "42" {
 				http.NotFound(w, r)
 				return
 			}
-			_, _ = fmt.Fprintf(w, `{"108e9186":{"body":%q,"logIndex":42}}`, v.entry(v.rekorSum))
+			_, _ = fmt.Fprintf(w, cmp.Or(v.rekor, `{"108e9186":{"body":%[1]q,"logIndex":42}}`), v.entry(v.rekorSum))
 		default:
 			http.NotFound(w, r)
 		}
@@ -258,7 +268,7 @@ func TestCodexBadRelease(t *testing.T) {
 		edit func(*vendor)
 		want string
 	}{
-		{"wrong archive sha256", func(v *vendor) { v.bundleSum, v.rekorSum = sum([]byte("x")), sum([]byte("x")) },
+		{"wrong binary sha256", func(v *vendor) { v.bundleSum, v.rekorSum = sum([]byte("x")), sum([]byte("x")) },
 			"the sha256 of codex is"},
 		{"bundle hash mismatch with Rekor", func(v *vendor) { v.rekorSum = sum([]byte("x")) },
 			"the Rekor entry 42 has the sha256"},
@@ -267,6 +277,14 @@ func TestCodexBadRelease(t *testing.T) {
 			"no Rekor log index"},
 		{"an intoto entry", func(v *vendor) { v.kind = "intoto" }, `kind "intoto"`},
 		{"a short sha256", func(v *vendor) { v.bundleSum = "abc" }, "not a hashedrekord"},
+		{"no Rekor entry", func(v *vendor) { v.rekor = `{}%.0[1]s` }, "0 entries for the log index 42"},
+		{"2 Rekor entries", func(v *vendor) { v.rekor = `{"a":{"body":%[1]q},"b":{"body":%[1]q}}` },
+			"2 entries for the log index 42"},
+		{"latest gives 200", func(v *vendor) { v.latestStatus = http.StatusOK }, "200 OK is not"},
+		{"latest gives 500", func(v *vendor) { v.latestStatus = http.StatusInternalServerError },
+			"500 Internal Server Error is not"},
+		{"archive gives 404", func(v *vendor) { v.archiveStatus = http.StatusNotFound }, "404"},
+		{"archive gives 500", func(v *vendor) { v.archiveStatus = http.StatusInternalServerError }, "500"},
 		{"bad tag", func(v *vendor) { v.location += "-alpha" },
 			"not of the form rust-v1.2.3"},
 		{"bad Location path", func(v *vendor) { v.location = "https://github.com/openai/codex/releases" },

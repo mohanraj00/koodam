@@ -188,7 +188,10 @@ func (in *Installer) codexLatest(ctx context.Context) (string, error) {
 // codexSum reads the sha256 of the codex binary from the cosign bundle at url. The bundle has the
 // Rekor log entry of the signature. The Rekor log at in.Rekor is not on GitHub, so codexSum also
 // reads the entry from Rekor and requires the same sha256. This gives a second source for the sum.
-// codexSum does not verify the signature or the certificate of the bundle.
+// Trust boundary: the Rekor check shows only that the sha256 is in the public log at that index.
+// Anyone can write to Rekor. codexSum does not verify the signature, the certificate identity or
+// the signed entry timestamp. Thus a party that controls the bundle and the archive can pass the
+// check. Issue #47 adds these checks.
 func (in *Installer) codexSum(ctx context.Context, url string) (string, error) {
 	b, err := in.get(ctx, url, 1<<20)
 	if err != nil {
