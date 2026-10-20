@@ -21,8 +21,8 @@ env:
   CHART_REPO: oci://ghcr.io/mohanraj00/charts
 
 jobs:
+  # The dry run also runs on a tag. The publish jobs start only when it passes.
   dry-run:
-    if: github.event_name != 'push'
     permissions:
       contents: read
     name: Dry run (no publish)
@@ -79,6 +79,7 @@ jobs:
           retention-days: 7
 
   cli:
+    needs: dry-run
     if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
     permissions:
       # GoReleaser makes the GitHub release and uploads the binaries and checksums.txt to it.
@@ -107,6 +108,7 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
   chart:
+    needs: dry-run
     if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
     permissions:
       contents: read
@@ -150,6 +152,6 @@ jobs:
           REGISTRY_USER: ${{ github.actor }}
           REGISTRY_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
+          trap 'helm registry logout ghcr.io' EXIT
           printf '%s' "$REGISTRY_TOKEN" | helm registry login ghcr.io --username "$REGISTRY_USER" --password-stdin
           helm push "dist/chart/koodam-$VERSION.tgz" "$CHART_REPO"
-          helm registry logout ghcr.io
