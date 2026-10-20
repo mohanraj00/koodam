@@ -24,6 +24,7 @@ import (
 	"reflect"
 	"slices"
 	"strconv"
+	"strings"
 	"time"
 
 	batchv1 "k8s.io/api/batch/v1"
@@ -44,6 +45,7 @@ import (
 
 	corev1alpha1 "github.com/mohanraj00/koodam/api/v1alpha1"
 	"github.com/mohanraj00/koodam/internal/gateway"
+	"github.com/mohanraj00/koodam/internal/harness"
 )
 
 const (
@@ -53,6 +55,8 @@ const (
 	agentLabel = "koodam.dev/agent"
 	// keyField is the Secret field with the key value.
 	keyField = "ANTHROPIC_AUTH_TOKEN"
+	// openAIKeyField is the Secret field with the key value for Codex.
+	openAIKeyField = "OPENAI_API_KEY"
 
 	// DefaultJobTTLSeconds is the default time that the controller keeps a run Job after it ends (24 h).
 	DefaultJobTTLSeconds = 86400
@@ -352,7 +356,7 @@ func (r *AgentReconciler) provision(ctx context.Context, a *corev1alpha1.Agent) 
 			RoleRef:  rbacv1.RoleRef{APIGroup: rbacv1.GroupName, Kind: "Role", Name: name},
 			Subjects: []rbacv1.Subject{{Kind: rbacv1.ServiceAccountKind, Name: name, Namespace: a.Namespace}},
 		},
-		runJob(a, r.InstallerImage),
+		runJob(a, r.InstallerImage, r.GatewayURL),
 	}
 	for _, o := range objs {
 		err := r.Create(ctx, o)
@@ -390,13 +394,13 @@ func (r *AgentReconciler) secret(a *corev1alpha1.Agent, key string) *corev1.Secr
 		"ANTHROPIC_BASE_URL": r.GatewayURL, keyField: key, "ANTHROPIC_MODEL": m,
 		"ANTHROPIC_DEFAULT_HAIKU_MODEL": m, "ANTHROPIC_DEFAULT_SONNET_MODEL": m,
 		"ANTHROPIC_DEFAULT_OPUS_MODEL": m, "ANTHROPIC_SMALL_FAST_MODEL": m, "CLAUDE_CODE_SUBAGENT_MODEL": m,
-		"OPENAI_BASE_URL": r.GatewayURL + "/v1", "OPENAI_API_KEY": key,
+		"OPENAI_BASE_URL": r.GatewayURL + "/v1", openAIKeyField: key,
 	}}
 }
 
 // runJob makes the run Job. The Job has no ttlSecondsAfterFinished. If Kubernetes deletes the Job
 // while the controller is down, the result of the run is lost. Thus deleteEndedJob deletes it.
-func runJob(a *corev1alpha1.Agent, installerImage string) *batchv1.Job {
+func runJob(a *corev1alpha1.Agent, installerImage, gatewayURL string) *batchv1.Job {
 	name := runName(a)
 	env := make([]corev1.EnvVar, 0, len(a.Spec.Env)+1)
 	for k, v := range a.Spec.Env {
@@ -411,17 +415,66 @@ func runJob(a *corev1alpha1.Agent, installerImage string) *batchv1.Job {
 				LocalObjectReference: corev1.LocalObjectReference{Name: name}}}},
 		}},
 	}
+	tmpl := metav1.ObjectMeta{Labels: map[string]string{agentLabel: a.Name}}
 	if h := a.Spec.Harness; h != nil {
 		addHarness(&pod, h, installerImage)
+		if h.Name == harness.Codex {
+			tmpl.Annotations = map[string]string{codexConfigAnnotation: codexConfig(gatewayURL, a.Spec.Model)}
+			addCodexConfig(&pod)
+		}
 	}
 	return &batchv1.Job{ObjectMeta: runMeta(a), Spec: batchv1.JobSpec{
 		BackoffLimit:          new(int32(0)),
 		ActiveDeadlineSeconds: new(a.Spec.DeadlineSeconds),
-		Template: corev1.PodTemplateSpec{
-			ObjectMeta: metav1.ObjectMeta{Labels: map[string]string{agentLabel: a.Name}},
-			Spec:       pod,
-		},
+		Template:              corev1.PodTemplateSpec{ObjectMeta: tmpl, Spec: pod},
 	}}
+}
+
+// codexConfigPath is the system config file of Codex. A config.toml in CODEX_HOME can change it.
+const codexConfigPath = "/etc/codex/config.toml"
+
+// codexConfigAnnotation is the pod annotation with the Codex config. It holds no credential.
+const codexConfigAnnotation = "koodam.dev/codex-config"
+
+// codexConfig is the Codex config for the gateway. Codex does not read OPENAI_BASE_URL, and it
+// supports only the Responses API. The config has the name of the key env, not the key value.
+func codexConfig(gatewayURL, model string) string {
+	return "model = " + tomlString(model) + "\nmodel_provider = \"koodam\"\n\n" +
+		"[model_providers.koodam]\nname = \"koodam\"\nbase_url = " + tomlString(strings.TrimSuffix(gatewayURL, "/")+"/v1") + "\n" +
+		"env_key = " + tomlString(openAIKeyField) + "\nwire_api = \"responses\"\n"
+}
+
+// tomlString quotes s as a TOML basic string.
+func tomlString(s string) string {
+	var b strings.Builder
+	b.WriteByte('"')
+	for _, c := range s {
+		switch {
+		case c == '"' || c == '\\':
+			b.WriteByte('\\')
+			b.WriteRune(c)
+		case c < 0x20 || c == 0x7f:
+			fmt.Fprintf(&b, "\\u%04X", c)
+		default:
+			b.WriteRune(c)
+		}
+	}
+	b.WriteByte('"')
+	return b.String()
+}
+
+// addCodexConfig gives the pod annotation with the Codex config to the agent container as the
+// file codexConfigPath. A downward API volume does this with no new object and no RBAC verb.
+func addCodexConfig(pod *corev1.PodSpec) {
+	const vol, file = "codex-config", "config.toml"
+	pod.Volumes = append(pod.Volumes, corev1.Volume{Name: vol, VolumeSource: corev1.VolumeSource{
+		DownwardAPI: &corev1.DownwardAPIVolumeSource{Items: []corev1.DownwardAPIVolumeFile{{Path: file,
+			FieldRef: &corev1.ObjectFieldSelector{
+				FieldPath: "metadata.annotations['" + codexConfigAnnotation + "']"}}}}}})
+	// The subPath mounts only the file, so the other files of /etc/codex in the image stay.
+	c := &pod.Containers[0]
+	c.VolumeMounts = append(c.VolumeMounts, corev1.VolumeMount{Name: vol, MountPath: codexConfigPath,
+		SubPath: file, ReadOnly: true})
 }
 
 // harnessDir is the folder of the harness binary in the run pod.

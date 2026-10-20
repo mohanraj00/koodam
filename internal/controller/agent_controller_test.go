@@ -316,6 +316,52 @@ var _ = Describe("Agent Controller", func() {
 			{Name: pathEnv, Value: "/opt/bin:/koodam/bin"}}))
 	})
 
+	It("gives Codex a model provider for the gateway", func() {
+		setHarness(&corev1alpha1.HarnessSpec{Name: codexName}, nil)
+		r := newReconciler()
+		r.InstallerImage = installerImage
+		reconcileOnce(r)
+		job := &batchv1.Job{}
+		Expect(exists(job)).To(BeTrue())
+		cfg := job.Spec.Template.Annotations[codexConfigAnnotation]
+		Expect(cfg).To(Equal(`model = "local-agent"
+model_provider = "koodam"
+
+[model_providers.koodam]
+name = "koodam"
+base_url = "http://gw.test:4000/v1"
+env_key = "OPENAI_API_KEY"
+wire_api = "responses"
+`))
+		Expect(cfg).NotTo(ContainSubstring(gw.created[0].Value), "the config has the env name, not the key")
+		pod := job.Spec.Template.Spec
+		Expect(pod.Volumes).To(HaveLen(2))
+		v := pod.Volumes[1]
+		Expect(v.DownwardAPI).NotTo(BeNil())
+		Expect(v.DownwardAPI.Items).To(HaveLen(1))
+		Expect(v.DownwardAPI.Items[0].Path).To(Equal("config.toml"))
+		Expect(v.DownwardAPI.Items[0].FieldRef.FieldPath).To(Equal("metadata.annotations['koodam.dev/codex-config']"))
+		Expect(pod.Containers[0].VolumeMounts).To(ContainElement(corev1.VolumeMount{
+			Name: v.Name, MountPath: "/etc/codex/config.toml", SubPath: "config.toml", ReadOnly: true}))
+		Expect(pod.InitContainers[0].VolumeMounts).To(HaveLen(1), "the installer does not get the config")
+	})
+
+	It("gives no Codex config to Claude Code", func() {
+		setHarness(&corev1alpha1.HarnessSpec{Name: claudeName}, nil)
+		r := newReconciler()
+		r.InstallerImage = installerImage
+		reconcileOnce(r)
+		job := &batchv1.Job{}
+		Expect(exists(job)).To(BeTrue())
+		Expect(job.Spec.Template.Annotations).NotTo(HaveKey(codexConfigAnnotation))
+		Expect(job.Spec.Template.Spec.Volumes).To(HaveLen(1))
+	})
+
+	It("quotes the TOML strings in the Codex config", func() {
+		Expect(tomlString(`a"b\c` + "\n\x7f")).To(Equal(`"a\"b\\c\u000A\u007F"`))
+		Expect(codexConfig("http://gw", `m"`)).To(HavePrefix(`model = "m\""` + "\n"))
+	})
+
 	It("gives the musl libc to the installer", func() {
 		setHarness(&corev1alpha1.HarnessSpec{Name: claudeName, Libc: "musl"}, nil)
 		r := newReconciler()
@@ -583,7 +629,7 @@ var _ = Describe("Agent Controller", func() {
 		reconcileOnce(r)
 		Expect(k8sClient.Delete(ctx, &batchv1.Job{ObjectMeta: metav1.ObjectMeta{Name: "kd-" + name, Namespace: ns}},
 			client.PropagationPolicy(metav1.DeletePropagationBackground))).To(Succeed())
-		other := runJob(agent(), "")
+		other := runJob(agent(), "", "")
 		other.OwnerReferences = nil
 		Expect(k8sClient.Create(ctx, other)).To(Succeed())
 		reconcileOnce(r)
