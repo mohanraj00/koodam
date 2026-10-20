@@ -48,6 +48,8 @@ Put the instructions and the skills in the repo that the run works on. Then both
 
 Skills and config for each user, outside the repo, come with the profiles in v0.2.
 
+The gateway gives each run a budget, a revoke and the real spend. [docs/gateway.md](docs/gateway.md) tells how to configure it.
+
 A run has one harness or none. If a run has a harness, `kubectl get agents` and `koodam get` show it, and the gateway key has it in the metadata (`harness`). Thus you can group the gateway spend by harness.
 
 ## One run, one command
