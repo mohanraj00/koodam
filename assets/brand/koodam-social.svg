@@ -1,6 +1,8 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="Koodam mark, option C, dark">
-  <title>Koodam: a K with a cluster of hexagon pods at work in its open side</title>
-  <defs><clipPath id="c"><rect x="0" y="6" width="64" height="52"/></clipPath></defs>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1280 640" role="img" aria-label="Koodam">
+  <title>Koodam</title>
+  <rect width="1280" height="640" fill="#16213A"/>
+  <svg x="480" y="160" width="320" height="320" viewBox="0 0 64 64">
+    <defs><clipPath id="c"><rect x="0" y="6" width="64" height="52"/></clipPath></defs>
   <g stroke="#EEF1F6" stroke-width="8" clip-path="url(#c)">
     <path d="M14 0 V64"/>
     <path d="M14 42 L56 0"/>
@@ -9,4 +11,5 @@
   <polygon points="44.00,32.70 39.93,30.35 39.93,25.65 44.00,23.30 48.07,25.65 48.07,30.35" fill="#EEF1F6"/>
   <polygon points="52.66,32.70 48.59,30.35 48.59,25.65 52.66,23.30 56.73,25.65 56.73,30.35" fill="#F5A524"/>
   <polygon points="48.33,40.20 44.26,37.85 44.26,33.15 48.33,30.80 52.40,33.15 52.40,37.85" fill="#EEF1F6"/>
+  </svg>
 </svg>

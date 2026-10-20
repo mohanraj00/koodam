@@ -5,6 +5,7 @@ type: application
 version: 0.1.0
 appVersion: "0.1.0"
 home: https://github.com/mohanraj00/koodam
+icon: https://raw.githubusercontent.com/mohanraj00/koodam/main/assets/brand/png/koodam-mark-256.png
 sources:
 - https://github.com/mohanraj00/koodam
 annotations:
