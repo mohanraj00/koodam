@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="Koodam mark, option D, dark">
+  <title>Koodam: K as the gable of a hall; o, ட and ம form the window, pillars and floor</title>
+  <g fill="none" stroke="#F5F1E8" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M7 10 V56 M7 40 L27 8 L59 32 M11.5 33 L20 56" stroke-width="6.5"/>
+    <circle cx="27" cy="22" r="4.5" stroke-width="3.5"/>
+    <path d="M29 40 V56 H36" stroke-width="4.5"/>
+    <path d="M42 40 V56 H50 C55 56 58 52 58 47 C58 42 55 39 51.5 39 C48.5 39 47.5 41.5 48.5 44.5" stroke-width="4"/>
+  </g>
+  <circle cx="44" cy="33" r="2.8" fill="#F2A93B"/>
+</svg>
