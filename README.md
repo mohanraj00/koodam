@@ -44,11 +44,11 @@ An init container downloads the binary from the vendor when the pod starts and c
 Put the instructions and the skills in the repo that the run works on. Then both harnesses read the same files:
 
 - **Instructions:** write `AGENTS.md`. Codex reads it. Claude Code reads it if the repo has no `CLAUDE.md`. If the repo has a `CLAUDE.md`, put `@AGENTS.md` in it.
-- **Skills:** put them in `.agents/skills/<name>/SKILL.md`. Codex reads this folder. Claude Code reads `.claude/skills`, so link it: `ln -s ../.agents/skills .claude/skills`.
+- **Skills:** put them in `.agents/skills/<name>/SKILL.md`. Codex reads this folder. Claude Code reads `.claude/skills`, so link it: `mkdir -p .claude && ln -s ../.agents/skills .claude/skills`.
 
 Skills and config for each user, outside the repo, come with the profiles in v0.3.
 
-Each run has one harness. `kubectl get agents` and `koodam get` show it, and the gateway key has it in the metadata (`harness`). Thus you can group the gateway spend by harness.
+A run has one harness or none. `kubectl get agents` and `koodam get` show it, and the gateway key has it in the metadata (`harness`). Thus you can group the gateway spend by harness.
 
 ## One run, one command
 
