@@ -286,12 +286,17 @@ func TestRunRefusesAnotherKind(t *testing.T) {
 // runEnds gives an interceptor that does the work of the controller: on create, the run ends
 // and the usage is written.
 func runEnds() *interceptor.Funcs {
+	return runEndsWith(&corev1alpha1.AgentUsage{Spend: "0.25", Calls: 3, InputTokens: 10, OutputTokens: 20})
+}
+
+// runEndsWith is runEnds with the usage u. If u is nil, the status has no usage.
+func runEndsWith(u *corev1alpha1.AgentUsage) *interceptor.Funcs {
 	return &interceptor.Funcs{Create: func(ctx context.Context, c client.WithWatch, o client.Object,
 		opts ...client.CreateOption) error {
 		if a, ok := o.(*corev1alpha1.Agent); ok {
 			a.UID, a.Status.Job = agentUID, testJob
 			a.Status.Phase = corev1alpha1.AgentSucceeded
-			a.Status.Usage = &corev1alpha1.AgentUsage{Spend: "0.25", Calls: 3, InputTokens: 10, OutputTokens: 20}
+			a.Status.Usage = u
 			a.Status.Conditions = []metav1.Condition{{Type: condRevoked, Status: metav1.ConditionTrue,
 				Reason: "JobComplete", Message: "The spend did not settle, so the usage can be low.",
 				LastTransitionTime: metav1.Now()}}
@@ -308,6 +313,9 @@ func TestRunWaitShowsTheLogAndTheSpend(t *testing.T) {
 	}
 	wantAll(t, out, fakeLog, "agent/fix-tests Succeeded", "spend 0.25 of 2, 3 calls",
 		"revoke: The spend did not settle")
+	if strings.Contains(out, gatewayNote) {
+		t.Errorf("the run end shows the gateway note for a run with gateway spend:\n%s", out)
+	}
 
 	// A log error is a warning without values, and the spend still shows.
 	cs := kubefake.NewClientset()
@@ -345,6 +353,48 @@ func TestGetAndSpendShowThePhaseTheBudgetAndTheUsage(t *testing.T) {
 	wantAll(t, out, "BUDGET", "FAILED", testName, "Succeeded", "0.5")
 	if _, err := run(t, kube, "get", "missing"); err == nil {
 		t.Error("get did not fail for a missing Agent")
+	}
+}
+
+func TestRunWaitShowsTheGatewayNoteForARunWithNoGatewaySpend(t *testing.T) {
+	kube := newKube(t, runEndsWith(nil), testJobObject(), testPod())
+	out, err := run(t, kube, cmdRun, "-f", writeManifest(t, manifest), flagWait)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantAll(t, out, "spend unknown", gatewayNote, "docs/gateway.md")
+}
+
+// endedAgent gives an Agent that the controller revoked, with the usage u.
+func endedAgent(u *corev1alpha1.AgentUsage) *corev1alpha1.Agent {
+	a := testAgent(corev1alpha1.AgentSucceeded, u)
+	a.Status.Conditions = []metav1.Condition{{Type: condRevoked, Status: metav1.ConditionTrue,
+		Reason: "JobComplete", LastTransitionTime: metav1.Now()}}
+	return a
+}
+
+func TestGetAndSpendShowTheGatewayNoteOnlyForAnEndedRunWithNoGatewaySpend(t *testing.T) {
+	cases := []struct {
+		name  string
+		agent *corev1alpha1.Agent
+		want  int // how many times the note shows
+	}{
+		{"ended with no usage", endedAgent(nil), 1},
+		{"ended with usage", endedAgent(&corev1alpha1.AgentUsage{Spend: "0.5", Calls: 1}), 0},
+		{"running with no usage", testAgent(corev1alpha1.AgentRunning, nil), 0},
+	}
+	for _, tc := range cases {
+		for _, cmd := range []string{"get", "spend"} {
+			t.Run(tc.name+"/"+cmd, func(t *testing.T) {
+				out, err := run(t, newKube(t, nil, tc.agent), cmd)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if got := strings.Count(out, gatewayNote); got != tc.want {
+					t.Errorf("%s shows the gateway note %d times:\n%s", cmd, got, out)
+				}
+			})
+		}
 	}
 }
 

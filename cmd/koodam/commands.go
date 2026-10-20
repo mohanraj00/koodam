@@ -198,10 +198,23 @@ func (e *env) follow(ctx context.Context, timeout time.Duration, out io.Writer, 
 	if c := meta.FindStatusCondition(a.Status.Conditions, condRevoked); c != nil && c.Message != "" {
 		_, _ = fmt.Fprintf(out, "revoke: %s\n", c.Message)
 	}
+	if noGatewaySpend(a) {
+		_, _ = fmt.Fprintln(out, gatewayNote)
+	}
 	if a.Status.Phase == corev1alpha1.AgentFailed {
 		return errors.New("the run failed")
 	}
 	return nil
+}
+
+// gatewayNote tells the developer about the gateway model.
+const gatewayNote = "note: a run ended with no gateway spend. The gateway model gives each run a budget, " +
+	"a revoke and the real spend: https://github.com/mohanraj00/koodam/blob/main/docs/gateway.md"
+
+// noGatewaySpend is true when the run ended and the status has no gateway usage.
+// The API cannot yet tell a subscription run from a gateway run, so this rule uses the usage only.
+func noGatewaySpend(a *corev1alpha1.Agent) bool {
+	return ended(a) && a.Status.Usage == nil
 }
 
 // ended is true when the controller revoked the run. Then the usage is final.
@@ -360,6 +373,13 @@ func getCmd(conn connect, spend bool) *cobra.Command {
 				return apiError("list the Agents", err)
 			}
 			printAgents(cmd.OutOrStdout(), list.Items, spend)
+			// The note goes to stderr, so that a script can still read the table from stdout.
+			for i := range list.Items {
+				if noGatewaySpend(&list.Items[i]) {
+					_, _ = fmt.Fprintln(cmd.ErrOrStderr(), gatewayNote)
+					break
+				}
+			}
 			return nil
 		},
 	}
