@@ -23,7 +23,6 @@ import (
 	"compress/gzip"
 	"context"
 	"crypto/sha256"
-	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -156,7 +155,7 @@ func (in *Installer) codex(ctx context.Context, version, dir string) (string, er
 	}
 	bin := "codex-" + arch + "-unknown-linux-musl"
 	rel := in.CodexDownload + "rust-v" + version + "/" + bin
-	sum, err := in.codexSum(ctx, rel+".sigstore")
+	sum, err := in.codexSum(ctx, rel+".sigstore", version)
 	if err != nil {
 		return "", fmt.Errorf("codex %s %s: %w", version, bin, err)
 	}
@@ -185,36 +184,21 @@ func (in *Installer) codexLatest(ctx context.Context) (string, error) {
 	return version, nil
 }
 
-// codexSum reads the sha256 of the codex binary from the cosign bundle at url. The bundle has the
-// Rekor log entry of the signature. The Rekor log at in.Rekor is not on GitHub, so codexSum also
-// reads the entry from Rekor and requires the same sha256. This gives a second source for the sum.
-// Trust boundary: the Rekor check shows only that the sha256 is in the public log at that index.
-// Anyone can write to Rekor. codexSum does not verify the signature, the certificate identity or
-// the signed entry timestamp. Thus a party that controls the bundle and the archive can pass the
-// check. Issue #47 adds these checks.
-func (in *Installer) codexSum(ctx context.Context, url string) (string, error) {
+// codexSum reads the sha256 of the codex binary from the cosign bundle at url and verifies the
+// bundle (see verifyBundle). The bundle has the Rekor log entry of the signature. codexSum also
+// reads the entry from the Rekor log at in.Rekor and requires the same entry. This shows that the
+// entry is in the log now, not only that Rekor signed a promise to add it.
+// Trust boundary: codexSum trusts the embedded Sigstore Fulcio and Rekor keys, the GitHub Actions
+// OIDC issuer, and the openai/codex rust-release.yml workflow on the release tag. A party that
+// controls the bundle and the archive, but not one of these, cannot pass the check.
+func (in *Installer) codexSum(ctx context.Context, url, version string) (string, error) {
 	b, err := in.get(ctx, url, 1<<20)
 	if err != nil {
 		return "", err
 	}
-	var bundle struct {
-		RekorBundle struct {
-			Payload struct {
-				Body     string `json:"body"`
-				LogIndex *int64 `json:"logIndex"`
-			} `json:"Payload"`
-		} `json:"rekorBundle"`
-	}
-	if err := json.Unmarshal(b, &bundle); err != nil {
-		return "", fmt.Errorf("read the bundle: %w", err)
-	}
-	p := bundle.RekorBundle.Payload
-	if p.LogIndex == nil || *p.LogIndex < 0 {
-		return "", errors.New("the bundle has no Rekor log index")
-	}
-	sum, err := entrySum(p.Body)
+	sum, p, err := verifyBundle(b, version)
 	if err != nil {
-		return "", fmt.Errorf("the bundle: %w", err)
+		return "", err
 	}
 	b, err = in.get(ctx, in.Rekor+"/api/v1/log/entries?logIndex="+strconv.FormatInt(*p.LogIndex, 10), 1<<20)
 	if err != nil {
@@ -230,46 +214,14 @@ func (in *Installer) codexSum(ctx context.Context, url string) (string, error) {
 		return "", fmt.Errorf("the Rekor log has %d entries for the log index %d, not 1", len(entries), *p.LogIndex)
 	}
 	for _, e := range entries {
-		got, err := entrySum(e.Body)
-		if err != nil {
-			return "", fmt.Errorf("the Rekor entry %d: %w", *p.LogIndex, err)
-		}
-		if got != sum {
-			return "", fmt.Errorf("the Rekor entry %d has the sha256 %s, not %s", *p.LogIndex, got, sum)
+		if e.Body != p.Body {
+			return "", fmt.Errorf("the Rekor entry %d is not the entry in the bundle", *p.LogIndex)
 		}
 	}
 	return sum, nil
 }
 
 var sha256RE = regexp.MustCompile(`^[0-9a-f]{64}$`)
-
-// entrySum returns the sha256 of a Rekor hashedrekord entry. body is the entry in base64.
-func entrySum(body string) (string, error) {
-	b, err := base64.StdEncoding.DecodeString(body)
-	if err != nil {
-		return "", fmt.Errorf("read the log entry: %w", err)
-	}
-	var e struct {
-		Kind string `json:"kind"`
-		Spec struct {
-			Data struct {
-				Hash struct {
-					Algorithm string `json:"algorithm"`
-					Value     string `json:"value"`
-				} `json:"hash"`
-			} `json:"data"`
-		} `json:"spec"`
-	}
-	if err := json.Unmarshal(b, &e); err != nil {
-		return "", fmt.Errorf("read the log entry: %w", err)
-	}
-	h := e.Spec.Data.Hash
-	if e.Kind != "hashedrekord" || h.Algorithm != "sha256" || !sha256RE.MatchString(h.Value) {
-		return "", fmt.Errorf("the log entry is not a hashedrekord with a sha256 (kind %q, algorithm %q)",
-			e.Kind, h.Algorithm)
-	}
-	return h.Value, nil
-}
 
 // codexArchive downloads the archive and extracts the binary. The sum applies to the binary, not
 // to the archive. It removes the archive.
