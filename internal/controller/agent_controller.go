@@ -440,7 +440,7 @@ const codexConfigAnnotation = "koodam.dev/codex-config"
 // supports only the Responses API. The config has the name of the key env, not the key value.
 func codexConfig(gatewayURL, model string) string {
 	return "model = " + tomlString(model) + "\nmodel_provider = \"koodam\"\n\n" +
-		"[model_providers.koodam]\nname = \"koodam\"\nbase_url = " + tomlString(gatewayURL+"/v1") + "\n" +
+		"[model_providers.koodam]\nname = \"koodam\"\nbase_url = " + tomlString(strings.TrimSuffix(gatewayURL, "/")+"/v1") + "\n" +
 		"env_key = " + tomlString(openAIKeyField) + "\nwire_api = \"responses\"\n"
 }
 
