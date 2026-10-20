@@ -23,7 +23,6 @@ import (
 	"compress/gzip"
 	"context"
 	"crypto/sha256"
-	"encoding/base64"
 	"encoding/hex"
 	"fmt"
 	"net/http"
@@ -76,13 +75,13 @@ type vendor struct {
 	bundle    string
 	noBundle  bool
 	bundleSum string
-	rekorSum  string
 	kind      string
+	sigstore  *fakeSigstore
 	status    int
 	// latestStatus and archiveStatus replace the usual status of /gh/latest and the archive.
 	latestStatus  int
 	archiveStatus int
-	// rekor replaces the Rekor response. %[1]s in it is the entry with rekorSum.
+	// rekor replaces the Rekor response. %[1]s in it is the entry in the bundle.
 	rekor      string
 	requests   []string
 	srv        *httptest.Server
@@ -91,18 +90,13 @@ type vendor struct {
 
 const codexRel = "/dl/rust-v0.9.1/codex-x86_64-unknown-linux-musl"
 
-// entry returns a Rekor log entry in base64.
-func (v *vendor) entry(hash string) string {
-	return base64.StdEncoding.EncodeToString(fmt.Appendf(nil, `{"apiVersion":"0.0.1","kind":%q,`+
-		`"spec":{"data":{"hash":{"algorithm":"sha256","value":%q}}}}`, v.kind, hash))
-}
-
 func newVendor(t *testing.T) *vendor {
 	v := &vendor{latest: "2.1.3\n", claude: []byte("claude binary"), codexBin: []byte("codex binary"),
 		location: "https://github.com/openai/codex/releases/tag/rust-v0.9.1", kind: "hashedrekord"}
 	v.claudeSum = sum(v.claude)
 	v.codex = tgz(t, "codex-x86_64-unknown-linux-musl", v.codexBin)
-	v.bundleSum, v.rekorSum = sum(v.codexBin), sum(v.codexBin)
+	v.bundleSum, v.sigstore = sum(v.codexBin), newFakeSigstore(t)
+	var body string
 	v.srv = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		v.requests = append(v.requests, r.URL.Path)
 		if v.status != 0 {
@@ -128,8 +122,7 @@ func newVendor(t *testing.T) *vendor {
 				return
 			}
 			if v.bundle == "" {
-				v.bundle = fmt.Sprintf(`{"base64Signature":"x","cert":"x","rekorBundle":`+
-					`{"Payload":{"body":%q,"logIndex":42}}}`, v.entry(v.bundleSum))
+				v.bundle, body = v.sigstore.bundle(t, v.bundleSum, "0.9.1", func(o *fakeOpts) { o.kind = v.kind })
 			}
 			_, _ = fmt.Fprint(w, v.bundle)
 		case codexRel + ".tar.gz":
@@ -143,7 +136,7 @@ func newVendor(t *testing.T) *vendor {
 				http.NotFound(w, r)
 				return
 			}
-			_, _ = fmt.Fprintf(w, cmp.Or(v.rekor, `{"108e9186":{"body":%[1]q,"logIndex":42}}`), v.entry(v.rekorSum))
+			_, _ = fmt.Fprintf(w, cmp.Or(v.rekor, `{"108e9186":{"body":%[1]q,"logIndex":42}}`), body)
 		default:
 			http.NotFound(w, r)
 		}
@@ -268,10 +261,12 @@ func TestCodexBadRelease(t *testing.T) {
 		edit func(*vendor)
 		want string
 	}{
-		{"wrong binary sha256", func(v *vendor) { v.bundleSum, v.rekorSum = sum([]byte("x")), sum([]byte("x")) },
-			"the sha256 of codex is"},
-		{"bundle hash mismatch with Rekor", func(v *vendor) { v.rekorSum = sum([]byte("x")) },
-			"the Rekor entry 42 has the sha256"},
+		{"wrong binary sha256", func(v *vendor) { v.bundleSum = sum([]byte("x")) }, "the sha256 of codex is"},
+		{"bundle entry mismatch with Rekor", func(v *vendor) { v.rekor = `{"a":{"body":"e30="}}%.0[1]s` },
+			"the Rekor entry 42 is not the entry in the bundle"},
+		{"bad bundle signature", func(v *vendor) {
+			v.bundle, _ = v.sigstore.bundle(t, v.bundleSum, "0.9.1", func(o *fakeOpts) { o.badSig = true })
+		}, "signature is not valid"},
 		{"missing bundle", func(v *vendor) { v.noBundle = true }, "codex 0.9.1 codex-x86_64-unknown-linux-musl"},
 		{"no log index", func(v *vendor) { v.bundle = `{"rekorBundle":{"Payload":{"body":""}}}` },
 			"no Rekor log index"},
