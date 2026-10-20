@@ -15,7 +15,7 @@ The gateway key of a run gives you 3 things that a subscription login does not g
 - **A revoke.** The key expires after `deadlineSeconds` plus a grace period. When the Job ends, or when you delete the Agent, the controller blocks the key before it deletes anything. A finalizer keeps the Agent until the block is done.
 - **The real spend.** After the revoke, the controller reads the spend, the calls and the tokens of the key from the gateway. It writes them to the Agent status. `koodam spend` and `kubectl get agents` show them.
 
-The key value is never in the status, in an event or in a log. The status has only the key alias.
+The key value is never in the status, in an event or in a log. The status has the key alias and the SHA-256 hash of the key. The gateway refuses the hash for model calls, so the hash is not a credential.
 
 If a run ends with no gateway spend in the status, `koodam get`, `koodam spend` and `koodam run --wait` show a note with a link to this guide.
 
@@ -36,6 +36,7 @@ kubectl -n koodam-system create secret generic koodam-gateway --from-file=master
 Then install the chart:
 
 ```sh
+VERSION=0.1.0
 helm install koodam oci://ghcr.io/mohanraj00/charts/koodam --version "$VERSION" -n koodam-system \
   -f "https://raw.githubusercontent.com/mohanraj00/koodam/v$VERSION/charts/koodam/values-bundled.yaml"
 ```

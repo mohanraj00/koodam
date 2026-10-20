@@ -109,15 +109,20 @@ func run(t *testing.T, kube client.WithWatch, args ...string) (string, error) {
 // runWith is run with the fake clientset cs for the pod log.
 func runWith(t *testing.T, kube client.WithWatch, cs *kubefake.Clientset, args ...string) (string, error) {
 	t.Helper()
+	out := &bytes.Buffer{}
+	err := runTo(kube, cs, out, out, args...)
+	return out.String(), err
+}
+
+// runTo runs the koodam command with args and writes stdout to out and stderr to errOut.
+func runTo(kube client.WithWatch, cs *kubefake.Clientset, out, errOut io.Writer, args ...string) error {
 	e := &env{kube: kube, clientset: cs, namespace: testNS, poll: time.Millisecond}
 	root := newRoot(func() (*env, error) { return e, nil })
-	out := &bytes.Buffer{}
 	root.SetOut(out)
-	root.SetErr(out)
+	root.SetErr(errOut)
 	root.SetArgs(args)
 	root.SetContext(context.Background())
-	err := root.Execute()
-	return out.String(), err
+	return root.Execute()
 }
 
 // TestVersion checks that "version" and "--version" print the version and do not connect.
@@ -386,12 +391,16 @@ func TestGetAndSpendShowTheGatewayNoteOnlyForAnEndedRunWithNoGatewaySpend(t *tes
 	for _, tc := range cases {
 		for _, cmd := range []string{"get", "spend"} {
 			t.Run(tc.name+"/"+cmd, func(t *testing.T) {
-				out, err := run(t, newKube(t, nil, tc.agent), cmd)
-				if err != nil {
+				var out, errOut bytes.Buffer
+				if err := runTo(newKube(t, nil, tc.agent), kubefake.NewClientset(), &out, &errOut, cmd); err != nil {
 					t.Fatal(err)
 				}
-				if got := strings.Count(out, gatewayNote); got != tc.want {
-					t.Errorf("%s shows the gateway note %d times:\n%s", cmd, got, out)
+				// The note goes to stderr only, so that stdout has only the table.
+				if strings.Contains(out.String(), gatewayNote) {
+					t.Errorf("%s shows the gateway note on stdout:\n%s", cmd, out.String())
+				}
+				if got := strings.Count(errOut.String(), gatewayNote); got != tc.want {
+					t.Errorf("%s shows the gateway note %d times on stderr:\n%s", cmd, got, errOut.String())
 				}
 			})
 		}
