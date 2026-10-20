@@ -1,9 +1,12 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="Koodam mark, option B">
-  <title>Koodam: K in a hall doorway</title>
-  <path d="M6 60 V30 A26 26 0 0 1 58 30 V60 Z" fill="#B5462C"/>
-  <g fill="none" stroke="#FFF4E0" stroke-width="7.5" stroke-linecap="round" stroke-linejoin="round">
-    <path d="M21 22 V52"/>
-    <path d="M42 22 L22 38"/>
-    <path d="M28 33 L36 44 C39.5 49 45 50.5 49 47.5 C52 45 52 41.5 50 39.5"/>
+  <title>Koodam: a K whose arms are built from pods</title>
+  <g fill="#16213A">
+    <rect x="8" y="6" width="12" height="52"/>
+    <rect x="22" y="28" width="10" height="10"/>
+    <rect x="32" y="17" width="10" height="10"/>
+    <rect x="42" y="6" width="10" height="10"/>
+    <rect x="32" y="39" width="10" height="10"/>
+    <rect x="42" y="48" width="10" height="10"/>
   </g>
+  <rect x="42" y="6" width="10" height="10" fill="#F5A524"/>
 </svg>

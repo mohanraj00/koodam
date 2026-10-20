@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="Koodam mark, option C, dark">
+  <title>Koodam: a machined K with one pod set into its joint</title>
+  <defs>
+    <clipPath id="c"><rect x="0" y="6" width="64" height="52"/></clipPath>
+    <mask id="m">
+      <rect width="64" height="64" fill="#fff"/>
+      <rect x="19" y="21" width="22" height="22" transform="rotate(45 30 32)" fill="#000"/>
+    </mask>
+  </defs>
+  <g stroke="#EEF1F6" stroke-width="12" clip-path="url(#c)" mask="url(#m)">
+    <path d="M14 0 V64"/>
+    <path d="M14 42 L56 0"/>
+    <path d="M24 32 L64 72"/>
+  </g>
+  <rect x="24" y="26" width="12" height="12" transform="rotate(45 30 32)" fill="#F5A524"/>
+</svg>

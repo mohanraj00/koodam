@@ -1,11 +1,16 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="Koodam mark, option C">
-  <title>Koodam: units that gather to form a K</title>
-  <g fill="none" stroke="#1A9E8F" stroke-width="10" stroke-linecap="round">
-    <path d="M16 9 V55"/>
-    <path d="M47 11 L32 29"/>
-    <path d="M32 35 L47 53"/>
+  <title>Koodam: a machined K with one pod set into its joint</title>
+  <defs>
+    <clipPath id="c"><rect x="0" y="6" width="64" height="52"/></clipPath>
+    <mask id="m">
+      <rect width="64" height="64" fill="#fff"/>
+      <rect x="19" y="21" width="22" height="22" transform="rotate(45 30 32)" fill="#000"/>
+    </mask>
+  </defs>
+  <g stroke="#16213A" stroke-width="12" clip-path="url(#c)" mask="url(#m)">
+    <path d="M14 0 V64"/>
+    <path d="M14 42 L56 0"/>
+    <path d="M24 32 L64 72"/>
   </g>
-  <circle cx="27" cy="32" r="7" fill="none" stroke="#F2A93B" stroke-width="5.5"/>
-  <circle cx="48" cy="10" r="7" fill="#F2A93B"/>
-  <circle cx="48" cy="54" r="7" fill="#F2A93B"/>
+  <rect x="24" y="26" width="12" height="12" transform="rotate(45 30 32)" fill="#F5A524"/>
 </svg>
