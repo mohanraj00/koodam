@@ -1,3 +1,10 @@
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="assets/brand/koodam-mark-dark.svg">
+    <img src="assets/brand/koodam-mark.svg" alt="Koodam" width="128">
+  </picture>
+</p>
+
 # Koodam
 
 Koodam (கூடம், "hall") is where your agents live on Kubernetes. One `Agent` resource gets a model key with a budget and a TTL, a ServiceAccount with only the access it asks for, and a Job. When the run ends, Koodam revokes all of it and writes the spend to the status.
@@ -130,3 +137,5 @@ Koodam is built with [Kubebuilder](https://book.kubebuilder.io). [docs/kubebuild
 ## License
 
 Apache-2.0.
+
+The Koodam mark is in [`assets/brand/`](assets/brand/). [docs/brand.md](docs/brand.md) has the rules for its use.
