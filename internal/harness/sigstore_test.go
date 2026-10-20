@@ -48,10 +48,13 @@ func TestVerifyRealBundle(t *testing.T) {
 	if err != nil || got != "399ff69c431c066e40de318fba45c2b07f45a76b19939d247ee4828fc70c4215" || *p.LogIndex != 3267983038 {
 		t.Fatalf("verifyBundle = %q, %d, %v", got, *p.LogIndex, err)
 	}
-	if _, _, err := verifyBundle(b, "0.163.1"); err == nil || !strings.Contains(err.Error(), "identity") {
+	if _, _, err := verifyBundle(b, "0.163.1"); err == nil || !strings.Contains(err.Error(), identity) {
 		t.Fatalf("verifyBundle for a different tag = %v, want an identity error", err)
 	}
 }
+
+// identity is in the error for a wrong certificate identity.
+const identity = "identity"
 
 // fakeSigstore is a test Fulcio CA and a test Rekor key. It replaces the trust anchors.
 type fakeSigstore struct {
@@ -65,7 +68,7 @@ type fakeOpts struct {
 	signed                               time.Time
 	integrated                           time.Time
 	badSig, badSET                       bool
-	bodySig                              []byte
+	bodySig, bodyCert                    []byte
 	ca                                   *fakeSigstore
 }
 
@@ -157,9 +160,12 @@ func (f *fakeSigstore) bundle(t *testing.T, sum, version string, edit func(*fake
 	if o.bodySig == nil {
 		o.bodySig = sig
 	}
+	if o.bodyCert == nil {
+		o.bodyCert = certPEM
+	}
 	b64 := base64.StdEncoding.EncodeToString
 	body := b64(fmt.Appendf(nil, `{"apiVersion":"0.0.1","kind":%q,"spec":{"data":{"hash":{"algorithm":"sha256",`+
-		`"value":%q}},"signature":{"content":%q,"publicKey":{"content":%q}}}}`, o.kind, sum, b64(o.bodySig), b64(certPEM)))
+		`"value":%q}},"signature":{"content":%q,"publicKey":{"content":%q}}}}`, o.kind, sum, b64(o.bodySig), b64(o.bodyCert)))
 	idx := int64(42)
 	p := rekorPayload{Body: body, IntegratedTime: o.integrated.Unix(), LogID: o.logID, LogIndex: &idx}
 	msg, err := json.Marshal(p)
@@ -195,11 +201,11 @@ func TestVerifyBundle(t *testing.T) {
 		{"only the old issuer", func(o *fakeOpts) { o.issuerV2 = "" }, ""},
 		{"only the new issuer", func(o *fakeOpts) { o.issuerV1 = "" }, ""},
 		{"bad signature", func(o *fakeOpts) { o.badSig = true }, "signature is not valid"},
-		{"wrong workflow", func(o *fakeOpts) { o.uri = strings.Replace(o.uri, "rust-release", "other", 1) }, "identity"},
-		{"wrong repository", func(o *fakeOpts) { o.uri = strings.Replace(o.uri, "openai", "attacker", 1) }, "identity"},
-		{"wrong tag", func(o *fakeOpts) { o.uri += "1" }, "identity"},
+		{"wrong workflow", func(o *fakeOpts) { o.uri = strings.Replace(o.uri, "rust-release", "other", 1) }, identity},
+		{"wrong repository", func(o *fakeOpts) { o.uri = strings.Replace(o.uri, "openai", "attacker", 1) }, identity},
+		{"wrong tag", func(o *fakeOpts) { o.uri += "1" }, identity},
 		{"a branch ref", func(o *fakeOpts) { o.uri = strings.Replace(o.uri, "tags/rust-v0.9.1", "heads/main", 1) },
-			"identity"},
+			identity},
 		{"wrong new issuer", func(o *fakeOpts) { o.issuerV2 = "https://accounts.google.com" }, "issuer is"},
 		{"wrong old issuer", func(o *fakeOpts) { o.issuerV1 = "https://accounts.google.com" }, "issuer is"},
 		{"no issuer", func(o *fakeOpts) { o.issuerV1, o.issuerV2 = "", "" }, "no issuer"},
@@ -210,6 +216,8 @@ func TestVerifyBundle(t *testing.T) {
 		{"before the certificate", func(o *fakeOpts) { o.integrated = o.signed.Add(-time.Minute) }, "expired"},
 		{"other CA", func(o *fakeOpts) { o.ca = other }, "unknown authority"},
 		{"Rekor body with another signature", func(o *fakeOpts) { o.bodySig = []byte("other") },
+			"does not have the signature"},
+		{"Rekor body with another certificate", func(o *fakeOpts) { o.bodyCert = []byte("other") },
 			"does not have the signature"},
 	} {
 		t.Run(c.name, func(t *testing.T) {
@@ -224,9 +232,14 @@ func TestVerifyBundle(t *testing.T) {
 			}
 		})
 	}
-	for _, b := range []string{`{`, `{"base64Signature":"!","rekorBundle":{"Payload":{"logIndex":1}}}`} {
-		if _, _, err := verifyBundle([]byte(b), "0.9.1"); err == nil {
-			t.Fatalf("verifyBundle(%s) did not fail", b)
+	b, _ := f.bundle(t, s, "0.9.1", nil)
+	for _, c := range []struct{ bundle, want string }{
+		{`{`, "read the bundle"},
+		{strings.Replace(b, `"base64Signature":"`, `"base64Signature":"!`, 1), "read the bundle signature"},
+		{strings.Replace(b, `"cert":"`, `"cert":"!`, 1), "read the bundle certificate"},
+	} {
+		if _, _, err := verifyBundle([]byte(c.bundle), "0.9.1"); err == nil || !strings.Contains(err.Error(), c.want) {
+			t.Fatalf("verifyBundle error = %v, want %q", err, c.want)
 		}
 	}
 }

@@ -17,6 +17,7 @@ limitations under the License.
 package harness
 
 import (
+	"bytes"
 	"crypto/ecdsa"
 	"crypto/sha256"
 	"crypto/x509"
@@ -152,12 +153,15 @@ func verifyBundle(b []byte, version string) (string, rekorPayload, error) {
 	if err := verifySET(p, bundle.RekorBundle.SignedEntryTimestamp); err != nil {
 		return "", p, err
 	}
-	sig, err1 := base64.StdEncoding.DecodeString(bundle.Base64Signature)
-	certPEM, err2 := base64.StdEncoding.DecodeString(bundle.Cert)
-	if err := errors.Join(err1, err2); err != nil {
-		return "", p, fmt.Errorf("read the bundle: %w", err)
+	sig, err := base64.StdEncoding.DecodeString(bundle.Base64Signature)
+	if err != nil {
+		return "", p, fmt.Errorf("read the bundle signature: %w", err)
 	}
-	if string(e.sig) != string(sig) || string(e.cert) != string(certPEM) {
+	certPEM, err := base64.StdEncoding.DecodeString(bundle.Cert)
+	if err != nil {
+		return "", p, fmt.Errorf("read the bundle certificate: %w", err)
+	}
+	if !bytes.Equal(e.sig, sig) || !bytes.Equal(e.cert, certPEM) {
 		return "", p, errors.New("the Rekor entry does not have the signature and the certificate of the bundle")
 	}
 	cert, err := verifyCert(certPEM, time.Unix(p.IntegratedTime, 0), version)
@@ -165,8 +169,11 @@ func verifyBundle(b []byte, version string) (string, rekorPayload, error) {
 		return "", p, err
 	}
 	key, ok := cert.PublicKey.(*ecdsa.PublicKey)
+	if !ok {
+		return "", p, errors.New("the bundle certificate key is not an ECDSA key")
+	}
 	digest, _ := hex.DecodeString(e.sum)
-	if !ok || !ecdsa.VerifyASN1(key, digest, sig) {
+	if !ecdsa.VerifyASN1(key, digest, sig) {
 		return "", p, errors.New("the bundle signature is not valid for the sha256 of the binary")
 	}
 	return e.sum, p, nil
