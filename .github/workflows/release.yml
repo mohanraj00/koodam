@@ -57,6 +57,13 @@ jobs:
       - name: Show the checksums
         run: cat dist/checksums.txt
 
+      # The binary must show the snapshot version, not "dev". This shows that the ldflags set it.
+      - name: Check the CLI version
+        run: |
+          out="$(dist/koodam_linux_amd64*/koodam version)"
+          echo "$out"
+          test "$out" != "koodam dev"
+
       - name: Setup Helm
         uses: azure/setup-helm@9bc31f4ebc9c6b171d7bfbaa5d006ae7abdb4310 # v5.0.1
         with:
