@@ -265,7 +265,7 @@ func TestCodexBadRelease(t *testing.T) {
 		{"missing bundle", func(v *vendor) { v.noBundle = true }, "codex 0.9.1 codex-x86_64-unknown-linux-musl"},
 		{"no log index", func(v *vendor) { v.bundle = `{"rekorBundle":{"Payload":{"body":""}}}` },
 			"no Rekor log index"},
-		{"not a hashedrekord", func(v *vendor) { v.kind = "intoto" }, "not a hashedrekord"},
+		{"an intoto entry", func(v *vendor) { v.kind = "intoto" }, `kind "intoto"`},
 		{"a short sha256", func(v *vendor) { v.bundleSum = "abc" }, "not a hashedrekord"},
 		{"bad tag", func(v *vendor) { v.location += "-alpha" },
 			"not of the form rust-v1.2.3"},
