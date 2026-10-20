@@ -122,7 +122,7 @@ func newVendor(t *testing.T) *vendor {
 				return
 			}
 			if v.bundle == "" {
-				v.bundle, body = v.sigstore.bundle(t, v.bundleSum, "0.9.1", func(o *fakeOpts) { o.kind = v.kind })
+				v.bundle, body = v.sigstore.bundle(t, v.bundleSum, func(o *fakeOpts) { o.kind = v.kind })
 			}
 			_, _ = fmt.Fprint(w, v.bundle)
 		case codexRel + ".tar.gz":
@@ -265,7 +265,7 @@ func TestCodexBadRelease(t *testing.T) {
 		{"bundle entry mismatch with Rekor", func(v *vendor) { v.rekor = `{"a":{"body":"e30="}}%.0[1]s` },
 			"the Rekor entry 42 is not the entry in the bundle"},
 		{"bad bundle signature", func(v *vendor) {
-			v.bundle, _ = v.sigstore.bundle(t, v.bundleSum, "0.9.1", func(o *fakeOpts) { o.badSig = true })
+			v.bundle, _ = v.sigstore.bundle(t, v.bundleSum, func(o *fakeOpts) { o.badSig = true })
 		}, "signature is not valid"},
 		{"missing bundle", func(v *vendor) { v.noBundle = true }, "codex 0.9.1 codex-x86_64-unknown-linux-musl"},
 		{"no log index", func(v *vendor) { v.bundle = `{"rekorBundle":{"Payload":{"body":""}}}` },

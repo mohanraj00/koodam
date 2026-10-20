@@ -120,11 +120,11 @@ func newFakeSigstore(t *testing.T) *fakeSigstore {
 	return f
 }
 
-// bundle returns a cosign bundle for the binary sum of the codex release rust-v<version>, and
+// bundle returns a cosign bundle for the binary sum of the codex release rust-v0.9.1, and
 // the Rekor entry body in the bundle.
-func (f *fakeSigstore) bundle(t *testing.T, sum, version string, edit func(*fakeOpts)) (string, string) {
+func (f *fakeSigstore) bundle(t *testing.T, sum string, edit func(*fakeOpts)) (string, string) {
 	now := time.Now().Truncate(time.Second)
-	o := fakeOpts{uri: "https://github.com/openai/codex/.github/workflows/rust-release.yml@refs/tags/rust-v" + version,
+	o := fakeOpts{uri: "https://github.com/openai/codex/.github/workflows/rust-release.yml@refs/tags/rust-v0.9.1",
 		issuerV1: githubIssuer, issuerV2: githubIssuer, kind: "hashedrekord", logID: trust.rekorID,
 		signed: now.Add(-time.Hour), integrated: now.Add(-time.Hour + time.Minute), ca: f}
 	if edit != nil {
@@ -221,7 +221,7 @@ func TestVerifyBundle(t *testing.T) {
 			"does not have the signature"},
 	} {
 		t.Run(c.name, func(t *testing.T) {
-			b, _ := f.bundle(t, s, "0.9.1", c.edit)
+			b, _ := f.bundle(t, s, c.edit)
 			got, _, err := verifyBundle([]byte(b), "0.9.1")
 			if c.want == "" {
 				if err != nil || got != s {
@@ -232,7 +232,7 @@ func TestVerifyBundle(t *testing.T) {
 			}
 		})
 	}
-	b, _ := f.bundle(t, s, "0.9.1", nil)
+	b, _ := f.bundle(t, s, nil)
 	for _, c := range []struct{ bundle, want string }{
 		{`{`, "read the bundle"},
 		{strings.Replace(b, `"base64Signature":"`, `"base64Signature":"!`, 1), "read the bundle signature"},
