@@ -46,7 +46,7 @@ Put the instructions and the skills in the repo that the run works on. Then both
 - **Instructions:** write `AGENTS.md`. Codex reads it. Claude Code reads it if the repo has no `CLAUDE.md`. If the repo has a `CLAUDE.md`, put `@AGENTS.md` in it.
 - **Skills:** put them in `.agents/skills/<name>/SKILL.md`. Codex reads this folder. Claude Code reads `.claude/skills`, so link it: `mkdir -p .claude && ln -s ../.agents/skills .claude/skills`.
 
-Skills and config for each user, outside the repo, come with the profiles in v0.3.
+Skills and config for each user, outside the repo, come with the profiles in v0.2.
 
 A run has one harness or none. If a run has a harness, `kubectl get agents` and `koodam get` show it, and the gateway key has it in the metadata (`harness`). Thus you can group the gateway spend by harness.
 
@@ -65,7 +65,7 @@ koodam logs NAME         # the pod log of the run
 koodam delete NAME       # the controller revokes the key first
 ```
 
-Build it with `go build -o bin/koodam ./cmd/koodam`. It uses your kubeconfig, and `-n`, `--context` and `--kubeconfig` work as in kubectl.
+Get it from the GitHub release (see [Install](#install)), or build it with `go build -o bin/koodam ./cmd/koodam`. It uses your kubeconfig, and `-n`, `--context` and `--kubeconfig` work as in kubectl.
 
 For `koodam logs` and `run --wait`, the CLI user needs `get` on jobs, `list` on pods and `get` on pods/log in the namespace. The Agent viewer and editor ClusterRoles do not give them.
 
@@ -73,24 +73,44 @@ The controller deletes a finished Job and its pod 24 h after the end (the chart 
 
 ## Install
 
-The Helm chart installs the controller and the `Agent` CRD. The controller image is `ghcr.io/mohanraj00/koodam`. The chart uses an existing LiteLLM gateway, or it installs its own:
+Each release tag `vX.Y.Z` publishes 3 things: the controller image `ghcr.io/mohanraj00/koodam`, the Helm chart `oci://ghcr.io/mohanraj00/charts/koodam` and the `koodam` CLI on the [GitHub release](https://github.com/mohanraj00/koodam/releases). The chart version, the image tag and the CLI version are the same.
+
+The chart installs the controller and the `Agent` CRD. It uses an existing LiteLLM gateway, or it installs its own:
 
 ```sh
+VERSION=0.1.0
 kubectl create namespace koodam-system
 kubectl -n koodam-system create secret generic koodam-gateway --from-file=master-key=./master-key
-helm install koodam charts/koodam -n koodam-system -f charts/koodam/values-bundled.yaml
+helm install koodam oci://ghcr.io/mohanraj00/charts/koodam --version "$VERSION" -n koodam-system \
+  -f "https://raw.githubusercontent.com/mohanraj00/koodam/v$VERSION/charts/koodam/values-bundled.yaml"
 ```
 
-With an existing gateway, pass `--set gateway.url=<address>`. It has no default, and the install stops without it. [charts/koodam/README.md](charts/koodam/README.md) has the steps.
+With an existing gateway, do not use `values-bundled.yaml`. Pass `--set gateway.url=<address>`. It has no default, and the install stops without it. [charts/koodam/README.md](charts/koodam/README.md) has the steps.
+
+The CLI is for linux and darwin, on amd64 and arm64. Check the archive against `checksums.txt` before you install it:
+
+```sh
+VERSION=0.1.0
+OS=linux     # or darwin
+ARCH=amd64   # or arm64
+FILE="koodam_${VERSION}_${OS}_${ARCH}.tar.gz"
+curl -fsSLO "https://github.com/mohanraj00/koodam/releases/download/v$VERSION/$FILE"
+curl -fsSLO "https://github.com/mohanraj00/koodam/releases/download/v$VERSION/checksums.txt"
+grep " $FILE\$" checksums.txt | shasum -a 256 -c -
+tar -xzf "$FILE" koodam
+sudo install koodam /usr/local/bin/koodam
+```
+
+If `shasum -c` does not show `OK`, do not install the file.
 
 ## Plan
 
 | Version | Adds |
 |---|---|
 | v0.1 | `Agent` runs as a Job, key and Role for each run, spend in the status, `koodam` CLI, Helm chart |
-| v0.2 | traced ingress and egress: every call in and out of an agent goes through a proxy and gets a span |
-| v0.3 | profiles: log in once, and every harness in your namespaces shares the login, skills, config and memory |
-| v0.4 | MCP tools with credentials for each run |
+| v0.2 | profiles and workspaces: log in once, and every harness in your namespaces shares the login, skills, config and memory. A workspace is a pod that you connect to over SSH from the Claude or Codex app or a terminal |
+| v0.3 | traced egress: every call out of an agent goes through a proxy and gets a span |
+| v0.4 | MCP tools with credentials for each run, and a portal |
 | later | long-running agents, managed clusters |
 
 Each version starts with a spike that decides go or no-go before the build. The spike records are the evidence for every claim here.

@@ -1,0 +1,155 @@
+name: Release
+
+# A release tag vX.Y.Z publishes the koodam CLI and the Helm chart. Only a maintainer pushes the tag.
+# image.yml publishes the controller image for the same tag.
+# A manual run (workflow_dispatch) or a PR that changes the release files is a dry run. It publishes nothing.
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - .goreleaser.yaml
+      - .github/workflows/release.yml
+      - charts/**
+
+permissions: {}
+
+env:
+  CHART_DIR: charts/koodam
+  CHART_REPO: oci://ghcr.io/mohanraj00/charts
+
+jobs:
+  dry-run:
+    if: github.event_name != 'push'
+    permissions:
+      contents: read
+    name: Dry run (no publish)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Clone the code
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Setup Go
+        uses: actions/setup-go@4b73464bb391d4059bd26b0524d20df3927bd417 # v6.3.0
+        with:
+          go-version-file: go.mod
+
+      - name: Check the GoReleaser config
+        uses: goreleaser/goreleaser-action@f06c13b6b1a9625abc9e6e439d9c05a8f2190e94 # v7.2.3
+        with:
+          distribution: goreleaser
+          version: v2.18.2
+          args: check
+
+      # A snapshot builds the binaries and checksums.txt in dist/. It does not publish.
+      - name: Build a snapshot of the CLI
+        uses: goreleaser/goreleaser-action@f06c13b6b1a9625abc9e6e439d9c05a8f2190e94 # v7.2.3
+        with:
+          distribution: goreleaser
+          version: v2.18.2
+          args: release --snapshot --clean
+
+      - name: Show the checksums
+        run: cat dist/checksums.txt
+
+      - name: Setup Helm
+        uses: azure/setup-helm@9bc31f4ebc9c6b171d7bfbaa5d006ae7abdb4310 # v5.0.1
+        with:
+          version: v4.2.3
+
+      # The version 0.0.0-dryrun shows that the package step sets the version and appVersion.
+      - name: Package the chart
+        run: |
+          helm package "$CHART_DIR" --version 0.0.0-dryrun --app-version 0.0.0-dryrun --destination dist/chart
+          helm show chart dist/chart/koodam-0.0.0-dryrun.tgz
+
+      - name: Keep the dry run output
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: release-dry-run
+          path: |
+            dist/*.tar.gz
+            dist/checksums.txt
+            dist/chart/*.tgz
+          retention-days: 7
+
+  cli:
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+    permissions:
+      # GoReleaser makes the GitHub release and uploads the binaries and checksums.txt to it.
+      contents: write
+    name: Publish the CLI release
+    runs-on: ubuntu-latest
+    steps:
+      - name: Clone the code
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Setup Go
+        uses: actions/setup-go@4b73464bb391d4059bd26b0524d20df3927bd417 # v6.3.0
+        with:
+          go-version-file: go.mod
+
+      - name: Publish the release
+        uses: goreleaser/goreleaser-action@f06c13b6b1a9625abc9e6e439d9c05a8f2190e94 # v7.2.3
+        with:
+          distribution: goreleaser
+          version: v2.18.2
+          args: release --clean
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  chart:
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+    permissions:
+      contents: read
+      # Helm pushes the chart package to ghcr.io/mohanraj00/charts.
+      packages: write
+    name: Publish the Helm chart
+    runs-on: ubuntu-latest
+    steps:
+      - name: Clone the code
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      - name: Setup Helm
+        uses: azure/setup-helm@9bc31f4ebc9c6b171d7bfbaa5d006ae7abdb4310 # v5.0.1
+        with:
+          version: v4.2.3
+
+      # The tag v0.1.0 gives the chart version and appVersion 0.1.0.
+      # The chart uses appVersion as the default image tag, and image.yml pushes the image with the same tag.
+      - name: Get the version from the tag
+        id: version
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          version="${TAG#v}"
+          if ! printf '%s' "$version" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$'; then
+            echo "The tag $TAG is not vX.Y.Z." >&2
+            exit 1
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+      - name: Package the chart
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: helm package "$CHART_DIR" --version "$VERSION" --app-version "$VERSION" --destination dist/chart
+
+      - name: Push the chart to GHCR
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+          REGISTRY_USER: ${{ github.actor }}
+          REGISTRY_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          printf '%s' "$REGISTRY_TOKEN" | helm registry login ghcr.io --username "$REGISTRY_USER" --password-stdin
+          helm push "dist/chart/koodam-$VERSION.tgz" "$CHART_REPO"
+          helm registry logout ghcr.io
