@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="Koodam mark, option B">
+  <title>Koodam: K in a hall doorway</title>
+  <path d="M6 60 V30 A26 26 0 0 1 58 30 V60 Z" fill="#B5462C"/>
+  <g fill="none" stroke="#FFF4E0" stroke-width="7.5" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M21 22 V52"/>
+    <path d="M42 22 L22 38"/>
+    <path d="M28 33 L36 44 C39.5 49 45 50.5 49 47.5 C52 45 52 41.5 50 39.5"/>
+  </g>
+</svg>
