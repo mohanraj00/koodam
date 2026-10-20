@@ -164,6 +164,7 @@ type AgentStatus struct {
 // +kubebuilder:subresource:status
 // +kubebuilder:printcolumn:name="Phase",type=string,JSONPath=`.status.phase`
 // +kubebuilder:printcolumn:name="Model",type=string,JSONPath=`.spec.model`
+// +kubebuilder:printcolumn:name="Harness",type=string,JSONPath=`.spec.harness.name`
 // +kubebuilder:printcolumn:name="Budget",type=string,JSONPath=`.spec.budget`
 // +kubebuilder:printcolumn:name="Spend",type=string,JSONPath=`.status.usage.spend`
 // +kubebuilder:printcolumn:name="Age",type=date,JSONPath=`.metadata.creationTimestamp`

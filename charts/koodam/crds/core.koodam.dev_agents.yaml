@@ -21,6 +21,9 @@ spec:
     - jsonPath: .spec.model
       name: Model
       type: string
+    - jsonPath: .spec.harness.name
+      name: Harness
+      type: string
     - jsonPath: .spec.budget
       name: Budget
       type: string

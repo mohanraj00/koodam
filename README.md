@@ -41,6 +41,15 @@ spec:
 
 An init container downloads the binary from the vendor when the pod starts and checks its sha256. The binary is in `/koodam/bin`, first on the `PATH`. If the Agent `env` has a `PATH`, Koodam does not change it, so put `/koodam/bin` in it. Koodam does not keep or redistribute the binary. The pod needs egress to `downloads.claude.ai` (Claude Code) or to `api.github.com` and `github.com` (Codex).
 
+Put the instructions and the skills in the repo that the run works on. Then both harnesses read the same files:
+
+- **Instructions:** write `AGENTS.md`. Codex reads it. Claude Code reads it if the repo has no `CLAUDE.md`. If the repo has a `CLAUDE.md`, put `@AGENTS.md` in it.
+- **Skills:** put them in `.agents/skills/<name>/SKILL.md`. Codex reads this folder. Claude Code reads `.claude/skills`, so link it: `mkdir -p .claude && ln -s ../.agents/skills .claude/skills`.
+
+Skills and config for each user, outside the repo, come with the profiles in v0.3.
+
+A run has one harness or none. If a run has a harness, `kubectl get agents` and `koodam get` show it, and the gateway key has it in the metadata (`harness`). Thus you can group the gateway spend by harness.
+
 ## One run, one command
 
 ```sh

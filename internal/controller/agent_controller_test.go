@@ -227,6 +227,7 @@ var _ = Describe("Agent Controller", func() {
 		Expect(s.Model).To(Equal("local-agent"))
 		Expect(s.Budget).To(Equal(1.5))
 		Expect(s.TTL).To(Equal(11 * time.Minute))
+		Expect(s.Metadata).NotTo(HaveKey("harness"))
 
 		sec := &corev1.Secret{}
 		Expect(exists(sec)).To(BeTrue())
@@ -287,6 +288,7 @@ var _ = Describe("Agent Controller", func() {
 		Expect(pod.InitContainers).To(HaveLen(1))
 		ic := pod.InitContainers[0]
 		Expect(ic.Image).To(Equal(installerImage))
+		Expect(gw.created[0].Metadata).To(HaveKeyWithValue("harness", claudeName))
 		Expect(ic.Command).To(Equal(installArgs(claudeName, "2.1.3", "glibc")), "the CRD default for libc is glibc")
 		Expect(ic.Env).To(BeEmpty())
 		Expect(ic.EnvFrom).To(BeEmpty(), "the installer gets no credential")

@@ -304,12 +304,13 @@ func TestGetAndSpendShowThePhaseTheBudgetAndTheUsage(t *testing.T) {
 	a := testAgent(corev1alpha1.AgentSucceeded, &corev1alpha1.AgentUsage{Spend: "0.5", Calls: 4, FailedCalls: 1})
 	a.Status.StartedAt = &metav1.Time{Time: time.Date(2026, 10, 18, 9, 0, 0, 0, time.UTC)}
 	a.Status.CompletedAt = &metav1.Time{Time: time.Date(2026, 10, 18, 9, 4, 30, 0, time.UTC)}
+	a.Spec.Harness = &corev1alpha1.HarnessSpec{Name: "codex"}
 	kube := newKube(t, nil, a)
 	out, err := run(t, kube, "get")
 	if err != nil {
 		t.Fatal(err)
 	}
-	wantAll(t, out, "PHASE", "STARTED", "COMPLETED", testName, "Succeeded", "local-agent", "0.5",
+	wantAll(t, out, "PHASE", "HARNESS", "codex", "STARTED", "COMPLETED", testName, "Succeeded", "local-agent", "0.5",
 		"2026-10-18T09:00:00Z", "2026-10-18T09:04:30Z", "koodam-dev-fix-tests")
 
 	out, err = run(t, kube, "spend", testName)
@@ -331,8 +332,8 @@ func TestGetShowsADashForATimeThatIsNotSet(t *testing.T) {
 		t.Fatal(err)
 	}
 	wantAll(t, out, "2026-10-18T09:00:00Z")
-	if got := strings.Count(out, " - "); got != 2 {
-		t.Errorf("get shows %d dashes, want a dash for the spend and for the end time:\n%s", got, out)
+	if got := strings.Count(out, " - "); got != 3 {
+		t.Errorf("get shows %d dashes, want a dash for the harness, the spend and the end time:\n%s", got, out)
 	}
 }
 
