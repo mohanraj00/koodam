@@ -25,17 +25,18 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+	"time"
 	"unicode"
 
 	"github.com/spf13/cobra"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/util/httpstream"
 	"k8s.io/apimachinery/pkg/util/validation"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
-	"k8s.io/client-go/transport/spdy"
+	"k8s.io/streaming/pkg/httpstream"
+	"k8s.io/streaming/pkg/httpstream/spdy"
 )
 
 const (
@@ -179,9 +180,23 @@ func forward(ctx context.Context, c httpstream.Connection, in io.Reader, out io.
 // spdyDial returns a dialFunc that opens a SPDY port-forward with the user's kubeconfig.
 func spdyDial(cfg *rest.Config, cs kubernetes.Interface) dialFunc {
 	return func(ctx context.Context, ns, pod string) (httpstream.Connection, error) {
-		rt, upgrader, err := spdy.RoundTripperFor(cfg)
+		tlsCfg, err := rest.TLSConfigFor(cfg)
 		if err != nil {
-			return nil, errors.New("make the SPDY transport: check the TLS settings of the kube context")
+			return nil, errors.New("read the TLS settings of the kube context")
+		}
+		proxy := http.ProxyFromEnvironment
+		if cfg.Proxy != nil {
+			proxy = cfg.Proxy
+		}
+		upgrader, err := spdy.NewRoundTripperWithConfig(spdy.RoundTripperConfig{
+			TLS: tlsCfg, Proxier: proxy, PingPeriod: 5 * time.Second})
+		if err != nil {
+			return nil, errors.New("make the SPDY transport")
+		}
+		// The wrappers add the credentials of the kube context to the request.
+		rt, err := rest.HTTPWrappersForConfig(cfg, upgrader)
+		if err != nil {
+			return nil, errors.New("add the credentials of the kube context to the transport")
 		}
 		u := cs.CoreV1().RESTClient().Post().Resource("pods").Namespace(ns).Name(pod).
 			SubResource("portforward").URL()
@@ -193,8 +208,7 @@ func spdyDial(cfg *rest.Config, cs kubernetes.Interface) dialFunc {
 		resp, err := (&http.Client{Transport: rt}).Do(req)
 		if err != nil {
 			// The URL holds the server address from the kubeconfig. Give only the cause.
-			var urlErr *url.Error
-			if errors.As(err, &urlErr) {
+			if urlErr, ok := errors.AsType[*url.Error](err); ok {
 				err = urlErr.Err
 			}
 			return nil, fmt.Errorf("connect to the API server: %w", err)
