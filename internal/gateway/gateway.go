@@ -35,12 +35,15 @@ var ErrKeyNotFound = errors.New("gateway: key not found")
 // KeySpec is the key for one run. The caller makes Value with NewKeyValue and saves it
 // before CreateKey, so that a retry after a crash uses the same key.
 type KeySpec struct {
-	Value    string
-	Alias    string
-	Model    string
-	Budget   float64
-	TTL      time.Duration
-	Metadata map[string]string
+	Value  string
+	Alias  string
+	Model  string
+	Budget float64
+	// BudgetPeriod resets the spend of the key after each period. If it is 0, the budget is
+	// for the full life of the key.
+	BudgetPeriod time.Duration
+	TTL          time.Duration
+	Metadata     map[string]string
 }
 
 // Usage is the gateway count for one key. The counts come from successful calls only.
@@ -60,6 +63,10 @@ type Gateway interface {
 	// A blocked key returns nil. A missing key returns nil only if the gateway says that the
 	// key is missing.
 	BlockKey(ctx context.Context, key string) error
+	// RenewKey sets the end of the key to spec.TTL from now, and sets the model and the budget
+	// from spec. spec.Value is the key value. If the key is missing, it returns ErrKeyNotFound.
+	// RenewKey does not unblock a blocked key.
+	RenewKey(ctx context.Context, spec KeySpec) error
 	// Usage waits until the spend is stable and returns the count for the key. key is the key
 	// value or its HashKey. If the spend does not settle, it returns the count and
 	// ErrSpendNotSettled. If the key is missing, it returns ErrKeyNotFound.
