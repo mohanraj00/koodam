@@ -67,7 +67,7 @@ func TestRunKeepsOnlyTheChatModelsOfAnthropicAndOpenAI(t *testing.T) {
 	if err := json.Unmarshal(out.Bytes(), &s); err != nil {
 		t.Fatal(err)
 	}
-	var names []string
+	names := make([]string, 0, len(s.Models))
 	for n := range s.Models {
 		names = append(names, n)
 	}
