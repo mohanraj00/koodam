@@ -18,11 +18,13 @@ package main
 
 import (
 	"bytes"
+	"cmp"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"io/fs"
+	"maps"
 	"os"
 	"path"
 	"path/filepath"
@@ -53,7 +55,18 @@ const (
 	manifestKey = "manifest.json"
 	// maxGlobals is the maximum total size. The ConfigMap limit is 1 MiB.
 	maxGlobals = 900 << 10
+	// maxSkill is the maximum size of 1 skill folder. A skill above the total limit can never
+	// fit, so the push skips it. A smaller skill can fit with the other files.
+	maxSkill = maxGlobals
+	// largestShown is the number of skills that the total-size error names.
+	largestShown = 3
 )
+
+// skipError is a reason to skip a skill folder: a binary file or a file that is too large. For
+// CLAUDE.md and AGENTS.md it is an error. Each other error from readGlobal stops the push.
+type skipError struct{ reason string }
+
+func (e skipError) Error() string { return e.reason }
 
 // globalFile is one file in the ConfigMap. Path is relative to /etc/koodam/globals after the
 // pod rebuilds the tree, with "/" as the separator.
@@ -93,13 +106,15 @@ func profilePushCmd(conn connect) *cobra.Command {
 			"pod mounts it read-only at /etc/koodam/globals.\n\n" +
 			"The key of a path is the path with \"_u\" for each \"_\", then \"_s\" for each \"/\". For\n" +
 			"example, skills/my_skill/SKILL.md has the key skills_smy_uskill_sSKILL.md. The key\n" +
-			"manifest.json lists each key and its path. The command refuses a file that is not UTF-8\n" +
-			"text, a credential file\n" +
-			"(for example .credentials.json, auth.json, *.key, *.pem, id_*, .env, .netrc, or a file with\n" +
-			"a private key) and a total size above 900 KiB.\n\n" +
-			"It skips symlinks and files that are not regular, and shows each skipped path. Thus it\n" +
-			"skips a skill folder that is a symlink. It refuses a CLAUDE.md or AGENTS.md symlink that\n" +
-			"goes out of its folder. --dry-run does the same checks and does not connect to the cluster.",
+			"manifest.json lists each key and its path. The command refuses a credential file (for\n" +
+			"example .credentials.json, auth.json, *.key, *.pem, id_*, .env, .netrc, or a file with a\n" +
+			"private key) and pushes nothing. It refuses a total size above 900 KiB, and names the\n" +
+			"largest skills.\n\n" +
+			"It skips a skill folder that has a file that is not UTF-8 text, or that is larger than\n" +
+			"900 KiB. It skips dot folders, dot files, symlinks and files that are not regular, and shows\n" +
+			"each skipped path with the reason. Thus it skips a skill folder that is a symlink. It refuses\n" +
+			"a CLAUDE.md or AGENTS.md that is not UTF-8 text, or a symlink that goes out of its folder.\n" +
+			"--dry-run does the same checks and does not connect to the cluster.",
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			files, err := readGlobals(cmd, claudeMD, agentsMD, skills)
@@ -191,33 +206,48 @@ func readSingle(file, rel string) (globalFile, error) {
 		return globalFile{}, err
 	}
 	defer func() { _ = root.Close() }()
-	return readGlobal(root, filepath.Base(file), file, rel)
+	return readGlobal(root, filepath.Base(file), file, rel, true)
 }
 
-// readSkills reads each regular file under dir/NAME/ through an os.Root on dir. It follows a
-// symlink only for dir. It skips each other symlink and shows its path.
-func readSkills(cmd *cobra.Command, dir string) ([]globalFile, error) {
-	dir, err := filepath.EvalSymlinks(dir)
-	if err != nil {
-		return nil, err
-	}
+// skillRead is the result of the walk for 1 skill folder. reason is empty if the push keeps it.
+type skillRead struct {
+	name, reason string
+	files        []globalFile
+	size         int
+}
+
+// walkSkills reads each regular file under dir/NAME/ through an os.Root on dir. dir must have
+// no symlinks. It skips each symlink, dot folder and dot file, and shows its path. It never reads
+// a dot folder. It refuses a dot file with a credential name. It scans all the files of a skill
+// for a credential, also after it has a reason to skip the skill, so a credential file always
+// stops the push. It keeps no data of a skill that has a reason to skip.
+func walkSkills(cmd *cobra.Command, dir string) ([]*skillRead, error) {
 	root, err := os.OpenRoot(dir)
 	if err != nil {
 		return nil, err
 	}
 	defer func() { _ = root.Close() }()
-	var files []globalFile
+	var skills []*skillRead
 	err = fs.WalkDir(root.FS(), ".", func(name string, d fs.DirEntry, err error) error {
 		if err != nil || name == "." {
 			return err
 		}
 		shown := filepath.Join(dir, filepath.FromSlash(name))
+		dot := strings.HasPrefix(d.Name(), ".")
 		skip := ""
 		switch {
-		case d.IsDir() && d.Name() == ".git":
+		case d.IsDir() && dot:
+			_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "skip %s: a dot folder\n", shown)
 			return fs.SkipDir
+		case d.IsDir() && !strings.Contains(name, "/"):
+			skills = append(skills, &skillRead{name: name})
+			return nil
 		case d.IsDir():
 			return nil
+		case dot && isCredential(d.Name()):
+			return credentialError(shown)
+		case dot:
+			skip = "a dot file"
 		case d.Type()&fs.ModeSymlink != 0:
 			skip = "a symlink"
 		case !d.Type().IsRegular():
@@ -229,14 +259,59 @@ func readSkills(cmd *cobra.Command, dir string) ([]globalFile, error) {
 			_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "skip %s: %s\n", shown, skip)
 			return nil
 		}
-		f, err := readGlobal(root, name, shown, "skills/"+name)
-		if err != nil {
+		s := skills[len(skills)-1]
+		// If the skill has a reason to skip, readGlobal only does the credential checks.
+		f, err := readGlobal(root, name, shown, "skills/"+name, s.reason == "")
+		var se skipError
+		switch {
+		case errors.As(err, &se):
+			s.skip(se.reason)
+		case err != nil:
 			return err
+		case s.reason == "":
+			s.files = append(s.files, f)
+			s.size += f.Size
+			if s.size > maxSkill {
+				s.skip(fmt.Sprintf("the skill is larger than %d KiB, the limit for 1 skill", maxSkill>>10))
+			}
 		}
-		files = append(files, f)
 		return nil
 	})
-	return files, err
+	return skills, err
+}
+
+// skip gives the skill its first reason to skip, and releases its data.
+func (s *skillRead) skip(reason string) {
+	if s.reason == "" {
+		s.reason = reason
+	}
+	s.files = nil
+}
+
+// readSkills reads the skills in dir with walkSkills. It shows each skipped skill with the reason,
+// and gives the files of the other skills.
+func readSkills(cmd *cobra.Command, dir string) ([]globalFile, error) {
+	dir, err := filepath.EvalSymlinks(dir)
+	if err != nil {
+		return nil, err
+	}
+	skills, err := walkSkills(cmd, dir)
+	if err != nil {
+		return nil, err
+	}
+	var files []globalFile
+	for _, s := range skills {
+		if s.reason != "" {
+			_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "skip the skill %s: %s\n", filepath.Join(dir, s.name), s.reason)
+			continue
+		}
+		files = append(files, s.files...)
+	}
+	return files, nil
+}
+
+func credentialError(shown string) error {
+	return fmt.Errorf("%s looks like a credential file: koodam profile push never pushes it", shown)
 }
 
 // checkRel refuses a path that the pod cannot rebuild as a safe file: an absolute path, and a
@@ -286,10 +361,15 @@ func decodeKey(key string) (string, error) {
 }
 
 // readGlobal reads name in root to the relative path rel. shown is the path in the errors. It
-// refuses a credential file and a file that is not UTF-8 text. The errors never give the content.
-func readGlobal(root *os.Root, name, shown, rel string) (globalFile, error) {
+// refuses a credential file. It gives a skipError for a file that is not UTF-8 text or that is
+// larger than maxGlobals, after the credential checks. If keep is false, it does only the
+// credential checks, keeps no data and gives an empty globalFile. The errors never give the content.
+func readGlobal(root *os.Root, name, shown, rel string, keep bool) (globalFile, error) {
 	if isCredential(path.Base(rel)) || isCredential(filepath.Base(name)) {
-		return globalFile{}, fmt.Errorf("%s looks like a credential file: koodam profile push never pushes it", shown)
+		return globalFile{}, credentialError(shown)
+	}
+	if !keep {
+		return globalFile{}, scanGlobal(root, name, shown)
 	}
 	if err := checkRel(rel); err != nil {
 		return globalFile{}, fmt.Errorf("%s: %w", shown, err)
@@ -299,32 +379,78 @@ func readGlobal(root *os.Root, name, shown, rel string) (globalFile, error) {
 		return globalFile{}, fmt.Errorf("%s: %s is not a valid ConfigMap key (use only letters, digits, '-', '_' and '.')",
 			shown, key)
 	}
-	f, err := root.Open(name)
+	data, err := openScan(root, name, shown, maxGlobals+1)
 	if err != nil {
 		return globalFile{}, err
+	}
+	if len(data) > maxGlobals {
+		return globalFile{}, skipError{fmt.Sprintf("%s is larger than %d KiB", shown, maxGlobals>>10)}
+	}
+	if !utf8.Valid(data) {
+		return globalFile{}, skipError{fmt.Sprintf(
+			"%s is not UTF-8 text: koodam profile push does not push binary files", shown)}
+	}
+	return globalFile{Key: key, Path: rel, Size: len(data), data: string(data)}, nil
+}
+
+// scanGlobal refuses a file with a private key. It keeps no data.
+func scanGlobal(root *os.Root, name, shown string) error {
+	_, err := openScan(root, name, shown, 0)
+	return err
+}
+
+// openScan opens a regular file, refuses it if it has a private key, and gives the first keep
+// bytes.
+func openScan(root *os.Root, name, shown string, keep int) ([]byte, error) {
+	f, err := root.Open(name)
+	if err != nil {
+		return nil, err
 	}
 	defer func() { _ = f.Close() }()
 	info, err := f.Stat()
 	if err != nil {
-		return globalFile{}, err
+		return nil, err
 	}
 	if !info.Mode().IsRegular() {
-		return globalFile{}, fmt.Errorf("%s is not a regular file", shown)
+		return nil, fmt.Errorf("%s is not a regular file", shown)
 	}
-	data, err := io.ReadAll(io.LimitReader(f, maxGlobals+1))
+	data, privateKey, err := readScan(f, keep)
 	if err != nil {
-		return globalFile{}, fmt.Errorf("read %s: %w", shown, err)
+		return nil, fmt.Errorf("read %s: %w", shown, err)
 	}
-	if len(data) > maxGlobals {
-		return globalFile{}, fmt.Errorf("%s is larger than %d KiB", shown, maxGlobals>>10)
+	if privateKey {
+		return nil, fmt.Errorf("%s has a private key: koodam profile push never pushes it", shown)
 	}
-	if !utf8.Valid(data) {
-		return globalFile{}, fmt.Errorf("%s is not UTF-8 text: koodam profile push does not push binary files", shown)
+	return data, nil
+}
+
+// privateKeyMark is in each PEM private key, for example "-----BEGIN OPENSSH PRIVATE KEY-----".
+var privateKeyMark = []byte("PRIVATE KEY-----")
+
+// readScan reads r to the end and looks for privateKeyMark in all of it, also in a binary file
+// and after keep bytes. It keeps only the first keep bytes, so the memory stays small.
+func readScan(r io.Reader, keep int) ([]byte, bool, error) {
+	var data []byte
+	buf := make([]byte, 64<<10)
+	// tail is the end of the last block, so the scan finds a mark across 2 blocks.
+	var tail []byte
+	for {
+		n, err := r.Read(buf)
+		block := append(tail, buf[:n]...)
+		if bytes.Contains(block, privateKeyMark) {
+			return nil, true, nil
+		}
+		tail = append([]byte(nil), block[max(0, len(block)-len(privateKeyMark)+1):]...)
+		if len(data) < keep {
+			data = append(data, buf[:min(n, keep-len(data))]...)
+		}
+		if errors.Is(err, io.EOF) {
+			return data, false, nil
+		}
+		if err != nil {
+			return nil, false, err
+		}
 	}
-	if bytes.Contains(data, []byte("PRIVATE KEY-----")) {
-		return globalFile{}, fmt.Errorf("%s has a private key: koodam profile push never pushes it", shown)
-	}
-	return globalFile{Key: key, Path: rel, Size: len(data), data: string(data)}, nil
 }
 
 // credentialNames are the file names of a login, a token or a key, in lower case.
@@ -365,10 +491,33 @@ func globalsData(files []globalFile) (map[string]string, error) {
 		total += len(f.Key) + f.Size
 	}
 	if total > maxGlobals {
-		return nil, fmt.Errorf("the global files have %d KiB, and the limit is %d KiB: remove files or skills",
-			total>>10, maxGlobals>>10)
+		return nil, fmt.Errorf("the global files have %d KiB, and the limit is %d KiB: remove files or skills%s",
+			total>>10, maxGlobals>>10, largestSkills(files))
 	}
 	return data, nil
+}
+
+// largestSkills gives the names and the sizes of the largest skills in files, for an error. It
+// never gives the content.
+func largestSkills(files []globalFile) string {
+	sizes := map[string]int{}
+	for _, f := range files {
+		if parts := strings.SplitN(f.Path, "/", 3); len(parts) == 3 && parts[0] == "skills" {
+			sizes[parts[1]] += f.Size
+		}
+	}
+	names := slices.Collect(maps.Keys(sizes))
+	slices.SortFunc(names, func(a, b string) int {
+		return cmp.Or(cmp.Compare(sizes[b], sizes[a]), cmp.Compare(a, b))
+	})
+	if len(names) == 0 {
+		return ""
+	}
+	shown := make([]string, 0, largestShown)
+	for _, n := range names[:min(len(names), largestShown)] {
+		shown = append(shown, fmt.Sprintf("%s (%d KiB)", n, sizes[n]>>10))
+	}
+	return ". The largest skills are " + strings.Join(shown, ", ")
 }
 
 // pushGlobals creates or updates the ConfigMap. It replaces all the data, so a file that you

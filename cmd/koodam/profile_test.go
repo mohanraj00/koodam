@@ -20,11 +20,13 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
+	"github.com/spf13/cobra"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -37,6 +39,8 @@ const (
 	secretText = "do-not-show-this-text"
 	credErr    = "credential"
 	claudeFile = "CLAUDE.md"
+	keyErr     = "has a private key"
+	notesFile  = "notes.md"
 )
 
 // profileHome makes a home with CLAUDE.md, AGENTS.md and 1 skill.
@@ -150,10 +154,10 @@ func TestProfilePushRefusesBadFiles(t *testing.T) {
 		".git-credentials":  credErr,
 		"credentials.json":  credErr,
 		"token.json":        credErr,
-		"notes.md":          "has a private key",
+		notesFile:           keyErr,
 		"bad name.md":       "not a valid ConfigMap key",
-		"logo.png":          "not UTF-8",
-		"large.md":          "limit is 900 KiB",
+		"logo.png":          keyErr,
+		"large.md":          keyErr,
 	}
 	for name, want := range cases {
 		t.Run(name, func(t *testing.T) {
@@ -161,13 +165,13 @@ func TestProfilePushRefusesBadFiles(t *testing.T) {
 			path := filepath.Join(home, ".claude", "skills", "review", name)
 			switch name {
 			case "logo.png":
-				writeTestFile(t, path, "\xff\xfe\x00binary")
+				// A binary file with a private key stops the push. It does not skip the skill.
+				writeTestFile(t, path, "\xff\xfe\x00-----BEGIN RSA PRIVATE KEY-----"+secretText)
 			case "large.md":
-				for i := range 2 {
-					writeTestFile(t, filepath.Join(home, ".claude", "skills", "review", "l"+string(rune('a'+i))+".md"),
-						strings.Repeat("x", 500<<10))
-				}
-			case "notes.md":
+				// The mark starts 5 bytes before the end of the 15th block of 64 KiB, after the
+				// first 900 KiB. Thus the scan finds a mark across 2 blocks in a file that is too large.
+				writeTestFile(t, path, strings.Repeat("x", 15*(64<<10)-16)+"-----BEGIN PRIVATE KEY-----")
+			case notesFile:
 				writeTestFile(t, path, "-----BEGIN OPENSSH PRIVATE KEY-----\n"+secretText)
 			default:
 				writeTestFile(t, path, secretText)
@@ -325,9 +329,7 @@ func TestProfilePushDryRunChecksAndDoesNotConnect(t *testing.T) {
 	home := profileHome(t)
 	for _, big := range []bool{false, true} {
 		if big {
-			for _, n := range []string{"a.md", "b.md"} {
-				writeTestFile(t, filepath.Join(home, ".claude", "skills", "review", n), strings.Repeat("x", 500<<10))
-			}
+			bigSkills(t, home)
 		}
 		root := newRoot(func() (*env, error) {
 			t.Fatal("the dry run connected to the cluster")
@@ -377,5 +379,193 @@ func TestProfilePushTellsToRunAgainOnAConflict(t *testing.T) {
 	_, err := run(t, kube, "profile", "push")
 	if err == nil || !strings.Contains(err.Error(), "run the command again") || updates < 2 {
 		t.Fatalf("got %v after %d updates, want retries and a run-again error", err, updates)
+	}
+}
+
+const binaryBody = "\xff\xfe\x00binary " + secretText
+
+// bigSkills adds 3 skills of 400 KiB. Each skill is below the limit for 1 skill, and the total
+// is above the limit.
+func bigSkills(t *testing.T, home string) {
+	t.Helper()
+	for _, n := range []string{"big-a", "big-b", "big-c"} {
+		writeTestFile(t, filepath.Join(home, ".claude", "skills", n, "SKILL.md"), strings.Repeat("x", 400<<10))
+	}
+}
+
+func TestProfilePushSkipsDotEntriesAndBadSkills(t *testing.T) {
+	home := profileHome(t)
+	skills := filepath.Join(home, ".claude", "skills")
+	writeTestFile(t, filepath.Join(skills, ".trash", "id1", "morning", "font.woff2"), binaryBody)
+	writeTestFile(t, filepath.Join(skills, ".DS_Store"), binaryBody)
+	writeTestFile(t, filepath.Join(skills, "review", ".DS_Store"), binaryBody)
+	writeTestFile(t, filepath.Join(skills, "fonts", "SKILL.md"), "fonts skill")
+	writeTestFile(t, filepath.Join(skills, "fonts", "assets", "a.woff2"), binaryBody)
+	for _, n := range []string{"a.md", "b.md"} {
+		writeTestFile(t, filepath.Join(skills, "huge", n), strings.Repeat("x", 500<<10))
+	}
+	kube := newKube(t, nil)
+	out, err := run(t, kube, "profile", "push")
+	if err != nil {
+		t.Fatalf("push: %v\n%s", err, out)
+	}
+	real, err := filepath.EvalSymlinks(skills)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantAll(t, out,
+		"skip "+filepath.Join(real, ".trash")+": a dot folder",
+		"skip "+filepath.Join(real, ".DS_Store")+": a dot file",
+		"skip "+filepath.Join(real, "review", ".DS_Store")+": a dot file",
+		"skip the skill "+filepath.Join(real, "fonts")+": "+filepath.Join(real, "fonts", "assets", "a.woff2")+
+			" is not UTF-8 text",
+		"skip the skill "+filepath.Join(real, "huge")+": the skill is larger than 900 KiB, the limit for 1 skill",
+		"4 files")
+	if got := strings.Count(out, "skip the skill"); got != 2 {
+		t.Errorf("got %d skill warnings, want 2:\n%s", got, out)
+	}
+	if strings.Contains(out, secretText) {
+		t.Errorf("the output showed the content:\n%s", out)
+	}
+	data := getGlobals(t, kube).Data
+	if data["skills_sreview_sSKILL.md"] == "" || len(data) != 5 {
+		t.Errorf("got keys %v, want the 4 files of the profile and the manifest", data)
+	}
+}
+
+func TestProfilePushStopsOnACredentialInASkippedSkill(t *testing.T) {
+	for _, cred := range []string{"auth.json", notesFile, ".env"} {
+		t.Run(cred, func(t *testing.T) {
+			home := profileHome(t)
+			skill := filepath.Join(home, ".claude", "skills", "fonts")
+			// a.woff2 comes before the credential file in the walk, so the skill has a reason to
+			// skip before the walk reads the credential file.
+			writeTestFile(t, filepath.Join(skill, "a.woff2"), binaryBody)
+			writeTestFile(t, filepath.Join(skill, cred), "-----BEGIN OPENSSH PRIVATE KEY-----\n"+secretText)
+			kube := newKube(t, nil)
+			out, err := run(t, kube, "profile", "push")
+			if err == nil || !strings.Contains(err.Error(), filepath.Join("fonts", cred)) {
+				t.Fatalf("got %v, want an error for the credential file\n%s", err, out)
+			}
+			if strings.Contains(out+err.Error(), secretText) {
+				t.Errorf("the output showed the content:\n%s", out)
+			}
+			cm := &corev1.ConfigMap{}
+			err = kube.Get(context.Background(), client.ObjectKey{Namespace: testNS, Name: globalsName}, cm)
+			if !apierrors.IsNotFound(err) {
+				t.Errorf("the push changed the cluster: %v", err)
+			}
+		})
+	}
+}
+
+// A dot folder is never read and never pushed. Thus a credential file in it does not stop the
+// push, and it cannot go to the cluster.
+func TestProfilePushDoesNotReadADotFolder(t *testing.T) {
+	home := profileHome(t)
+	writeTestFile(t, filepath.Join(home, ".claude", "skills", "review", ".cache", "auth.json"), "dot-folder-token")
+	kube := newKube(t, nil)
+	out, err := run(t, kube, "profile", "push")
+	if err != nil {
+		t.Fatalf("push: %v\n%s", err, out)
+	}
+	wantAll(t, out, ".cache: a dot folder", "4 files")
+	for k, v := range getGlobals(t, kube).Data {
+		if strings.Contains(k, "auth") || strings.Contains(v, "dot-folder-token") {
+			t.Errorf("the push sent the file in the dot folder as %s", k)
+		}
+	}
+}
+
+func TestProfilePushNamesTheLargestSkills(t *testing.T) {
+	home := profileHome(t)
+	bigSkills(t, home)
+	_, err := run(t, newKube(t, nil), "profile", "push")
+	want := "limit is 900 KiB: remove files or skills. The largest skills are big-a (400 KiB), big-b (400 KiB), " +
+		"big-c (400 KiB)"
+	if err == nil || !strings.Contains(err.Error(), want) {
+		t.Fatalf("got %v, want %q", err, want)
+	}
+}
+
+func TestProfilePushDryRunShowsTheSkippedSkills(t *testing.T) {
+	home := profileHome(t)
+	writeTestFile(t, filepath.Join(home, ".claude", "skills", "fonts", "a.woff2"), binaryBody)
+	kube := newKube(t, nil)
+	out, err := run(t, kube, "profile", "push", "--dry-run")
+	if err != nil {
+		t.Fatalf("dry run: %v\n%s", err, out)
+	}
+	wantAll(t, out, "fonts: ", "a.woff2 is not UTF-8 text", "skills_sreview_sSKILL.md\t12", "4 files", "(dry run)")
+	if strings.Contains(out, secretText) || strings.Contains(out, "skills_sfonts") {
+		t.Errorf("the dry run showed the content or the skipped skill:\n%s", out)
+	}
+}
+
+func TestProfilePushSkipsAnEmptySkillAndASymlinkInASkill(t *testing.T) {
+	home := profileHome(t)
+	skills := filepath.Join(home, ".claude", "skills")
+	if err := os.MkdirAll(filepath.Join(skills, "empty"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeTestFile(t, filepath.Join(home, "outside.md"), secretText)
+	link := filepath.Join(skills, "review", "refs", "link.md")
+	if err := os.Symlink(filepath.Join(home, "outside.md"), link); err != nil {
+		t.Skip("no symlinks:", err)
+	}
+	kube := newKube(t, nil)
+	out, err := run(t, kube, "profile", "push")
+	if err != nil {
+		t.Fatalf("push: %v\n%s", err, out)
+	}
+	wantAll(t, out, "link.md: a symlink", "4 files")
+	data := getGlobals(t, kube).Data
+	if len(data) != 5 || data["skills_sreview_srefs_sa.md"] != "ref" {
+		t.Errorf("got keys %v, want the 4 files of the profile and the manifest", data)
+	}
+}
+
+func TestProfilePushRefusesABadClaudeOrAgentsFile(t *testing.T) {
+	for _, file := range []string{filepath.Join(".claude", claudeFile), filepath.Join(".codex", "AGENTS.md")} {
+		for body, want := range map[string]string{
+			binaryBody:                        "not UTF-8",
+			strings.Repeat("x", maxGlobals+1): "larger than 900 KiB",
+		} {
+			t.Run(file+" "+want, func(t *testing.T) {
+				home := profileHome(t)
+				writeTestFile(t, filepath.Join(home, file), body)
+				_, err := run(t, newKube(t, nil), "profile", "push")
+				if err == nil || !strings.Contains(err.Error(), want) || strings.Contains(err.Error(), secretText) {
+					t.Fatalf("got %v, want an error with %q and without the content", err, want)
+				}
+			})
+		}
+	}
+}
+
+// After a skill is too large, the walk keeps no more data of it, and it still scans the other
+// files of the skill for a credential.
+func TestWalkSkillsKeepsNoDataOfALargeSkill(t *testing.T) {
+	dir := t.TempDir()
+	for i := range 20 {
+		writeTestFile(t, filepath.Join(dir, "huge", fmt.Sprintf("f%02d.md", i)), strings.Repeat("x", 100<<10))
+	}
+	writeTestFile(t, filepath.Join(dir, "huge", "z.bin"), binaryBody)
+	writeTestFile(t, filepath.Join(dir, "small", "SKILL.md"), "small")
+	cmd := &cobra.Command{}
+	cmd.SetErr(&bytes.Buffer{})
+	got, err := walkSkills(cmd, dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 2 || got[0].reason == "" || got[0].files != nil || got[0].size > maxSkill+(100<<10) ||
+		got[1].reason != "" || len(got[1].files) != 1 {
+		t.Fatalf("got %+v and %+v, want a skipped huge skill with no data", *got[0], *got[1])
+	}
+
+	writeTestFile(t, filepath.Join(dir, "huge", "z.md"), "-----BEGIN PRIVATE KEY-----\n"+secretText)
+	if _, err := walkSkills(cmd, dir); err == nil || !strings.Contains(err.Error(), keyErr) ||
+		strings.Contains(err.Error(), secretText) {
+		t.Fatalf("got %v, want a private key error after the skip", err)
 	}
 }
