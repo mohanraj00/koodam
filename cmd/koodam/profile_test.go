@@ -36,6 +36,7 @@ import (
 const (
 	secretText = "do-not-show-this-text"
 	credErr    = "credential"
+	claudeFile = "CLAUDE.md"
 )
 
 // profileHome makes a home with CLAUDE.md, AGENTS.md and 1 skill.
@@ -44,7 +45,7 @@ func profileHome(t *testing.T) string {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	t.Setenv("USERPROFILE", home)
-	writeTestFile(t, filepath.Join(home, ".claude", "CLAUDE.md"), "claude rules "+secretText)
+	writeTestFile(t, filepath.Join(home, ".claude", claudeFile), "claude rules "+secretText)
 	writeTestFile(t, filepath.Join(home, ".codex", "AGENTS.md"), "codex rules")
 	writeTestFile(t, filepath.Join(home, ".claude", "skills", "review", "SKILL.md"), "review skill")
 	writeTestFile(t, filepath.Join(home, ".claude", "skills", "review", "refs", "a.md"), "ref")
@@ -83,7 +84,7 @@ func TestProfilePushCreatesThenUpdatesTheConfigMap(t *testing.T) {
 		t.Errorf("the ConfigMap has no label %s: %v", workspaceLabel, cm.Labels)
 	}
 	want := map[string]string{
-		"CLAUDE.md":                  "CLAUDE.md",
+		claudeFile:                   claudeFile,
 		"AGENTS.md":                  "AGENTS.md",
 		"skills_sreview_sSKILL.md":   "skills/review/SKILL.md",
 		"skills_sreview_srefs_sa.md": "skills/review/refs/a.md",
@@ -214,7 +215,7 @@ func TestProfilePushSkipsSymlinksAndMissingDefaults(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	wantAll(t, out, "skip "+filepath.Join(home, ".claude", "CLAUDE.md"),
+	wantAll(t, out, "skip "+filepath.Join(home, ".claude", claudeFile),
 		"skip "+filepath.Join(real, "review", "link.md")+": a symlink",
 		"skip "+filepath.Join(real, "linked")+": a symlink", "1 files")
 	if data := getGlobals(t, kube).Data; len(data) != 2 || data["skills_sreview_sSKILL.md"] == "" {
@@ -248,7 +249,7 @@ func TestProfilePushGivesAHintOnForbidden(t *testing.T) {
 
 func TestProfilePushRefusesASymlinkOutOfTheFolder(t *testing.T) {
 	home := profileHome(t)
-	claude := filepath.Join(home, ".claude", "CLAUDE.md")
+	claude := filepath.Join(home, ".claude", claudeFile)
 	writeTestFile(t, filepath.Join(home, "outside.md"), secretText)
 	if err := os.Remove(claude); err != nil {
 		t.Fatal(err)
@@ -274,7 +275,7 @@ func TestCheckRelRefusesUnsafePaths(t *testing.T) {
 }
 
 func TestKeyEncodingIsReversible(t *testing.T) {
-	paths := []string{"CLAUDE.md", "skills/review/SKILL.md", "skills/py/__init__.py", "skills/t/_template.md",
+	paths := []string{claudeFile, "skills/review/SKILL.md", "skills/py/__init__.py", "skills/t/_template.md",
 		"skills/a_/b", "skills/a/_b", "skills/a__b/c", "skills/x_s/y", "skills/x/_sy", "skills/x_u/y"}
 	keys := map[string]string{}
 	for _, p := range paths {
