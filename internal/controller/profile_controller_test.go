@@ -55,29 +55,26 @@ var _ = Describe("Profile Controller", func() {
 	}
 
 	It("binds only the namespaces that the Profile lists and that have its label", func() {
-		makeNamespace("pf-listed-labelled", "pf-alice")
-		makeNamespace("pf-labelled-only", "pf-alice")
+		const alice, listedLabelled = "pf-alice", "pf-listed-labelled"
+		makeNamespace(listedLabelled, alice)
+		makeNamespace("pf-labelled-only", alice)
 		makeNamespace("pf-listed-only", "")
 		makeNamespace("pf-other-label", "pf-bob")
 
 		p := &corev1alpha1.Profile{
-			ObjectMeta: metav1.ObjectMeta{Name: "pf-alice"},
+			ObjectMeta: metav1.ObjectMeta{Name: alice},
 			Spec: corev1alpha1.ProfileSpec{Namespaces: []string{
-				"pf-listed-labelled", "pf-listed-only", "pf-other-label", "pf-missing",
+				listedLabelled, "pf-listed-only", "pf-other-label", "pf-missing",
 			}},
 		}
 		Expect(k8sClient.Create(ctx, p)).To(Succeed())
 		DeferCleanup(func() { Expect(k8sClient.Delete(ctx, p)).To(Succeed()) })
 
-		got := reconcileProfile("pf-alice")
-		By("binding the namespace that is listed and labelled")
-		Expect(got.Status.BoundNamespaces).To(ConsistOf("pf-listed-labelled"))
-		By("not binding the labelled namespace that is not listed")
-		Expect(got.Status.BoundNamespaces).NotTo(ContainElement("pf-labelled-only"))
-		By("not binding the listed namespace without the label")
-		Expect(got.Status.BoundNamespaces).NotTo(ContainElement("pf-listed-only"))
-		By("not binding the namespace with the label of another Profile")
-		Expect(got.Status.BoundNamespaces).NotTo(ContainElement("pf-other-label"))
+		got := reconcileProfile(alice)
+		// Only the listed and labelled namespace is bound. These are not bound: the labelled
+		// namespace that is not listed, the listed namespace without the label, the namespace with
+		// the label of another Profile, and the listed namespace that does not exist.
+		Expect(got.Status.BoundNamespaces).To(ConsistOf(listedLabelled))
 
 		ready := meta.FindStatusCondition(got.Status.Conditions, "Ready")
 		Expect(ready).NotTo(BeNil())
@@ -86,31 +83,32 @@ var _ = Describe("Profile Controller", func() {
 	})
 
 	It("updates the bound namespaces when a namespace label changes", func() {
-		makeNamespace("pf-change", "")
+		const profile, namespace = "pf-carol", "pf-change"
+		makeNamespace(namespace, "")
 		p := &corev1alpha1.Profile{
-			ObjectMeta: metav1.ObjectMeta{Name: "pf-carol"},
-			Spec:       corev1alpha1.ProfileSpec{Namespaces: []string{"pf-change"}},
+			ObjectMeta: metav1.ObjectMeta{Name: profile},
+			Spec:       corev1alpha1.ProfileSpec{Namespaces: []string{namespace}},
 		}
 		Expect(k8sClient.Create(ctx, p)).To(Succeed())
 		DeferCleanup(func() { Expect(k8sClient.Delete(ctx, p)).To(Succeed()) })
-		Expect(reconcileProfile("pf-carol").Status.BoundNamespaces).To(BeEmpty())
+		Expect(reconcileProfile(profile).Status.BoundNamespaces).To(BeEmpty())
 
 		ns := &corev1.Namespace{}
-		Expect(k8sClient.Get(ctx, types.NamespacedName{Name: "pf-change"}, ns)).To(Succeed())
+		Expect(k8sClient.Get(ctx, types.NamespacedName{Name: namespace}, ns)).To(Succeed())
 		old := ns.DeepCopy()
-		ns.Labels = map[string]string{corev1alpha1.ProfileLabel: "pf-carol"}
+		ns.Labels = map[string]string{corev1alpha1.ProfileLabel: profile}
 		Expect(k8sClient.Update(ctx, ns)).To(Succeed())
 
 		By("mapping the namespace event to the Profile in the label")
 		Expect(profileForNamespace(ctx, ns)).To(ConsistOf(
-			reconcile.Request{NamespacedName: types.NamespacedName{Name: "pf-carol"}}))
+			reconcile.Request{NamespacedName: types.NamespacedName{Name: profile}}))
 		Expect(profileForNamespace(ctx, old)).To(BeEmpty())
-		Expect(reconcileProfile("pf-carol").Status.BoundNamespaces).To(ConsistOf("pf-change"))
+		Expect(reconcileProfile(profile).Status.BoundNamespaces).To(ConsistOf(namespace))
 
 		By("removing the binding when the label goes to another Profile")
 		ns.Labels[corev1alpha1.ProfileLabel] = "pf-dave"
 		Expect(k8sClient.Update(ctx, ns)).To(Succeed())
-		Expect(reconcileProfile("pf-carol").Status.BoundNamespaces).To(BeEmpty())
+		Expect(reconcileProfile(profile).Status.BoundNamespaces).To(BeEmpty())
 	})
 
 	It("refuses a namespace name that is not a DNS-1123 label", func() {
