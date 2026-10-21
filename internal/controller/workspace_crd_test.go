@@ -19,6 +19,7 @@ package controller
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
@@ -93,6 +94,12 @@ var _ = Describe("Workspace CRD", func() {
 	It("refuses a public key with a newline", func() {
 		ws := newWorkspace("ws-newline")
 		ws.Spec.SSHPublicKeys = []string{testKey(1) + "\n" + testKey(2)}
+		expectInvalid(create(ws))
+	})
+
+	It("refuses a public key longer than 8192 characters", func() {
+		ws := newWorkspace("ws-long-key")
+		ws.Spec.SSHPublicKeys = []string{"ssh-ed25519 AAAA" + strings.Repeat("A", 8192)}
 		expectInvalid(create(ws))
 	})
 
