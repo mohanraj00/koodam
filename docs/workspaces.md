@@ -2,7 +2,13 @@
 
 A Workspace is a long-lived pod for 1 developer. You connect to it with SSH, and you run the harnesses in `tmux`. A session stays after a disconnect.
 
-The terminal works. The checks with the Claude desktop app and the Codex app are in #15.
+The maintainer checked the apps on 2026-10-21 (#15):
+
+- The terminal and the Claude desktop app work.
+- The Claude desktop app needs no login in the pod.
+- After a cut of the tunnel, the app connected again, and the task continued.
+- After `koodam profile push`, the shared skills and `CLAUDE.md` show in the app.
+- For the Codex app, install Codex in the pod and sign in to Codex in the pod (see #98).
 
 For each Workspace, the controller makes these objects:
 
@@ -21,7 +27,7 @@ The pod has no public port. `koodam tunnel` connects SSH to port 2222 through th
   kubectl create namespace dev-sample
   ```
 
-- **Bind the namespace to a Profile.** The controller runs a Workspace only in a namespace that a Profile binds. Else the Workspace stays `Pending`, and the condition `ProfileBound` is `False`. A cluster admin applies a Profile that permits `dev-sample`:
+- **Bind the namespace to a Profile.** The controller runs a Workspace only in a namespace that a Profile binds. If not, the Workspace stays `Pending`, and the condition `ProfileBound` is `False`. A cluster admin applies a Profile that permits `dev-sample`:
 
   ```sh
   kubectl apply -f - <<'EOF'
@@ -35,7 +41,7 @@ The pod has no public port. `koodam tunnel` connects SSH to port 2222 through th
   EOF
   ```
 
-  Then the namespace gets the Profile label:
+  Add the Profile label to the namespace:
 
   ```sh
   kubectl label namespace dev-sample koodam.dev/profile=profile-sample
@@ -150,7 +156,7 @@ To use more sessions, run `tmux` commands in the pod. sshd permits 10 sessions o
 
 ## Connect the Codex app
 
-1. Install Codex in the pod. See [Install the harnesses](#install-the-harnesses).
+1. Install Codex in the pod. See [Install the harnesses](#install-the-harnesses) and #98.
 2. Run `koodam ssh setup main -n dev-sample`.
 3. Run `koodam ssh test main -n dev-sample`.
 4. In the Codex app, add an SSH connection with the host name `koodam-main.dev-sample`.
