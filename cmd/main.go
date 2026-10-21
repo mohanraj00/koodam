@@ -65,15 +65,29 @@ func init() {
 	// +kubebuilder:scaffold:scheme
 }
 
-// releaseVersion is the format of a release version of the Go module, for example v0.2.0.
-var releaseVersion = regexp.MustCompile(`^v[0-9]+\.[0-9]+\.[0-9]+$`)
+// releaseVersion is the format of a release version of the Go module, for example v0.2.0 or
+// v0.2.0-rc.1.
+var releaseVersion = regexp.MustCompile(`^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$`)
 
-// defaultWorkspaceImage is the workspace image of the same release as the controller. If the
-// build has no release version, the tag is "latest".
+// pseudoVersion is the end of a Go pseudo-version, for example -20261021000000-abcdef123456. No
+// image has this tag.
+var pseudoVersion = regexp.MustCompile(`[0-9]{14}-[0-9a-f]{12}$`)
+
+// defaultWorkspaceImage is the workspace image of the same release as the controller.
 func defaultWorkspaceImage() string {
+	v := ""
+	if bi, ok := debug.ReadBuildInfo(); ok {
+		v = bi.Main.Version
+	}
+	return workspaceImageFor(v)
+}
+
+// workspaceImageFor returns the workspace image for the module version v. If v is not a release
+// version, the tag is "latest".
+func workspaceImageFor(v string) string {
 	tag := "latest"
-	if bi, ok := debug.ReadBuildInfo(); ok && releaseVersion.MatchString(bi.Main.Version) {
-		tag = strings.TrimPrefix(bi.Main.Version, "v")
+	if releaseVersion.MatchString(v) && !pseudoVersion.MatchString(v) {
+		tag = strings.TrimPrefix(v, "v")
 	}
 	return "ghcr.io/mohanraj00/koodam-workspace:" + tag
 }

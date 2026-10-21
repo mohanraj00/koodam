@@ -18,9 +18,6 @@ package controller
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"regexp"
@@ -28,6 +25,7 @@ import (
 
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/api/equality"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
 	"k8s.io/apimachinery/pkg/api/resource"
@@ -59,8 +57,6 @@ const (
 	workspaceUser       = int64(1000)
 	workspacePort       = int32(2222)
 
-	// specHashAnnotation is the hash of the pod template that the controller wrote last.
-	specHashAnnotation = "koodam.dev/spec-hash"
 	// maxWorkspaceName keeps the pod label controller-revision-hash (name, "-", 10 characters)
 	// at 63 characters or fewer.
 	maxWorkspaceName = 52
@@ -124,7 +120,10 @@ func (r *WorkspaceReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 		return ctrl.Result{}, err
 	}
 	ws.Status.Phase = phase
-	ws.Status.Pod = ws.Name + "-0"
+	ws.Status.Pod = ""
+	if phase != corev1alpha1.WorkspaceFailed {
+		ws.Status.Pod = ws.Name + "-0"
+	}
 	ready := metav1.ConditionFalse
 	if phase == corev1alpha1.WorkspaceRunning {
 		ready = metav1.ConditionTrue
@@ -174,7 +173,8 @@ func (r *WorkspaceReconciler) apply(ctx context.Context, ws *corev1alpha1.Worksp
 		return "", "", "", err
 	case ws.Spec.Suspend:
 		return corev1alpha1.WorkspaceSuspended, "Suspended", "The pod is stopped. The home PVC stays.", nil
-	case sts.Status.ReadyReplicas > 0:
+	case sts.Status.ObservedGeneration >= sts.Generation && sts.Status.ReadyReplicas > 0:
+		// The ready replica must come from the current StatefulSet spec.
 		return corev1alpha1.WorkspaceRunning, "PodReady", "The pod is ready for SSH.", nil
 	default:
 		return corev1alpha1.WorkspacePending, "PodNotReady", "The pod is not ready.", nil
@@ -248,16 +248,13 @@ func (r *WorkspaceReconciler) applyConfigMap(ctx context.Context, ws *corev1alph
 	return r.Update(ctx, cm)
 }
 
-// applyStatefulSet makes the StatefulSet. It updates the pod template only if its hash changed,
-// and the replicas if spec.suspend changed. The volumeClaimTemplates cannot change.
+// applyStatefulSet makes the StatefulSet. It updates the pod template only if it is not the
+// template of the controller, and the replicas if spec.suspend changed. The volumeClaimTemplates cannot change.
 func (r *WorkspaceReconciler) applyStatefulSet(ctx context.Context, ws *corev1alpha1.Workspace) (
 	*appsv1.StatefulSet, error) {
-	want, err := r.statefulSet(ws)
-	if err != nil {
-		return nil, err
-	}
+	want := r.statefulSet(ws)
 	have := &appsv1.StatefulSet{}
-	err = r.Get(ctx, types.NamespacedName{Namespace: ws.Namespace, Name: ws.Name}, have)
+	err := r.Get(ctx, types.NamespacedName{Namespace: ws.Namespace, Name: ws.Name}, have)
 	if apierrors.IsNotFound(err) {
 		return want, r.createOwned(ctx, ws, want)
 	}
@@ -267,17 +264,14 @@ func (r *WorkspaceReconciler) applyStatefulSet(ctx context.Context, ws *corev1al
 	if !metav1.IsControlledBy(have, ws) {
 		return nil, errNotOwned
 	}
-	hash := want.Annotations[specHashAnnotation]
-	if have.Annotations[specHashAnnotation] == hash && have.Spec.Replicas != nil &&
-		*have.Spec.Replicas == *want.Spec.Replicas {
+	// DeepDerivative ignores the fields that the API server sets as defaults. Thus the
+	// controller updates the template only if it changed, for example after a manual edit.
+	sameTemplate := equality.Semantic.DeepDerivative(want.Spec.Template, have.Spec.Template)
+	if sameTemplate && have.Spec.Replicas != nil && *have.Spec.Replicas == *want.Spec.Replicas {
 		return have, nil
 	}
-	if have.Annotations[specHashAnnotation] != hash {
+	if !sameTemplate {
 		have.Spec.Template = want.Spec.Template
-		if have.Annotations == nil {
-			have.Annotations = map[string]string{}
-		}
-		have.Annotations[specHashAnnotation] = hash
 	}
 	have.Spec.Replicas = want.Spec.Replicas
 	return have, r.Update(ctx, have)
@@ -300,7 +294,7 @@ func (r *WorkspaceReconciler) createOwned(ctx context.Context, ws *corev1alpha1.
 }
 
 // statefulSet makes the StatefulSet of the pod contract in issue #15.
-func (r *WorkspaceReconciler) statefulSet(ws *corev1alpha1.Workspace) (*appsv1.StatefulSet, error) {
+func (r *WorkspaceReconciler) statefulSet(ws *corev1alpha1.Workspace) *appsv1.StatefulSet {
 	const home, ssh, globals, login = "home", "ssh", "globals", "login"
 	image := ws.Spec.Image
 	if image == "" {
@@ -363,11 +357,6 @@ func (r *WorkspaceReconciler) statefulSet(ws *corev1alpha1.Workspace) (*appsv1.S
 		Containers: []corev1.Container{container},
 		Volumes:    volumes,
 	}}
-	b, err := json.Marshal(tmpl)
-	if err != nil {
-		return nil, fmt.Errorf("hash the pod template: %w", err)
-	}
-	sum := sha256.Sum256(b)
 	sts := &appsv1.StatefulSet{ObjectMeta: workspaceMeta(ws, ws.Name), Spec: appsv1.StatefulSetSpec{
 		Replicas: &replicas,
 		Selector: &metav1.LabelSelector{MatchLabels: labels},
@@ -386,8 +375,7 @@ func (r *WorkspaceReconciler) statefulSet(ws *corev1alpha1.Workspace) (*appsv1.S
 			WhenScaled:  appsv1.RetainPersistentVolumeClaimRetentionPolicyType,
 		},
 	}}
-	sts.Annotations = map[string]string{specHashAnnotation: hex.EncodeToString(sum[:8])}
-	return sts, nil
+	return sts
 }
 
 // SetupWithManager sets up the controller with the Manager. It does not watch the Secrets,

@@ -260,13 +260,55 @@ var _ = Describe("Workspace Controller", func() {
 		Expect(sts.Spec.Replicas).To(HaveValue(Equal(int32(1))))
 		Expect(workspace().Status.Phase).To(Equal(corev1alpha1.WorkspacePending))
 
-		// envtest has no StatefulSet controller, so the test writes the ready count.
+		// envtest has no StatefulSet controller, so the test writes the status. A ready replica
+		// of an old generation does not give Running.
 		sts.Status.Replicas, sts.Status.ReadyReplicas = 1, 1
+		sts.Status.ObservedGeneration = sts.Generation - 1
+		Expect(k8sClient.Status().Update(ctx, sts)).To(Succeed())
+		reconcileOnce()
+		Expect(workspace().Status.Phase).To(Equal(corev1alpha1.WorkspacePending))
+
+		get(sts, name)
+		sts.Status.ObservedGeneration = sts.Generation
 		Expect(k8sClient.Status().Update(ctx, sts)).To(Succeed())
 		reconcileOnce()
 		ws = workspace()
 		Expect(ws.Status.Phase).To(Equal(corev1alpha1.WorkspaceRunning))
 		Expect(meta.IsStatusConditionTrue(ws.Status.Conditions, condReady)).To(BeTrue())
+	})
+
+	It("reverts a manual edit of the pod template", func() {
+		reconcileOnce()
+		sts := &appsv1.StatefulSet{}
+		get(sts, name)
+		want := sts.Spec.Template.DeepCopy()
+		sts.Spec.Template.Spec.Containers[0].Image = "example.com/other:1"
+		sts.Spec.Template.Spec.SecurityContext.RunAsNonRoot = new(false)
+		Expect(k8sClient.Update(ctx, sts)).To(Succeed())
+
+		reconcileOnce()
+		get(sts, name)
+		Expect(sts.Spec.Template).To(Equal(*want))
+	})
+
+	It("uses spec.image and the default storage of 20Gi", func() {
+		ws := &corev1alpha1.Workspace{
+			ObjectMeta: metav1.ObjectMeta{Name: name + "-d", Namespace: ns},
+			Spec:       corev1alpha1.WorkspaceSpec{Image: "example.com/my-workspace:2"},
+		}
+		Expect(k8sClient.Create(ctx, ws)).To(Succeed())
+		cleanup(ws)
+		cleanup(&corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: name + "-d-ssh-host", Namespace: ns}})
+		cleanup(&corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Name: name + "-d-ssh", Namespace: ns}})
+		cleanup(&appsv1.StatefulSet{ObjectMeta: metav1.ObjectMeta{Name: name + "-d", Namespace: ns}})
+		_, err := r().Reconcile(ctx, reconcile.Request{NamespacedName: nn(name + "-d")})
+		Expect(err).NotTo(HaveOccurred())
+
+		sts := &appsv1.StatefulSet{}
+		get(sts, name+"-d")
+		Expect(sts.Spec.Template.Spec.Containers[0].Image).To(Equal("example.com/my-workspace:2"))
+		Expect(sts.Spec.VolumeClaimTemplates[0].Spec.Resources.Requests[corev1.ResourceStorage]).
+			To(Equal(resource.MustParse("20Gi")))
 	})
 
 	It("fails and keeps an object that is not from the Workspace", func() {
@@ -278,6 +320,7 @@ var _ = Describe("Workspace Controller", func() {
 		ws := workspace()
 		Expect(ws.Status.Phase).To(Equal(corev1alpha1.WorkspaceFailed))
 		Expect(meta.FindStatusCondition(ws.Status.Conditions, condReady).Reason).To(Equal("NameConflict"))
+		Expect(ws.Status.Pod).To(BeEmpty())
 		get(other, name+"-ssh")
 		Expect(other.Data).To(Equal(map[string]string{"x": "y"}))
 	})
