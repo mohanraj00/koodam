@@ -50,8 +50,9 @@ func helmTemplate(t *testing.T, values string, set ...string) (string, error) {
 	if err := os.WriteFile(file, []byte(values), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	args := []string{"template", "koodam", chartDir, "--namespace", "koodam-system",
-		"-f", filepath.Join(chartDir, "values-bundled.yaml"), "-f", file}
+	args := make([]string, 0, 9+2*len(set))
+	args = append(args, "template", "koodam", chartDir, "--namespace", "koodam-system",
+		"-f", filepath.Join(chartDir, "values-bundled.yaml"), "-f", file)
 	for _, s := range set {
 		args = append(args, "--set", s)
 	}
