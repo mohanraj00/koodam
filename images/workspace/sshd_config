@@ -1,0 +1,25 @@
+# sshd of the Workspace. It runs as the user dev (uid 1000), not as root.
+# The paths are the pod contract. The README of this folder has the table.
+Port 2222
+HostKey /etc/koodam/ssh/host/ssh_host_ed25519_key
+AuthorizedKeysFile /etc/koodam/ssh/authorized_keys
+# The mounted files belong to root, so sshd must not check their owner.
+StrictModes no
+# A non-root sshd cannot write to /run, so it writes no PID file.
+PidFile none
+
+PermitRootLogin no
+PubkeyAuthentication yes
+PasswordAuthentication no
+KbdInteractiveAuthentication no
+AuthenticationMethods publickey
+UsePAM no
+AllowUsers dev
+
+MaxSessions 10
+AllowTcpForwarding local
+AllowAgentForwarding no
+X11Forwarding no
+PermitTunnel no
+PrintMotd no
+Subsystem sftp internal-sftp

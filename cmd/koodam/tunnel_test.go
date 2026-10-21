@@ -184,7 +184,7 @@ func TestTunnelArgs(t *testing.T) {
 }
 
 // TestTunnelData checks that stdout gets only the remote data, that the remote side gets
-// stdin, and that the streams ask for port 22.
+// stdin, and that the streams ask for port 2222.
 func TestTunnelData(t *testing.T) {
 	c := newFakeConn("")
 	var gotNS, gotPod string
@@ -213,8 +213,8 @@ func TestTunnelData(t *testing.T) {
 		t.Fatalf("got %d streams, want 2", len(c.headers))
 	}
 	for i, want := range []string{corev1.StreamTypeError, corev1.StreamTypeData} {
-		if h := c.headers[i]; h.Get(corev1.StreamType) != want || h.Get(corev1.PortHeader) != "22" {
-			t.Errorf("stream %d headers %v, want type %s and port 22", i, h, want)
+		if h := c.headers[i]; h.Get(corev1.StreamType) != want || h.Get(corev1.PortHeader) != "2222" {
+			t.Errorf("stream %d headers %v, want type %s and port 2222", i, h, want)
 		}
 	}
 }
@@ -234,7 +234,7 @@ func TestTunnelErrors(t *testing.T) {
 		{name: "pod not running", want: "is Pending, not Running", pod: workspacePod(corev1.PodPending)},
 		{name: "dial fails", want: "you need create on pods/portforward", pod: workspacePod(corev1.PodRunning),
 			dialErr: errors.New("the API server denied the port-forward (HTTP 403): you need create on pods/portforward")},
-		{name: "remote error", want: "port-forward to port 22 failed: connection refused",
+		{name: "remote error", want: "port-forward to port 2222 failed: connection refused",
 			pod: workspacePod(corev1.PodRunning), conn: remoteErr},
 	}
 	for _, tc := range cases {
@@ -334,7 +334,7 @@ func TestTunnelErrorAfterClose(t *testing.T) {
 	c.closeAtEnd = true
 	out := &bytes.Buffer{}
 	err := forward(context.Background(), c, strings.NewReader(""), out, 5*time.Second)
-	if err == nil || !strings.Contains(err.Error(), "port-forward to port 22 failed: connection refused") {
+	if err == nil || !strings.Contains(err.Error(), "port-forward to port 2222 failed: connection refused") {
 		t.Errorf("got %v, want the error from the server", err)
 	}
 	if out.Len() != 0 {
