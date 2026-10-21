@@ -46,6 +46,9 @@ const (
 	maxToken = 1024
 	// revokeNote tells the user that a removed token is still valid.
 	revokeNote = "The token is still valid. Revoke it in your Anthropic account settings."
+	// loginCreated and loginUpdated are the verbs in the output.
+	loginCreated = "created"
+	loginUpdated = "updated"
 )
 
 // readTerminal reads 1 line from the terminal with no echo. Tests replace it.
@@ -157,7 +160,7 @@ func (e *env) storeLogin(cmd *cobra.Command, key string, token []byte) (string, 
 			s = &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Namespace: e.namespace, Name: loginName,
 				Labels: map[string]string{managedByLabel: managedBy}}, Type: corev1.SecretTypeOpaque}
 			s.Data = map[string][]byte{key: token}
-			verb, op = "created", "create the Secret"
+			verb, op = loginCreated, "create the Secret"
 			return e.kube.Create(ctx, s)
 		case err != nil:
 			return err
@@ -169,7 +172,7 @@ func (e *env) storeLogin(cmd *cobra.Command, key string, token []byte) (string, 
 			s.Data = map[string][]byte{}
 		}
 		s.Data[key] = token
-		verb, op = "updated", "update the Secret"
+		verb, op = loginUpdated, "update the Secret"
 		return e.kube.Update(ctx, s)
 	})
 	switch {
