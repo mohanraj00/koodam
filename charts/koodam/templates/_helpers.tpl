@@ -65,3 +65,19 @@ app.kubernetes.io/name: {{ (index . 0).Chart.Name }}
 app.kubernetes.io/instance: {{ (index . 0).Release.Name }}
 app.kubernetes.io/component: {{ index . 1 }}
 {{- end -}}
+
+{{/*
+The default workspace image. If the tag is empty, the tag is the chart appVersion.
+If the tag starts with "sha256:", the tag is a digest. A null workspace or workspace.image
+gives the "required" error.
+*/}}
+{{- define "koodam.workspaceImage" -}}
+{{- $image := get (.Values.workspace | default dict) "image" | default dict -}}
+{{- $repository := required "workspace.image.repository is necessary." (get $image "repository") -}}
+{{- $tag := get $image "tag" | default .Chart.AppVersion -}}
+{{- if hasPrefix "sha256:" $tag -}}
+{{- printf "%s@%s" $repository $tag -}}
+{{- else -}}
+{{- printf "%s:%s" $repository $tag -}}
+{{- end -}}
+{{- end -}}
