@@ -70,10 +70,12 @@ const (
 var (
 	// managerImage is the manager image that the suite builds and loads into kind.
 	managerImage = "example.com/koodam:v0.0.1"
-	ctx          = context.Background()
-	restCfg      *rest.Config
-	k8s          client.Client
-	clientset    *kubernetes.Clientset
+	// workspaceImage is the workspace image that the suite builds from images/workspace.
+	workspaceImage = "example.com/koodam-workspace:v0.0.1"
+	ctx            = context.Background()
+	restCfg        *rest.Config
+	k8s            client.Client
+	clientset      *kubernetes.Clientset
 	// masterKey is the gateway master key. The suite makes it and never prints it.
 	masterKey   string
 	gatewayURL  = "http://127.0.0.1:" + gatewayPort
@@ -95,6 +97,11 @@ var _ = BeforeSuite(func() {
 
 	By("loading the manager image on kind")
 	Expect(utils.LoadImageToKindClusterWithName(managerImage)).To(Succeed())
+
+	By("building the workspace image and loading it on kind")
+	_, err = utils.Run(exec.Command("make", "docker-build-workspace", "WORKSPACE_IMG="+workspaceImage))
+	Expect(err).NotTo(HaveOccurred(), "Failed to build the workspace image")
+	Expect(utils.LoadImageToKindClusterWithName(workspaceImage)).To(Succeed())
 
 	restCfg, err = ctrl.GetConfig()
 	Expect(err).NotTo(HaveOccurred())
