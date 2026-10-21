@@ -7,6 +7,16 @@ rules:
 - apiGroups:
   - ""
   resources:
+  - configmaps
+  verbs:
+  - create
+  - get
+  - list
+  - update
+  - watch
+- apiGroups:
+  - ""
+  resources:
   - namespaces
   verbs:
   - get
@@ -46,6 +56,7 @@ rules:
   - agents/finalizers
   - agents/status
   - profiles/status
+  - workspaces/finalizers
   verbs:
   - update
 - apiGroups:
@@ -56,6 +67,23 @@ rules:
   - get
   - list
   - watch
+- apiGroups:
+  - core.koodam.dev
+  resources:
+  - workspaces
+  verbs:
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - core.koodam.dev
+  resources:
+  - workspaces/status
+  verbs:
+  - patch
+  - update
 - apiGroups:
   - rbac.authorization.k8s.io
   resources:

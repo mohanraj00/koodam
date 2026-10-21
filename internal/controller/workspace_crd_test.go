@@ -32,7 +32,7 @@ import (
 	corev1alpha1 "github.com/mohanraj00/koodam/api/v1alpha1"
 )
 
-// The CRD validation of the Workspace. There is no Workspace controller yet, so these tests only
+// The CRD validation of the Workspace. These tests do not run the Workspace controller. They only
 // send objects to the API server.
 var _ = Describe("Workspace CRD", func() {
 	ctx := context.Background()
