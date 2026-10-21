@@ -145,6 +145,13 @@ run
 check "stamp: target not written" test ! -e "$work/stamp-target"
 check "stamp: regular file now" test -f "$st/.globals-stamp" -a ! -L "$st/.globals-stamp"
 check "stamp: tree updated" test "$(cat "$g/skills/review/SKILL.md")" = r10
+rm -f "$st/.globals-stamp"
+mkdir -p "$work/stamp-dir"
+ln -s "$work/stamp-dir" "$st/.globals-stamp"
+configmap 'skills_sreview_sSKILL.md=r10b'
+run
+check "stamp: nothing moved into a linked folder" test -z "$(ls -A "$work/stamp-dir")"
+check "stamp: regular file after a folder link" test -f "$st/.globals-stamp" -a ! -L "$st/.globals-stamp"
 
 # 11. $globals that is not a link of koodam: keep it, do not link from it, exit 0.
 #     The no-change path (same ..data) checks it too.
@@ -153,17 +160,19 @@ rm "$g"
 mkdir -p "$work/other/skills/foreign"
 ln -s "$work/other" "$g"
 run
-check "globals: exit 0" test $? -eq 0
+check "globals: exit 0 (no change)" test $? -eq 0
 check "globals: message (no change)" grep -q 'is not a link of koodam' "$work/stderr"
 check "globals: link kept" test "$(readlink "$g")" = "$work/other"
 check "globals: no foreign link" test ! -L "$HOME/.claude/skills/foreign"
 configmap 'skills_sreview_sSKILL.md=r11'
 run
+check "globals: exit 0 (change)" test $? -eq 0
 check "globals: message (change)" grep -q 'is not a link of koodam' "$work/stderr"
 check "globals: link still kept" test "$(readlink "$g")" = "$work/other"
 rm "$g"
 mkdir "$g"
 run
+check "globals: exit 0 (folder)" test $? -eq 0
 check "globals: folder kept" test -d "$g" -a ! -L "$g"
 rmdir "$g"
 ln -s "$tree" "$g"

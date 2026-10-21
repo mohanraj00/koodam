@@ -187,6 +187,8 @@ main() {
     if [ -d "$stampfile" ] && [ ! -L "$stampfile" ]; then
       warn "skip the stamp: $stampfile is a folder"
     elif [ -n "$stamp" ] && tmp=$(mktemp "$state/.globals-stamp.XXXXXX"); then
+      # mv into a symlink to a folder moves the file into the folder, so remove the link first.
+      [ -L "$stampfile" ] && rm -f "$stampfile"
       printf '%s\n' "$stamp" >"$tmp" && mv -f "$tmp" "$stampfile" || rm -f "$tmp"
     else
       rm -f "$stampfile"
