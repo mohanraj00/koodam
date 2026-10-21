@@ -79,6 +79,20 @@ spec:
         # Kubernetes puts the password into the URL. The password value is not in the pod spec.
         - name: DATABASE_URL
           value: {{ printf "postgresql://litellm:$(POSTGRES_PASSWORD)@%s-postgres.%s.svc:5432/litellm" (include "koodam.fullname" .) .Release.Namespace }}
+        # The upstream provider keys. Each value comes from a Secret that you make.
+        # The chart has no path for a literal value, so a key value is never in the release.
+        {{- range $i, $e := $b.litellm.extraEnvFromSecrets }}
+        {{- $item := printf "gateway.bundled.litellm.extraEnvFromSecrets[%d]" $i }}
+        {{- $envName := required (printf "%s.name is necessary." $item) $e.name }}
+        {{- if has $envName (list "LITELLM_MASTER_KEY" "POSTGRES_PASSWORD" "DATABASE_URL") }}
+        {{- fail (printf "%s.name must not be %s. The chart sets this variable." $item $envName) }}
+        {{- end }}
+        - name: {{ $envName | quote }}
+          valueFrom:
+            secretKeyRef:
+              name: {{ required (printf "%s.secretName is necessary." $item) $e.secretName | quote }}
+              key: {{ required (printf "%s.secretKey is necessary." $item) $e.secretKey | quote }}
+        {{- end }}
         ports:
         - containerPort: 4000
           name: http
