@@ -206,7 +206,7 @@ func readSingle(file, rel string) (globalFile, error) {
 		return globalFile{}, err
 	}
 	defer func() { _ = root.Close() }()
-	return readGlobal(root, filepath.Base(file), file, rel)
+	return readGlobal(root, filepath.Base(file), file, rel, true)
 }
 
 // skillRead is the result of the walk for 1 skill folder. reason is empty if the push keeps it.
@@ -216,15 +216,12 @@ type skillRead struct {
 	size         int
 }
 
-// readSkills reads each regular file under dir/NAME/ through an os.Root on dir. It follows a
-// symlink only for dir. It skips each other symlink, dot folder and dot file, and shows its path.
-// It never reads a dot folder. It refuses a dot file with a credential name. It reads all the
-// files of a skill before it decides to skip the skill, so a credential file always stops the push.
-func readSkills(cmd *cobra.Command, dir string) ([]globalFile, error) {
-	dir, err := filepath.EvalSymlinks(dir)
-	if err != nil {
-		return nil, err
-	}
+// walkSkills reads each regular file under dir/NAME/ through an os.Root on dir. dir must have
+// no symlinks. It skips each symlink, dot folder and dot file, and shows its path. It never reads
+// a dot folder. It refuses a dot file with a credential name. It scans all the files of a skill
+// for a credential, also after it has a reason to skip the skill, so a credential file always
+// stops the push. It keeps no data of a skill that has a reason to skip.
+func walkSkills(cmd *cobra.Command, dir string) ([]*skillRead, error) {
 	root, err := os.OpenRoot(dir)
 	if err != nil {
 		return nil, err
@@ -263,31 +260,47 @@ func readSkills(cmd *cobra.Command, dir string) ([]globalFile, error) {
 			return nil
 		}
 		s := skills[len(skills)-1]
-		f, err := readGlobal(root, name, shown, "skills/"+name)
+		// If the skill has a reason to skip, readGlobal only does the credential checks.
+		f, err := readGlobal(root, name, shown, "skills/"+name, s.reason == "")
 		var se skipError
 		switch {
 		case errors.As(err, &se):
-			if s.reason == "" {
-				s.reason = se.reason
-			}
-			s.files = nil
+			s.skip(se.reason)
 		case err != nil:
 			return err
 		case s.reason == "":
 			s.files = append(s.files, f)
 			s.size += f.Size
+			if s.size > maxSkill {
+				s.skip(fmt.Sprintf("the skill is larger than %d KiB, the limit for 1 skill", maxSkill>>10))
+			}
 		}
 		return nil
 	})
+	return skills, err
+}
+
+// skip gives the skill its first reason to skip, and releases its data.
+func (s *skillRead) skip(reason string) {
+	if s.reason == "" {
+		s.reason = reason
+	}
+	s.files = nil
+}
+
+// readSkills reads the skills in dir with walkSkills. It shows each skipped skill with the reason,
+// and gives the files of the other skills.
+func readSkills(cmd *cobra.Command, dir string) ([]globalFile, error) {
+	dir, err := filepath.EvalSymlinks(dir)
+	if err != nil {
+		return nil, err
+	}
+	skills, err := walkSkills(cmd, dir)
 	if err != nil {
 		return nil, err
 	}
 	var files []globalFile
 	for _, s := range skills {
-		if s.reason == "" && s.size > maxSkill {
-			s.reason = fmt.Sprintf("the skill has %d KiB, and the limit for 1 skill is %d KiB",
-				s.size>>10, maxSkill>>10)
-		}
 		if s.reason != "" {
 			_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "skip the skill %s: %s\n", filepath.Join(dir, s.name), s.reason)
 			continue
@@ -349,10 +362,14 @@ func decodeKey(key string) (string, error) {
 
 // readGlobal reads name in root to the relative path rel. shown is the path in the errors. It
 // refuses a credential file. It gives a skipError for a file that is not UTF-8 text or that is
-// larger than maxGlobals, after the credential checks. The errors never give the content.
-func readGlobal(root *os.Root, name, shown, rel string) (globalFile, error) {
+// larger than maxGlobals, after the credential checks. If keep is false, it does only the
+// credential checks, keeps no data and gives an empty globalFile. The errors never give the content.
+func readGlobal(root *os.Root, name, shown, rel string, keep bool) (globalFile, error) {
 	if isCredential(path.Base(rel)) || isCredential(filepath.Base(name)) {
 		return globalFile{}, credentialError(shown)
+	}
+	if !keep {
+		return globalFile{}, scanGlobal(root, name, shown)
 	}
 	if err := checkRel(rel); err != nil {
 		return globalFile{}, fmt.Errorf("%s: %w", shown, err)
@@ -362,24 +379,9 @@ func readGlobal(root *os.Root, name, shown, rel string) (globalFile, error) {
 		return globalFile{}, fmt.Errorf("%s: %s is not a valid ConfigMap key (use only letters, digits, '-', '_' and '.')",
 			shown, key)
 	}
-	f, err := root.Open(name)
+	data, err := openScan(root, name, shown, maxGlobals+1)
 	if err != nil {
 		return globalFile{}, err
-	}
-	defer func() { _ = f.Close() }()
-	info, err := f.Stat()
-	if err != nil {
-		return globalFile{}, err
-	}
-	if !info.Mode().IsRegular() {
-		return globalFile{}, fmt.Errorf("%s is not a regular file", shown)
-	}
-	data, privateKey, err := readScan(f)
-	if err != nil {
-		return globalFile{}, fmt.Errorf("read %s: %w", shown, err)
-	}
-	if privateKey {
-		return globalFile{}, fmt.Errorf("%s has a private key: koodam profile push never pushes it", shown)
 	}
 	if len(data) > maxGlobals {
 		return globalFile{}, skipError{fmt.Sprintf("%s is larger than %d KiB", shown, maxGlobals>>10)}
@@ -391,12 +393,43 @@ func readGlobal(root *os.Root, name, shown, rel string) (globalFile, error) {
 	return globalFile{Key: key, Path: rel, Size: len(data), data: string(data)}, nil
 }
 
+// scanGlobal refuses a file with a private key. It keeps no data.
+func scanGlobal(root *os.Root, name, shown string) error {
+	_, err := openScan(root, name, shown, 0)
+	return err
+}
+
+// openScan opens a regular file, refuses it if it has a private key, and gives the first keep
+// bytes.
+func openScan(root *os.Root, name, shown string, keep int) ([]byte, error) {
+	f, err := root.Open(name)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = f.Close() }()
+	info, err := f.Stat()
+	if err != nil {
+		return nil, err
+	}
+	if !info.Mode().IsRegular() {
+		return nil, fmt.Errorf("%s is not a regular file", shown)
+	}
+	data, privateKey, err := readScan(f, keep)
+	if err != nil {
+		return nil, fmt.Errorf("read %s: %w", shown, err)
+	}
+	if privateKey {
+		return nil, fmt.Errorf("%s has a private key: koodam profile push never pushes it", shown)
+	}
+	return data, nil
+}
+
 // privateKeyMark is in each PEM private key, for example "-----BEGIN OPENSSH PRIVATE KEY-----".
 var privateKeyMark = []byte("PRIVATE KEY-----")
 
 // readScan reads r to the end and looks for privateKeyMark in all of it, also in a binary file
-// and after maxGlobals. It keeps only the first maxGlobals+1 bytes, so the memory stays small.
-func readScan(r io.Reader) ([]byte, bool, error) {
+// and after keep bytes. It keeps only the first keep bytes, so the memory stays small.
+func readScan(r io.Reader, keep int) ([]byte, bool, error) {
 	var data []byte
 	buf := make([]byte, 64<<10)
 	// tail is the end of the last block, so the scan finds a mark across 2 blocks.
@@ -408,8 +441,8 @@ func readScan(r io.Reader) ([]byte, bool, error) {
 			return nil, true, nil
 		}
 		tail = append([]byte(nil), block[max(0, len(block)-len(privateKeyMark)+1):]...)
-		if len(data) <= maxGlobals {
-			data = append(data, buf[:min(n, maxGlobals+1-len(data))]...)
+		if len(data) < keep {
+			data = append(data, buf[:min(n, keep-len(data))]...)
 		}
 		if errors.Is(err, io.EOF) {
 			return data, false, nil

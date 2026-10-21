@@ -20,11 +20,13 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
+	"github.com/spf13/cobra"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -417,7 +419,7 @@ func TestProfilePushSkipsDotEntriesAndBadSkills(t *testing.T) {
 		"skip "+filepath.Join(real, "review", ".DS_Store")+": a dot file",
 		"skip the skill "+filepath.Join(real, "fonts")+": "+filepath.Join(real, "fonts", "assets", "a.woff2")+
 			" is not UTF-8 text",
-		"skip the skill "+filepath.Join(real, "huge")+": the skill has 1000 KiB, and the limit for 1 skill is 900 KiB",
+		"skip the skill "+filepath.Join(real, "huge")+": the skill is larger than 900 KiB, the limit for 1 skill",
 		"4 files")
 	if got := strings.Count(out, "skip the skill"); got != 2 {
 		t.Errorf("got %d skill warnings, want 2:\n%s", got, out)
@@ -497,5 +499,73 @@ func TestProfilePushDryRunShowsTheSkippedSkills(t *testing.T) {
 	wantAll(t, out, "fonts: ", "a.woff2 is not UTF-8 text", "skills_sreview_sSKILL.md\t12", "4 files", "(dry run)")
 	if strings.Contains(out, secretText) || strings.Contains(out, "skills_sfonts") {
 		t.Errorf("the dry run showed the content or the skipped skill:\n%s", out)
+	}
+}
+
+func TestProfilePushSkipsAnEmptySkillAndASymlinkInASkill(t *testing.T) {
+	home := profileHome(t)
+	skills := filepath.Join(home, ".claude", "skills")
+	if err := os.MkdirAll(filepath.Join(skills, "empty"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeTestFile(t, filepath.Join(home, "outside.md"), secretText)
+	link := filepath.Join(skills, "review", "refs", "link.md")
+	if err := os.Symlink(filepath.Join(home, "outside.md"), link); err != nil {
+		t.Skip("no symlinks:", err)
+	}
+	kube := newKube(t, nil)
+	out, err := run(t, kube, "profile", "push")
+	if err != nil {
+		t.Fatalf("push: %v\n%s", err, out)
+	}
+	wantAll(t, out, "link.md: a symlink", "4 files")
+	data := getGlobals(t, kube).Data
+	if len(data) != 5 || data["skills_sreview_srefs_sa.md"] != "ref" {
+		t.Errorf("got keys %v, want the 4 files of the profile and the manifest", data)
+	}
+}
+
+func TestProfilePushRefusesABadClaudeOrAgentsFile(t *testing.T) {
+	for _, file := range []string{filepath.Join(".claude", claudeFile), filepath.Join(".codex", "AGENTS.md")} {
+		for body, want := range map[string]string{
+			binaryBody:                        "not UTF-8",
+			strings.Repeat("x", maxGlobals+1): "larger than 900 KiB",
+		} {
+			t.Run(file+" "+want, func(t *testing.T) {
+				home := profileHome(t)
+				writeTestFile(t, filepath.Join(home, file), body)
+				_, err := run(t, newKube(t, nil), "profile", "push")
+				if err == nil || !strings.Contains(err.Error(), want) || strings.Contains(err.Error(), secretText) {
+					t.Fatalf("got %v, want an error with %q and without the content", err, want)
+				}
+			})
+		}
+	}
+}
+
+// After a skill is too large, the walk keeps no more data of it, and it still scans the other
+// files of the skill for a credential.
+func TestWalkSkillsKeepsNoDataOfALargeSkill(t *testing.T) {
+	dir := t.TempDir()
+	for i := range 20 {
+		writeTestFile(t, filepath.Join(dir, "huge", fmt.Sprintf("f%02d.md", i)), strings.Repeat("x", 100<<10))
+	}
+	writeTestFile(t, filepath.Join(dir, "huge", "z.bin"), binaryBody)
+	writeTestFile(t, filepath.Join(dir, "small", "SKILL.md"), "small")
+	cmd := &cobra.Command{}
+	cmd.SetErr(&bytes.Buffer{})
+	got, err := walkSkills(cmd, dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 2 || got[0].reason == "" || got[0].files != nil || got[0].size > maxSkill+(100<<10) ||
+		got[1].reason != "" || len(got[1].files) != 1 {
+		t.Fatalf("got %+v and %+v, want a skipped huge skill with no data", *got[0], *got[1])
+	}
+
+	writeTestFile(t, filepath.Join(dir, "huge", "z.md"), "-----BEGIN PRIVATE KEY-----\n"+secretText)
+	if _, err := walkSkills(cmd, dir); err == nil || !strings.Contains(err.Error(), keyErr) ||
+		strings.Contains(err.Error(), secretText) {
+		t.Fatalf("got %v, want a private key error after the skip", err)
 	}
 }
