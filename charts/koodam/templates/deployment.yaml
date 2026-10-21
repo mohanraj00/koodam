@@ -58,6 +58,7 @@ spec:
         - --key-grace={{ .Values.keyGrace }}
         - --job-ttl-seconds={{ int64 .Values.jobTTLSeconds }}
         - "--installer-image={{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
+        - "--workspace-image={{ required "workspace.image.repository is necessary." .Values.workspace.image.repository }}:{{ .Values.workspace.image.tag | default .Chart.AppVersion }}"
         ports:
         - containerPort: 8081
           name: health

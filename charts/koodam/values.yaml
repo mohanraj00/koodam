@@ -5,6 +5,16 @@ image:
   pullPolicy: IfNotPresent
 imagePullSecrets: []
 
+# The default image for a Workspace with no spec.image.
+# The chart always gives this image to the controller with the flag --workspace-image.
+# If the tag is empty, the chart uses the chart appVersion, the same tag as the controller image.
+# Thus the controller and the workspace image are on the same release. If you set image.tag,
+# also set workspace.image.tag to the same release.
+workspace:
+  image:
+    repository: ghcr.io/mohanraj00/koodam-workspace
+    tag: ""
+
 # Use 1 replica. The controller uses leader election, so more replicas are standby replicas.
 replicaCount: 1
 leaderElection: true

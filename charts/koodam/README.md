@@ -125,11 +125,23 @@ helm install koodam charts/koodam -n koodam-system -f charts/koodam/values-bundl
   --set image.repository=<image> --set image.tag=<tag>
 ```
 
+## The workspace image
+
+A Workspace with no `spec.image` uses the image in `workspace.image`. The default is `ghcr.io/mohanraj00/koodam-workspace`. If `workspace.image.tag` is empty, the chart uses the chart `appVersion` as the tag. Thus the controller image and the workspace image are on the same release. The chart always passes this image to the controller with the flag `--workspace-image`.
+
+If you set `image.tag`, also set `workspace.image.tag` to the same release:
+
+```sh
+helm install koodam charts/koodam -n koodam-system -f charts/koodam/values-bundled.yaml \
+  --set image.tag=<tag> --set workspace.image.tag=<tag>
+```
+
 ## Values
 
 | Value | Default | Description |
 | --- | --- | --- |
 | `image.repository`, `image.tag` | `ghcr.io/mohanraj00/koodam`, empty | The controller image. If the tag is empty, the chart uses the chart `appVersion`. |
+| `workspace.image.repository`, `workspace.image.tag` | `ghcr.io/mohanraj00/koodam-workspace`, empty | The image for a Workspace with no `spec.image`. If the tag is empty, the chart uses the chart `appVersion`. |
 | `gateway.mode` | `existing` | `existing` or `bundled`. |
 | `gateway.url` | empty | The LiteLLM admin address for the controller. The existing mode needs it. The bundled mode ignores it. |
 | `gateway.agentUrl` | empty | The gateway address for the agent pods. If empty, the pods use `gateway.url`. |
