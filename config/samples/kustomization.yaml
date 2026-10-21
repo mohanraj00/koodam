@@ -2,4 +2,5 @@
 resources:
 - core_v1alpha1_agent.yaml
 - core_v1alpha1_profile.yaml
+- core_v1alpha1_workspace.yaml
 # +kubebuilder:scaffold:manifestskustomizesamples

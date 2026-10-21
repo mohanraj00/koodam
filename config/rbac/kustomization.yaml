@@ -23,6 +23,9 @@ resources:
 # default, aiding admins in cluster management. Those roles are
 # not used by the koodam itself. You can comment the following lines
 # if you do not want those helpers be installed with your Project.
+- workspace_admin_role.yaml
+- workspace_editor_role.yaml
+- workspace_viewer_role.yaml
 - profile_admin_role.yaml
 - profile_editor_role.yaml
 - profile_viewer_role.yaml

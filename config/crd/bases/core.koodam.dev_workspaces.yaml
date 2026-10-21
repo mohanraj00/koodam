@@ -1,0 +1,271 @@
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  annotations:
+    controller-gen.kubebuilder.io/version: v0.22.0
+  name: workspaces.core.koodam.dev
+spec:
+  group: core.koodam.dev
+  names:
+    kind: Workspace
+    listKind: WorkspaceList
+    plural: workspaces
+    singular: workspace
+  scope: Namespaced
+  versions:
+  - additionalPrinterColumns:
+    - jsonPath: .status.phase
+      name: Phase
+      type: string
+    - jsonPath: .status.pod
+      name: Pod
+      type: string
+    - jsonPath: .spec.suspend
+      name: Suspend
+      type: boolean
+    - jsonPath: .metadata.creationTimestamp
+      name: Age
+      type: date
+    name: v1alpha1
+    schema:
+      openAPIV3Schema:
+        description: |-
+          Workspace is a long-lived developer pod with SSH access, a home PVC and an optional gateway
+          key.
+        properties:
+          apiVersion:
+            description: |-
+              APIVersion defines the versioned schema of this representation of an object.
+              Servers should convert recognized schemas to the latest internal value, and
+              may reject unrecognized values.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#resources
+            type: string
+          kind:
+            description: |-
+              Kind is a string value representing the REST resource this object represents.
+              Servers may infer this from the endpoint the client submits requests to.
+              Cannot be updated.
+              In CamelCase.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds
+            type: string
+          metadata:
+            type: object
+          spec:
+            description: spec defines the desired state of Workspace
+            properties:
+              gateway:
+                description: |-
+                  Gateway gives the pod a gateway key. If it is empty, the pod gets no gateway key and the
+                  harnesses use the subscription login only.
+                properties:
+                  budgetPerDay:
+                    anyOf:
+                    - type: integer
+                    - type: string
+                    description: |-
+                      BudgetPerDay is the maximum spend in one day, in the currency of the gateway price
+                      table. The gateway refuses calls after the budget.
+                    pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                    x-kubernetes-int-or-string: true
+                  model:
+                    description: Model is the gateway model name. The key permits
+                      only this model.
+                    minLength: 1
+                    type: string
+                required:
+                - budgetPerDay
+                - model
+                type: object
+              harnesses:
+                description: Harnesses are the coding harnesses in the pod. Each name
+                  occurs one time only.
+                items:
+                  description: |-
+                    HarnessSpec selects the harness binary. An init container downloads it from the vendor and
+                    checks its sha256. Koodam does not keep or redistribute a harness binary.
+                  properties:
+                    libc:
+                      default: glibc
+                      description: |-
+                        Libc is the C library of the agent image. It selects the Claude Code build. The Codex
+                        build is static.
+                      enum:
+                      - glibc
+                      - musl
+                      type: string
+                    name:
+                      description: Name is the harness. The binary is claude for claude-code
+                        and codex for codex.
+                      enum:
+                      - claude-code
+                      - codex
+                      type: string
+                    version:
+                      description: Version pins the harness version. If it is empty,
+                        the pod gets the latest version.
+                      pattern: ^([0-9]+\.[0-9]+\.[0-9]+)?$
+                      type: string
+                  required:
+                  - name
+                  type: object
+                maxItems: 4
+                type: array
+                x-kubernetes-list-map-keys:
+                - name
+                x-kubernetes-list-type: map
+              image:
+                description: |-
+                  Image is the workspace container image. If it is empty, the pod uses the default
+                  workspace image of the chart.
+                type: string
+              sshPublicKeys:
+                description: |-
+                  SSHPublicKeys are the public keys that can log in to the pod with SSH. Each item is one
+                  line in the authorized_keys format: the key type, the key data and an optional comment.
+                  The API server refuses a private key and a line with a newline.
+                items:
+                  maxLength: 8192
+                  pattern: ^(ssh-ed25519|ecdsa-sha2-nistp256|ecdsa-sha2-nistp384|ecdsa-sha2-nistp521|sk-ssh-ed25519@openssh\.com|sk-ecdsa-sha2-nistp256@openssh\.com|ssh-rsa)
+                    [A-Za-z0-9+/]+={0,2}( [^\r\n]*)?$
+                  type: string
+                maxItems: 16
+                type: array
+                x-kubernetes-list-type: set
+              storage:
+                anyOf:
+                - type: integer
+                - type: string
+                default: 20Gi
+                description: Storage is the size of the PVC for the home.
+                pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                x-kubernetes-int-or-string: true
+              suspend:
+                description: Suspend stops the pod and blocks the gateway key. The
+                  PVC stays.
+                type: boolean
+            type: object
+          status:
+            description: status defines the observed state of Workspace
+            properties:
+              conditions:
+                description: Conditions are the conditions of the Workspace.
+                items:
+                  description: Condition contains details for one aspect of the current
+                    state of this API Resource.
+                  properties:
+                    lastTransitionTime:
+                      description: |-
+                        lastTransitionTime is the last time the condition transitioned from one status to another.
+                        This should be when the underlying condition changed.  If that is not known, then using the time when the API field changed is acceptable.
+                      format: date-time
+                      type: string
+                    message:
+                      description: |-
+                        message is a human readable message indicating details about the transition.
+                        This may be an empty string.
+                      maxLength: 32768
+                      type: string
+                    observedGeneration:
+                      description: |-
+                        observedGeneration represents the .metadata.generation that the condition was set based upon.
+                        For instance, if .metadata.generation is currently 12, but the .status.conditions[x].observedGeneration is 9, the condition is out of date
+                        with respect to the current state of the instance.
+                      format: int64
+                      minimum: 0
+                      type: integer
+                    reason:
+                      description: |-
+                        reason contains a programmatic identifier indicating the reason for the condition's last transition.
+                        Producers of specific condition types may define expected values and meanings for this field,
+                        and whether the values are considered a guaranteed API.
+                        The value should be a CamelCase string.
+                        This field may not be empty.
+                      maxLength: 1024
+                      minLength: 1
+                      pattern: ^[A-Za-z]([A-Za-z0-9_,:]*[A-Za-z0-9_])?$
+                      type: string
+                    status:
+                      description: status of the condition, one of True, False, Unknown.
+                      enum:
+                      - "True"
+                      - "False"
+                      - Unknown
+                      type: string
+                    type:
+                      description: type of condition in CamelCase or in foo.example.com/CamelCase.
+                      maxLength: 316
+                      pattern: ^([a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*/)?(([A-Za-z0-9][-A-Za-z0-9_.]*)?[A-Za-z0-9])$
+                      type: string
+                  required:
+                  - lastTransitionTime
+                  - message
+                  - reason
+                  - status
+                  - type
+                  type: object
+                type: array
+                x-kubernetes-list-map-keys:
+                - type
+                x-kubernetes-list-type: map
+              hostKey:
+                description: |-
+                  HostKey is the public SSH host key of the pod, for known_hosts. The private host key is
+                  only in the Secret.
+                type: string
+              keyAlias:
+                description: KeyAlias identifies the gateway key. The key value is
+                  never in the status.
+                type: string
+              keyHash:
+                description: |-
+                  KeyHash is the SHA-256 hash of the gateway key. The gateway refuses the hash for model
+                  calls, so it is not a credential.
+                type: string
+              phase:
+                description: Phase is the lifecycle phase.
+                enum:
+                - Pending
+                - Running
+                - Suspended
+                - Failed
+                type: string
+              pod:
+                description: Pod is the name of the workspace pod.
+                type: string
+              usage:
+                description: Usage is the count for the gateway key.
+                properties:
+                  calls:
+                    description: Calls is the count of successful calls.
+                    format: int64
+                    type: integer
+                  inputTokens:
+                    description: InputTokens is the sum of the input tokens over the
+                      successful calls.
+                    format: int64
+                    type: integer
+                  outputTokens:
+                    description: OutputTokens is the sum of the output tokens over
+                      the successful calls.
+                    format: int64
+                    type: integer
+                  source:
+                    description: Source tells where the count comes from.
+                    enum:
+                    - gateway
+                    - projected
+                    type: string
+                  spend:
+                    description: Spend is the total spend of the key, as a decimal
+                      string.
+                    type: string
+                type: object
+            type: object
+        required:
+        - spec
+        type: object
+    served: true
+    storage: true
+    subresources:
+      status: {}
