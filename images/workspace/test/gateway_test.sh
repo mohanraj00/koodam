@@ -4,7 +4,7 @@
 # It writes only to a temporary folder. It exits 1 if a check fails. The keys are fake values
 # that the test makes at run time. The test never prints a key.
 set -u
-unset ANTHROPIC_AUTH_TOKEN OPENAI_API_KEY CLAUDE_CODE_SUBAGENT_MODEL LD_PRELOAD BASH_ENV
+unset ANTHROPIC_AUTH_TOKEN OPENAI_API_KEY CLAUDE_CODE_SUBAGENT_MODEL LD_PRELOAD BASH_ENV ENV
 
 src=$(cd "$(dirname "$0")/.." && pwd)/gateway.sh
 work=$(mktemp -d)
