@@ -78,6 +78,8 @@ Get it from the GitHub release (see [Install](#install)), or build it with `go b
 
 For `koodam logs` and `run --wait`, the CLI user needs `get` on jobs, `list` on pods and `get` on pods/log in the namespace. The Agent viewer and editor ClusterRoles do not give them.
 
+For `koodam tunnel NAMESPACE/WORKSPACE` (an OpenSSH `ProxyCommand`), the CLI user needs `get` on pods and `create` on pods/portforward in the namespace.
+
 The controller deletes a finished Job and its pod 24 h after the end (the chart value `jobTTLSeconds`). After that, `koodam logs` has no log. The Agent keeps the status and the spend. The controller records the result before it deletes the Job, so a controller restart does not lose the result. If the controller is down, finished Jobs stay until it starts again.
 
 ## Install
