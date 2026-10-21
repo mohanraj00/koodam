@@ -41,7 +41,7 @@ import (
 
 const (
 	// sshPort is the port of sshd in the Workspace pod.
-	sshPort = 22
+	sshPort = 2222
 	// portForwardProtocol is the SPDY sub-protocol of the port-forward API.
 	portForwardProtocol = "portforward.k8s.io"
 )
@@ -52,13 +52,13 @@ const errWait = 2 * time.Second
 // dialFunc opens a port-forward connection to a pod.
 type dialFunc func(ctx context.Context, ns, pod string) (httpstream.Connection, error)
 
-// tunnelCmd connects stdin and stdout to port 22 of the Workspace pod. OpenSSH uses it as a
+// tunnelCmd connects stdin and stdout to port 2222 of the Workspace pod. OpenSSH uses it as a
 // ProxyCommand. Stdout is the SSH data channel, so the command writes only the data to it.
 func tunnelCmd(conn connect) *cobra.Command {
 	return &cobra.Command{
 		Use:   "tunnel NAMESPACE/WORKSPACE",
 		Short: "Connect stdin and stdout to the SSH port of a Workspace (an OpenSSH ProxyCommand)",
-		Long: "Connect stdin and stdout to port 22 of the pod WORKSPACE-0 through the Kubernetes API.\n" +
+		Long: "Connect stdin and stdout to port 2222 of the pod WORKSPACE-0 through the Kubernetes API.\n" +
 			"The command uses your kube context and your RBAC. It opens no local port.\n" +
 			"You need create on pods/portforward and get on pods in the namespace.\n\n" +
 			"Example ~/.ssh/config entry:\n  ProxyCommand koodam tunnel dev-mohan/main",
@@ -117,7 +117,7 @@ func (e *env) tunnel(ctx context.Context, ns, ws string, in io.Reader, out io.Wr
 	return forward(ctx, c, in, out, errWait)
 }
 
-// forward copies the data of port 22 in the 2 directions. It stops when the remote side ends,
+// forward copies the data of port 2222 in the 2 directions. It stops when the remote side ends,
 // when the connection closes, or when ctx ends. At the end of stdin, it closes the write side
 // of the data stream, so that the remote side can end. After the data stops, it waits for the
 // error stream for the time wait at most.
