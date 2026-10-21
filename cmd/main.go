@@ -270,11 +270,12 @@ func main() {
 	if agentGatewayURL == "" {
 		agentGatewayURL = gatewayURL
 	}
+	gw := gateway.NewLiteLLM(gatewayURL, strings.TrimSpace(string(masterKey)))
 	if err := (&controller.AgentReconciler{
 		Client:         mgr.GetClient(),
 		Scheme:         mgr.GetScheme(),
 		APIReader:      mgr.GetAPIReader(),
-		Gateway:        gateway.NewLiteLLM(gatewayURL, strings.TrimSpace(string(masterKey))),
+		Gateway:        gw,
 		GatewayURL:     strings.TrimRight(agentGatewayURL, "/"),
 		Grace:          keyGrace,
 		InstallerImage: installerImage,
@@ -291,10 +292,12 @@ func main() {
 		os.Exit(1)
 	}
 	if err := (&controller.WorkspaceReconciler{
-		Client:    mgr.GetClient(),
-		Scheme:    mgr.GetScheme(),
-		APIReader: mgr.GetAPIReader(),
-		Image:     workspaceImage,
+		Client:     mgr.GetClient(),
+		Scheme:     mgr.GetScheme(),
+		APIReader:  mgr.GetAPIReader(),
+		Image:      workspaceImage,
+		Gateway:    gw,
+		GatewayURL: strings.TrimRight(agentGatewayURL, "/"),
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "Failed to create controller", "controller", "workspace")
 		os.Exit(1)

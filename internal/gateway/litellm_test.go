@@ -20,6 +20,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"maps"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -48,9 +49,17 @@ type fake struct {
 	blockNotFound bool
 	// echoMaster makes each response an error that contains the Authorization header.
 	echoMaster bool
+	// updateStatus, if set, makes /key/update return this status and updateBody.
+	updateStatus int
+	updateBody   string
+	// infoCalls is the count of /key/info requests.
+	infoCalls int
 }
 
 const testModel = "local-agent"
+
+// routeNotFound is the 404 body of a wrong route.
+const routeNotFound = `{"detail":"Not Found"}`
 
 // notFoundBody is the LiteLLM v1.104.2 body for a missing key. The long message
 // makes it longer than the 300 bytes that an error message keeps.
@@ -88,6 +97,27 @@ func (f *fake) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 		f.keys[h] = b
 		_, _ = w.Write([]byte(`{}`))
+	case "/key/update":
+		if f.updateStatus != 0 {
+			w.WriteHeader(f.updateStatus)
+			_, _ = w.Write([]byte(f.updateBody))
+			return
+		}
+		var b map[string]any
+		_ = json.NewDecoder(r.Body).Decode(&b)
+		k, ok := b["key"].(string)
+		if !ok {
+			w.WriteHeader(http.StatusUnprocessableEntity)
+			return
+		}
+		h := HashKey(k)
+		if _, ok := f.keys[h]; !ok {
+			w.WriteHeader(http.StatusBadRequest)
+			_, _ = w.Write([]byte(`{"error":"no key ` + k + `"}`))
+			return
+		}
+		maps.Copy(f.keys[h], b)
+		_, _ = w.Write([]byte(`{}`))
 	case "/key/block":
 		if f.routeBody != "" {
 			w.WriteHeader(http.StatusNotFound)
@@ -105,6 +135,7 @@ func (f *fake) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		f.blocked[h] = true
 		_, _ = w.Write([]byte(`{}`))
 	case "/key/info":
+		f.infoCalls++
 		if f.routeBody != "" {
 			w.WriteHeader(http.StatusNotFound)
 			_, _ = w.Write([]byte(f.routeBody))
@@ -134,7 +165,7 @@ func (f *fake) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		_ = json.NewEncoder(w).Encode(f.logs)
 	default:
 		w.WriteHeader(http.StatusNotFound)
-		_, _ = w.Write([]byte(`{"detail":"Not Found"}`))
+		_, _ = w.Write([]byte(routeNotFound))
 	}
 }
 
@@ -168,6 +199,75 @@ func TestCreateKeySendsBudgetModelAndTTL(t *testing.T) {
 	}
 	if m := b["models"].([]any); len(m) != 1 || m[0] != testModel {
 		t.Fatalf("models %v", m)
+	}
+}
+
+func TestRenewKeySetsTTLBudgetAndPeriod(t *testing.T) {
+	f := newFake()
+	l, stop := client(f)
+	defer stop()
+	ctx := context.Background()
+	s := spec(t)
+	if err := l.CreateKey(ctx, s); err != nil {
+		t.Fatal(err)
+	}
+	s.TTL, s.Budget, s.BudgetPeriod = 2*time.Hour, 5, 24*time.Hour
+	if err := l.RenewKey(ctx, s); err != nil {
+		t.Fatal(err)
+	}
+	b := f.keys[HashKey(s.Value)]
+	if b["duration"] != "7200s" || b["max_budget"] != 5.0 || b["budget_duration"] != "86400s" {
+		t.Fatalf("body %v", b)
+	}
+}
+
+func TestRenewKeyReportsAMissingKeyWithoutTheKey(t *testing.T) {
+	l, stop := client(newFake())
+	defer stop()
+	s := spec(t)
+	err := l.RenewKey(context.Background(), s)
+	if !errors.Is(err, ErrKeyNotFound) {
+		t.Fatalf("want ErrKeyNotFound, got %v", err)
+	}
+	if strings.Contains(err.Error(), s.Value) {
+		t.Fatalf("error not redacted: %v", err)
+	}
+}
+
+func TestRenewKeyRefusesATTLUnder1s(t *testing.T) {
+	f := newFake()
+	l, stop := client(f)
+	defer stop()
+	s := spec(t)
+	s.TTL = 500 * time.Millisecond
+	if err := l.RenewKey(context.Background(), s); err == nil {
+		t.Fatal("a TTL under 1s formats to 0s and must fail")
+	}
+}
+
+func TestRenewKeyDoesNotAskInfoOnAServerError(t *testing.T) {
+	f := newFake()
+	f.updateStatus, f.updateBody = http.StatusInternalServerError, `{"error":"db down"}`
+	l, stop := client(f)
+	defer stop()
+	err := l.RenewKey(context.Background(), spec(t))
+	if err == nil || errors.Is(err, ErrKeyNotFound) {
+		t.Fatalf("want a server error, got %v", err)
+	}
+	if f.infoCalls != 0 {
+		t.Fatalf("a 500 must not call /key/info, got %d calls", f.infoCalls)
+	}
+}
+
+func TestRenewKeyOnARoute404IsNotAMissingKey(t *testing.T) {
+	f := newFake()
+	f.updateStatus, f.updateBody = http.StatusNotFound, routeNotFound
+	f.routeBody = routeNotFound
+	l, stop := client(f)
+	defer stop()
+	err := l.RenewKey(context.Background(), spec(t))
+	if err == nil || errors.Is(err, ErrKeyNotFound) {
+		t.Fatalf("a route 404 must not count as a missing key, got %v", err)
 	}
 }
 
@@ -228,7 +328,7 @@ func TestBlockKeyFailsOn404WhenTheKeyExists(t *testing.T) {
 }
 
 func TestBlockKeyFailsOnARoute404(t *testing.T) {
-	for _, body := range []string{`{"detail":"Not Found"}`, `{"error":"route not found"}`, `<html>404</html>`} {
+	for _, body := range []string{routeNotFound, `{"error":"route not found"}`, `<html>404</html>`} {
 		f := newFake()
 		f.routeBody = body
 		l, stop := client(f)

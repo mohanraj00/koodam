@@ -65,6 +65,8 @@ func (g *fakeGateway) CreateKey(_ context.Context, s gateway.KeySpec) error {
 	return nil
 }
 
+func (g *fakeGateway) RenewKey(context.Context, gateway.KeySpec) error { return nil }
+
 func (g *fakeGateway) BlockKey(ctx context.Context, key string) error {
 	err := k8sClient.Get(ctx, g.runBinding, &rbacv1.RoleBinding{})
 	g.mu.Lock()
