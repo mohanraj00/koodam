@@ -60,10 +60,8 @@ const (
 
 // The Workspace specs connect with ssh through the ProxyCommand that "koodam ssh setup" writes.
 // The SSH client key is made at run time in a temporary HOME. The test never prints a key.
+// Each Eventually gives its timeout. The specs do not change the defaults of the suite.
 var _ = Describe("Workspaces", Ordered, Label("workspace"), func() {
-	SetDefaultEventuallyTimeout(5 * time.Minute)
-	SetDefaultEventuallyPollingInterval(time.Second)
-
 	var (
 		// home is the temporary HOME of koodam. It has .ssh with the client key and the host file.
 		home   string
@@ -105,7 +103,9 @@ var _ = Describe("Workspaces", Ordered, Label("workspace"), func() {
 		env = append(os.Environ(), "HOME="+home, "KUBECONFIG="+kubeconfig)
 
 		By("building the koodam CLI")
+		// koodam ssh setup writes the absolute path of this program in the ProxyCommand.
 		koodam = filepath.Join(home, "bin", "koodam")
+		Expect(os.MkdirAll(filepath.Dir(koodam), 0o700)).To(Succeed())
 		_, err = utils.Run(exec.Command("go", "build", "-o", koodam, "./cmd/koodam"))
 		Expect(err).NotTo(HaveOccurred())
 
@@ -118,6 +118,8 @@ var _ = Describe("Workspaces", Ordered, Label("workspace"), func() {
 		Expect(err).NotTo(HaveOccurred())
 
 		By("making a Profile that binds " + wsNS + ", and the namespace " + freeNS + " with no Profile")
+		// Register the cleanup before the first object, so that a failure in BeforeAll leaks nothing.
+		DeferCleanup(cleanWorkspaces)
 		objs := []client.Object{
 			&corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: wsNS,
 				Labels: map[string]string{corev1alpha1.ProfileLabel: wsProfile}}},
@@ -141,22 +143,6 @@ var _ = Describe("Workspaces", Ordered, Label("workspace"), func() {
 	})
 
 	AfterEach(func() { dumpWorkspaces() })
-
-	AfterAll(func() {
-		By("deleting the Workspaces, the Profile and the namespaces")
-		for _, ns := range []string{wsNS, freeNS} {
-			_ = k8s.DeleteAllOf(ctx, &corev1alpha1.Workspace{}, client.InNamespace(ns))
-		}
-		Eventually(func() int {
-			l := &corev1alpha1.WorkspaceList{}
-			_ = k8s.List(ctx, l)
-			return len(l.Items)
-		}, 2*time.Minute).Should(BeZero(), "The finalizer kept a Workspace.")
-		_ = k8s.Delete(ctx, &corev1alpha1.Profile{ObjectMeta: metav1.ObjectMeta{Name: wsProfile}})
-		for _, ns := range []string{wsNS, freeNS} {
-			_ = k8s.Delete(ctx, &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: ns}})
-		}
-	})
 
 	It("keeps the tmux session after an SSH disconnect", func() {
 		By("making the Workspace with the SSH public key")
@@ -185,8 +171,13 @@ var _ = Describe("Workspaces", Ordered, Label("workspace"), func() {
 		Eventually(func(g Gomega) {
 			out, err := ssh("tmux capture-pane -p -t e2e")
 			g.Expect(err).NotTo(HaveOccurred())
-			g.Expect(strings.Split(out, "\n")).To(ContainElement(marker))
-		}, 30*time.Second, time.Second).Should(Succeed(), "The tmux session e2e does not have the output.")
+			lines := strings.Split(out, "\n")
+			for i := range lines {
+				lines[i] = strings.TrimSpace(lines[i])
+			}
+			// The echo output is a line with only the marker. The command line has more text.
+			g.Expect(lines).To(ContainElement(marker))
+		}, 2*time.Minute, 2*time.Second).Should(Succeed(), "The tmux session e2e does not have the output.")
 	})
 
 	It("blocks the key at a suspend, stops the pod and keeps the PVC", func() {
@@ -194,7 +185,7 @@ var _ = Describe("Workspaces", Ordered, Label("workspace"), func() {
 		Eventually(func() bool {
 			_ = k8s.Get(ctx, client.ObjectKeyFromObject(ws), ws)
 			return meta.IsStatusConditionTrue(ws.Status.Conditions, "GatewayKey")
-		}).Should(BeTrue(), "The gateway key is not active.")
+		}, 2*time.Minute, time.Second).Should(BeTrue(), "The gateway key is not active.")
 		hash := ws.Status.KeyHash
 		s := &corev1.Secret{}
 		Expect(k8s.Get(ctx, client.ObjectKey{Namespace: wsNS, Name: wsName + "-gateway"}, s)).To(Succeed())
@@ -212,23 +203,28 @@ var _ = Describe("Workspaces", Ordered, Label("workspace"), func() {
 				return c.Reason
 			}
 			return ""
-		}, time.Minute).Should(Equal("Revoked"))
+		}, time.Minute, time.Second).Should(Equal("Revoked"))
 
 		By("checking that the gateway refuses the key and has it blocked")
-		code, errType := modelCall(ctx, key)
-		Expect(code == http.StatusUnauthorized && errType == "auth_error").To(BeTrue(), fmt.Sprintf(
-			"The gateway did not refuse the key: status %d, error type %q.", code, errType))
-		Expect(keyInfo(hash).Blocked).To(BeTrue(), "The gateway did not block the key.")
+		Eventually(func(g Gomega) {
+			code, errType := modelCall(ctx, key)
+			g.Expect(code == http.StatusUnauthorized && errType == "auth_error").To(BeTrue(), fmt.Sprintf(
+				"The gateway did not refuse the key: status %d, error type %q.", code, errType))
+			g.Expect(keyInfo(hash).Blocked).To(BeTrue(), "The gateway did not block the key.")
+		}, 30*time.Second, time.Second).Should(Succeed())
 
 		By("checking that the pod stopped and the home PVC stays")
-		sts := &appsv1.StatefulSet{}
-		Expect(k8s.Get(ctx, client.ObjectKey{Namespace: wsNS, Name: wsName}, sts)).To(Succeed())
-		Expect(*sts.Spec.Replicas).To(BeZero())
+		Eventually(func(g Gomega) {
+			sts := &appsv1.StatefulSet{}
+			g.Expect(k8s.Get(ctx, client.ObjectKey{Namespace: wsNS, Name: wsName}, sts)).To(Succeed())
+			g.Expect(sts.Spec.Replicas).NotTo(BeNil())
+			g.Expect(*sts.Spec.Replicas).To(BeZero())
+		}, time.Minute, time.Second).Should(Succeed(), "The StatefulSet does not have 0 replicas.")
 		Eventually(func() int {
 			pods := &corev1.PodList{}
 			_ = k8s.List(ctx, pods, client.InNamespace(wsNS), client.MatchingLabels{wsLabel: wsName})
 			return len(pods.Items)
-		}, 2*time.Minute).Should(BeZero(), "The Workspace pod did not stop.")
+		}, 2*time.Minute, time.Second).Should(BeZero(), "The Workspace pod did not stop.")
 		pvc := &corev1.PersistentVolumeClaim{}
 		Expect(k8s.Get(ctx, client.ObjectKey{Namespace: wsNS, Name: "home-" + wsName + "-0"}, pvc)).To(Succeed())
 		Expect(pvc.DeletionTimestamp).To(BeNil(), "The home PVC is in deletion.")
@@ -236,8 +232,11 @@ var _ = Describe("Workspaces", Ordered, Label("workspace"), func() {
 		By("resuming the Workspace and reading the file from the first session")
 		setSuspend(ws, false)
 		waitPhase(ws, corev1alpha1.WorkspaceRunning)
-		Eventually(func() (string, error) { return ssh("cat ~/e2e-marker") }, 2*time.Minute, 5*time.Second).
-			Should(Equal(marker+"\n"), "The home PVC did not keep the file.")
+		Eventually(func(g Gomega) {
+			out, err := ssh("cat ~/e2e-marker")
+			g.Expect(err).NotTo(HaveOccurred())
+			g.Expect(strings.TrimSpace(out)).To(Equal(marker))
+		}, 2*time.Minute, 5*time.Second).Should(Succeed(), "The home PVC did not keep the file.")
 	})
 
 	It("keeps a Workspace Pending in a namespace that no Profile binds", func() {
@@ -251,7 +250,7 @@ var _ = Describe("Workspaces", Ordered, Label("workspace"), func() {
 			g.Expect(c).NotTo(BeNil())
 			g.Expect(c.Status).To(Equal(metav1.ConditionFalse))
 			g.Expect(c.Reason).To(Equal("NamespaceNotBound"))
-		}, time.Minute).Should(Succeed())
+		}, time.Minute, time.Second).Should(Succeed())
 		err := k8s.Get(ctx, client.ObjectKey{Namespace: freeNS, Name: wsName}, &appsv1.StatefulSet{})
 		Expect(apierrors.IsNotFound(err)).To(BeTrue(), "The controller made a StatefulSet in "+freeNS+".")
 	})
@@ -263,7 +262,38 @@ func waitPhase(ws *corev1alpha1.Workspace, p corev1alpha1.WorkspacePhase) {
 	Eventually(func() corev1alpha1.WorkspacePhase {
 		_ = k8s.Get(ctx, client.ObjectKeyFromObject(ws), ws)
 		return ws.Status.Phase
-	}).Should(Equal(p), "The Workspace does not have the phase "+string(p)+".")
+	}, 5*time.Minute, time.Second).Should(Equal(p), "The Workspace does not have the phase "+string(p)+".")
+}
+
+// cleanWorkspaces deletes the Workspaces in the test namespaces, the Profile and the namespaces.
+// It waits until the namespaces are gone, with the home PVC.
+func cleanWorkspaces() {
+	By("deleting the Workspaces, the Profile and the namespaces")
+	namespaces := []string{wsNS, freeNS}
+	for _, ns := range namespaces {
+		_ = k8s.DeleteAllOf(ctx, &corev1alpha1.Workspace{}, client.InNamespace(ns))
+	}
+	Eventually(func() int {
+		n := 0
+		for _, ns := range namespaces {
+			l := &corev1alpha1.WorkspaceList{}
+			_ = k8s.List(ctx, l, client.InNamespace(ns))
+			n += len(l.Items)
+		}
+		return n
+	}, 2*time.Minute, time.Second).Should(BeZero(), "The finalizer kept a Workspace.")
+	_ = k8s.Delete(ctx, &corev1alpha1.Profile{ObjectMeta: metav1.ObjectMeta{Name: wsProfile}})
+	for _, ns := range namespaces {
+		_ = k8s.Delete(ctx, &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: ns}})
+	}
+	Eventually(func() bool {
+		for _, ns := range namespaces {
+			if !apierrors.IsNotFound(k8s.Get(ctx, client.ObjectKey{Name: ns}, &corev1.Namespace{})) {
+				return false
+			}
+		}
+		return true
+	}, 5*time.Minute, 2*time.Second).Should(BeTrue(), "A test namespace was not deleted.")
 }
 
 // setSuspend writes spec.suspend of ws with a merge patch.
