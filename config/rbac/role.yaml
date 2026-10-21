@@ -32,6 +32,16 @@ rules:
   - delete
   - get
 - apiGroups:
+  - apps
+  resources:
+  - statefulsets
+  verbs:
+  - create
+  - get
+  - list
+  - update
+  - watch
+- apiGroups:
   - batch
   resources:
   - jobs

@@ -18,17 +18,23 @@ package controller
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"regexp"
 	"strings"
 
+	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
+	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/apimachinery/pkg/util/intstr"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
@@ -40,10 +46,24 @@ const (
 	// WorkspaceLabel is on each object that the controller makes for a Workspace.
 	WorkspaceLabel = "koodam.dev/workspace"
 
-	// The keys of the pod contract in issue #15.
+	// The keys and the paths of the pod contract in issue #15.
 	hostKeyField        = "ssh_host_ed25519_key"
 	hostPubField        = "ssh_host_ed25519_key.pub"
 	authorizedKeysField = "authorized_keys"
+	workspaceHome       = "/home/dev"
+	workspaceSSHDir     = "/etc/koodam/ssh"
+	workspaceGlobalsDir = "/etc/koodam/globals"
+	workspaceLoginDir   = "/etc/koodam/login"
+	globalsConfigMap    = "koodam-globals"
+	loginSecret         = "koodam-login"
+	workspaceUser       = int64(1000)
+	workspacePort       = int32(2222)
+
+	// specHashAnnotation is the hash of the pod template that the controller wrote last.
+	specHashAnnotation = "koodam.dev/spec-hash"
+	// maxWorkspaceName keeps the pod label controller-revision-hash (name, "-", 10 characters)
+	// at 63 characters or fewer.
+	maxWorkspaceName = 52
 
 	condReady = "Ready"
 	// condKeysValid is False if the controller skipped a key of spec.sshPublicKeys.
@@ -70,18 +90,21 @@ func validKeys(keys []string) (valid []string, skipped []int) {
 	return valid, skipped
 }
 
-// WorkspaceReconciler makes the host key Secret and the authorized_keys ConfigMap of a
-// Workspace. The owner references delete them when the Workspace is deleted.
+// WorkspaceReconciler makes the host key Secret, the authorized_keys ConfigMap and the
+// StatefulSet of a Workspace. The owner references delete them when the Workspace is deleted.
 type WorkspaceReconciler struct {
 	client.Client
 	Scheme *runtime.Scheme
 	// APIReader reads the host key Secret. The controller has no list or watch on Secrets.
 	APIReader client.Reader
+	// Image is the workspace image if spec.image is empty.
+	Image string
 }
 
 // +kubebuilder:rbac:groups=core.koodam.dev,resources=workspaces,verbs=get;list;watch
 // +kubebuilder:rbac:groups=core.koodam.dev,resources=workspaces/status,verbs=update
 // +kubebuilder:rbac:groups=core.koodam.dev,resources=workspaces/finalizers,verbs=update
+// +kubebuilder:rbac:groups=apps,resources=statefulsets,verbs=get;list;watch;create;update
 // +kubebuilder:rbac:groups="",resources=configmaps,verbs=get;list;watch;create;update
 // +kubebuilder:rbac:groups="",resources=secrets,verbs=get;create
 
@@ -101,6 +124,7 @@ func (r *WorkspaceReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 		return ctrl.Result{}, err
 	}
 	ws.Status.Phase = phase
+	ws.Status.Pod = ws.Name + "-0"
 	ready := metav1.ConditionFalse
 	if phase == corev1alpha1.WorkspaceRunning {
 		ready = metav1.ConditionTrue
@@ -123,15 +147,22 @@ func (r *WorkspaceReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 	return ctrl.Result{}, r.Status().Update(ctx, ws)
 }
 
-// apply makes or updates the objects of the Workspace. It returns the phase, and the reason and
-// the message of the Ready condition. It returns an error only if a retry can fix it.
+// apply makes or updates the 3 objects of the Workspace. It returns the phase, and the reason
+// and the message of the Ready condition. It returns an error only if a retry can fix it.
 func (r *WorkspaceReconciler) apply(ctx context.Context, ws *corev1alpha1.Workspace) (
 	corev1alpha1.WorkspacePhase, string, string, error) {
 	const failed = corev1alpha1.WorkspaceFailed
+	if len(ws.Name) > maxWorkspaceName {
+		return failed, "Invalid", "The Workspace name is too long for the StatefulSet. Use 52 characters or fewer.", nil
+	}
 	pub, err := r.hostKey(ctx, ws)
 	if err == nil {
 		ws.Status.HostKey = pub
 		err = r.applyConfigMap(ctx, ws)
+	}
+	var sts *appsv1.StatefulSet
+	if err == nil {
+		sts, err = r.applyStatefulSet(ctx, ws)
 	}
 	switch {
 	case errors.Is(err, errNotOwned):
@@ -143,9 +174,10 @@ func (r *WorkspaceReconciler) apply(ctx context.Context, ws *corev1alpha1.Worksp
 		return "", "", "", err
 	case ws.Spec.Suspend:
 		return corev1alpha1.WorkspaceSuspended, "Suspended", "The pod is stopped. The home PVC stays.", nil
+	case sts.Status.ReadyReplicas > 0:
+		return corev1alpha1.WorkspaceRunning, "PodReady", "The pod is ready for SSH.", nil
 	default:
-		// A later change makes the pod. Until then, the Workspace stays Pending.
-		return corev1alpha1.WorkspacePending, "NoPod", "The controller does not make the pod yet.", nil
+		return corev1alpha1.WorkspacePending, "PodNotReady", "The pod is not ready.", nil
 	}
 }
 
@@ -216,6 +248,41 @@ func (r *WorkspaceReconciler) applyConfigMap(ctx context.Context, ws *corev1alph
 	return r.Update(ctx, cm)
 }
 
+// applyStatefulSet makes the StatefulSet. It updates the pod template only if its hash changed,
+// and the replicas if spec.suspend changed. The volumeClaimTemplates cannot change.
+func (r *WorkspaceReconciler) applyStatefulSet(ctx context.Context, ws *corev1alpha1.Workspace) (
+	*appsv1.StatefulSet, error) {
+	want, err := r.statefulSet(ws)
+	if err != nil {
+		return nil, err
+	}
+	have := &appsv1.StatefulSet{}
+	err = r.Get(ctx, types.NamespacedName{Namespace: ws.Namespace, Name: ws.Name}, have)
+	if apierrors.IsNotFound(err) {
+		return want, r.createOwned(ctx, ws, want)
+	}
+	if err != nil {
+		return nil, err
+	}
+	if !metav1.IsControlledBy(have, ws) {
+		return nil, errNotOwned
+	}
+	hash := want.Annotations[specHashAnnotation]
+	if have.Annotations[specHashAnnotation] == hash && have.Spec.Replicas != nil &&
+		*have.Spec.Replicas == *want.Spec.Replicas {
+		return have, nil
+	}
+	if have.Annotations[specHashAnnotation] != hash {
+		have.Spec.Template = want.Spec.Template
+		if have.Annotations == nil {
+			have.Annotations = map[string]string{}
+		}
+		have.Annotations[specHashAnnotation] = hash
+	}
+	have.Spec.Replicas = want.Spec.Replicas
+	return have, r.Update(ctx, have)
+}
+
 // createOwned creates o. If an object with the same name exists, the cache did not have it. Then
 // createOwned reads it from the API server and returns errNotOwned if it is not from ws.
 func (r *WorkspaceReconciler) createOwned(ctx context.Context, ws *corev1alpha1.Workspace, o client.Object) error {
@@ -232,11 +299,101 @@ func (r *WorkspaceReconciler) createOwned(ctx context.Context, ws *corev1alpha1.
 	return errors.New("the cache does not have the object yet")
 }
 
+// statefulSet makes the StatefulSet of the pod contract in issue #15.
+func (r *WorkspaceReconciler) statefulSet(ws *corev1alpha1.Workspace) (*appsv1.StatefulSet, error) {
+	const home, ssh, globals, login = "home", "ssh", "globals", "login"
+	image := ws.Spec.Image
+	if image == "" {
+		image = r.Image
+	}
+	replicas := int32(1)
+	if ws.Spec.Suspend {
+		replicas = 0
+	}
+	storage := ws.Spec.Storage
+	if storage.IsZero() {
+		storage = resource.MustParse("20Gi")
+	}
+	labels := map[string]string{WorkspaceLabel: ws.Name}
+	volumes := []corev1.Volume{
+		// One projected volume gives the 2 files of the contract. The kubelet updates the files.
+		{Name: ssh, VolumeSource: corev1.VolumeSource{Projected: &corev1.ProjectedVolumeSource{
+			Sources: []corev1.VolumeProjection{
+				{ConfigMap: &corev1.ConfigMapProjection{
+					LocalObjectReference: corev1.LocalObjectReference{Name: sshConfigMapName(ws)},
+					Items:                []corev1.KeyToPath{{Key: authorizedKeysField, Path: authorizedKeysField}}}},
+				{Secret: &corev1.SecretProjection{
+					LocalObjectReference: corev1.LocalObjectReference{Name: hostKeySecretName(ws)},
+					Items: []corev1.KeyToPath{{Key: hostKeyField, Path: "host/" + hostKeyField,
+						Mode: new(int32(0o400))}}}},
+			}}}},
+		{Name: globals, VolumeSource: corev1.VolumeSource{ConfigMap: &corev1.ConfigMapVolumeSource{
+			LocalObjectReference: corev1.LocalObjectReference{Name: globalsConfigMap}, Optional: new(true)}}},
+		{Name: login, VolumeSource: corev1.VolumeSource{Secret: &corev1.SecretVolumeSource{
+			SecretName: loginSecret, Optional: new(true), DefaultMode: new(int32(0o400))}}},
+	}
+	container := corev1.Container{
+		Name: "workspace", Image: image,
+		Ports: []corev1.ContainerPort{{Name: "ssh", ContainerPort: workspacePort, Protocol: corev1.ProtocolTCP}},
+		ReadinessProbe: &corev1.Probe{ProbeHandler: corev1.ProbeHandler{
+			TCPSocket: &corev1.TCPSocketAction{Port: intstr.FromInt32(workspacePort)}}},
+		VolumeMounts: []corev1.VolumeMount{
+			{Name: home, MountPath: workspaceHome},
+			{Name: ssh, MountPath: workspaceSSHDir, ReadOnly: true},
+			{Name: globals, MountPath: workspaceGlobalsDir, ReadOnly: true},
+			{Name: login, MountPath: workspaceLoginDir, ReadOnly: true},
+		},
+		SecurityContext: &corev1.SecurityContext{
+			RunAsNonRoot: new(true), RunAsUser: new(workspaceUser), RunAsGroup: new(workspaceUser),
+			AllowPrivilegeEscalation: new(false),
+			Capabilities:             &corev1.Capabilities{Drop: []corev1.Capability{"ALL"}},
+			SeccompProfile:           &corev1.SeccompProfile{Type: corev1.SeccompProfileTypeRuntimeDefault},
+		},
+	}
+	tmpl := corev1.PodTemplateSpec{ObjectMeta: metav1.ObjectMeta{Labels: labels}, Spec: corev1.PodSpec{
+		AutomountServiceAccountToken: new(false),
+		EnableServiceLinks:           new(false),
+		SecurityContext: &corev1.PodSecurityContext{
+			RunAsNonRoot: new(true), RunAsUser: new(workspaceUser), RunAsGroup: new(workspaceUser),
+			FSGroup:        new(workspaceUser),
+			SeccompProfile: &corev1.SeccompProfile{Type: corev1.SeccompProfileTypeRuntimeDefault},
+		},
+		Containers: []corev1.Container{container},
+		Volumes:    volumes,
+	}}
+	b, err := json.Marshal(tmpl)
+	if err != nil {
+		return nil, fmt.Errorf("hash the pod template: %w", err)
+	}
+	sum := sha256.Sum256(b)
+	sts := &appsv1.StatefulSet{ObjectMeta: workspaceMeta(ws, ws.Name), Spec: appsv1.StatefulSetSpec{
+		Replicas: &replicas,
+		Selector: &metav1.LabelSelector{MatchLabels: labels},
+		Template: tmpl,
+		VolumeClaimTemplates: []corev1.PersistentVolumeClaim{{
+			ObjectMeta: metav1.ObjectMeta{Name: home, Labels: labels},
+			Spec: corev1.PersistentVolumeClaimSpec{
+				AccessModes: []corev1.PersistentVolumeAccessMode{corev1.ReadWriteOnce},
+				Resources: corev1.VolumeResourceRequirements{
+					Requests: corev1.ResourceList{corev1.ResourceStorage: storage}},
+			},
+		}},
+		// The home PVC stays after a scale to 0 and after a Workspace delete.
+		PersistentVolumeClaimRetentionPolicy: &appsv1.StatefulSetPersistentVolumeClaimRetentionPolicy{
+			WhenDeleted: appsv1.RetainPersistentVolumeClaimRetentionPolicyType,
+			WhenScaled:  appsv1.RetainPersistentVolumeClaimRetentionPolicyType,
+		},
+	}}
+	sts.Annotations = map[string]string{specHashAnnotation: hex.EncodeToString(sum[:8])}
+	return sts, nil
+}
+
 // SetupWithManager sets up the controller with the Manager. It does not watch the Secrets,
 // because the controller has no list or watch on Secrets.
 func (r *WorkspaceReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&corev1alpha1.Workspace{}).
+		Owns(&appsv1.StatefulSet{}).
 		Owns(&corev1.ConfigMap{}).
 		Named("workspace").
 		Complete(r)

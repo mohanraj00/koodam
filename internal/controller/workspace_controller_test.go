@@ -30,8 +30,10 @@ import (
 	"github.com/go-logr/logr/funcr"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
+	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/meta"
+	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -42,6 +44,7 @@ import (
 
 var _ = Describe("Workspace Controller", func() {
 	const ns = "default"
+	const image = "ghcr.io/mohanraj00/koodam-workspace:test"
 	var (
 		ctx  context.Context
 		logs *bytes.Buffer
@@ -54,7 +57,7 @@ var _ = Describe("Workspace Controller", func() {
 
 	nn := func(s string) types.NamespacedName { return types.NamespacedName{Namespace: ns, Name: s} }
 	r := func() *WorkspaceReconciler {
-		return &WorkspaceReconciler{Client: k8sClient, Scheme: k8sClient.Scheme(), APIReader: k8sClient}
+		return &WorkspaceReconciler{Client: k8sClient, Scheme: k8sClient.Scheme(), APIReader: k8sClient, Image: image}
 	}
 	reconcileOnce := func() {
 		_, err := r().Reconcile(ctx, reconcile.Request{NamespacedName: nn(name)})
@@ -83,15 +86,16 @@ var _ = Describe("Workspace Controller", func() {
 		}, funcr.Options{Verbosity: 1}))
 		ws := &corev1alpha1.Workspace{
 			ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: ns},
-			Spec:       corev1alpha1.WorkspaceSpec{SSHPublicKeys: []string{key1}},
+			Spec:       corev1alpha1.WorkspaceSpec{SSHPublicKeys: []string{key1}, Storage: resource.MustParse("5Gi")},
 		}
 		Expect(k8sClient.Create(ctx, ws)).To(Succeed())
 		cleanup(ws)
 		cleanup(&corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: name + "-ssh-host", Namespace: ns}})
 		cleanup(&corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Name: name + "-ssh", Namespace: ns}})
+		cleanup(&appsv1.StatefulSet{ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: ns}})
 	})
 
-	It("makes the host key Secret and the authorized_keys ConfigMap", func() {
+	It("makes the 3 objects of the pod contract", func() {
 		reconcileOnce()
 		ws := workspace()
 
@@ -106,12 +110,56 @@ var _ = Describe("Workspace Controller", func() {
 		get(cm, name+"-ssh")
 		Expect(cm.Data).To(Equal(map[string]string{authorizedKeysField: key1 + "\n"}))
 
-		for _, o := range []metav1.Object{s, cm} {
+		sts := &appsv1.StatefulSet{}
+		get(sts, name)
+		for _, o := range []metav1.Object{s, cm, sts} {
 			Expect(metav1.IsControlledBy(o, ws)).To(BeTrue(), o.GetName())
 			Expect(o.GetLabels()).To(HaveKeyWithValue(WorkspaceLabel, name))
 		}
+		Expect(sts.Spec.Replicas).To(HaveValue(Equal(int32(1))))
+		Expect(sts.Spec.PersistentVolumeClaimRetentionPolicy.WhenDeleted).To(Equal(appsv1.RetainPersistentVolumeClaimRetentionPolicyType))
+		Expect(sts.Spec.PersistentVolumeClaimRetentionPolicy.WhenScaled).To(Equal(appsv1.RetainPersistentVolumeClaimRetentionPolicyType))
+		Expect(sts.Spec.VolumeClaimTemplates).To(HaveLen(1))
+		vct := sts.Spec.VolumeClaimTemplates[0]
+		Expect(vct.Name).To(Equal("home"))
+		Expect(vct.Spec.Resources.Requests[corev1.ResourceStorage]).To(Equal(resource.MustParse("5Gi")))
+
+		pod := sts.Spec.Template.Spec
+		Expect(pod.Containers).To(HaveLen(1))
+		c := pod.Containers[0]
+		Expect(c.Image).To(Equal(image))
+		mounts := map[string]corev1.VolumeMount{}
+		for _, m := range c.VolumeMounts {
+			mounts[m.MountPath] = m
+		}
+		Expect(mounts).To(HaveKeyWithValue("/home/dev", corev1.VolumeMount{Name: "home", MountPath: "/home/dev"}))
+		for _, p := range []string{"/etc/koodam/ssh", "/etc/koodam/globals", "/etc/koodam/login"} {
+			Expect(mounts).To(HaveKey(p))
+			Expect(mounts[p].ReadOnly).To(BeTrue(), p)
+		}
+		vols := map[string]corev1.Volume{}
+		for _, v := range pod.Volumes {
+			vols[v.Name] = v
+		}
+		src := vols[mounts["/etc/koodam/ssh"].Name].Projected.Sources
+		Expect(src).To(HaveLen(2))
+		Expect(src[0].ConfigMap.Name).To(Equal(name + "-ssh"))
+		Expect(src[0].ConfigMap.Items).To(Equal([]corev1.KeyToPath{{Key: "authorized_keys", Path: "authorized_keys"}}))
+		Expect(src[1].Secret.Name).To(Equal(name + "-ssh-host"))
+		Expect(src[1].Secret.Items).To(Equal([]corev1.KeyToPath{{Key: "ssh_host_ed25519_key",
+			Path: "host/ssh_host_ed25519_key", Mode: new(int32(0o400))}}))
+		globals := vols[mounts["/etc/koodam/globals"].Name].ConfigMap
+		Expect(globals.Name).To(Equal("koodam-globals"))
+		Expect(globals.Optional).To(HaveValue(BeTrue()))
+		login := vols[mounts["/etc/koodam/login"].Name].Secret
+		Expect(login.SecretName).To(Equal("koodam-login"))
+		Expect(login.Optional).To(HaveValue(BeTrue()))
+
+		Expect(c.Ports).To(ConsistOf(HaveField("ContainerPort", int32(2222))))
+		Expect(c.ReadinessProbe.TCPSocket.Port.IntValue()).To(Equal(2222))
 
 		Expect(ws.Status.Phase).To(Equal(corev1alpha1.WorkspacePending))
+		Expect(ws.Status.Pod).To(Equal(name + "-0"))
 		Expect(meta.IsStatusConditionFalse(ws.Status.Conditions, condReady)).To(BeTrue())
 		Expect(meta.IsStatusConditionTrue(ws.Status.Conditions, condKeysValid)).To(BeTrue())
 	})
@@ -133,6 +181,28 @@ var _ = Describe("Workspace Controller", func() {
 		Expect(other.Data).To(Equal(map[string][]byte{"x": []byte("y")}))
 	})
 
+	It("meets the Pod Security restricted profile", func() {
+		reconcileOnce()
+		sts := &appsv1.StatefulSet{}
+		get(sts, name)
+		pod := sts.Spec.Template.Spec
+		Expect(pod.AutomountServiceAccountToken).To(HaveValue(BeFalse()))
+		psc := pod.SecurityContext
+		Expect(psc.RunAsNonRoot).To(HaveValue(BeTrue()))
+		Expect(psc.RunAsUser).To(HaveValue(Equal(int64(1000))))
+		Expect(psc.FSGroup).To(HaveValue(Equal(int64(1000))))
+		Expect(psc.SeccompProfile.Type).To(Equal(corev1.SeccompProfileTypeRuntimeDefault))
+		sc := pod.Containers[0].SecurityContext
+		Expect(sc.AllowPrivilegeEscalation).To(HaveValue(BeFalse()))
+		Expect(sc.Capabilities.Drop).To(Equal([]corev1.Capability{"ALL"}))
+		Expect(sc.Capabilities.Add).To(BeEmpty())
+		Expect(sc.RunAsNonRoot).To(HaveValue(BeTrue()))
+		Expect(sc.SeccompProfile.Type).To(Equal(corev1.SeccompProfileTypeRuntimeDefault))
+		for _, v := range pod.Volumes {
+			Expect(v.HostPath).To(BeNil())
+		}
+	})
+
 	It("does not change the host key on a second reconcile", func() {
 		reconcileOnce()
 		before := &corev1.Secret{}
@@ -148,8 +218,11 @@ var _ = Describe("Workspace Controller", func() {
 		Expect(workspace().Status.HostKey).To(Equal(hostKey))
 	})
 
-	It("updates the ConfigMap when the keys change", func() {
+	It("updates the ConfigMap and not the pod template when the keys change", func() {
 		reconcileOnce()
+		before := &appsv1.StatefulSet{}
+		get(before, name)
+
 		ws := workspace()
 		ws.Spec.SSHPublicKeys = []string{key1, key2}
 		Expect(k8sClient.Update(ctx, ws)).To(Succeed())
@@ -158,17 +231,39 @@ var _ = Describe("Workspace Controller", func() {
 		cm := &corev1.ConfigMap{}
 		get(cm, name+"-ssh")
 		Expect(cm.Data[authorizedKeysField]).To(Equal(key1 + "\n" + key2 + "\n"))
+		after := &appsv1.StatefulSet{}
+		get(after, name)
+		Expect(after.Generation).To(Equal(before.Generation))
+		Expect(after.Spec.Template).To(Equal(before.Spec.Template))
 	})
 
-	It("is Suspended when spec.suspend is true", func() {
+	It("scales to 0 on suspend and is Running when the pod is ready", func() {
 		reconcileOnce()
 		ws := workspace()
 		ws.Spec.Suspend = true
 		Expect(k8sClient.Update(ctx, ws)).To(Succeed())
 		reconcileOnce()
+
+		sts := &appsv1.StatefulSet{}
+		get(sts, name)
+		Expect(sts.Spec.Replicas).To(HaveValue(Equal(int32(0))))
+		Expect(workspace().Status.Phase).To(Equal(corev1alpha1.WorkspaceSuspended))
+
 		ws = workspace()
-		Expect(ws.Status.Phase).To(Equal(corev1alpha1.WorkspaceSuspended))
-		Expect(meta.IsStatusConditionFalse(ws.Status.Conditions, condReady)).To(BeTrue())
+		ws.Spec.Suspend = false
+		Expect(k8sClient.Update(ctx, ws)).To(Succeed())
+		reconcileOnce()
+		get(sts, name)
+		Expect(sts.Spec.Replicas).To(HaveValue(Equal(int32(1))))
+		Expect(workspace().Status.Phase).To(Equal(corev1alpha1.WorkspacePending))
+
+		// envtest has no StatefulSet controller, so the test writes the ready count.
+		sts.Status.Replicas, sts.Status.ReadyReplicas = 1, 1
+		Expect(k8sClient.Status().Update(ctx, sts)).To(Succeed())
+		reconcileOnce()
+		ws = workspace()
+		Expect(ws.Status.Phase).To(Equal(corev1alpha1.WorkspaceRunning))
+		Expect(meta.IsStatusConditionTrue(ws.Status.Conditions, condReady)).To(BeTrue())
 	})
 
 	It("fails and keeps an object that is not from the Workspace", func() {
