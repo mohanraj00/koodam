@@ -9,10 +9,17 @@ esac
 if [ -d /etc/koodam/gateway ]; then
   for koodam_gw_f in /etc/koodam/gateway/*; do
     koodam_gw_n=${koodam_gw_f##*/}
+    # Export only the names that the controller writes (gatewayEnv). Thus a file cannot change
+    # a shell variable such as PATH, IFS or LD_PRELOAD. The class has each letter, because the
+    # meaning of a range such as [A-Z] changes with the locale.
     case $koodam_gw_n in
-      '' | [0-9]* | *[!A-Z0-9_]*) continue ;;
+      ANTHROPIC_?* | OPENAI_?* | CLAUDE_CODE_?*) ;;
+      *) continue ;;
     esac
-    [ -f "$koodam_gw_f" ] && export "$koodam_gw_n=$(cat "$koodam_gw_f")"
+    case $koodam_gw_n in
+      *[!ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_]*) continue ;;
+    esac
+    [ -f "$koodam_gw_f" ] && [ -r "$koodam_gw_f" ] && export "$koodam_gw_n=$(cat "$koodam_gw_f")"
   done
 fi
 unset koodam_gw_f koodam_gw_n
