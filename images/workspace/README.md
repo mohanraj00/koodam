@@ -14,11 +14,25 @@ The start script runs as uid 1000. It does these steps:
 
 1. If `~/.profile` or `~/.bashrc` is missing (an empty PVC home), it copies the file from `/etc/skel`.
 2. It makes `~/.local/bin`. The Debian `~/.profile` adds this folder to the login `PATH`.
-3. It runs `exec /usr/sbin/sshd -D -e -f /etc/koodam/sshd_config`.
+3. It runs `koodam-globals`. The section "Global files" tells what this script does.
+4. It runs `exec /usr/sbin/sshd -D -e -f /etc/koodam/sshd_config`.
 
 sshd does not run as root, so it can log in only the user `dev`. It writes no PID file (`PidFile none`). It cannot write login records, and it writes a log line about this for each session. This log line is not an error.
 
-A later PR adds the skill links from `/etc/koodam/globals` to the start script, when the format of `koodam-globals` is decided.
+## Global files
+
+`/usr/local/bin/koodam-globals` (`globals.sh`) copies the files of `koodam profile push` from `/etc/koodam/globals` to the home. The start script runs it before sshd. `/etc/profile.d/koodam-globals.sh` (`profile-globals.sh`) runs it at each login, so a new push is seen without a pod restart.
+
+1. If the target of `/etc/koodam/globals/..data` did not change, the script does not copy the files again. Then it writes nothing.
+2. Else it decodes each key to a path: first `_s` becomes `/`, then `_u` becomes `_`. It skips `manifest.json` and the dot entries of the kubelet.
+3. It refuses a key that is not valid, and a path that is not `CLAUDE.md`, `AGENTS.md` or `skills/NAME/FILE`. A path with an empty, `.` or `..` segment is not valid. It writes a message on stderr for each refused key.
+4. It writes the files to a new folder `~/.koodam/.globals-tree.XXXXXX`. Then it changes the link `~/.koodam/globals` to the new folder in one rename, and removes the old folder.
+5. It makes the links `~/.claude/CLAUDE.md`, `~/.codex/AGENTS.md`, `~/.claude/skills/NAME` and `~/.codex/skills/NAME` to `~/.koodam/globals`. It makes one link for each skill and never replaces the folder `skills`, because Codex writes `~/.codex/skills/.system`.
+6. It removes each link that it made (a link into `~/.koodam/globals`) for a file or a skill that is no longer in the ConfigMap.
+
+The script never replaces a file, a folder or a link of the user. If `~/.koodam/globals` is not a link to a `.globals-tree.*` folder, the script does not change it and makes no links. If another run holds the lock, the script stops at once. If `/etc/koodam/globals` is missing, the result is an empty tree. The script never fails: it writes each error on stderr and exits 0. Do not edit the files under `~/.koodam/globals`, because the next push replaces them.
+
+To test the script with a temporary `HOME` and a fake ConfigMap folder, run `bash images/workspace/test/globals_test.sh` from the root of the repo.
 
 ## The pod contract
 
@@ -29,7 +43,7 @@ The controller mounts these paths. The pod passes the Pod Security `restricted` 
 | `/home/dev` | the PVC from the StatefulSet `volumeClaimTemplates` (`spec.storage`) | read-write |
 | `/etc/koodam/ssh/authorized_keys` | the ConfigMap `<workspace>-ssh`, key `authorized_keys` | read-only |
 | `/etc/koodam/ssh/host/ssh_host_ed25519_key` | the Secret `<workspace>-ssh-host`, key `ssh_host_ed25519_key`, `defaultMode` 0440 with the pod `fsGroup` 1000 (owner root, group 1000) | read-only |
-| `/etc/koodam/globals` | the ConfigMap `koodam-globals`, optional | read-only |
+| `/etc/koodam/globals` | the ConfigMap `koodam-globals`, optional. `koodam-globals` copies it to `~/.koodam/globals` | read-only |
 | `/etc/koodam/login` | the Secret `koodam-login`, optional | read-only |
 | `/etc/koodam/memory` | the PVC `koodam-memory`, optional | read-write |
 
