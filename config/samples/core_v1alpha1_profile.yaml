@@ -1,0 +1,12 @@
+apiVersion: core.koodam.dev/v1alpha1
+kind: Profile
+metadata:
+  labels:
+    app.kubernetes.io/name: koodam
+    app.kubernetes.io/managed-by: kustomize
+  name: profile-sample
+spec:
+  # A namespace is bound only if this list has it and it has the label
+  # koodam.dev/profile=profile-sample.
+  namespaces:
+  - dev-sample
