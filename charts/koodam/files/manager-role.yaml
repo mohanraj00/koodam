@@ -7,6 +7,16 @@ rules:
 - apiGroups:
   - ""
   resources:
+  - configmaps
+  verbs:
+  - create
+  - get
+  - list
+  - update
+  - watch
+- apiGroups:
+  - ""
+  resources:
   - namespaces
   verbs:
   - get
@@ -21,6 +31,16 @@ rules:
   - create
   - delete
   - get
+- apiGroups:
+  - apps
+  resources:
+  - statefulsets
+  verbs:
+  - create
+  - get
+  - list
+  - update
+  - watch
 - apiGroups:
   - batch
   resources:
@@ -46,12 +66,15 @@ rules:
   - agents/finalizers
   - agents/status
   - profiles/status
+  - workspaces/finalizers
+  - workspaces/status
   verbs:
   - update
 - apiGroups:
   - core.koodam.dev
   resources:
   - profiles
+  - workspaces
   verbs:
   - get
   - list
