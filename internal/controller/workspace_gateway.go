@@ -41,8 +41,8 @@ const (
 	workspaceFinalizer = "koodam.dev/workspace-gateway"
 	// workspaceGatewayDir has one file for each field of the gateway Secret.
 	workspaceGatewayDir = "/etc/koodam/gateway"
-	// DefaultWorkspaceKeyTTL is the TTL of a Workspace key. The controller renews the key after
-	// half of the TTL.
+	// DefaultWorkspaceKeyTTL is the TTL of a Workspace key. The controller renews the key when
+	// the last renew is older than TTL/4.
 	DefaultWorkspaceKeyTTL = 24 * time.Hour
 
 	// condGatewayKey tells the state of the gateway key. The reason "Revoking" is in the status
