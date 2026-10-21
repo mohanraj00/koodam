@@ -1,3 +1,19 @@
+/*
+Copyright 2026 Mohan Raj.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
+
 // Package chart has the render tests for the Helm chart in charts/koodam.
 // The tests run "helm template". If helm is not on the PATH, the tests stop,
 // but in CI (the variable CI is set) the tests fail.
@@ -179,6 +195,10 @@ func TestUpstreamKeysRefuseBadItems(t *testing.T) {
 		"no secret key": {
 			set:  []string{item + ".name=ANTHROPIC_API_KEY", item + ".secretName=upstream-keys"},
 			want: item + ".secretKey is necessary.",
+		},
+		"no secret name": {
+			set:  []string{item + ".name=ANTHROPIC_API_KEY", item + ".secretKey=anthropic"},
+			want: item + ".secretName is necessary.",
 		},
 		"no name": {
 			set:  []string{item + ".secretName=upstream-keys", item + ".secretKey=anthropic"},
