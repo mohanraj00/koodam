@@ -67,8 +67,7 @@ func (r *ProfileReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ct
 		if err != nil {
 			return ctrl.Result{}, err
 		}
-		// A label alone gives nothing. The Profile must also list the namespace.
-		if ns.Labels[corev1alpha1.ProfileLabel] == p.Name && ns.DeletionTimestamp.IsZero() {
+		if namespaceBound(p, ns) {
 			bound = append(bound, name)
 		}
 	}
@@ -91,6 +90,32 @@ func (r *ProfileReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ct
 	}
 	log.Info("Updated Profile status", "boundNamespaces", bound)
 	return ctrl.Result{}, nil
+}
+
+// namespaceBound is the binding rule. The namespace is bound to the Profile only if the Profile
+// lists the namespace and the namespace has the label koodam.dev/profile=<Profile name>. A label
+// alone gives nothing. A namespace that is in deletion is not bound.
+func namespaceBound(p *corev1alpha1.Profile, ns *corev1.Namespace) bool {
+	return ns.Labels[corev1alpha1.ProfileLabel] == p.Name && ns.DeletionTimestamp.IsZero() &&
+		slices.Contains(p.Spec.Namespaces, ns.Name)
+}
+
+// profileBinds reads the namespace and the Profile in its label, and applies namespaceBound.
+// It returns false and no error if the namespace, the label or the Profile does not exist.
+func profileBinds(ctx context.Context, c client.Reader, namespace string) (bool, error) {
+	ns := &corev1.Namespace{}
+	if err := c.Get(ctx, types.NamespacedName{Name: namespace}, ns); err != nil {
+		return false, client.IgnoreNotFound(err)
+	}
+	name := ns.Labels[corev1alpha1.ProfileLabel]
+	if name == "" {
+		return false, nil
+	}
+	p := &corev1alpha1.Profile{}
+	if err := c.Get(ctx, types.NamespacedName{Name: name}, p); err != nil {
+		return false, client.IgnoreNotFound(err)
+	}
+	return namespaceBound(p, ns), nil
 }
 
 // conditionsEqual compares the conditions without the transition time.

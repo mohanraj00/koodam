@@ -37,7 +37,9 @@ import (
 	"k8s.io/apimachinery/pkg/util/intstr"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/handler"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
+	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	corev1alpha1 "github.com/mohanraj00/koodam/api/v1alpha1"
 	"github.com/mohanraj00/koodam/internal/gateway"
@@ -67,6 +69,10 @@ const (
 	condReady = "Ready"
 	// condKeysValid is False if the controller skipped a key of spec.sshPublicKeys.
 	condKeysValid = "SSHKeysValid"
+	// condProfileBound is False if no Profile binds the namespace of the Workspace.
+	condProfileBound  = "ProfileBound"
+	reasonNotBound    = "NamespaceNotBound"
+	reasonNamespaceOK = "NamespaceBound"
 
 	// maxKeyLength is the maximum length of a key line. It is the same as in the CRD.
 	maxKeyLength = 8192
@@ -132,15 +138,26 @@ func (r *WorkspaceReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 		return ctrl.Result{}, r.applyKey(ctx, ws)
 	}
 	old := ws.Status.DeepCopy()
-	phase, reason, msg, err := r.apply(ctx, ws)
+	bound, err := profileBinds(ctx, r.Client, ws.Namespace)
+	if err != nil {
+		return ctrl.Result{}, err
+	}
+	phase, reason, msg, err := r.apply(ctx, ws, bound)
 	if err != nil {
 		return ctrl.Result{}, err
 	}
 	ws.Status.Phase = phase
 	ws.Status.Pod = ""
-	if phase != corev1alpha1.WorkspaceFailed {
+	if phase != corev1alpha1.WorkspaceFailed && bound {
 		ws.Status.Pod = ws.Name + "-0"
 	}
+	// The message names the namespace and the label only.
+	boundCond := metav1.Condition{Type: condProfileBound, Status: metav1.ConditionTrue, Reason: reasonNamespaceOK,
+		Message: "A Profile binds the namespace.", ObservedGeneration: ws.Generation}
+	if !bound {
+		boundCond.Status, boundCond.Reason, boundCond.Message = metav1.ConditionFalse, reasonNotBound, msg
+	}
+	meta.SetStatusCondition(&ws.Status.Conditions, boundCond)
 	ready := metav1.ConditionFalse
 	if phase == corev1alpha1.WorkspaceRunning {
 		ready = metav1.ConditionTrue
@@ -158,10 +175,10 @@ func (r *WorkspaceReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 	meta.SetStatusCondition(&ws.Status.Conditions, keysCond)
 	res := ctrl.Result{}
 	var keyErr error
-	if c := meta.FindStatusCondition(ws.Status.Conditions, condGatewayKey); wantKey(ws) && c != nil &&
+	if c := meta.FindStatusCondition(ws.Status.Conditions, condGatewayKey); bound && wantKey(ws) && c != nil &&
 		c.Reason == reasonRenewFailed {
 		keyErr = errRenewFailed
-	} else if wantKey(ws) && ws.Status.KeyHash != "" {
+	} else if bound && wantKey(ws) && ws.Status.KeyHash != "" {
 		res.RequeueAfter = max(time.Second, r.untilRenew(ws.Status.KeyHash))
 	}
 	if old.Phase == ws.Status.Phase && old.Pod == ws.Status.Pod && old.HostKey == ws.Status.HostKey &&
@@ -175,12 +192,21 @@ func (r *WorkspaceReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 }
 
 // apply makes or updates the 3 objects of the Workspace. It returns the phase, and the reason
-// and the message of the Ready condition. It returns an error only if a retry can fix it.
-func (r *WorkspaceReconciler) apply(ctx context.Context, ws *corev1alpha1.Workspace) (
+// and the message of the Ready condition. It returns an error only if a retry can fix it. If
+// bound is false, apply makes no object and stops the pod.
+func (r *WorkspaceReconciler) apply(ctx context.Context, ws *corev1alpha1.Workspace, bound bool) (
 	corev1alpha1.WorkspacePhase, string, string, error) {
 	const failed = corev1alpha1.WorkspaceFailed
 	if len(ws.Name) > maxWorkspaceName {
 		return failed, "Invalid", "The Workspace name is too long for the StatefulSet. Use 52 characters or fewer.", nil
+	}
+	if !bound {
+		if err := r.unbind(ctx, ws); err != nil {
+			return "", "", "", err
+		}
+		return corev1alpha1.WorkspacePending, reasonNotBound, fmt.Sprintf("No Profile binds the namespace %q. "+
+			"Add the label %s=<profile> to the namespace, and add the namespace to spec.namespaces of that Profile.",
+			ws.Namespace, corev1alpha1.ProfileLabel), nil
 	}
 	pub, err := r.hostKey(ctx, ws)
 	if err == nil {
@@ -194,7 +220,7 @@ func (r *WorkspaceReconciler) apply(ctx context.Context, ws *corev1alpha1.Worksp
 		err = r.applyKey(ctx, ws)
 	}
 	if err == nil {
-		sts, err = r.applyStatefulSet(ctx, ws)
+		sts, err = r.applyStatefulSet(ctx, ws, true)
 	}
 	switch {
 	case errors.Is(err, errNotOwned):
@@ -281,11 +307,35 @@ func (r *WorkspaceReconciler) applyConfigMap(ctx context.Context, ws *corev1alph
 	return r.Update(ctx, cm)
 }
 
+// unbind stops the Workspace in a namespace that no Profile binds. It uses the order of a
+// suspend: it blocks the gateway key first, then it scales the StatefulSet to 0. It makes no
+// object. The home PVC stays.
+func (r *WorkspaceReconciler) unbind(ctx context.Context, ws *corev1alpha1.Workspace) error {
+	secret, err := r.readKey(ctx, ws)
+	if err != nil && !errors.Is(err, errNotOwned) {
+		return err
+	}
+	if err := r.revokeKey(ctx, ws, secret); err != nil {
+		return err
+	}
+	sts := &appsv1.StatefulSet{}
+	err = r.Get(ctx, types.NamespacedName{Namespace: ws.Namespace, Name: ws.Name}, sts)
+	if apierrors.IsNotFound(err) || (err == nil && !metav1.IsControlledBy(sts, ws)) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	_, err = r.applyStatefulSet(ctx, ws, false)
+	return err
+}
+
 // applyStatefulSet makes the StatefulSet. It updates the pod template only if it is not the
-// template of the controller, and the replicas if spec.suspend changed. The volumeClaimTemplates cannot change.
-func (r *WorkspaceReconciler) applyStatefulSet(ctx context.Context, ws *corev1alpha1.Workspace) (
+// template of the controller, and the replicas if spec.suspend or the binding changed. The
+// volumeClaimTemplates cannot change.
+func (r *WorkspaceReconciler) applyStatefulSet(ctx context.Context, ws *corev1alpha1.Workspace, bound bool) (
 	*appsv1.StatefulSet, error) {
-	want := r.statefulSet(ws)
+	want := r.statefulSet(ws, bound)
 	have := &appsv1.StatefulSet{}
 	err := r.Get(ctx, types.NamespacedName{Namespace: ws.Namespace, Name: ws.Name}, have)
 	if apierrors.IsNotFound(err) {
@@ -326,15 +376,16 @@ func (r *WorkspaceReconciler) createOwned(ctx context.Context, ws *corev1alpha1.
 	return errors.New("the cache does not have the object yet")
 }
 
-// statefulSet makes the StatefulSet of the pod contract in issue #15.
-func (r *WorkspaceReconciler) statefulSet(ws *corev1alpha1.Workspace) *appsv1.StatefulSet {
+// statefulSet makes the StatefulSet of the pod contract in issue #15. If bound is false, the
+// StatefulSet has 0 replicas.
+func (r *WorkspaceReconciler) statefulSet(ws *corev1alpha1.Workspace, bound bool) *appsv1.StatefulSet {
 	const home, ssh, globals, login = "home", "ssh", "globals", "login"
 	image := ws.Spec.Image
 	if image == "" {
 		image = r.Image
 	}
 	replicas := int32(1)
-	if ws.Spec.Suspend {
+	if ws.Spec.Suspend || !bound {
 		replicas = 0
 	}
 	storage := ws.Spec.Storage
@@ -421,13 +472,50 @@ func (r *WorkspaceReconciler) statefulSet(ws *corev1alpha1.Workspace) *appsv1.St
 	return sts
 }
 
+// workspacesIn returns a request for each Workspace in the namespace.
+func (r *WorkspaceReconciler) workspacesIn(ctx context.Context, namespace string) []reconcile.Request {
+	list := &corev1alpha1.WorkspaceList{}
+	if err := r.List(ctx, list, client.InNamespace(namespace)); err != nil {
+		logf.FromContext(ctx).Error(err, "Failed to list the Workspaces", "namespace", namespace)
+		return nil
+	}
+	reqs := make([]reconcile.Request, 0, len(list.Items))
+	for _, ws := range list.Items {
+		reqs = append(reqs, reconcile.Request{NamespacedName: client.ObjectKeyFromObject(&ws)})
+	}
+	return reqs
+}
+
+// workspacesForNamespace maps a Namespace to its Workspaces. Thus a label change reconciles them.
+func (r *WorkspaceReconciler) workspacesForNamespace(ctx context.Context, obj client.Object) []reconcile.Request {
+	return r.workspacesIn(ctx, obj.GetName())
+}
+
+// workspacesForProfile maps a Profile to the Workspaces in the namespaces that it lists. On an
+// update, the handler calls it for the old and the new Profile. Thus a removed namespace is also
+// reconciled.
+func (r *WorkspaceReconciler) workspacesForProfile(ctx context.Context, obj client.Object) []reconcile.Request {
+	p, ok := obj.(*corev1alpha1.Profile)
+	if !ok {
+		return nil
+	}
+	var reqs []reconcile.Request
+	for _, ns := range p.Spec.Namespaces {
+		reqs = append(reqs, r.workspacesIn(ctx, ns)...)
+	}
+	return reqs
+}
+
 // SetupWithManager sets up the controller with the Manager. It does not watch the Secrets,
-// because the controller has no list or watch on Secrets.
+// because the controller has no list or watch on Secrets. It watches the Namespaces and the
+// Profiles, because they give the binding.
 func (r *WorkspaceReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&corev1alpha1.Workspace{}).
 		Owns(&appsv1.StatefulSet{}).
 		Owns(&corev1.ConfigMap{}).
+		Watches(&corev1.Namespace{}, handler.EnqueueRequestsFromMapFunc(r.workspacesForNamespace)).
+		Watches(&corev1alpha1.Profile{}, handler.EnqueueRequestsFromMapFunc(r.workspacesForProfile)).
 		Named("workspace").
 		Complete(r)
 }

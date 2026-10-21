@@ -25,6 +25,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/go-logr/logr"
 	"github.com/go-logr/logr/funcr"
@@ -37,6 +38,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	corev1alpha1 "github.com/mohanraj00/koodam/api/v1alpha1"
@@ -379,5 +381,184 @@ var _ = Describe("newHostKey", func() {
 		out, err := exec.Command(keygen, "-y", "-f", file).Output()
 		Expect(err).NotTo(HaveOccurred())
 		Expect(strings.TrimSpace(string(out))).To(Equal(public))
+	})
+})
+
+// testProfile binds the namespace "default" for all the Workspace tests. The binding tests use
+// other namespaces.
+const testProfile = "ws-default"
+
+var _ = BeforeEach(func() {
+	ctx := context.Background()
+	p := &corev1alpha1.Profile{ObjectMeta: metav1.ObjectMeta{Name: testProfile},
+		Spec: corev1alpha1.ProfileSpec{Namespaces: []string{metav1.NamespaceDefault}}}
+	Expect(client.IgnoreAlreadyExists(k8sClient.Create(ctx, p))).To(Succeed())
+	ns := &corev1.Namespace{}
+	Expect(k8sClient.Get(ctx, types.NamespacedName{Name: metav1.NamespaceDefault}, ns)).To(Succeed())
+	if ns.Labels[corev1alpha1.ProfileLabel] != testProfile {
+		if ns.Labels == nil {
+			ns.Labels = map[string]string{}
+		}
+		ns.Labels[corev1alpha1.ProfileLabel] = testProfile
+		Expect(k8sClient.Update(ctx, ns)).To(Succeed())
+	}
+})
+
+var _ = Describe("Workspace Profile binding", func() {
+	const name = "ws"
+	var (
+		ctx context.Context
+		gw  *wsGateway
+		rec *WorkspaceReconciler
+		ns  string
+		n   int
+	)
+	nn := func(s string) types.NamespacedName { return types.NamespacedName{Namespace: ns, Name: s} }
+	reconcileOnce := func() {
+		_, err := rec.Reconcile(ctx, reconcile.Request{NamespacedName: nn(name)})
+		Expect(err).NotTo(HaveOccurred())
+	}
+	workspace := func() *corev1alpha1.Workspace {
+		ws := &corev1alpha1.Workspace{}
+		Expect(k8sClient.Get(ctx, nn(name), ws)).To(Succeed())
+		return ws
+	}
+	exists := func(o client.Object, s string) bool {
+		err := k8sClient.Get(ctx, nn(s), o)
+		Expect(client.IgnoreNotFound(err)).To(Succeed())
+		return err == nil
+	}
+	replicas := func() int32 {
+		sts := &appsv1.StatefulSet{}
+		Expect(k8sClient.Get(ctx, nn(name), sts)).To(Succeed())
+		return *sts.Spec.Replicas
+	}
+	// setLabel sets the Profile label of the namespace to the Profile of the test, or removes it.
+	setLabel := func(on bool) {
+		o := &corev1.Namespace{}
+		Expect(k8sClient.Get(ctx, types.NamespacedName{Name: ns}, o)).To(Succeed())
+		o.Labels = map[string]string{}
+		if on {
+			o.Labels[corev1alpha1.ProfileLabel] = ns
+		}
+		Expect(k8sClient.Update(ctx, o)).To(Succeed())
+	}
+	// expectBound checks the condition ProfileBound, and the phase if the namespace is not bound.
+	expectBound := func(want bool) {
+		ws := workspace()
+		c := meta.FindStatusCondition(ws.Status.Conditions, condProfileBound)
+		Expect(c).NotTo(BeNil())
+		if want {
+			Expect(c.Status).To(Equal(metav1.ConditionTrue))
+			return
+		}
+		Expect(c.Status).To(Equal(metav1.ConditionFalse))
+		Expect(c.Reason).To(Equal(reasonNotBound))
+		Expect(c.Message).To(ContainSubstring(ns))
+		Expect(c.Message).To(ContainSubstring(corev1alpha1.ProfileLabel))
+		Expect(ws.Status.Phase).To(Equal(corev1alpha1.WorkspacePending))
+		Expect(ws.Status.Pod).To(BeEmpty())
+	}
+
+	// setup makes a namespace and a Profile with the name of the namespace. If label is true, the
+	// namespace has the Profile label. If list is true, the Profile lists the namespace. Then setup
+	// makes a Workspace with a gateway key.
+	setup := func(label, list bool) {
+		n++
+		ns = fmt.Sprintf("wsbind-%d", n)
+		ctx = context.Background()
+		gw = &wsGateway{keys: map[string]bool{}}
+		rec = &WorkspaceReconciler{Client: k8sClient, Scheme: k8sClient.Scheme(), APIReader: k8sClient,
+			Image: "img:test", Gateway: gw, GatewayURL: "http://gw.bind.test:4000", KeyTTL: time.Hour}
+		o := &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: ns}}
+		if label {
+			o.Labels = map[string]string{corev1alpha1.ProfileLabel: ns}
+		}
+		Expect(k8sClient.Create(ctx, o)).To(Succeed())
+		p := &corev1alpha1.Profile{ObjectMeta: metav1.ObjectMeta{Name: ns}}
+		if list {
+			p.Spec.Namespaces = []string{ns}
+		}
+		Expect(k8sClient.Create(ctx, p)).To(Succeed())
+		ws := &corev1alpha1.Workspace{ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: ns},
+			Spec: corev1alpha1.WorkspaceSpec{Storage: resource.MustParse("1Gi"),
+				Gateway: &corev1alpha1.WorkspaceGateway{Model: "m", BudgetPerDay: resource.MustParse("1")}}}
+		Expect(k8sClient.Create(ctx, ws)).To(Succeed())
+		DeferCleanup(func() {
+			bg := context.Background()
+			w := &corev1alpha1.Workspace{}
+			if k8sClient.Get(bg, nn(name), w) == nil && controllerutil.RemoveFinalizer(w, workspaceFinalizer) {
+				Expect(k8sClient.Update(bg, w)).To(Succeed())
+			}
+			// envtest has no namespace controller, so the namespace stays in deletion.
+			for _, d := range []client.Object{w, p, o} {
+				Expect(client.IgnoreNotFound(k8sClient.Delete(bg, d))).To(Succeed())
+			}
+		})
+	}
+
+	DescribeTable("makes no object and no key if the namespace is not bound",
+		func(label, list bool) {
+			setup(label, list)
+			reconcileOnce()
+			expectBound(false)
+			Expect(exists(&appsv1.StatefulSet{}, name)).To(BeFalse())
+			Expect(exists(&corev1.ConfigMap{}, name+"-ssh")).To(BeFalse())
+			Expect(exists(&corev1.Secret{}, name+"-ssh-host")).To(BeFalse())
+			Expect(exists(&corev1.Secret{}, name+"-gateway")).To(BeFalse())
+			Expect(gw.order).To(BeEmpty())
+		},
+		Entry("no label", false, false),
+		Entry("a label, but the Profile does not list the namespace", true, false),
+		Entry("the Profile lists the namespace, but no label", false, true),
+	)
+
+	It("blocks the key before it stops the pod when the binding goes, and runs again when it returns", func() {
+		setup(true, true)
+		reconcileOnce()
+		expectBound(true)
+		Expect(replicas()).To(Equal(int32(1)))
+		Expect(gw.order).To(Equal([]string{opCreate}))
+		sts := &appsv1.StatefulSet{}
+		Expect(k8sClient.Get(ctx, nn(name), sts)).To(Succeed())
+		sts.Status.Replicas, sts.Status.ReadyReplicas, sts.Status.ObservedGeneration = 1, 1, sts.Generation
+		Expect(k8sClient.Status().Update(ctx, sts)).To(Succeed())
+		reconcileOnce()
+		Expect(workspace().Status.Phase).To(Equal(corev1alpha1.WorkspaceRunning))
+		old := workspace().Status.KeyHash
+
+		var replicasAtBlock int32
+		var secretAtBlock bool
+		gw.atBlock = func() { replicasAtBlock, secretAtBlock = replicas(), exists(&corev1.Secret{}, name+"-gateway") }
+		setLabel(false)
+		reconcileOnce()
+		Expect(replicasAtBlock).To(Equal(int32(1)))
+		Expect(secretAtBlock).To(BeTrue())
+		Expect(replicas()).To(Equal(int32(0)))
+		Expect(exists(&corev1.Secret{}, name+"-gateway")).To(BeFalse())
+		Expect(gw.order).To(Equal([]string{opCreate, opBlock, opUsage}))
+		expectBound(false)
+		Expect(workspace().Status.KeyHash).To(BeEmpty())
+		// The home PVC stays after the scale to 0.
+		Expect(k8sClient.Get(ctx, nn(name), sts)).To(Succeed())
+		Expect(sts.Spec.PersistentVolumeClaimRetentionPolicy.WhenScaled).To(
+			Equal(appsv1.RetainPersistentVolumeClaimRetentionPolicyType))
+
+		setLabel(true)
+		reconcileOnce()
+		expectBound(true)
+		Expect(replicas()).To(Equal(int32(1)))
+		Expect(gw.order).To(Equal([]string{opCreate, opBlock, opUsage, opCreate}))
+		Expect(workspace().Status.KeyHash).NotTo(BeEmpty())
+		Expect(workspace().Status.KeyHash).NotTo(Equal(old))
+	})
+
+	It("maps a Namespace and a Profile to the Workspaces in the namespace", func() {
+		setup(true, true)
+		want := []reconcile.Request{{NamespacedName: nn(name)}}
+		Expect(rec.workspacesForNamespace(ctx, &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: ns}})).
+			To(Equal(want))
+		p := &corev1alpha1.Profile{Spec: corev1alpha1.ProfileSpec{Namespaces: []string{ns, "wsbind-none"}}}
+		Expect(rec.workspacesForProfile(ctx, p)).To(Equal(want))
 	})
 })
