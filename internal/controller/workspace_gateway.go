@@ -143,14 +143,23 @@ func (r *WorkspaceReconciler) applyKey(ctx context.Context, ws *corev1alpha1.Wor
 			return err
 		}
 	}
+	r.renewKey(ctx, ws, key)
+	return nil
+}
+
+// renewKey renews the key if the last renew is older than TTL/4. If the gateway has no key, it
+// makes the key. It writes the result to the condition GatewayKey and returns no error, so the
+// pod apply continues.
+func (r *WorkspaceReconciler) renewKey(ctx context.Context, ws *corev1alpha1.Workspace, key string) {
+	g := ws.Spec.Gateway
 	spec := gateway.KeySpec{Value: key, Alias: ws.Status.KeyAlias, Model: g.Model,
 		Budget: g.BudgetPerDay.AsApproximateFloat64(), BudgetPeriod: 24 * time.Hour, TTL: r.keyTTL(),
 		Metadata: map[string]string{"uid": string(ws.UID), "namespace": ws.Namespace, "workspace": ws.Name}}
 	if r.untilRenew(ws.Status.KeyHash) > 0 {
-		return nil
+		return
 	}
 	// A renew of a key that is not in the gateway, after a crash before CreateKey, makes the key.
-	err = r.Gateway.RenewKey(ctx, spec)
+	err := r.Gateway.RenewKey(ctx, spec)
 	if errors.Is(err, gateway.ErrKeyNotFound) {
 		err = r.Gateway.CreateKey(ctx, spec)
 	}
@@ -167,7 +176,6 @@ func (r *WorkspaceReconciler) applyKey(ctx context.Context, ws *corev1alpha1.Wor
 		r.setRenewed(ws.Status.KeyHash)
 	}
 	meta.SetStatusCondition(&ws.Status.Conditions, cond)
-	return nil
 }
 
 // errRenewFailed is the Reconcile error after a failed renew. It gives the backoff of the
