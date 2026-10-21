@@ -30,6 +30,7 @@ import (
 	"slices"
 	"strings"
 	"time"
+	"unicode"
 )
 
 const (
@@ -139,7 +140,7 @@ func setKnownHost(path, alias, key string) error {
 		if f := strings.Fields(line); len(f) > 0 && f[0] == alias {
 			continue
 		}
-		out = append(out, strings.TrimRight(line, "\n"))
+		out = append(out, strings.TrimRight(line, "\r\n"))
 	}
 	if key != "" {
 		out = append(out, alias+" "+key)
@@ -151,20 +152,47 @@ func setKnownHost(path, alias, key string) error {
 	return writeFile(path, []byte(text), 0o600)
 }
 
-// readEntries gives the targets NAMESPACE/WORKSPACE in the host file.
-func readEntries(path string) ([]string, error) {
+// hostEntry is 1 Workspace in the host file. proxy is the ProxyCommand value. koodam keeps
+// the value of each other entry, because each entry has the kube context of its setup.
+type hostEntry struct{ target, proxy string }
+
+// readHosts gives the entries in the host file. It ignores an entry with no ProxyCommand.
+func readHosts(path string) ([]hostEntry, error) {
 	data, err := readOptional(path)
-	var targets []string
+	var entries []hostEntry
+	target := ""
 	for line := range strings.Lines(string(data)) {
-		t, ok := strings.CutPrefix(strings.TrimSpace(line), strings.TrimSpace(entryMark))
-		if !ok {
-			continue
-		}
-		if _, _, err := parseTarget(strings.TrimSpace(t)); err == nil {
-			targets = append(targets, strings.TrimSpace(t))
+		line = strings.TrimSpace(line)
+		if t, ok := strings.CutPrefix(line, strings.TrimSpace(entryMark)); ok {
+			target = strings.TrimSpace(t)
+			if _, _, err := parseTarget(target); err != nil {
+				target = ""
+			}
+		} else if p, ok := strings.CutPrefix(line, "ProxyCommand "); ok && target != "" {
+			entries = append(entries, hostEntry{target: target, proxy: p})
+			target = ""
 		}
 	}
+	return entries, err
+}
+
+// readEntries gives the targets NAMESPACE/WORKSPACE in the host file.
+func readEntries(path string) ([]string, error) {
+	entries, err := readHosts(path)
+	targets := make([]string, 0, len(entries))
+	for _, e := range entries {
+		targets = append(targets, e.target)
+	}
 	return targets, err
+}
+
+// setHost adds or replaces the entry e, or removes the entry of e.target if e.proxy is empty.
+func setHost(entries []hostEntry, e hostEntry) []hostEntry {
+	entries = slices.DeleteFunc(entries, func(o hostEntry) bool { return o.target == e.target })
+	if e.proxy != "" {
+		entries = append(entries, e)
+	}
+	return entries
 }
 
 // hostNames gives the Host names of each target. Each target has the long name. It also has
@@ -186,29 +214,56 @@ func hostNames(targets []string) map[string]string {
 	return names
 }
 
-// proxyCommand gives the ProxyCommand value. OpenSSH runs it with the user shell, so the path
-// is in single quotes. OpenSSH expands % tokens, so each % becomes %%. On Windows, OpenSSH
-// runs the command with no shell, so the path is in double quotes.
-func proxyCommand(exe, target string) string {
-	q := "'" + strings.ReplaceAll(exe, "'", `'\''`) + "'"
-	if onWindows {
-		q = `"` + exe + `"`
+// proxyArg checks and quotes 1 argument of the ProxyCommand. OpenSSH runs the ProxyCommand
+// with the user shell, so the argument is in single quotes. On Windows, OpenSSH runs it with
+// no shell, so the argument is in double quotes. OpenSSH expands % tokens, so each % becomes %%.
+func proxyArg(what, s string) (string, error) {
+	if s == "" || strings.ContainsFunc(s, unicode.IsControl) || (onWindows && strings.Contains(s, `"`)) {
+		return "", fmt.Errorf("the %s is empty or has a character that koodam cannot quote", what)
 	}
-	return strings.ReplaceAll(q, "%", "%%") + " tunnel " + target
+	q := "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
+	if onWindows {
+		q = `"` + s + `"`
+	}
+	return strings.ReplaceAll(q, "%", "%%"), nil
 }
 
-// renderHosts gives the host file for the targets.
-func renderHosts(targets []string, exe string) []byte {
-	targets = slices.Compact(slices.Sorted(slices.Values(targets)))
+// proxyCommand gives the ProxyCommand value. It pins the kube context, and the kubeconfig if
+// kubeconfig is not empty, so that a later context change does not change the cluster.
+func proxyCommand(exe, kubeContext, kubeconfig, target string) (string, error) {
+	args := []string{exe, "--context", kubeContext}
+	if kubeconfig != "" {
+		args = append(args, "--kubeconfig", kubeconfig)
+	}
+	what := []string{"path of the koodam program", "", "kube context name", "", "kubeconfig path"}
+	for i := 0; i < len(args); i += 2 {
+		q, err := proxyArg(what[i], args[i])
+		if err != nil {
+			return "", err
+		}
+		args[i] = q
+	}
+	return strings.Join(args, " ") + " tunnel " + target, nil
+}
+
+// renderHosts gives the host file for the entries.
+func renderHosts(entries []hostEntry) []byte {
+	entries = slices.SortedFunc(slices.Values(entries), func(a, b hostEntry) int {
+		return strings.Compare(a.target, b.target)
+	})
+	targets := make([]string, 0, len(entries))
+	for _, e := range entries {
+		targets = append(targets, e.target)
+	}
 	names := hostNames(targets)
 	var b strings.Builder
 	b.WriteString(hostHeader)
-	for _, t := range targets {
-		ns, ws, _ := strings.Cut(t, "/")
-		fmt.Fprintf(&b, "\n%s%s\nHost %s\n", entryMark, t, names[t])
+	for _, e := range entries {
+		ns, ws, _ := strings.Cut(e.target, "/")
+		fmt.Fprintf(&b, "\n%s%s\nHost %s\n", entryMark, e.target, names[e.target])
 		fmt.Fprintf(&b, "  User dev\n  IdentityFile ~/.ssh/koodam_ed25519\n  IdentitiesOnly yes\n")
 		fmt.Fprintf(&b, "  UserKnownHostsFile ~/.ssh/koodam_known_hosts\n  HostKeyAlias %s\n", hostAlias(ns, ws))
-		fmt.Fprintf(&b, "  ProxyCommand %s\n  ServerAliveInterval 30\n", proxyCommand(exe, t))
+		fmt.Fprintf(&b, "  ProxyCommand %s\n  ServerAliveInterval 30\n", e.proxy)
 	}
 	return []byte(b.String())
 }
@@ -234,37 +289,37 @@ func hasInclude(data []byte) bool {
 }
 
 // addInclude adds the Include line at the top of ~/.ssh/config. It asks first, if yes is
-// false. It makes a backup of the file first, and it changes no other line.
-func addInclude(p sshPaths, yes bool, in io.Reader, out io.Writer, now time.Time) error {
+// false. It makes a backup of the file first, and it changes no other line. It returns true if
+// the config has the Include line at the end.
+func addInclude(p sshPaths, yes bool, in io.Reader, out io.Writer, now time.Time) (bool, error) {
 	path := p.config()
 	if real, err := filepath.EvalSymlinks(path); err == nil {
 		path = real
 	}
 	data, err := readOptional(path)
 	if err != nil || hasInclude(data) {
-		return err
+		return err == nil, err
 	}
 	_, _ = fmt.Fprintf(out, "koodam adds this line at the top of %s:\n  %s\n", path, includeLine)
 	if !yes {
 		_, _ = fmt.Fprint(out, "Add the line? [y/N] ")
 		answer, _ := bufio.NewReader(in).ReadString('\n')
 		if a := strings.ToLower(strings.TrimSpace(answer)); a != "y" && a != "yes" {
-			_, _ = fmt.Fprintf(out, "No change to %s. Add the line before the first Host line.\n", path)
-			return nil
+			return false, nil
 		}
 	}
 	mode := fs.FileMode(0o600)
 	if data != nil {
 		fi, err := os.Stat(path)
 		if err != nil {
-			return err
+			return false, err
 		}
 		mode = fi.Mode().Perm()
 		backup := path + ".koodam-backup-" + now.Format("20060102T150405")
 		if err := writeFile(backup, data, 0o600); err != nil {
-			return fmt.Errorf("make the backup: %w", err)
+			return false, fmt.Errorf("make the backup: %w", err)
 		}
 		_, _ = fmt.Fprintf(out, "Backup: %s\n", backup)
 	}
-	return writeFile(path, append([]byte(includeLine+"\n"), data...), mode)
+	return true, writeFile(path, append([]byte(includeLine+"\n"), data...), mode)
 }

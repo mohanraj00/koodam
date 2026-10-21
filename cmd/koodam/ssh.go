@@ -128,6 +128,14 @@ func (e *env) sshSetup(cmd *cobra.Command, ns, ws string, yes bool) error {
 	if err != nil {
 		return err
 	}
+	exe, err := os.Executable()
+	if err != nil {
+		return errors.New("find the path of the koodam program for the ProxyCommand")
+	}
+	proxy, err := proxyCommand(exe, e.context, e.kubeconfig, ns+"/"+ws)
+	if err != nil {
+		return err
+	}
 	key, err := ensureKey(cmd, p)
 	if err != nil {
 		return err
@@ -144,27 +152,31 @@ func (e *env) sshSetup(cmd *cobra.Command, ns, ws string, yes bool) error {
 	if !ok {
 		return fmt.Errorf("the host key in the status of Workspace %s/%s is not a valid public key", ns, ws)
 	}
-	exe, err := os.Executable()
-	if err != nil || printable(exe) != exe {
-		return errors.New("find the path of the koodam program for the ProxyCommand")
-	}
 	if err := os.MkdirAll(p.hostDir(), 0o700); err != nil {
 		return err
 	}
 	if err := setKnownHost(p.knownHosts(), hostAlias(ns, ws), hostKey); err != nil {
 		return fmt.Errorf("write %s: %w", p.knownHosts(), err)
 	}
-	targets, err := readEntries(p.hostFile())
+	entries, err := readHosts(p.hostFile())
 	if err != nil {
 		return err
 	}
-	if err := writeFile(p.hostFile(), renderHosts(append(targets, ns+"/"+ws), exe), 0o600); err != nil {
+	entries = setHost(entries, hostEntry{target: ns + "/" + ws, proxy: proxy})
+	if err := writeFile(p.hostFile(), renderHosts(entries), 0o600); err != nil {
 		return fmt.Errorf("write %s: %w", p.hostFile(), err)
 	}
-	if err := addInclude(p, yes, cmd.InOrStdin(), out, time.Now()); err != nil {
+	active, err := addInclude(p, yes, cmd.InOrStdin(), out, time.Now())
+	if err != nil {
 		return fmt.Errorf("add the Include line: %w", err)
 	}
-	targets, _ = readEntries(p.hostFile())
+	if !active {
+		_, _ = fmt.Fprintf(out, "The host entry for Workspace %s/%s is not active: ~/.ssh/config does not "+
+			"include it.\nAdd this line at the top of ~/.ssh/config, before the first Host line:\n  %s\n",
+			ns, ws, includeLine)
+		return nil
+	}
+	targets, _ := readEntries(p.hostFile())
 	host := strings.Fields(hostNames(targets)[ns+"/"+ws] + " " + hostAlias(ns, ws))[0]
 	_, _ = fmt.Fprintf(out, "SSH is configured for Workspace %s/%s.\n"+
 		"  Terminal: koodam ssh %s, or ssh %s\n  Desktop app: add an SSH connection to the host %s\n",
@@ -265,16 +277,13 @@ func sshRemoveCmd(conn connect) *cobra.Command {
 			if err := setKnownHost(p.knownHosts(), hostAlias(ns, ws), ""); err != nil {
 				return err
 			}
-			targets, err := readEntries(p.hostFile())
+			// The other entries keep their ProxyCommand, so remove writes no new program path.
+			entries, err := readHosts(p.hostFile())
 			if err != nil {
 				return err
 			}
-			if i := slices.Index(targets, ns+"/"+ws); i >= 0 {
-				exe, err := os.Executable()
-				if err != nil {
-					return errors.New("find the path of the koodam program for the ProxyCommand")
-				}
-				if err := writeFile(p.hostFile(), renderHosts(slices.Delete(targets, i, i+1), exe), 0o600); err != nil {
+			if left := setHost(slices.Clone(entries), hostEntry{target: ns + "/" + ws}); len(left) != len(entries) {
+				if err := writeFile(p.hostFile(), renderHosts(left), 0o600); err != nil {
 					return err
 				}
 			}

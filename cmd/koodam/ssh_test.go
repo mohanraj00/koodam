@@ -31,6 +31,7 @@ import (
 	"github.com/spf13/cobra"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	kubefake "k8s.io/client-go/kubernetes/fake"
+	"k8s.io/client-go/tools/clientcmd"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	corev1alpha1 "github.com/mohanraj00/koodam/api/v1alpha1"
@@ -43,6 +44,7 @@ const (
 	wsName    = "main"
 	wsAlias   = "koodam-main." + testNS
 	userLines = "Host example\n  User me\n"
+	binKoodam = "/bin/koodam"
 )
 
 // sshHome makes a temporary home and a fake runProgram. The fake ssh-keygen writes the key
@@ -77,9 +79,14 @@ func testWorkspace(key string, phase corev1alpha1.WorkspacePhase) *corev1alpha1.
 	}
 }
 
-// runSSH runs koodam with stdin in.
+// runSSH runs koodam with stdin in and the kube context kind-test.
 func runSSH(kube client.WithWatch, in string, args ...string) (string, error) {
-	e := &env{kube: kube, clientset: kubefake.NewClientset(), namespace: testNS, poll: time.Millisecond}
+	return runSSHEnv(&env{kube: kube, namespace: testNS, context: "kind-test"}, in, args...)
+}
+
+// runSSHEnv runs koodam with the env e and stdin in.
+func runSSHEnv(e *env, in string, args ...string) (string, error) {
+	e.clientset, e.poll = kubefake.NewClientset(), time.Millisecond
 	root := newRoot(func() (*env, error) { return e, nil })
 	out := &bytes.Buffer{}
 	root.SetOut(out)
@@ -232,11 +239,134 @@ func TestSSHHostNamesAreUnique(t *testing.T) {
 			t.Errorf("%s: got %q, want %q", k, names[k], v)
 		}
 	}
-	if !onWindows {
-		if got := proxyCommand("/opt/my apps/it's%h/koodam", "a/main"); got !=
-			`'/opt/my apps/it'\''s%%h/koodam' tunnel a/main` {
-			t.Errorf("proxyCommand: got %s", got)
+}
+
+func TestProxyCommandQuotesAndPinsTheContext(t *testing.T) {
+	if onWindows {
+		t.Skip("Windows uses double quotes")
+	}
+	got, err := proxyCommand("/opt/my apps/it's%h/koodam", "ctx'%r", "/home/me/k 1.yaml", "a/main")
+	want := `'/opt/my apps/it'\''s%%h/koodam' --context 'ctx'\''%%r' --kubeconfig '/home/me/k 1.yaml' tunnel a/main`
+	if err != nil || got != want {
+		t.Errorf("proxyCommand: got %s, %v\nwant %s", got, err, want)
+	}
+	if got, _ := proxyCommand(binKoodam, "kind", "", "a/main"); got != `'/bin/koodam' --context 'kind' tunnel a/main` {
+		t.Errorf("proxyCommand without a kubeconfig: got %s", got)
+	}
+	for _, args := range [][3]string{{binKoodam + "\n", "kind", ""}, {binKoodam, "kind\nHost *", ""},
+		{binKoodam, "", ""}, {binKoodam, "kind", "/k\r"}} {
+		if _, err := proxyCommand(args[0], args[1], args[2], "a/main"); err == nil {
+			t.Errorf("proxyCommand(%q) did not refuse the input", args)
 		}
+	}
+}
+
+func TestSSHSetupRefusesABadContextName(t *testing.T) {
+	p, _ := sshHome(t)
+	kube := newKube(t, nil, testWorkspace(hostKey, corev1alpha1.WorkspaceRunning))
+	_, err := runSSHEnv(&env{kube: kube, namespace: testNS, context: "kind\nProxyCommand evil"}, "",
+		"ssh", "setup", wsName, "--yes")
+	if err == nil || !strings.Contains(err.Error(), "kube context name") {
+		t.Errorf("got %v, want a refusal of the context name", err)
+	}
+	if _, err := os.Stat(p.hostFile()); !errors.Is(err, fs.ErrNotExist) {
+		t.Errorf("setup wrote %s", p.hostFile())
+	}
+	if got := getWorkspace(t, kube).Spec.SSHPublicKeys; !slices.Equal(got, []string{otherKey}) {
+		t.Errorf("setup changed the keys: %q", got)
+	}
+}
+
+func TestSSHSetupKeepsTheContextOfEachEntry(t *testing.T) {
+	p, _ := sshHome(t)
+	other := testWorkspace(hostKey, corev1alpha1.WorkspaceRunning)
+	other.Name = "dev"
+	kube := newKube(t, nil, testWorkspace(hostKey, corev1alpha1.WorkspaceRunning), other)
+	if out, err := runSSHEnv(&env{kube: kube, namespace: testNS, context: "first"}, "", "ssh", "setup", wsName,
+		"--yes"); err != nil {
+		t.Fatalf("setup: %v\n%s", err, out)
+	}
+	if out, err := runSSHEnv(&env{kube: kube, namespace: testNS, context: "second", kubeconfig: "/k.yaml"}, "",
+		"ssh", "setup", "dev", "--yes"); err != nil {
+		t.Fatalf("setup: %v\n%s", err, out)
+	}
+	wantAll(t, read(t, p.hostFile()), " --context 'first' tunnel "+testNS+"/main\n",
+		" --context 'second' --kubeconfig '/k.yaml' tunnel "+testNS+"/dev\n")
+}
+
+func TestSSHSetupTellsThatTheEntryIsNotActiveAfterANo(t *testing.T) {
+	sshHome(t)
+	kube := newKube(t, nil, testWorkspace(hostKey, corev1alpha1.WorkspaceRunning))
+	out, err := runSSH(kube, "no\n", "ssh", "setup", wsName)
+	if err != nil {
+		t.Fatalf("setup: %v\n%s", err, out)
+	}
+	wantAll(t, out, "is not active", "\n  "+includeLine+"\n")
+	if strings.Contains(out, "SSH is configured") {
+		t.Errorf("setup said that SSH is configured:\n%s", out)
+	}
+}
+
+func TestSSHSetupKeepsASymlinkedConfig(t *testing.T) {
+	if onWindows {
+		t.Skip("symlinks need a privilege on Windows")
+	}
+	p, _ := sshHome(t)
+	if err := os.MkdirAll(p.dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	target := filepath.Join(t.TempDir(), "dotfiles-ssh-config")
+	if err := os.WriteFile(target, []byte(userLines), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(target, p.config()); err != nil {
+		t.Fatal(err)
+	}
+	kube := newKube(t, nil, testWorkspace(hostKey, corev1alpha1.WorkspaceRunning))
+	if out, err := runSSH(kube, "", "ssh", "setup", wsName, "--yes"); err != nil {
+		t.Fatalf("setup: %v\n%s", err, out)
+	}
+	if fi, err := os.Lstat(p.config()); err != nil || fi.Mode()&fs.ModeSymlink == 0 {
+		t.Errorf("%s is not a symlink now: %v", p.config(), err)
+	}
+	if got := read(t, target); got != includeLine+"\n"+userLines {
+		t.Errorf("target: got %q", got)
+	}
+	wantMode(t, target, 0o644)
+}
+
+func TestKubeEnvGivesTheContextAndTheKubeconfig(t *testing.T) {
+	dir := t.TempDir()
+	t.Chdir(dir)
+	cfg := "apiVersion: v1\nkind: Config\ncurrent-context: a\n" +
+		"clusters:\n- name: c\n  cluster: {server: 'https://127.0.0.1:1'}\n" +
+		"users:\n- name: u\n  user: {}\n" +
+		"contexts:\n- name: a\n  context: {cluster: c, user: u}\n- name: b\n  context: {cluster: c, user: u}\n"
+	if err := os.WriteFile("kubeconfig", []byte(cfg), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	for flag, want := range map[string]string{"": "a", "b": "b"} {
+		rules := &clientcmd.ClientConfigLoadingRules{ExplicitPath: "kubeconfig"}
+		e, err := kubeEnv(rules, &clientcmd.ConfigOverrides{CurrentContext: flag})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if e.context != want || e.kubeconfig != filepath.Join(dir, "kubeconfig") {
+			t.Errorf("--context %q: got %q and %q", flag, e.context, e.kubeconfig)
+		}
+	}
+}
+
+func TestSetKnownHostRemovesCRLF(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "known_hosts")
+	if err := os.WriteFile(path, []byte("other "+hostKey+"\r\nold "+hostKey+"\r\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := setKnownHost(path, "old", ""); err != nil {
+		t.Fatal(err)
+	}
+	if got := read(t, path); got != "other "+hostKey+"\n" {
+		t.Errorf("got %q", got)
 	}
 }
 
@@ -276,6 +406,23 @@ func TestSSHRemoveRemovesTheEntryTheHostKeyAndTheKey(t *testing.T) {
 	}
 	if got := read(t, p.config()); got != includeLine+"\n" {
 		t.Errorf("remove changed the config: %q", got)
+	}
+}
+
+func TestSSHRemoveWithoutKeyKeepsTheKeys(t *testing.T) {
+	p, _ := sshHome(t)
+	kube := newKube(t, nil, testWorkspace(hostKey, corev1alpha1.WorkspaceRunning))
+	if out, err := runSSH(kube, "", "ssh", "setup", wsName, "--yes"); err != nil {
+		t.Fatalf("setup: %v\n%s", err, out)
+	}
+	if out, err := runSSH(kube, "", "ssh", "remove", wsName); err != nil {
+		t.Fatalf("remove: %v\n%s", err, out)
+	}
+	if got := getWorkspace(t, kube).Spec.SSHPublicKeys; !slices.Equal(got, []string{otherKey, userKey}) {
+		t.Errorf("keys: got %q", got)
+	}
+	if got := read(t, p.hostFile()); got != hostHeader {
+		t.Errorf("host file: got %q", got)
 	}
 }
 
