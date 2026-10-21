@@ -19,6 +19,8 @@ package controller
 import (
 	"context"
 	"errors"
+	"fmt"
+	"regexp"
 	"strings"
 
 	corev1 "k8s.io/api/core/v1"
@@ -44,7 +46,29 @@ const (
 	authorizedKeysField = "authorized_keys"
 
 	condReady = "Ready"
+	// condKeysValid is False if the controller skipped a key of spec.sshPublicKeys.
+	condKeysValid = "SSHKeysValid"
+
+	// maxKeyLength is the maximum length of a key line. It is the same as in the CRD.
+	maxKeyLength = 8192
 )
+
+// keyLine is the rule of the CRD for a key line. The controller checks the keys again, because
+// an old CRD or a bypass of the API validation can give a line with an option such as command=.
+var keyLine = regexp.MustCompile(`^(ssh-ed25519|ecdsa-sha2-nistp256|ecdsa-sha2-nistp384|ecdsa-sha2-nistp521|` +
+	`sk-ssh-ed25519@openssh\.com|sk-ecdsa-sha2-nistp256@openssh\.com|ssh-rsa) [A-Za-z0-9+/]+={0,2}( [^\r\n]*)?$`)
+
+// validKeys returns the keys that obey keyLine and the indexes of the keys that do not.
+func validKeys(keys []string) (valid []string, skipped []int) {
+	for i, k := range keys {
+		if len(k) > maxKeyLength || !keyLine.MatchString(k) {
+			skipped = append(skipped, i)
+			continue
+		}
+		valid = append(valid, k)
+	}
+	return valid, skipped
+}
 
 // WorkspaceReconciler makes the host key Secret and the authorized_keys ConfigMap of a
 // Workspace. The owner references delete them when the Workspace is deleted.
@@ -55,11 +79,11 @@ type WorkspaceReconciler struct {
 	APIReader client.Reader
 }
 
-// +kubebuilder:rbac:groups=core.koodam.dev,resources=workspaces,verbs=get;list;watch;update;patch
-// +kubebuilder:rbac:groups=core.koodam.dev,resources=workspaces/status,verbs=update;patch
+// +kubebuilder:rbac:groups=core.koodam.dev,resources=workspaces,verbs=get;list;watch
+// +kubebuilder:rbac:groups=core.koodam.dev,resources=workspaces/status,verbs=update
 // +kubebuilder:rbac:groups=core.koodam.dev,resources=workspaces/finalizers,verbs=update
 // +kubebuilder:rbac:groups="",resources=configmaps,verbs=get;list;watch;create;update
-// +kubebuilder:rbac:groups="",resources=secrets,verbs=get;create;delete
+// +kubebuilder:rbac:groups="",resources=secrets,verbs=get;create
 
 // Reconcile makes the objects of the Workspace and writes its status.
 func (r *WorkspaceReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
@@ -84,6 +108,14 @@ func (r *WorkspaceReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 	meta.SetStatusCondition(&ws.Status.Conditions, metav1.Condition{
 		Type: condReady, Status: ready, Reason: reason, Message: msg, ObservedGeneration: ws.Generation,
 	})
+	// The message names the indexes only. It never has the key text.
+	keysCond := metav1.Condition{Type: condKeysValid, Status: metav1.ConditionTrue, Reason: "Valid",
+		Message: "All the keys are valid.", ObservedGeneration: ws.Generation}
+	if _, skipped := validKeys(ws.Spec.SSHPublicKeys); len(skipped) > 0 {
+		keysCond.Status, keysCond.Reason = metav1.ConditionFalse, "InvalidKey"
+		keysCond.Message = fmt.Sprintf("The controller skipped the keys at the indexes %v of spec.sshPublicKeys.", skipped)
+	}
+	meta.SetStatusCondition(&ws.Status.Conditions, keysCond)
 	if old.Phase == ws.Status.Phase && old.Pod == ws.Status.Pod && old.HostKey == ws.Status.HostKey &&
 		conditionsEqual(old.Conditions, ws.Status.Conditions) {
 		return ctrl.Result{}, nil
@@ -157,12 +189,12 @@ func (r *WorkspaceReconciler) hostKey(ctx context.Context, ws *corev1alpha1.Work
 	return string(s.Data[hostPubField]), nil
 }
 
-// applyConfigMap writes spec.sshPublicKeys to the ConfigMap. The kubelet updates the mounted
-// file, so a key change does not restart the pod.
+// applyConfigMap writes the valid keys of spec.sshPublicKeys to the ConfigMap. The kubelet
+// updates the mounted file, so a key change does not restart the pod.
 func (r *WorkspaceReconciler) applyConfigMap(ctx context.Context, ws *corev1alpha1.Workspace) error {
 	keys := ""
-	if len(ws.Spec.SSHPublicKeys) > 0 {
-		keys = strings.Join(ws.Spec.SSHPublicKeys, "\n") + "\n"
+	if valid, _ := validKeys(ws.Spec.SSHPublicKeys); len(valid) > 0 {
+		keys = strings.Join(valid, "\n") + "\n"
 	}
 	cm := &corev1.ConfigMap{}
 	err := r.Get(ctx, types.NamespacedName{Namespace: ws.Namespace, Name: sshConfigMapName(ws)}, cm)

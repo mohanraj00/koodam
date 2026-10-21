@@ -63,7 +63,9 @@ func init() {
 }
 
 // workspaceCache keeps only the ConfigMaps with the Workspace label in the cache. Thus the
-// controller does not keep all the ConfigMaps of the cluster in memory.
+// controller does not keep all the ConfigMaps of the cluster in memory. This limit applies to all
+// the controllers of the manager. A controller that reads other ConfigMaps (for example
+// koodam-globals) must use the API reader or change this cache.
 func workspaceCache() cache.Options {
 	req, err := labels.NewRequirement(controller.WorkspaceLabel, selection.Exists, nil)
 	utilruntime.Must(err)

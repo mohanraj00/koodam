@@ -57,33 +57,18 @@ rules:
   - agents/status
   - profiles/status
   - workspaces/finalizers
+  - workspaces/status
   verbs:
   - update
 - apiGroups:
   - core.koodam.dev
   resources:
   - profiles
-  verbs:
-  - get
-  - list
-  - watch
-- apiGroups:
-  - core.koodam.dev
-  resources:
   - workspaces
   verbs:
   - get
   - list
-  - patch
-  - update
   - watch
-- apiGroups:
-  - core.koodam.dev
-  resources:
-  - workspaces/status
-  verbs:
-  - patch
-  - update
 - apiGroups:
   - rbac.authorization.k8s.io
   resources:

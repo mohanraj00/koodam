@@ -113,6 +113,24 @@ var _ = Describe("Workspace Controller", func() {
 
 		Expect(ws.Status.Phase).To(Equal(corev1alpha1.WorkspacePending))
 		Expect(meta.IsStatusConditionFalse(ws.Status.Conditions, condReady)).To(BeTrue())
+		Expect(meta.IsStatusConditionTrue(ws.Status.Conditions, condKeysValid)).To(BeTrue())
+	})
+
+	It("fails and keeps a host key Secret that is not from the Workspace", func() {
+		other := &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: name + "-ssh-host", Namespace: ns},
+			Data: map[string][]byte{"x": []byte("y")}}
+		Expect(k8sClient.Create(ctx, other)).To(Succeed())
+		get(other, name+"-ssh-host")
+		version := other.ResourceVersion
+		reconcileOnce()
+
+		ws := workspace()
+		Expect(ws.Status.Phase).To(Equal(corev1alpha1.WorkspaceFailed))
+		Expect(meta.FindStatusCondition(ws.Status.Conditions, condReady).Reason).To(Equal("NameConflict"))
+		Expect(ws.Status.HostKey).To(BeEmpty())
+		get(other, name+"-ssh-host")
+		Expect(other.ResourceVersion).To(Equal(version))
+		Expect(other.Data).To(Equal(map[string][]byte{"x": []byte("y")}))
 	})
 
 	It("does not change the host key on a second reconcile", func() {
@@ -187,6 +205,22 @@ var _ = Describe("Workspace Controller", func() {
 			Expect(text).NotTo(ContainSubstring("PRIVATE KEY"))
 			Expect(text).NotTo(ContainSubstring(body))
 		}
+	})
+})
+
+var _ = Describe("validKeys", func() {
+	It("skips a key that the CRD rule refuses and returns its index", func() {
+		good := "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAITestOnly dev@laptop"
+		valid, skipped := validKeys([]string{
+			good,
+			`command="/bin/sh" ` + good,
+			"ssh-ed25519 AAAA\nssh-rsa BBBB",
+			"ssh-dss AAAAB3NzaC1kc3M=",
+			"ssh-ed25519 " + strings.Repeat("A", maxKeyLength),
+			"ssh-rsa AAAAB3NzaC1yc2E=",
+		})
+		Expect(valid).To(Equal([]string{good, "ssh-rsa AAAAB3NzaC1yc2E="}))
+		Expect(skipped).To(Equal([]int{1, 2, 3, 4}))
 	})
 })
 
