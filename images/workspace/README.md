@@ -10,6 +10,7 @@ This image is the container of a Koodam Workspace pod. A user connects to it wit
 - `/etc/koodam/sshd_config` is the configuration of sshd. sshd listens on port 2222.
 - `/usr/local/bin/koodam-workspace-start` is the start script (`start.sh`).
 - `/etc/profile.d/koodam-gateway.sh` (`gateway.sh`) exports each file in `/etc/koodam/gateway` as an environment variable in a login shell. sshd does not give the container environment to an SSH session, so the gateway key is a file and not an environment variable.
+- `/etc/profile.d/koodam-login.sh` (`login.sh`) exports `CLAUDE_CODE_OAUTH_TOKEN` in a login shell from the file `/etc/koodam/login/claude-code` (the token of `koodam login claude-code`). If the file is missing or empty, it does nothing. It does not replace a value that the user exported, and it never writes the token to the output. To test it, run `bash images/workspace/test/login_test.sh` from the root of the repo.
 
 The start script runs as uid 1000. It does these steps:
 
@@ -45,7 +46,7 @@ The controller mounts these paths. The pod passes the Pod Security `restricted` 
 | `/etc/koodam/ssh/authorized_keys` | the ConfigMap `<workspace>-ssh`, key `authorized_keys` | read-only |
 | `/etc/koodam/ssh/host/ssh_host_ed25519_key` | the Secret `<workspace>-ssh-host`, key `ssh_host_ed25519_key`, `defaultMode` 0440 with the pod `fsGroup` 1000 (owner root, group 1000) | read-only |
 | `/etc/koodam/globals` | the ConfigMap `koodam-globals`, optional. `koodam-globals` copies it to `~/.koodam/globals` | read-only |
-| `/etc/koodam/login` | the Secret `koodam-login`, optional | read-only |
+| `/etc/koodam/login` | the Secret `koodam-login`, optional. The key `claude-code` holds the token of `koodam login claude-code`. `defaultMode` 0440 | read-only |
 | `/etc/koodam/gateway` | the Secret `<workspace>-gateway`, only if the Workspace has `spec.gateway`. One file for each variable: `ANTHROPIC_BASE_URL`, `ANTHROPIC_AUTH_TOKEN`, the model variables, `OPENAI_BASE_URL` and `OPENAI_API_KEY`. `defaultMode` 0440 | read-only |
 | `/etc/koodam/memory` | the PVC `koodam-memory`, optional | read-write |
 
