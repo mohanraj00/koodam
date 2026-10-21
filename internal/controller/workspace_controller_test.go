@@ -39,6 +39,7 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
+	"sigs.k8s.io/controller-runtime/pkg/event"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	corev1alpha1 "github.com/mohanraj00/koodam/api/v1alpha1"
@@ -487,11 +488,15 @@ var _ = Describe("Workspace Profile binding", func() {
 		DeferCleanup(func() {
 			bg := context.Background()
 			w := &corev1alpha1.Workspace{}
-			if k8sClient.Get(bg, nn(name), w) == nil && controllerutil.RemoveFinalizer(w, workspaceFinalizer) {
+			err := k8sClient.Get(bg, nn(name), w)
+			Expect(client.IgnoreNotFound(err)).To(Succeed())
+			if err == nil && controllerutil.RemoveFinalizer(w, workspaceFinalizer) {
 				Expect(k8sClient.Update(bg, w)).To(Succeed())
 			}
-			// envtest has no namespace controller, so the namespace stays in deletion.
-			for _, d := range []client.Object{w, p, o} {
+			// Delete the known object, because w has no name if the Get failed. envtest has no
+			// namespace controller, so the namespace stays in deletion.
+			known := &corev1alpha1.Workspace{ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: ns}}
+			for _, d := range []client.Object{known, p, o} {
 				Expect(client.IgnoreNotFound(k8sClient.Delete(bg, d))).To(Succeed())
 			}
 		})
@@ -553,6 +558,24 @@ var _ = Describe("Workspace Profile binding", func() {
 		Expect(workspace().Status.KeyHash).NotTo(Equal(old))
 	})
 
+	It("blocks the key before it stops the pod when the Profile no longer lists the namespace", func() {
+		setup(true, true)
+		reconcileOnce()
+		expectBound(true)
+		var replicasAtBlock int32
+		gw.atBlock = func() { replicasAtBlock = replicas() }
+		p := &corev1alpha1.Profile{}
+		Expect(k8sClient.Get(ctx, types.NamespacedName{Name: ns}, p)).To(Succeed())
+		p.Spec.Namespaces = nil
+		Expect(k8sClient.Update(ctx, p)).To(Succeed())
+		reconcileOnce()
+		Expect(replicasAtBlock).To(Equal(int32(1)))
+		Expect(replicas()).To(Equal(int32(0)))
+		Expect(exists(&corev1.Secret{}, name+"-gateway")).To(BeFalse())
+		Expect(gw.order).To(Equal([]string{opCreate, opBlock, opUsage}))
+		expectBound(false)
+	})
+
 	It("maps a Namespace and a Profile to the Workspaces in the namespace", func() {
 		setup(true, true)
 		want := []reconcile.Request{{NamespacedName: nn(name)}}
@@ -560,5 +583,29 @@ var _ = Describe("Workspace Profile binding", func() {
 			To(Equal(want))
 		p := &corev1alpha1.Profile{Spec: corev1alpha1.ProfileSpec{Namespaces: []string{ns, "wsbind-none"}}}
 		Expect(rec.workspacesForProfile(ctx, p)).To(Equal(want))
+	})
+})
+
+var _ = Describe("namespaceBound", func() {
+	ns := &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: "nb",
+		Labels: map[string]string{corev1alpha1.ProfileLabel: "alice"}}}
+	profile := func() *corev1alpha1.Profile {
+		return &corev1alpha1.Profile{ObjectMeta: metav1.ObjectMeta{Name: "alice"},
+			Spec: corev1alpha1.ProfileSpec{Namespaces: []string{"nb"}}}
+	}
+
+	It("binds only if the Profile is not in deletion", func() {
+		p := profile()
+		Expect(namespaceBound(p, ns)).To(BeTrue())
+		p.DeletionTimestamp = &metav1.Time{Time: time.Now()}
+		Expect(namespaceBound(p, ns)).To(BeFalse())
+	})
+
+	It("finds the start of a Profile delete, and not a status write", func() {
+		old, statusOnly, deleted := profile(), profile(), profile()
+		statusOnly.Status.BoundNamespaces = []string{"nb"}
+		deleted.DeletionTimestamp = &metav1.Time{Time: time.Now()}
+		Expect(deleteStarted(event.UpdateEvent{ObjectOld: old, ObjectNew: statusOnly})).To(BeFalse())
+		Expect(deleteStarted(event.UpdateEvent{ObjectOld: old, ObjectNew: deleted})).To(BeTrue())
 	})
 })

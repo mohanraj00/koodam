@@ -36,9 +36,12 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/intstr"
 	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/builder"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/event"
 	"sigs.k8s.io/controller-runtime/pkg/handler"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
+	"sigs.k8s.io/controller-runtime/pkg/predicate"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	corev1alpha1 "github.com/mohanraj00/koodam/api/v1alpha1"
@@ -506,6 +509,11 @@ func (r *WorkspaceReconciler) workspacesForProfile(ctx context.Context, obj clie
 	return reqs
 }
 
+// deleteStarted is true if the update gives the object a deletionTimestamp.
+func deleteStarted(e event.UpdateEvent) bool {
+	return e.ObjectOld.GetDeletionTimestamp().IsZero() && !e.ObjectNew.GetDeletionTimestamp().IsZero()
+}
+
 // SetupWithManager sets up the controller with the Manager. It does not watch the Secrets,
 // because the controller has no list or watch on Secrets. It watches the Namespaces and the
 // Profiles, because they give the binding.
@@ -515,7 +523,11 @@ func (r *WorkspaceReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		Owns(&appsv1.StatefulSet{}).
 		Owns(&corev1.ConfigMap{}).
 		Watches(&corev1.Namespace{}, handler.EnqueueRequestsFromMapFunc(r.workspacesForNamespace)).
-		Watches(&corev1alpha1.Profile{}, handler.EnqueueRequestsFromMapFunc(r.workspacesForProfile)).
+		// A status write of a Profile does not change the binding. Thus only a spec change or the
+		// start of a delete reconciles the Workspaces. A create and a delete always pass.
+		Watches(&corev1alpha1.Profile{}, handler.EnqueueRequestsFromMapFunc(r.workspacesForProfile),
+			builder.WithPredicates(predicate.Or(predicate.GenerationChangedPredicate{},
+				predicate.Funcs{UpdateFunc: deleteStarted}))).
 		Named("workspace").
 		Complete(r)
 }

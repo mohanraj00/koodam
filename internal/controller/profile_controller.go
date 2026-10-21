@@ -94,9 +94,10 @@ func (r *ProfileReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ct
 
 // namespaceBound is the binding rule. The namespace is bound to the Profile only if the Profile
 // lists the namespace and the namespace has the label koodam.dev/profile=<Profile name>. A label
-// alone gives nothing. A namespace that is in deletion is not bound.
+// alone gives nothing. If the namespace or the Profile is in deletion, the namespace is not bound.
 func namespaceBound(p *corev1alpha1.Profile, ns *corev1.Namespace) bool {
 	return ns.Labels[corev1alpha1.ProfileLabel] == p.Name && ns.DeletionTimestamp.IsZero() &&
+		p.DeletionTimestamp.IsZero() &&
 		slices.Contains(p.Spec.Namespaces, ns.Name)
 }
 
