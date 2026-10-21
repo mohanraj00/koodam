@@ -202,7 +202,45 @@ else
   printf 'skip lock checks: flock is not available\n'
 fi
 
-# 13. A home that is not writable: exit 0.
+# 13. AGENTS.md and no CLAUDE.md: Claude Code reads AGENTS.md through a koodam import file.
+# The sleep of section 12 can still hold the lock, so wait for it.
+command -v flock >/dev/null 2>&1 && flock "$st/.globals-lock" true
+imp=$g/claude-imports-agents.md
+configmap 'AGENTS.md=a13'
+run
+check "import: CLAUDE.md link to the import" test "$(readlink "$HOME/.claude/CLAUDE.md")" = "$imp"
+check "import: the import text" test "$(cat "$HOME/.claude/CLAUDE.md")" = '@AGENTS.md'
+check "import: AGENTS.md next to the link" test "$(cat "$HOME/.claude/AGENTS.md")" = a13
+check "import: AGENTS.md next to the target" test "$(cat "$(dirname "$(readlink -f "$HOME/.claude/CLAUDE.md")")/AGENTS.md")" = a13
+check "import: codex AGENTS.md of the user kept" test "$(cat "$HOME/.codex/AGENTS.md")" = mine
+configmap 'AGENTS.md=a13' 'CLAUDE.md=c13'
+run
+check "import: CLAUDE.md wins" test "$(cat "$HOME/.claude/CLAUDE.md")" = c13
+check "import: no import file" test ! -e "$imp"
+check "import: AGENTS.md link removed" test ! -e "$HOME/.claude/AGENTS.md" -a ! -L "$HOME/.claude/AGENTS.md"
+configmap 'AGENTS.md=a13b'
+run
+check "import: back to the import" test "$(cat "$HOME/.claude/AGENTS.md")" = a13b
+rm "$HOME/.claude/CLAUDE.md"
+printf 'my claude' >"$HOME/.claude/CLAUDE.md"
+configmap 'AGENTS.md=a13c'
+run
+check "import: user CLAUDE.md kept" test "$(cat "$HOME/.claude/CLAUDE.md")" = "my claude"
+check "import: no AGENTS.md link for a user CLAUDE.md" test ! -L "$HOME/.claude/AGENTS.md"
+rm "$HOME/.claude/CLAUDE.md"
+printf 'my agents' >"$HOME/.claude/AGENTS.md"
+configmap 'AGENTS.md=a13d'
+run
+check "import: user AGENTS.md in .claude kept" test "$(cat "$HOME/.claude/AGENTS.md")" = "my agents"
+rm "$HOME/.claude/AGENTS.md"
+configmap 'AGENTS.md=a13e'
+run
+configmap
+run
+check "import: CLAUDE.md link removed" test ! -L "$HOME/.claude/CLAUDE.md"
+check "import: AGENTS.md link removed at the end" test ! -L "$HOME/.claude/AGENTS.md"
+
+# 14. A home that is not writable: exit 0.
 HOME=$work/nohome bash "$script" 2>/dev/null
 check "no home: exit 0" test $? -eq 0
 
