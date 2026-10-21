@@ -194,7 +194,7 @@ func forward(ctx context.Context, c httpstream.Connection, in io.Reader, out io.
 		return fmt.Errorf("the port-forward to port %d failed: %s", sshPort, printable(string(msg)))
 	}
 	if copyErr != nil {
-		return fmt.Errorf("copy the data: %w", copyErr)
+		return fmt.Errorf("copy the data: %s", printable(copyErr.Error()))
 	}
 	return nil
 }
@@ -227,7 +227,11 @@ func spdyDial(cfg *rest.Config, cs kubernetes.Interface) dialFunc {
 			return nil, errors.New("make the port-forward request")
 		}
 		req.Header.Add(httpstream.HeaderProtocolVersion, portForwardProtocol)
-		resp, err := (&http.Client{Transport: rt}).Do(req)
+		// Do not follow a redirect: the request carries the credentials of the kube context.
+		client := &http.Client{Transport: rt, CheckRedirect: func(*http.Request, []*http.Request) error {
+			return http.ErrUseLastResponse
+		}}
+		resp, err := client.Do(req)
 		if err != nil {
 			// The URL holds the server address from the kubeconfig. Give only the cause.
 			if urlErr, ok := errors.AsType[*url.Error](err); ok {
@@ -236,6 +240,9 @@ func spdyDial(cfg *rest.Config, cs kubernetes.Interface) dialFunc {
 			return nil, fmt.Errorf("connect to the API server: %w", err)
 		}
 		defer func() { _ = resp.Body.Close() }()
+		if resp.StatusCode >= 300 && resp.StatusCode < 400 {
+			return nil, fmt.Errorf("the API server sent a redirect (HTTP %d): koodam does not follow it", resp.StatusCode)
+		}
 		if resp.StatusCode == http.StatusForbidden {
 			return nil, fmt.Errorf("the API server denied the port-forward (HTTP 403): you need create on "+
 				"pods/portforward and get on pods in namespace %s", ns)

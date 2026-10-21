@@ -25,6 +25,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -338,5 +339,35 @@ func TestTunnelErrorAfterClose(t *testing.T) {
 	}
 	if out.Len() != 0 {
 		t.Errorf("stdout %q, want nothing", out.String())
+	}
+}
+
+// TestSpdyDialRedirect checks that the dial does not follow a redirect, so that the token does
+// not go to a second server.
+func TestSpdyDialRedirect(t *testing.T) {
+	const token = "token-value-1234"
+	var hits atomic.Int32
+	other := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		hits.Add(1)
+	}))
+	defer other.Close()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, other.URL+"/steal", http.StatusFound)
+	}))
+	defer srv.Close()
+	cfg := &rest.Config{Host: srv.URL, BearerToken: token}
+	cs, err := kubernetes.NewForConfig(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = spdyDial(cfg, cs)(context.Background(), tunnelNS, "main-0")
+	if err == nil || !strings.Contains(err.Error(), "redirect (HTTP 302)") {
+		t.Fatalf("got %v, want a redirect error", err)
+	}
+	if msg := err.Error(); strings.Contains(msg, token) || strings.Contains(msg, other.URL) {
+		t.Errorf("the error shows the token or the Location: %q", msg)
+	}
+	if n := hits.Load(); n != 0 {
+		t.Errorf("the second server got %d requests, want 0", n)
 	}
 }
