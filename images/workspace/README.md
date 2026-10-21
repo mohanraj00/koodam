@@ -30,7 +30,8 @@ sshd does not run as root, so it can log in only the user `dev`. It writes no PI
 3. It refuses a key that is not valid, and a path that is not `CLAUDE.md`, `AGENTS.md` or `skills/NAME/FILE`. A path with an empty, `.` or `..` segment is not valid. It writes a message on stderr for each refused key.
 4. It writes the files to a new folder `~/.koodam/.globals-tree.XXXXXX`. Then it changes the link `~/.koodam/globals` to the new folder in one rename, and removes the old folder.
 5. It makes the links `~/.claude/CLAUDE.md`, `~/.codex/AGENTS.md`, `~/.claude/skills/NAME` and `~/.codex/skills/NAME` to `~/.koodam/globals`. It makes one link for each skill and never replaces the folder `skills`, because Codex writes `~/.codex/skills/.system`.
-6. It removes each link that it made (a link into `~/.koodam/globals`) for a file or a skill that is no longer in the ConfigMap.
+6. If the globals have `AGENTS.md` and no `CLAUDE.md`, Claude Code must also read `AGENTS.md`. The script writes the file `claude-imports-agents.md` with the text `@AGENTS.md` in the tree. It links `~/.claude/CLAUDE.md` to this file, and `~/.claude/AGENTS.md` to `AGENTS.md` of the tree.
+7. It removes each link that it made (a link into `~/.koodam/globals`) for a file or a skill that is no longer in the ConfigMap.
 
 The script never replaces a file, a folder or a link of the user. If `~/.koodam/globals` is not a link to a `.globals-tree.*` folder, the script does not change it and makes no links. If another run holds the lock, the script stops at once. If `/etc/koodam/globals` is missing, the result is an empty tree. The script never fails: it writes each error on stderr and exits 0. Do not edit the files under `~/.koodam/globals`, because the next push replaces them.
 

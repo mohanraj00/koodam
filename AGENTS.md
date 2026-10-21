@@ -60,7 +60,7 @@ Never pass `--dangerously-skip-permissions`, `--dangerously-bypass-approvals-and
 ## Stop and ask the maintainer
 
 - The issue needs a decision, or the scope is not clear.
-- A change needs a new RBAC verb without a clear reason, or a dependency that is not Apache-2.0 or MIT.
+- A change needs a new RBAC verb without a clear reason, or a dependency that is not Apache-2.0, MIT, BSD-2-Clause or BSD-3-Clause.
 - Two reviewers do not agree on a security finding.
 - The step is outward: a tag, a release, a visibility change or a post. Only the maintainer does these.
 
@@ -70,7 +70,7 @@ Never pass `--dangerously-skip-permissions`, `--dangerously-bypass-approvals-and
 - **Generated code.** Edit the `*_types.go` files and the markers, then run `make manifests generate`. Do not edit `zz_generated.*`, `config/crd/bases/` or `config/rbac/role.yaml` by hand.
 - **The controller RBAC** is the main attack surface. Each new verb in a `+kubebuilder:rbac` marker needs a reason in the PR.
 - **Revoke first.** On a Job end or an Agent delete, block the key before the controller deletes anything or reads the spend. A finalizer keeps the Agent until the revoke is done.
-- **Licences.** Apache-2.0 or MIT dependencies only. No GPL or AGPL dependencies.
+- **Licences.** Apache-2.0, MIT, BSD-2-Clause or BSD-3-Clause dependencies only. No GPL, AGPL or LGPL dependencies.
 - **Claims.** Every number in the README or a doc must match a results file from a spike or a benchmark. Do not type numbers.
 - **Releases.** Only the maintainer tags a release or changes the repo visibility.
 

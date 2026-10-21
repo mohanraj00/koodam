@@ -12,6 +12,9 @@ state=$HOME/.koodam
 globals=$state/globals
 stampfile=$state/.globals-stamp
 lockfile=$state/.globals-lock
+# import is a file of the tree that imports AGENTS.md for Claude Code. It is not a valid key path,
+# so no key can replace it.
+import=claude-imports-agents.md
 
 warn() { printf 'koodam-globals: %s\n' "$*" >&2; }
 
@@ -124,15 +127,31 @@ rebuild() {
       fi
     done
   fi
+  # If the globals have AGENTS.md and no CLAUDE.md, Claude Code reads AGENTS.md through an import.
+  if [ -f "$new/AGENTS.md" ] && [ ! -e "$new/CLAUDE.md" ]; then
+    printf '@AGENTS.md\n' >"$new/$import" || warn "cannot write $import"
+  fi
   swap "$new" || { warn "cannot replace $globals"; rm -rf "$new"; return 1; }
 }
 
 # relink makes the links for the current tree, and removes each link of koodam that has no file.
 relink() {
   local f dir name
-  [ -f "$globals/CLAUDE.md" ] && link "$globals/CLAUDE.md" "$HOME/.claude/CLAUDE.md"
+  if [ -f "$globals/CLAUDE.md" ]; then
+    link "$globals/CLAUDE.md" "$HOME/.claude/CLAUDE.md"
+  elif [ -f "$globals/$import" ]; then
+    link "$globals/$import" "$HOME/.claude/CLAUDE.md"
+  fi
   [ -f "$globals/AGENTS.md" ] && link "$globals/AGENTS.md" "$HOME/.codex/AGENTS.md"
-  for f in "$HOME/.claude/CLAUDE.md" "$HOME/.codex/AGENTS.md"; do
+  # The import "@AGENTS.md" is relative to the CLAUDE.md file. The link ~/.claude/AGENTS.md
+  # makes it work for the link path, and the tree makes it work for the resolved path.
+  if [ -f "$globals/$import" ] &&
+    [ "$(readlink "$HOME/.claude/CLAUDE.md" 2>/dev/null)" = "$globals/$import" ]; then
+    link "$globals/AGENTS.md" "$HOME/.claude/AGENTS.md"
+  elif ours "$HOME/.claude/AGENTS.md"; then
+    rm -f "$HOME/.claude/AGENTS.md"
+  fi
+  for f in "$HOME/.claude/CLAUDE.md" "$HOME/.claude/AGENTS.md" "$HOME/.codex/AGENTS.md"; do
     ours "$f" && [ ! -e "$f" ] && rm -f "$f"
   done
   # Link each skill one by one. Codex writes ~/.codex/skills/.system, so never replace the folder.
