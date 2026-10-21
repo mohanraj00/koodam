@@ -49,6 +49,8 @@ type env struct {
 	poll time.Duration
 	// stream, if set, opens the pod log instead of the clientset. Tests use it.
 	stream func(ctx context.Context, ns, pod string, opts *corev1.PodLogOptions) (io.ReadCloser, error)
+	// dial opens a port-forward to a pod. Tests set a fake.
+	dial dialFunc
 }
 
 // connect makes an env from the kubeconfig flags.
@@ -77,7 +79,8 @@ func newRoot(conn connect) *cobra.Command {
 	if conn == nil {
 		conn = func() (*env, error) { return kubeEnv(rules, overrides) }
 	}
-	root.AddCommand(runCmd(conn), getCmd(conn, false), getCmd(conn, true), logsCmd(conn), deleteCmd(conn), versionCmd())
+	root.AddCommand(runCmd(conn), getCmd(conn, false), getCmd(conn, true), logsCmd(conn), deleteCmd(conn),
+		tunnelCmd(conn), versionCmd())
 	return root
 }
 
@@ -119,5 +122,5 @@ func kubeEnv(rules *clientcmd.ClientConfigLoadingRules, overrides *clientcmd.Con
 	if err != nil {
 		return nil, err
 	}
-	return &env{kube: kube, clientset: cs, namespace: ns, poll: 2 * time.Second}, nil
+	return &env{kube: kube, clientset: cs, namespace: ns, poll: 2 * time.Second, dial: spdyDial(cfg, cs)}, nil
 }
