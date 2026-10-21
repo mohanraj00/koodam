@@ -119,4 +119,6 @@ After the run, the controller blocks the gateway key. Then it deletes the Servic
 ## Next steps
 
 - [workspaces.md](workspaces.md): a long-lived pod that you connect to with SSH.
+- [profiles.md](profiles.md): the namespace binding, the shared login and the global files.
+- [cli.md](cli.md): each command of the CLI.
 - [gateway.md](gateway.md): real models, the budget and the spend.

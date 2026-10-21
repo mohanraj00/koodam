@@ -41,7 +41,7 @@ The pod has no public port. `koodam tunnel` connects SSH to port 2222 through th
   EOF
   ```
 
-  Add the Profile label to the namespace:
+  Add the Profile label to the namespace. [profiles.md](profiles.md) has more:
 
   ```sh
   kubectl label namespace dev-sample koodam.dev/profile=profile-sample
@@ -93,7 +93,7 @@ The phase is `Pending`, `Running`, `Suspended` or `Failed`. If the phase is not 
 
 ## Install the harnesses
 
-In v0.2, the Workspace image does not contain Claude Code or Codex, and the controller does not install `spec.harnesses`. Install each harness in the home with the vendor installer. The start script makes `~/.local/bin`, and the login `PATH` has this folder. The home is on the PVC, so the harnesses stay after a pod restart.
+In v0.2, the Workspace image does not contain Claude Code or Codex, and the controller does not install `spec.harnesses` (issue #98). Install each harness in the home with the vendor installer. The start script makes `~/.local/bin`, and the login `PATH` has this folder. The home is on the PVC, so the harnesses stay after a pod restart.
 
 ## Connect with SSH
 

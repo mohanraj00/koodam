@@ -15,11 +15,14 @@ I run coding harnesses (Claude Code, Codex) and my own agents on a dev cluster. 
 
 ## Docs
 
-v0.2 adds Workspaces. A Workspace is a pod with a home on a PVC. I connect to it over SSH and run the harnesses in tmux.
+v0.2 adds Workspaces. A Workspace is a pod with a home on a PVC. I connect to it over SSH and run the harnesses in tmux. A Profile binds my namespaces, so each Workspace in them gets my Claude Code login, my global files and my skills.
 
 - [Quick start](docs/quickstart.md): install the chart and the CLI, then run 1 Agent.
 - [Workspaces](docs/workspaces.md): make a Workspace and connect with `koodam ssh`.
+- [Profiles](docs/profiles.md): the namespace binding, the shared login, the global files, the project files and the memory.
+- [The CLI](docs/cli.md): each command, and the spend and the projected cost.
 - [The gateway](docs/gateway.md): the budget, the revoke and the spend.
+- [Architecture](docs/architecture.md): the controller, the gateway, the Workspace pod, the PVC home and the tunnel.
 
 ## What one Agent gets (v0.1 target)
 
