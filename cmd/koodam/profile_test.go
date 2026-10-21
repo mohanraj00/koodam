@@ -17,6 +17,7 @@ limitations under the License.
 package main
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"os"
@@ -26,6 +27,7 @@ import (
 
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
@@ -137,7 +139,20 @@ func TestProfilePushRefusesBadFiles(t *testing.T) {
 		"auth.json":         credErr,
 		".env":              credErr,
 		"ssh.key":           credErr,
+		"ID_ED25519":        credErr,
+		"Server.PEM":        credErr,
+		"cert.p12":          credErr,
+		"cert.pfx":          credErr,
+		".NETRC":            credErr,
+		".npmrc":            credErr,
+		".pypirc":           credErr,
+		".git-credentials":  credErr,
+		"credentials.json":  credErr,
+		"token.json":        credErr,
+		"notes.md":          "has a private key",
 		"a__b.md":           "is not permitted",
+		"_a.md":             "is not permitted",
+		"a.md_":             "is not permitted",
 		"bad name.md":       "not a valid ConfigMap key",
 		"logo.png":          "not UTF-8",
 		"large.md":          "limit is 900 KiB",
@@ -154,6 +169,8 @@ func TestProfilePushRefusesBadFiles(t *testing.T) {
 					writeTestFile(t, filepath.Join(home, ".claude", "skills", "review", "l"+string(rune('a'+i))+".md"),
 						strings.Repeat("x", 500<<10))
 				}
+			case "notes.md":
+				writeTestFile(t, path, "-----BEGIN OPENSSH PRIVATE KEY-----\n"+secretText)
 			default:
 				writeTestFile(t, path, secretText)
 			}
@@ -196,7 +213,13 @@ func TestProfilePushSkipsSymlinksAndMissingDefaults(t *testing.T) {
 	if err != nil {
 		t.Fatalf("push: %v\n%s", err, out)
 	}
-	wantAll(t, out, "skip "+filepath.Join(home, ".claude", "CLAUDE.md"), "not a regular file", "1 files")
+	real, err := filepath.EvalSymlinks(skills)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantAll(t, out, "skip "+filepath.Join(home, ".claude", "CLAUDE.md"),
+		"skip "+filepath.Join(real, "review", "link.md")+": a symlink",
+		"skip "+filepath.Join(real, "linked")+": a symlink", "1 files")
 	if data := getGlobals(t, kube).Data; len(data) != 2 || data["skills__review__SKILL.md"] == "" {
 		t.Errorf("got keys %v, want only the skill and the manifest", data)
 	}
@@ -223,5 +246,98 @@ func TestProfilePushGivesAHintOnForbidden(t *testing.T) {
 	if err == nil || !apierrors.IsForbidden(err) ||
 		!strings.Contains(err.Error(), "get, create and update on configmaps in namespace "+testNS) {
 		t.Fatalf("got %v, want Forbidden with the RBAC hint", err)
+	}
+}
+
+func TestProfilePushRefusesASymlinkOutOfTheFolder(t *testing.T) {
+	home := profileHome(t)
+	claude := filepath.Join(home, ".claude", "CLAUDE.md")
+	writeTestFile(t, filepath.Join(home, "outside.md"), secretText)
+	if err := os.Remove(claude); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(filepath.Join(home, "outside.md"), claude); err != nil {
+		t.Skip("no symlinks:", err)
+	}
+	out, err := run(t, newKube(t, nil), "profile", "push")
+	if err == nil || strings.Contains(out+err.Error(), secretText) {
+		t.Fatalf("got %v, want an error without the content", err)
+	}
+}
+
+func TestCheckRelRefusesUnsafePaths(t *testing.T) {
+	for _, rel := range []string{"", "/etc/passwd", "..", "skills/../x", "skills/./x", "skills//x", "a_/b", "a/_b"} {
+		if checkRel(rel) == nil {
+			t.Errorf("checkRel accepted %q", rel)
+		}
+	}
+	if err := checkRel("skills/review/SKILL.md"); err != nil {
+		t.Errorf("checkRel refused a good path: %v", err)
+	}
+}
+
+func TestGlobalsDataRefusesADuplicateKey(t *testing.T) {
+	files := []globalFile{{Key: "skills__a__b", Path: "skills/a/b"}, {Key: "skills__a__b", Path: "skills/a_/b"}}
+	if _, err := globalsData(files); err == nil || !strings.Contains(err.Error(), "2 files give the key") {
+		t.Fatalf("got %v, want a duplicate key error", err)
+	}
+}
+
+func TestProfilePushDryRunChecksAndDoesNotConnect(t *testing.T) {
+	home := profileHome(t)
+	for _, big := range []bool{false, true} {
+		if big {
+			for _, n := range []string{"a.md", "b.md"} {
+				writeTestFile(t, filepath.Join(home, ".claude", "skills", "review", n), strings.Repeat("x", 500<<10))
+			}
+		}
+		root := newRoot(func() (*env, error) {
+			t.Fatal("the dry run connected to the cluster")
+			return nil, nil
+		})
+		out := &bytes.Buffer{}
+		root.SetOut(out)
+		root.SetErr(out)
+		root.SetArgs([]string{"profile", "push", "--dry-run"})
+		err := root.Execute()
+		if big != (err != nil) || (big && !strings.Contains(err.Error(), "limit is 900 KiB")) {
+			t.Fatalf("big %v: got %v\n%s", big, err, out)
+		}
+	}
+}
+
+func TestProfilePushRefusesAConfigMapThatKoodamDidNotMake(t *testing.T) {
+	profileHome(t)
+	other := &corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Namespace: testNS, Name: globalsName},
+		Data: map[string]string{"keep": "me"}}
+	kube := newKube(t, nil, other)
+	_, err := run(t, kube, "profile", "push")
+	if err == nil || !strings.Contains(err.Error(), "--force") {
+		t.Fatalf("got %v, want a refusal with the --force hint", err)
+	}
+	if getGlobals(t, kube).Data["keep"] != "me" {
+		t.Fatal("the push changed a ConfigMap that koodam did not make")
+	}
+	out, err := run(t, kube, "profile", "push", "--force")
+	if err != nil {
+		t.Fatalf("push --force: %v\n%s", err, out)
+	}
+	wantAll(t, out, "configmap/koodam-globals updated")
+}
+
+func TestProfilePushTellsToRunAgainOnAConflict(t *testing.T) {
+	profileHome(t)
+	existing := &corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Namespace: testNS, Name: globalsName,
+		Labels: map[string]string{managedByLabel: managedBy}}}
+	updates := 0
+	kube := newKube(t, &interceptor.Funcs{
+		Update: func(context.Context, client.WithWatch, client.Object, ...client.UpdateOption) error {
+			updates++
+			return apierrors.NewConflict(schema.GroupResource{Resource: "configmaps"}, globalsName, os.ErrExist)
+		},
+	}, existing)
+	_, err := run(t, kube, "profile", "push")
+	if err == nil || !strings.Contains(err.Error(), "run the command again") || updates < 2 {
+		t.Fatalf("got %v after %d updates, want retries and a run-again error", err, updates)
 	}
 }
