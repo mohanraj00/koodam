@@ -105,7 +105,7 @@ The CLI uses your kubeconfig. The flags `-n`, `--context` and `--kubeconfig` wor
    koodam run -f agent.yaml --wait
    ```
 
-   The command creates the Agent and shows the pod log. Then it waits for the revoke. At the end, it shows the spend. The pod log shows `200`, the HTTP status of the call.
+   The command creates the Agent. It waits for the pod, then shows the pod log. Then it waits for the revoke. At the end, it shows the spend. The pod log shows `200`, the HTTP status of the call.
 
 4. Look at the result:
 

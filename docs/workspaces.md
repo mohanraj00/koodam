@@ -4,7 +4,7 @@ A Workspace is a long-lived pod for 1 developer. You connect to it with SSH, and
 
 The maintainer checked the apps on 2026-10-21 (#15):
 
-- The terminal and the Claude desktop app work.
+- The Claude desktop app connects over SSH, and a task runs.
 - The Claude desktop app needs no login in the pod.
 - After a cut of the tunnel, the app connected again, and the task continued.
 - After `koodam profile push`, the shared skills and `CLAUDE.md` show in the app.
@@ -156,16 +156,16 @@ To use more sessions, run `tmux` commands in the pod. sshd permits 10 sessions o
 
 ## Connect the Codex app
 
-1. Install Codex in the pod. See [Install the harnesses](#install-the-harnesses) and #98.
-2. Run `koodam ssh setup main -n dev-sample`.
-3. Run `koodam ssh test main -n dev-sample`.
-4. In the Codex app, add an SSH connection with the host name `koodam-main.dev-sample`.
-5. If the app shows "Sign in to Codex", log in to Codex in the pod. Codex keeps 1 login for each Workspace in its home:
+1. Run `koodam ssh setup main -n dev-sample`.
+2. Run `koodam ssh test main -n dev-sample`.
+3. Connect with `koodam ssh main -n dev-sample`. Install Codex in the pod. See [Install the harnesses](#install-the-harnesses) and #98.
+4. In the same SSH session, sign in to Codex. Codex keeps 1 login for each Workspace in its home:
 
    ```sh
-   koodam ssh main -n dev-sample
    codex login --device-auth
    ```
+
+5. In the Codex app, add an SSH connection with the host name `koodam-main.dev-sample`.
 
 ## Suspend and delete
 
