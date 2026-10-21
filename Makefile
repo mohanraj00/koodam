@@ -174,6 +174,21 @@ helm-sync: manifests ## Copy the CRD and the RBAC rules from config/ into the He
 	cp config/rbac/leader_election_role.yaml $(CHART)/files/leader-election-role.yaml
 	cp config/rbac/metrics_auth_role.yaml $(CHART)/files/metrics-auth-role.yaml
 
+# LITELLM_COMMIT pins the LiteLLM price file for koodam usage. Change it, then run make prices.
+LITELLM_COMMIT ?= 191967c20781877d606885f03f50721ab825ba0a
+LITELLM_RAW = https://raw.githubusercontent.com/BerriAI/litellm/$(LITELLM_COMMIT)
+PRICES_DIR = internal/usage/prices
+
+.PHONY: prices
+prices: ## Make the LiteLLM price subset of koodam usage again from LITELLM_COMMIT.
+	mkdir -p "$(LOCALBIN)"
+	curl -fsSL "$(LITELLM_RAW)/model_prices_and_context_window.json" -o "$(LOCALBIN)/litellm-prices.json"
+	curl -fsSL "$(LITELLM_RAW)/LICENSE" -o "$(LOCALBIN)/litellm-LICENSE"
+	go run ./hack/litellm-prices -commit "$(LITELLM_COMMIT)" -license "$(LOCALBIN)/litellm-LICENSE" \
+		"$(LOCALBIN)/litellm-prices.json" > "$(LOCALBIN)/litellm.json.tmp"
+	mv "$(LOCALBIN)/litellm.json.tmp" "$(PRICES_DIR)/litellm.json"
+	mv "$(LOCALBIN)/litellm-LICENSE" "$(PRICES_DIR)/LICENSE"
+
 # HELM_GATEWAY_URL is a gateway address for the render checks of the existing mode.
 HELM_GATEWAY_URL ?= http://litellm.example.svc:4000
 
