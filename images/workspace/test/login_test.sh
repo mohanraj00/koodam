@@ -41,7 +41,9 @@ quiet() {
     && ! grep -qF "$fake" "$work/stdout" "$work/stderr"
 }
 
-for sh in sh bash; do
+shells="sh bash"
+command -v dash >/dev/null 2>&1 && shells="$shells dash"
+for sh in $shells; do
   # 1. A missing file: no variable, no output.
   rm -f "$dir/claude-code"
   run "$sh" 'test -z "${CLAUDE_CODE_OAUTH_TOKEN+x}"'
@@ -93,10 +95,15 @@ for sh in sh bash; do
   check "$sh folder: not exported" test $? -eq 0
   check "$sh folder: no output" quiet
   rmdir "$dir/claude-code"
+  # 9. A shell with the trace on: the trace never shows the value, and the trace stays on.
+  printf '%s\n' "$fake" >"$dir/claude-code"
+  "$sh" -c 'set -x; . "$0"; case $- in *x*) ;; *) exit 3 ;; esac' "$script" >"$work/stdout" 2>"$work/stderr"
+  check "$sh trace: the trace stays on" test $? -eq 0
+  check "$sh trace: no value in the trace" sh -c '! grep -qF "$1" "$2" "$3"' sh "$fake" "$work/stdout" "$work/stderr"
 done
 
-# 8. The script has no trace and no echo of the value.
-check "script: no set -x" test -z "$(grep -n 'set -x\|set -o xtrace' "$src")"
+# 8. The script turns the trace on only to restore it (check 9 tests this), and has no echo.
+check "script: set -x only to restore the trace" test "$(grep -c 'set -x\|set -o xtrace' "$src")" -eq 1
 check "script: no echo or printf" test -z "$(grep -nE '^[^#]*\b(echo|printf)\b' "$src")"
 
 if [ "$fails" -gt 0 ]; then
