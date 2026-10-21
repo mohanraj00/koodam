@@ -58,6 +58,9 @@ type fake struct {
 
 const testModel = "local-agent"
 
+// routeNotFound is the 404 body of a wrong route.
+const routeNotFound = `{"detail":"Not Found"}`
+
 // notFoundBody is the LiteLLM v1.104.2 body for a missing key. The long message
 // makes it longer than the 300 bytes that an error message keeps.
 var notFoundBody = `{"error":{"message":"Key not found.` + strings.Repeat(" More detail.", 30) +
@@ -162,7 +165,7 @@ func (f *fake) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		_ = json.NewEncoder(w).Encode(f.logs)
 	default:
 		w.WriteHeader(http.StatusNotFound)
-		_, _ = w.Write([]byte(`{"detail":"Not Found"}`))
+		_, _ = w.Write([]byte(routeNotFound))
 	}
 }
 
@@ -258,8 +261,8 @@ func TestRenewKeyDoesNotAskInfoOnAServerError(t *testing.T) {
 
 func TestRenewKeyOnARoute404IsNotAMissingKey(t *testing.T) {
 	f := newFake()
-	f.updateStatus, f.updateBody = http.StatusNotFound, `{"detail":"Not Found"}`
-	f.routeBody = `{"detail":"Not Found"}`
+	f.updateStatus, f.updateBody = http.StatusNotFound, routeNotFound
+	f.routeBody = routeNotFound
 	l, stop := client(f)
 	defer stop()
 	err := l.RenewKey(context.Background(), spec(t))
@@ -325,7 +328,7 @@ func TestBlockKeyFailsOn404WhenTheKeyExists(t *testing.T) {
 }
 
 func TestBlockKeyFailsOnARoute404(t *testing.T) {
-	for _, body := range []string{`{"detail":"Not Found"}`, `{"error":"route not found"}`, `<html>404</html>`} {
+	for _, body := range []string{routeNotFound, `{"error":"route not found"}`, `<html>404</html>`} {
 		f := newFake()
 		f.routeBody = body
 		l, stop := client(f)
