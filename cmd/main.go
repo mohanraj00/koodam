@@ -29,10 +29,15 @@ import (
 	// to ensure that exec-entrypoint and run can make use of them.
 	_ "k8s.io/client-go/plugin/pkg/client/auth"
 
+	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/selection"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
 	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/cache"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/healthz"
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
 	"sigs.k8s.io/controller-runtime/pkg/metrics/filters"
@@ -55,6 +60,19 @@ func init() {
 
 	utilruntime.Must(corev1alpha1.AddToScheme(scheme))
 	// +kubebuilder:scaffold:scheme
+}
+
+// workspaceCache keeps only the ConfigMaps with the Workspace label in the cache. Thus the
+// controller does not keep all the ConfigMaps of the cluster in memory. This limit applies to all
+// the controllers of the manager. A controller that reads other ConfigMaps (for example
+// koodam-globals) must use the API reader or change this cache.
+func workspaceCache() cache.Options {
+	req, err := labels.NewRequirement(controller.WorkspaceLabel, selection.Exists, nil)
+	utilruntime.Must(err)
+	sel := labels.NewSelector().Add(*req)
+	return cache.Options{ByObject: map[client.Object]cache.ByObject{
+		&corev1.ConfigMap{}: {Label: sel},
+	}}
 }
 
 // nolint:gocyclo
@@ -179,6 +197,7 @@ func main() {
 
 	mgr, err := ctrl.NewManager(ctrl.GetConfigOrDie(), ctrl.Options{
 		Scheme:                 scheme,
+		Cache:                  workspaceCache(),
 		Metrics:                metricsServerOptions,
 		WebhookServer:          webhookServer,
 		HealthProbeBindAddress: probeAddr,
@@ -236,6 +255,14 @@ func main() {
 		Scheme: mgr.GetScheme(),
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "Failed to create controller", "controller", "profile")
+		os.Exit(1)
+	}
+	if err := (&controller.WorkspaceReconciler{
+		Client:    mgr.GetClient(),
+		Scheme:    mgr.GetScheme(),
+		APIReader: mgr.GetAPIReader(),
+	}).SetupWithManager(mgr); err != nil {
+		setupLog.Error(err, "Failed to create controller", "controller", "workspace")
 		os.Exit(1)
 	}
 	// +kubebuilder:scaffold:builder
