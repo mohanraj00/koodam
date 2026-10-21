@@ -22,6 +22,8 @@ import (
 	"fmt"
 	"math"
 	"os"
+	"regexp"
+	"runtime/debug"
 	"strings"
 	"time"
 
@@ -29,6 +31,7 @@ import (
 	// to ensure that exec-entrypoint and run can make use of them.
 	_ "k8s.io/client-go/plugin/pkg/client/auth"
 
+	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -62,16 +65,44 @@ func init() {
 	// +kubebuilder:scaffold:scheme
 }
 
-// workspaceCache keeps only the ConfigMaps with the Workspace label in the cache. Thus the
-// controller does not keep all the ConfigMaps of the cluster in memory. This limit applies to all
-// the controllers of the manager. A controller that reads other ConfigMaps (for example
-// koodam-globals) must use the API reader or change this cache.
+// releaseVersion is the format of a release version of the Go module, for example v0.2.0 or
+// v0.2.0-rc.1.
+var releaseVersion = regexp.MustCompile(`^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$`)
+
+// pseudoVersion is the end of a Go pseudo-version, for example -20261021000000-abcdef123456. No
+// image has this tag.
+var pseudoVersion = regexp.MustCompile(`[0-9]{14}-[0-9a-f]{12}$`)
+
+// defaultWorkspaceImage is the workspace image of the same release as the controller.
+func defaultWorkspaceImage() string {
+	v := ""
+	if bi, ok := debug.ReadBuildInfo(); ok {
+		v = bi.Main.Version
+	}
+	return workspaceImageFor(v)
+}
+
+// workspaceImageFor returns the workspace image for the module version v. If v is not a release
+// version, the tag is "latest".
+func workspaceImageFor(v string) string {
+	tag := "latest"
+	if releaseVersion.MatchString(v) && !pseudoVersion.MatchString(v) {
+		tag = strings.TrimPrefix(v, "v")
+	}
+	return "ghcr.io/mohanraj00/koodam-workspace:" + tag
+}
+
+// workspaceCache keeps only the ConfigMaps and the StatefulSets with the Workspace label in the
+// cache. Thus the controller does not keep all these objects of the cluster in memory. This limit
+// applies to all the controllers of the manager. A controller that reads other ConfigMaps or
+// StatefulSets (for example koodam-globals) must use the API reader or change this cache.
 func workspaceCache() cache.Options {
 	req, err := labels.NewRequirement(controller.WorkspaceLabel, selection.Exists, nil)
 	utilruntime.Must(err)
 	sel := labels.NewSelector().Add(*req)
 	return cache.Options{ByObject: map[client.Object]cache.ByObject{
-		&corev1.ConfigMap{}: {Label: sel},
+		&corev1.ConfigMap{}:   {Label: sel},
+		&appsv1.StatefulSet{}: {Label: sel},
 	}}
 }
 
@@ -85,7 +116,7 @@ func main() {
 	var probeAddr string
 	var secureMetrics bool
 	var enableHTTP2 bool
-	var gatewayURL, gatewayKeyFile, agentGatewayURL, installerImage string
+	var gatewayURL, gatewayKeyFile, agentGatewayURL, installerImage, workspaceImage string
 	var keyGrace time.Duration
 	var jobTTLSeconds int
 	var tlsOpts []func(*tls.Config)
@@ -122,6 +153,8 @@ func main() {
 			"The value must be from 60 to 2147483647.")
 	flag.StringVar(&installerImage, "installer-image", "",
 		"The image with /harness-install, for an Agent with a harness. The chart gives the manager image.")
+	flag.StringVar(&workspaceImage, "workspace-image", defaultWorkspaceImage(),
+		"The workspace image for a Workspace with no spec.image.")
 	opts.BindFlags(flag.CommandLine)
 	flag.Parse()
 
@@ -261,6 +294,7 @@ func main() {
 		Client:    mgr.GetClient(),
 		Scheme:    mgr.GetScheme(),
 		APIReader: mgr.GetAPIReader(),
+		Image:     workspaceImage,
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "Failed to create controller", "controller", "workspace")
 		os.Exit(1)
