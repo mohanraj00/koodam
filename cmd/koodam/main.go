@@ -84,7 +84,7 @@ func newRoot(conn connect) *cobra.Command {
 		conn = func() (*env, error) { return kubeEnv(rules, overrides) }
 	}
 	root.AddCommand(runCmd(conn), getCmd(conn, false), getCmd(conn, true), logsCmd(conn), deleteCmd(conn),
-		tunnelCmd(conn), sshCmd(conn), profileCmd(conn), loginCmd(conn), versionCmd())
+		tunnelCmd(conn), sshCmd(conn), usageCmd(conn), profileCmd(conn), loginCmd(conn), versionCmd())
 	return root
 }
 

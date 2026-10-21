@@ -19,6 +19,8 @@ The key value is never in the status, in an event or in a log. The status has th
 
 If a run ends with no gateway spend in the status, `koodam get`, `koodam spend` and `koodam run --wait` show a note with a link to this guide.
 
+For a Workspace with a subscription login, `koodam usage WORKSPACE` shows a projected API cost from the session files of the harnesses. It is the API price of the tokens. It is not a bill, and it gives no budget and no revoke.
+
 ## Install the chart with a gateway
 
 The chart has 2 gateway modes. [charts/koodam/README.md](../charts/koodam/README.md) has all the steps and values.
