@@ -123,6 +123,13 @@ run: manifests generate fmt vet ## Run a controller from your host.
 docker-build: ## Build docker image with the manager.
 	$(CONTAINER_TOOL) build $(if $(BASE_IMAGE),--build-arg BASE_IMAGE=$(BASE_IMAGE)) -t ${IMG} .
 
+# WORKSPACE_IMG is the tag of the workspace image. The e2e tests build it and load it into kind.
+WORKSPACE_IMG ?= koodam-workspace:dev
+
+.PHONY: docker-build-workspace
+docker-build-workspace: ## Build the workspace image from images/workspace.
+	$(CONTAINER_TOOL) build -t ${WORKSPACE_IMG} images/workspace
+
 .PHONY: docker-push
 docker-push: ## Push docker image with the manager.
 	$(CONTAINER_TOOL) push ${IMG}
