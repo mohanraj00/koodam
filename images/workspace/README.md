@@ -9,6 +9,7 @@ This image is the container of a Koodam Workspace pod. A user connects to it wit
 - The user is `dev` (uid 1000, gid 1000), with the shell `/bin/bash` and a locked password. The image runs as uid 1000.
 - `/etc/koodam/sshd_config` is the configuration of sshd. sshd listens on port 2222.
 - `/usr/local/bin/koodam-workspace-start` is the start script (`start.sh`).
+- `/etc/profile.d/koodam-gateway.sh` (`gateway.sh`) exports each file in `/etc/koodam/gateway` as an environment variable in a login shell. sshd does not give the container environment to an SSH session, so the gateway key is a file and not an environment variable.
 
 The start script runs as uid 1000. It does these steps:
 
@@ -45,6 +46,7 @@ The controller mounts these paths. The pod passes the Pod Security `restricted` 
 | `/etc/koodam/ssh/host/ssh_host_ed25519_key` | the Secret `<workspace>-ssh-host`, key `ssh_host_ed25519_key`, `defaultMode` 0440 with the pod `fsGroup` 1000 (owner root, group 1000) | read-only |
 | `/etc/koodam/globals` | the ConfigMap `koodam-globals`, optional. `koodam-globals` copies it to `~/.koodam/globals` | read-only |
 | `/etc/koodam/login` | the Secret `koodam-login`, optional | read-only |
+| `/etc/koodam/gateway` | the Secret `<workspace>-gateway`, only if the Workspace has `spec.gateway`. One file for each variable: `ANTHROPIC_BASE_URL`, `ANTHROPIC_AUTH_TOKEN`, the model variables, `OPENAI_BASE_URL` and `OPENAI_API_KEY`. `defaultMode` 0440 | read-only |
 | `/etc/koodam/memory` | the PVC `koodam-memory`, optional | read-write |
 
 sshd uses `Port 2222`, public key login only, `AllowUsers dev`, `MaxSessions 10`, SFTP (`internal-sftp`), `AllowTcpForwarding local` and `StrictModes no`. The mounted files belong to root, so `StrictModes` must be off.

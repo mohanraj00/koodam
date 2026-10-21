@@ -22,6 +22,8 @@ import (
 	"fmt"
 	"regexp"
 	"strings"
+	"sync"
+	"time"
 
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -38,6 +40,7 @@ import (
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
 
 	corev1alpha1 "github.com/mohanraj00/koodam/api/v1alpha1"
+	"github.com/mohanraj00/koodam/internal/gateway"
 )
 
 const (
@@ -86,8 +89,9 @@ func validKeys(keys []string) (valid []string, skipped []int) {
 	return valid, skipped
 }
 
-// WorkspaceReconciler makes the host key Secret, the authorized_keys ConfigMap and the
-// StatefulSet of a Workspace. The owner references delete them when the Workspace is deleted.
+// WorkspaceReconciler makes the host key Secret, the authorized_keys ConfigMap, the gateway key
+// Secret and the StatefulSet of a Workspace. The owner references delete them when the Workspace
+// is deleted. The finalizer keeps the Workspace until the gateway key is blocked.
 type WorkspaceReconciler struct {
 	client.Client
 	Scheme *runtime.Scheme
@@ -95,14 +99,27 @@ type WorkspaceReconciler struct {
 	APIReader client.Reader
 	// Image is the workspace image if spec.image is empty.
 	Image string
+	// Gateway makes, renews and blocks the gateway keys.
+	Gateway gateway.Gateway
+	// GatewayURL is the gateway address for the workspace pods.
+	GatewayURL string
+	// KeyTTL is the TTL of a gateway key. If it is 0, the controller uses DefaultWorkspaceKeyTTL.
+	// The controller renews a key when the last renew is older than KeyTTL/4.
+	KeyTTL time.Duration
+	// Now gives the time for the renew. If it is nil, the controller uses time.Now.
+	Now func() time.Time
+
+	renewMu sync.Mutex
+	// renewed has the time of the last renew for each key hash.
+	renewed map[string]time.Time
 }
 
-// +kubebuilder:rbac:groups=core.koodam.dev,resources=workspaces,verbs=get;list;watch
+// +kubebuilder:rbac:groups=core.koodam.dev,resources=workspaces,verbs=get;list;watch;update
 // +kubebuilder:rbac:groups=core.koodam.dev,resources=workspaces/status,verbs=update
 // +kubebuilder:rbac:groups=core.koodam.dev,resources=workspaces/finalizers,verbs=update
 // +kubebuilder:rbac:groups=apps,resources=statefulsets,verbs=get;list;watch;create;update
 // +kubebuilder:rbac:groups="",resources=configmaps,verbs=get;list;watch;create;update
-// +kubebuilder:rbac:groups="",resources=secrets,verbs=get;create
+// +kubebuilder:rbac:groups="",resources=secrets,verbs=get;create;delete
 
 // Reconcile makes the objects of the Workspace and writes its status.
 func (r *WorkspaceReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
@@ -111,8 +128,8 @@ func (r *WorkspaceReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 		return ctrl.Result{}, client.IgnoreNotFound(err)
 	}
 	if !ws.DeletionTimestamp.IsZero() {
-		// The garbage collector deletes the owned objects. The home PVC stays.
-		return ctrl.Result{}, nil
+		// Block the key first. Then the garbage collector deletes the owned objects. The home PVC stays.
+		return ctrl.Result{}, r.applyKey(ctx, ws)
 	}
 	old := ws.Status.DeepCopy()
 	phase, reason, msg, err := r.apply(ctx, ws)
@@ -139,11 +156,22 @@ func (r *WorkspaceReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 		keysCond.Message = fmt.Sprintf("The controller skipped the keys at the indexes %v of spec.sshPublicKeys.", skipped)
 	}
 	meta.SetStatusCondition(&ws.Status.Conditions, keysCond)
+	res := ctrl.Result{}
+	var keyErr error
+	if c := meta.FindStatusCondition(ws.Status.Conditions, condGatewayKey); wantKey(ws) && c != nil &&
+		c.Reason == reasonRenewFailed {
+		keyErr = errRenewFailed
+	} else if wantKey(ws) && ws.Status.KeyHash != "" {
+		res.RequeueAfter = max(time.Second, r.untilRenew(ws.Status.KeyHash))
+	}
 	if old.Phase == ws.Status.Phase && old.Pod == ws.Status.Pod && old.HostKey == ws.Status.HostKey &&
 		conditionsEqual(old.Conditions, ws.Status.Conditions) {
-		return ctrl.Result{}, nil
+		return res, keyErr
 	}
-	return ctrl.Result{}, r.Status().Update(ctx, ws)
+	if err := r.Status().Update(ctx, ws); err != nil {
+		return res, err
+	}
+	return res, keyErr
 }
 
 // apply makes or updates the 3 objects of the Workspace. It returns the phase, and the reason
@@ -160,6 +188,11 @@ func (r *WorkspaceReconciler) apply(ctx context.Context, ws *corev1alpha1.Worksp
 		err = r.applyConfigMap(ctx, ws)
 	}
 	var sts *appsv1.StatefulSet
+	if err == nil {
+		// The key comes before the StatefulSet: the pod mounts the Secret, and a suspend
+		// blocks the key before the pod stops.
+		err = r.applyKey(ctx, ws)
+	}
 	if err == nil {
 		sts, err = r.applyStatefulSet(ctx, ws)
 	}
@@ -345,6 +378,16 @@ func (r *WorkspaceReconciler) statefulSet(ws *corev1alpha1.Workspace) *appsv1.St
 			Capabilities:             &corev1.Capabilities{Drop: []corev1.Capability{"ALL"}},
 			SeccompProfile:           &corev1.SeccompProfile{Type: corev1.SeccompProfileTypeRuntimeDefault},
 		},
+	}
+	if ws.Spec.Gateway != nil {
+		// The gateway key is a file, not an env: sshd does not give its env to the SSH sessions.
+		// The image exports the files in a login shell. The kubelet updates the files after a
+		// key change, so a new login gets the new key.
+		const gw = "gateway"
+		volumes = append(volumes, corev1.Volume{Name: gw, VolumeSource: corev1.VolumeSource{
+			Secret: &corev1.SecretVolumeSource{SecretName: gatewaySecretName(ws), DefaultMode: new(int32(0o440))}}})
+		container.VolumeMounts = append(container.VolumeMounts,
+			corev1.VolumeMount{Name: gw, MountPath: workspaceGatewayDir, ReadOnly: true})
 	}
 	tmpl := corev1.PodTemplateSpec{ObjectMeta: metav1.ObjectMeta{Labels: labels}, Spec: corev1.PodSpec{
 		AutomountServiceAccountToken: new(false),
