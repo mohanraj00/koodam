@@ -309,7 +309,10 @@ func sshTestCmd(conn connect) *cobra.Command {
 	return &cobra.Command{
 		Use:   "test WORKSPACE",
 		Short: "Connect to a Workspace and show the versions of tmux, git and the harnesses",
-		Args:  cobra.ExactArgs(1),
+		Long: "Connect to a Workspace with SSH and show the versions of tmux, git and the harnesses.\n" +
+			"The test fails if tmux or git is not in the pod, because koodam ssh WORKSPACE needs tmux.\n" +
+			"The test shows claude --version and codex --version only if the harness is in the pod.",
+		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			_, ns, ws, err := sshTarget(conn, args[0])
 			if err != nil {
@@ -319,7 +322,7 @@ func sshTestCmd(conn connect) *cobra.Command {
 				return err
 			}
 			if err := runProgram(cmd, sshProgram, hostAlias(ns, ws), testScript); err != nil {
-				return fmt.Errorf("the SSH test failed (%w): run koodam ssh doctor %s", err, ws)
+				return fmt.Errorf("the SSH test failed (%w): run koodam ssh doctor -n %s %s", err, ns, ws)
 			}
 			_, err = fmt.Fprintf(cmd.OutOrStdout(), "The SSH test passed for Workspace %s/%s.\n", ns, ws)
 			return err
@@ -377,6 +380,10 @@ func sshDoctorCmd(conn connect) *cobra.Command {
 
 // modes checks that only the user can read the SSH files of koodam. Windows has no file modes.
 func (d *doctor) modes(p sshPaths) {
+	for _, path := range []string{p.key(), p.hostFile()} {
+		_, err := os.Stat(path)
+		d.check(path+" exists", err == nil, "run koodam ssh setup WORKSPACE")
+	}
 	if onWindows {
 		return
 	}
@@ -393,23 +400,29 @@ func (d *doctor) modes(p sshPaths) {
 
 // cluster checks the RBAC for the tunnel and the phase of each Workspace.
 func (d *doctor) cluster(ctx context.Context, e *env, p sshPaths, args []string) {
-	targets, _ := readEntries(p.hostFile())
+	entries, _ := readEntries(p.hostFile())
+	targets := entries
 	if len(args) == 1 {
 		targets = []string{e.namespace + "/" + args[0]}
 	}
 	d.check("the kube context", true, "")
-	if len(targets) == 0 {
-		_, _ = fmt.Fprintln(d.out, "No Workspace in ~/.ssh/config.d/koodam: run koodam ssh setup WORKSPACE.")
-	}
+	d.check("~/.ssh/config.d/koodam has a Workspace", len(entries) > 0, "run koodam ssh setup WORKSPACE")
 	for _, t := range targets {
 		ns, ws, err := parseTarget(t)
 		if err != nil {
 			d.check("the Workspace name", false, err.Error())
 			continue
 		}
+		if len(args) == 1 {
+			d.check("~/.ssh/config.d/koodam has an entry for "+t, slices.Contains(entries, t),
+				fmt.Sprintf("run koodam ssh setup -n %s %s", ns, ws))
+		}
 		allowed, err := e.canTunnel(ctx, ns)
-		d.check("RBAC: get on pods and create on pods/portforward in namespace "+ns, allowed && err == nil,
-			"ask the cluster admin for these verbs")
+		fix := "ask the cluster admin for these verbs"
+		if err != nil {
+			fix = err.Error()
+		}
+		d.check("RBAC: get on pods and create on pods/portforward in namespace "+ns, allowed && err == nil, fix)
 		w := &corev1alpha1.Workspace{}
 		if err := e.kube.Get(ctx, client.ObjectKey{Namespace: ns, Name: ws}, w); err != nil {
 			d.check("Workspace "+t+" exists", false, apiError("get the Workspace", err).Error())

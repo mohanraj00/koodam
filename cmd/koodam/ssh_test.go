@@ -30,6 +30,7 @@ import (
 
 	"github.com/spf13/cobra"
 	authv1 "k8s.io/api/authorization/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	k8sruntime "k8s.io/apimachinery/pkg/runtime"
 	kubefake "k8s.io/client-go/kubernetes/fake"
@@ -496,13 +497,7 @@ func TestSSHDoctorFindsEachFault(t *testing.T) {
 	if onWindows {
 		faults = slices.Delete(faults, 1, 2)
 	}
-	for _, f := range faults {
-		if !slices.ContainsFunc(strings.Split(out, "\n"), func(l string) bool {
-			return strings.HasPrefix(l, "FAULT") && strings.Contains(l, f)
-		}) {
-			t.Errorf("no FAULT line for %q:\n%s", f, out)
-		}
-	}
+	wantFaults(t, out, faults...)
 
 	root := newRoot(func() (*env, error) { return nil, errors.New("no context") })
 	buf := &bytes.Buffer{}
@@ -511,5 +506,80 @@ func TestSSHDoctorFindsEachFault(t *testing.T) {
 	root.SetArgs([]string{"ssh", "doctor"})
 	if err := root.Execute(); err == nil || !strings.Contains(buf.String(), "FAULT  the kube context") {
 		t.Errorf("doctor with no kube context: %v\n%s", err, buf.String())
+	}
+}
+
+// wantFaults checks that out has a FAULT line that contains each of faults.
+func wantFaults(t *testing.T, out string, faults ...string) {
+	t.Helper()
+	for _, f := range faults {
+		if !slices.ContainsFunc(strings.Split(out, "\n"), func(l string) bool {
+			return strings.HasPrefix(l, "FAULT") && strings.Contains(l, f)
+		}) {
+			t.Errorf("no FAULT line for %q:\n%s", f, out)
+		}
+	}
+}
+
+func TestSSHDoctorFindsAMissingSetup(t *testing.T) {
+	p, _ := sshHome(t)
+	kube := newKube(t, nil, testWorkspace(hostKey, corev1alpha1.WorkspaceRunning))
+	out, err := runSSH(kube, "", "ssh", "doctor")
+	if err == nil {
+		t.Fatalf("doctor found no fault:\n%s", out)
+	}
+	wantFaults(t, out, p.key()+" exists", p.hostFile()+" exists", "has a Workspace")
+	out, err = runSSH(kube, "", "ssh", "doctor", wsName)
+	if err == nil {
+		t.Fatalf("doctor %s found no fault:\n%s", wsName, out)
+	}
+	wantFaults(t, out, "has an entry for "+testNS+"/"+wsName+": run koodam ssh setup -n "+testNS+" "+wsName)
+}
+
+func TestSSHDoctorChecksTheWorkspaceArgument(t *testing.T) {
+	sshHome(t)
+	kube := newKube(t, nil, testWorkspace(hostKey, corev1alpha1.WorkspaceRunning))
+	if out, err := runSSH(kube, "", "ssh", "setup", wsName, "--yes"); err != nil {
+		t.Fatalf("setup: %v\n%s", err, out)
+	}
+	out, err := runSSH(kube, "", "ssh", "doctor", wsName)
+	if err != nil || strings.Contains(out, "FAULT") {
+		t.Fatalf("doctor %s: %v\n%s", wsName, err, out)
+	}
+	wantAll(t, out, "ok     ~/.ssh/config.d/koodam has an entry for "+testNS+"/"+wsName, "is Running")
+}
+
+func TestSSHDoctorShowsTheAccessReviewError(t *testing.T) {
+	sshHome(t)
+	kube := newKube(t, nil, testWorkspace(hostKey, corev1alpha1.WorkspaceRunning))
+	if out, err := runSSH(kube, "", "ssh", "setup", wsName, "--yes"); err != nil {
+		t.Fatalf("setup: %v\n%s", err, out)
+	}
+	cs := kubefake.NewClientset()
+	cs.PrependReactor("create", "selfsubjectaccessreviews",
+		func(k8stesting.Action) (bool, k8sruntime.Object, error) {
+			return true, nil, apierrors.NewInternalError(errors.New("token secret-value"))
+		})
+	out, err := runSSHEnv(&env{kube: kube, clientset: cs, namespace: testNS}, "", "ssh", "doctor")
+	if err == nil {
+		t.Fatalf("doctor found no fault:\n%s", out)
+	}
+	wantFaults(t, out, "pods/portforward in namespace "+testNS+": create the SelfSubjectAccessReview: InternalError")
+	if strings.Contains(out, "secret-value") || strings.Contains(out, "ask the cluster admin") {
+		t.Errorf("doctor showed the server message or the RBAC hint:\n%s", out)
+	}
+}
+
+func TestSSHTestFailureNamesTheNamespace(t *testing.T) {
+	sshHome(t)
+	kube := newKube(t, nil, testWorkspace(hostKey, corev1alpha1.WorkspaceRunning))
+	if out, err := runSSH(kube, "", "ssh", "setup", wsName, "--yes"); err != nil {
+		t.Fatalf("setup: %v\n%s", err, out)
+	}
+	runProgram = func(*cobra.Command, string, ...string) error { return errors.New("exit status 255") }
+	out, err := runSSH(kube, "", "ssh", "test", wsName)
+	want := "run koodam ssh doctor -n " + testNS + " " + wsName
+	if err == nil || !strings.Contains(err.Error(), want) || strings.Contains(out, "passed") {
+		t.Errorf("got %v, want %q\n%s", err, want, out)
 	}
 }
