@@ -88,6 +88,19 @@ func (f *fake) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 		f.keys[h] = b
 		_, _ = w.Write([]byte(`{}`))
+	case "/key/update":
+		var b map[string]any
+		_ = json.NewDecoder(r.Body).Decode(&b)
+		h := HashKey(b["key"].(string))
+		if _, ok := f.keys[h]; !ok {
+			w.WriteHeader(http.StatusBadRequest)
+			_, _ = w.Write([]byte(`{"error":"no key ` + b["key"].(string) + `"}`))
+			return
+		}
+		for k, v := range b {
+			f.keys[h][k] = v
+		}
+		_, _ = w.Write([]byte(`{}`))
 	case "/key/block":
 		if f.routeBody != "" {
 			w.WriteHeader(http.StatusNotFound)
@@ -168,6 +181,38 @@ func TestCreateKeySendsBudgetModelAndTTL(t *testing.T) {
 	}
 	if m := b["models"].([]any); len(m) != 1 || m[0] != testModel {
 		t.Fatalf("models %v", m)
+	}
+}
+
+func TestRenewKeySetsTTLBudgetAndPeriod(t *testing.T) {
+	f := newFake()
+	l, stop := client(f)
+	defer stop()
+	ctx := context.Background()
+	s := spec(t)
+	if err := l.CreateKey(ctx, s); err != nil {
+		t.Fatal(err)
+	}
+	s.TTL, s.Budget, s.BudgetPeriod = 2*time.Hour, 5, 24*time.Hour
+	if err := l.RenewKey(ctx, s); err != nil {
+		t.Fatal(err)
+	}
+	b := f.keys[HashKey(s.Value)]
+	if b["duration"] != "7200s" || b["max_budget"] != 5.0 || b["budget_duration"] != "86400s" {
+		t.Fatalf("body %v", b)
+	}
+}
+
+func TestRenewKeyReportsAMissingKeyWithoutTheKey(t *testing.T) {
+	l, stop := client(newFake())
+	defer stop()
+	s := spec(t)
+	err := l.RenewKey(context.Background(), s)
+	if !errors.Is(err, ErrKeyNotFound) {
+		t.Fatalf("want ErrKeyNotFound, got %v", err)
+	}
+	if strings.Contains(err.Error(), s.Value) {
+		t.Fatalf("error not redacted: %v", err)
 	}
 }
 

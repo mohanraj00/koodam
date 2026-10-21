@@ -205,10 +205,8 @@ func (l *LiteLLM) CreateKey(ctx context.Context, s KeySpec) error {
 	for k, v := range s.Metadata {
 		md[k] = v
 	}
-	body := map[string]any{
-		keyField: s.Value, "key_alias": s.Alias, "models": []string{s.Model},
-		"max_budget": s.Budget, "duration": fmt.Sprintf("%ds", int64(s.TTL/time.Second)), "metadata": md,
-	}
+	body := keyBody(s)
+	body["key_alias"], body["metadata"] = s.Alias, md
 	err := l.do(ctx, http.MethodPost, "/key/generate", body, s.Value, nil)
 	if err == nil {
 		return nil
@@ -217,6 +215,31 @@ func (l *LiteLLM) CreateKey(ctx context.Context, s KeySpec) error {
 	if _, ok := errors.AsType[*HTTPError](err); ok {
 		if ok, e := l.exists(ctx, s.Value); e == nil && ok {
 			return nil
+		}
+	}
+	return err
+}
+
+// keyBody has the fields that CreateKey and RenewKey both send.
+func keyBody(s KeySpec) map[string]any {
+	body := map[string]any{keyField: s.Value, "models": []string{s.Model}, "max_budget": s.Budget,
+		"duration": fmt.Sprintf("%ds", int64(s.TTL/time.Second))}
+	if s.BudgetPeriod > 0 {
+		body["budget_duration"] = fmt.Sprintf("%ds", int64(s.BudgetPeriod/time.Second))
+	}
+	return body
+}
+
+// RenewKey implements Gateway. LiteLLM sets the end of the key to the duration from now.
+func (l *LiteLLM) RenewKey(ctx context.Context, s KeySpec) error {
+	if s.Value == "" || s.Model == "" || s.TTL <= 0 {
+		return errors.New("litellm: key value, model and TTL are required")
+	}
+	err := l.do(ctx, http.MethodPost, "/key/update", keyBody(s), s.Value, nil)
+	if _, ok := errors.AsType[*HTTPError](err); ok {
+		// The error body of /key/update for a missing key is not stable. Ask /key/info.
+		if found, e := l.exists(ctx, s.Value); e == nil && !found {
+			return fmt.Errorf("%w: %w", ErrKeyNotFound, err)
 		}
 	}
 	return err
