@@ -117,13 +117,15 @@ In v0.2, only Workspaces use the login. An Agent run uses a gateway key.
    koodam profile push -n dev-sample
    ```
 
-The command refuses these files:
+The command stops and pushes nothing in these conditions:
 
-- a file that is not UTF-8 text;
-- a credential file, for example `.credentials.json`, `auth.json`, `*.key`, `*.pem`, `id_*`, `.env`, `.netrc`, or a file with a private key;
-- a total size above 900 KiB.
+- A file has a credential name or a private key, for example `.credentials.json`, `auth.json`, `*.key`, `*.pem`, `id_*`, `.env` or `.netrc`. The command checks each file, also in a skill that it skips.
+- `CLAUDE.md` or `AGENTS.md` is not UTF-8 text, or is larger than 900 KiB.
+- The total size is above 900 KiB. The error names the largest skills and their sizes.
 
-It skips symlinks, and shows each skipped path. So it skips a skill folder that is a symlink. It does not replace a `koodam-globals` ConfigMap that it did not make, except with `--force`. You need `get`, `create` and `update` on configmaps in the namespace.
+The command skips a skill that has a file that is not UTF-8 text or is larger than 900 KiB. It also skips a skill that is larger than 900 KiB, the limit for 1 skill. For each skipped skill, it writes 1 line on stderr, `skip the skill <folder>: <reason>`. Then it pushes the other skills.
+
+It skips dot folders at each level and never reads them. It also skips dot files, symlinks and files that are not regular, and shows each skipped path. So it skips a skill folder that is a symlink. `--dry-run` shows the same skip lines. It does not replace a `koodam-globals` ConfigMap that it did not make, except with `--force`. You need `get`, `create` and `update` on configmaps in the namespace.
 
 Each Workspace pod mounts the ConfigMap read-only at `/etc/koodam/globals`. The script `koodam-globals` copies the files to `~/.koodam/globals` and makes these links:
 
