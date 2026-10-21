@@ -221,6 +221,8 @@ check "import: AGENTS.md link removed" test ! -e "$HOME/.claude/AGENTS.md" -a ! 
 configmap 'AGENTS.md=a13b'
 run
 check "import: back to the import" test "$(cat "$HOME/.claude/AGENTS.md")" = a13b
+check "import: CLAUDE.md links to the import again" test "$(readlink "$HOME/.claude/CLAUDE.md")" = "$imp"
+check "import: the import text again" test "$(cat "$HOME/.claude/CLAUDE.md")" = '@AGENTS.md'
 rm "$HOME/.claude/CLAUDE.md"
 printf 'my claude' >"$HOME/.claude/CLAUDE.md"
 configmap 'AGENTS.md=a13c'
@@ -237,8 +239,8 @@ configmap 'AGENTS.md=a13e'
 run
 configmap
 run
-check "import: CLAUDE.md link removed" test ! -L "$HOME/.claude/CLAUDE.md"
-check "import: AGENTS.md link removed at the end" test ! -L "$HOME/.claude/AGENTS.md"
+check "import: CLAUDE.md link removed" test ! -e "$HOME/.claude/CLAUDE.md" -a ! -L "$HOME/.claude/CLAUDE.md"
+check "import: AGENTS.md link removed at the end" test ! -e "$HOME/.claude/AGENTS.md" -a ! -L "$HOME/.claude/AGENTS.md"
 
 # 14. A home that is not writable: exit 0.
 HOME=$work/nohome bash "$script" 2>/dev/null

@@ -145,7 +145,8 @@ relink() {
   [ -f "$globals/AGENTS.md" ] && link "$globals/AGENTS.md" "$HOME/.codex/AGENTS.md"
   # The import "@AGENTS.md" is relative to the CLAUDE.md file. The link ~/.claude/AGENTS.md
   # makes it work for the link path, and the tree makes it work for the resolved path.
-  if [ "$(readlink "$HOME/.claude/CLAUDE.md" 2>/dev/null)" = "$globals/$import" ]; then
+  if [ -f "$globals/$import" ] &&
+    [ "$(readlink "$HOME/.claude/CLAUDE.md" 2>/dev/null)" = "$globals/$import" ]; then
     link "$globals/AGENTS.md" "$HOME/.claude/AGENTS.md"
   elif ours "$HOME/.claude/AGENTS.md"; then
     rm -f "$HOME/.claude/AGENTS.md"
