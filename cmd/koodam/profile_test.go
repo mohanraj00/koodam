@@ -31,7 +31,10 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
 )
 
-const secretText = "do-not-show-this-text"
+const (
+	secretText = "do-not-show-this-text"
+	credErr    = "credential"
+)
 
 // profileHome makes a home with CLAUDE.md, AGENTS.md and 1 skill.
 func profileHome(t *testing.T) string {
@@ -130,10 +133,10 @@ func TestProfilePushDryRunShowsKeysAndSizesOnly(t *testing.T) {
 
 func TestProfilePushRefusesBadFiles(t *testing.T) {
 	cases := map[string]string{
-		".credentials.json": "credential",
-		"auth.json":         "credential",
-		".env":              "credential",
-		"ssh.key":           "credential",
+		".credentials.json": credErr,
+		"auth.json":         credErr,
+		".env":              credErr,
+		"ssh.key":           credErr,
 		"a__b.md":           "is not permitted",
 		"bad name.md":       "not a valid ConfigMap key",
 		"logo.png":          "not UTF-8",
@@ -170,7 +173,7 @@ func TestProfilePushRefusesACredentialFlagPath(t *testing.T) {
 	path := filepath.Join(home, ".codex", "auth.json")
 	writeTestFile(t, path, secretText)
 	_, err := run(t, newKube(t, nil), "profile", "push", "--agents-md", path)
-	if err == nil || !strings.Contains(err.Error(), "credential") || strings.Contains(err.Error(), secretText) {
+	if err == nil || !strings.Contains(err.Error(), credErr) || strings.Contains(err.Error(), secretText) {
 		t.Fatalf("got %v, want a credential error without the content", err)
 	}
 }
