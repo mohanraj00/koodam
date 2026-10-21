@@ -14,4 +14,7 @@ done
 # The Debian ~/.profile adds ~/.local/bin to PATH only if the folder exists at login.
 mkdir -p "$home/.local/bin"
 
+# Copy the global files of koodam profile push to the home. This step never fails.
+/usr/local/bin/koodam-globals || true
+
 exec /usr/sbin/sshd -D -e -f /etc/koodam/sshd_config

@@ -17,6 +17,9 @@ RUN apt-get update \
 COPY sshd_config /etc/koodam/sshd_config
 COPY start.sh /usr/local/bin/koodam-workspace-start
 RUN chmod 0755 /usr/local/bin/koodam-workspace-start
+COPY globals.sh /usr/local/bin/koodam-globals
+COPY profile-globals.sh /etc/profile.d/koodam-globals.sh
+RUN chmod 0755 /usr/local/bin/koodam-globals
 
 USER 1000:1000
 WORKDIR /home/dev
