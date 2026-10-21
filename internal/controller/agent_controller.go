@@ -57,6 +57,8 @@ const (
 	keyField = "ANTHROPIC_AUTH_TOKEN"
 	// openAIKeyField is the Secret field with the key value for Codex.
 	openAIKeyField = "OPENAI_API_KEY"
+	// modelField is the Secret field with the model name.
+	modelField = "ANTHROPIC_MODEL"
 
 	// DefaultJobTTLSeconds is the default time that the controller keeps a run Job after it ends (24 h).
 	DefaultJobTTLSeconds = 86400
@@ -387,15 +389,21 @@ func (r *AgentReconciler) provision(ctx context.Context, a *corev1alpha1.Agent) 
 	return r.Status().Update(ctx, a)
 }
 
-// secret has the env for the harnesses. Stage 2 found that a missing model alias gives a 403.
+// secret has the env for the harnesses.
 func (r *AgentReconciler) secret(a *corev1alpha1.Agent, key string) *corev1.Secret {
-	m := a.Spec.Model
-	return &corev1.Secret{ObjectMeta: runMeta(a), Immutable: new(true), StringData: map[string]string{
-		"ANTHROPIC_BASE_URL": r.GatewayURL, keyField: key, "ANTHROPIC_MODEL": m,
+	return &corev1.Secret{ObjectMeta: runMeta(a), Immutable: new(true),
+		StringData: gatewayEnv(r.GatewayURL, a.Spec.Model, key)}
+}
+
+// gatewayEnv is the env of the harnesses for a gateway key. Stage 2 found that a missing model
+// alias gives a 403.
+func gatewayEnv(url, m, key string) map[string]string {
+	return map[string]string{
+		"ANTHROPIC_BASE_URL": url, keyField: key, modelField: m,
 		"ANTHROPIC_DEFAULT_HAIKU_MODEL": m, "ANTHROPIC_DEFAULT_SONNET_MODEL": m,
 		"ANTHROPIC_DEFAULT_OPUS_MODEL": m, "ANTHROPIC_SMALL_FAST_MODEL": m, "CLAUDE_CODE_SUBAGENT_MODEL": m,
-		"OPENAI_BASE_URL": r.GatewayURL + "/v1", openAIKeyField: key,
-	}}
+		"OPENAI_BASE_URL": url + "/v1", openAIKeyField: key,
+	}
 }
 
 // runJob makes the run Job. The Job has no ttlSecondsAfterFinished. If Kubernetes deletes the Job
