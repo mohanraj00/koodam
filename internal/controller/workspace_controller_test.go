@@ -607,5 +607,6 @@ var _ = Describe("namespaceBound", func() {
 		deleted.DeletionTimestamp = &metav1.Time{Time: time.Now()}
 		Expect(deleteStarted(event.UpdateEvent{ObjectOld: old, ObjectNew: statusOnly})).To(BeFalse())
 		Expect(deleteStarted(event.UpdateEvent{ObjectOld: old, ObjectNew: deleted})).To(BeTrue())
+		Expect(deleteStarted(event.UpdateEvent{ObjectOld: nil, ObjectNew: deleted})).To(BeFalse())
 	})
 })

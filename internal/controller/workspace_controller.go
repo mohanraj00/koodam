@@ -511,6 +511,9 @@ func (r *WorkspaceReconciler) workspacesForProfile(ctx context.Context, obj clie
 
 // deleteStarted is true if the update gives the object a deletionTimestamp.
 func deleteStarted(e event.UpdateEvent) bool {
+	if e.ObjectOld == nil || e.ObjectNew == nil {
+		return false
+	}
 	return e.ObjectOld.GetDeletionTimestamp().IsZero() && !e.ObjectNew.GetDeletionTimestamp().IsZero()
 }
 
