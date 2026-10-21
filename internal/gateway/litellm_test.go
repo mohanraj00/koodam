@@ -20,6 +20,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"maps"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -97,9 +98,7 @@ func (f *fake) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			_, _ = w.Write([]byte(`{"error":"no key ` + b["key"].(string) + `"}`))
 			return
 		}
-		for k, v := range b {
-			f.keys[h][k] = v
-		}
+		maps.Copy(f.keys[h], b)
 		_, _ = w.Write([]byte(`{}`))
 	case "/key/block":
 		if f.routeBody != "" {
