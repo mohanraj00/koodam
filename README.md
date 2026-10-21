@@ -80,6 +80,14 @@ For `koodam logs` and `run --wait`, the CLI user needs `get` on jobs, `list` on 
 
 For `koodam tunnel NAMESPACE/WORKSPACE` (an OpenSSH `ProxyCommand`), the CLI user needs `get` on pods and `create` on pods/portforward in the namespace.
 
+For SSH to a Workspace, `koodam ssh setup` makes the key `~/.ssh/koodam_ed25519`, adds the public key to the Workspace, and writes the host entry. It needs `get` and `patch` on workspaces in the namespace, plus the tunnel verbs.
+
+```sh
+koodam ssh setup main     # asks before it adds 1 Include line to ~/.ssh/config
+koodam ssh main           # ssh, then the tmux session main
+koodam ssh remove main    # --key also removes the public key from the Workspace
+```
+
 The controller deletes a finished Job and its pod 24 h after the end (the chart value `jobTTLSeconds`). After that, `koodam logs` has no log. The Agent keeps the status and the spend. The controller records the result before it deletes the Job, so a controller restart does not lose the result. If the controller is down, finished Jobs stay until it starts again.
 
 ## Install

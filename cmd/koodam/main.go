@@ -23,6 +23,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -45,6 +46,9 @@ type env struct {
 	kube      client.Client
 	clientset kubernetes.Interface
 	namespace string
+	// context is the name of the kube context. kubeconfig is the --kubeconfig path, or empty.
+	// koodam ssh setup writes them to the ProxyCommand.
+	context, kubeconfig string
 	// poll is the interval between two reads of the cluster.
 	poll time.Duration
 	// stream, if set, opens the pod log instead of the clientset. Tests use it.
@@ -80,7 +84,7 @@ func newRoot(conn connect) *cobra.Command {
 		conn = func() (*env, error) { return kubeEnv(rules, overrides) }
 	}
 	root.AddCommand(runCmd(conn), getCmd(conn, false), getCmd(conn, true), logsCmd(conn), deleteCmd(conn),
-		tunnelCmd(conn), versionCmd())
+		tunnelCmd(conn), sshCmd(conn), versionCmd())
 	return root
 }
 
@@ -122,5 +126,20 @@ func kubeEnv(rules *clientcmd.ClientConfigLoadingRules, overrides *clientcmd.Con
 	if err != nil {
 		return nil, err
 	}
-	return &env{kube: kube, clientset: cs, namespace: ns, poll: 2 * time.Second, dial: spdyDial(cfg, cs)}, nil
+	kubeContext := overrides.CurrentContext
+	if kubeContext == "" {
+		raw, err := cc.RawConfig()
+		if err != nil {
+			return nil, fmt.Errorf("read the kubeconfig: %w", err)
+		}
+		kubeContext = raw.CurrentContext
+	}
+	kubeconfig := rules.ExplicitPath
+	if kubeconfig != "" {
+		if kubeconfig, err = filepath.Abs(kubeconfig); err != nil {
+			return nil, err
+		}
+	}
+	return &env{kube: kube, clientset: cs, namespace: ns, context: kubeContext, kubeconfig: kubeconfig,
+		poll: 2 * time.Second, dial: spdyDial(cfg, cs)}, nil
 }
