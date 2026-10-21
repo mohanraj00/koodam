@@ -34,9 +34,16 @@ func TestCostMultipliesEachType(t *testing.T) {
 	if got, ok := tab.Cost(r); !ok || !near(got, 1000*in+100*out+10000*read+2000*write) {
 		t.Errorf("cost: got %v %v", got, ok)
 	}
-	r.Model = "m-20250929"
-	if _, ok := tab.Cost(r); !ok {
-		t.Error("a model with a date suffix must use the price of the model with no date")
+	want := 1000*in + 100*out + 10000*read + 2000*write
+	for _, snapshot := range []string{"m-20250929", "m-2024-08-06", "m-0613"} {
+		r.Model = snapshot
+		if got, ok := tab.Cost(r); !ok || !near(got, want) {
+			t.Errorf("%s must use the price of m: got %v %v", snapshot, got, ok)
+		}
+	}
+	r.Model = "m-12345"
+	if _, ok := tab.Cost(r); ok {
+		t.Error("a suffix of 5 digits is not a snapshot suffix")
 	}
 	r.Model = "nocache"
 	if got, ok := tab.Cost(r); !ok || !near(got, (1000+10000+2000)*in+100*out) {
@@ -52,6 +59,10 @@ func TestEmbeddedPricesHaveTheHarnessModels(t *testing.T) {
 	tab, err := Prices()
 	if err != nil {
 		t.Fatal(err)
+	}
+	if !strings.Contains(tab.License, "MIT License") || !strings.Contains(tab.License, "Copyright (c) 2023 Berri AI") ||
+		!strings.Contains(tab.License, "Permission is hereby granted") {
+		t.Error("the embedded table must have the LiteLLM licence notice")
 	}
 	if len(tab.Commit) != 40 || !strings.Contains(tab.Source, tab.Commit) {
 		t.Errorf("source %q, commit %q", tab.Source, tab.Commit)

@@ -21,6 +21,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"regexp"
+	"sync"
 )
 
 // Harness names in a Row.
@@ -47,34 +48,40 @@ type Price struct {
 	CacheWrite *float64 `json:"cache_creation_input_token_cost,omitempty"`
 }
 
-// Table is the price subset.
+// Table is the price subset. License is the licence notice of LiteLLM (MIT). It is in the
+// embedded file, so the notice goes with the binary.
 type Table struct {
-	Source string           `json:"source"`
-	Commit string           `json:"commit"`
-	Models map[string]Price `json:"models"`
+	Source  string           `json:"source"`
+	Commit  string           `json:"commit"`
+	License string           `json:"license"`
+	Models  map[string]Price `json:"models"`
 }
 
 //go:embed prices/litellm.json
 var litellm []byte
 
-// Prices gives the embedded LiteLLM price subset.
-func Prices() (*Table, error) {
+// Prices gives the embedded LiteLLM price subset. It reads the embedded file 1 time only.
+// Do not change the table that it gives.
+var Prices = sync.OnceValues(func() (*Table, error) {
 	t := &Table{}
 	if err := json.Unmarshal(litellm, t); err != nil {
 		return nil, fmt.Errorf("read the embedded price table: %w", err)
 	}
 	return t, nil
-}
+})
 
-var dateSuffix = regexp.MustCompile(`-[0-9]{8}$`)
+// snapshotSuffix is the date or the version at the end of a model snapshot name, for example
+// -20250929 (Anthropic), -2024-08-06 or -0613 (OpenAI).
+var snapshotSuffix = regexp.MustCompile(`-([0-9]{8}|[0-9]{4}-[0-9]{2}-[0-9]{2}|[0-9]{4})$`)
 
-// Cost gives the projected cost of r in USD. It is false if the table has no input and output
-// price for the model. If the table has no cache price for the model, the input price is used.
+// Cost gives the projected cost of r in USD. If the table has no price for the snapshot name of
+// the model, Cost uses the name with no snapshot suffix. It is false if the table has no input
+// and output price for the model. If the table has no cache price, the input price is used.
 // The cache write price is the 5-minute price, and the price tiers above 200k tokens are not used.
 func (t *Table) Cost(r Row) (float64, bool) {
 	p, ok := t.Models[r.Model]
 	if !ok {
-		p, ok = t.Models[dateSuffix.ReplaceAllString(r.Model, "")]
+		p, ok = t.Models[snapshotSuffix.ReplaceAllString(r.Model, "")]
 	}
 	if !ok || p.Input == nil || p.Output == nil {
 		return 0, false
