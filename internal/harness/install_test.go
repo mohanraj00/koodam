@@ -190,10 +190,8 @@ func TestClaudeLatest(t *testing.T) {
 	if err != nil || got != pinned {
 		t.Fatalf("install = %q, %v", got, err)
 	}
-	expectBinary(t, filepath.Join(v.installDir, "claude"), v.claude)
-	if f := v.files(t); len(f) != 1 {
-		t.Fatalf("the install folder has %v, want only claude", f)
-	}
+	expectBinary(t, filepath.Join(v.installDir, ".claude-real"), v.claude)
+	expectInstalled(t, v, "claude")
 }
 
 func TestClaudePinnedMusl(t *testing.T) {
@@ -207,7 +205,8 @@ func TestClaudePinnedMusl(t *testing.T) {
 			t.Fatal("a pinned version read /latest")
 		}
 	}
-	expectBinary(t, filepath.Join(v.installDir, "claude"), v.claude)
+	expectBinary(t, filepath.Join(v.installDir, ".claude-real"), v.claude)
+	expectInstalled(t, v, "claude")
 }
 
 func TestClaudeChecksumMismatch(t *testing.T) {
@@ -245,10 +244,8 @@ func TestCodex(t *testing.T) {
 		if err != nil || got != "0.9.1" {
 			t.Fatalf("install(%q) = %q, %v", version, got, err)
 		}
-		expectBinary(t, filepath.Join(v.installDir, "codex"), v.codexBin)
-		if f := v.files(t); len(f) != 1 {
-			t.Fatalf("the install folder has %v, want only codex", f)
-		}
+		expectBinary(t, filepath.Join(v.installDir, ".codex-real"), v.codexBin)
+		expectInstalled(t, v, "codex")
 		if version != "" && slices.Contains(v.requests, "/gh/latest") {
 			t.Fatal("a pinned version read /latest")
 		}
@@ -261,7 +258,7 @@ func TestCodexBadRelease(t *testing.T) {
 		edit func(*vendor)
 		want string
 	}{
-		{"wrong binary sha256", func(v *vendor) { v.bundleSum = sum([]byte("x")) }, "the sha256 of codex is"},
+		{"wrong binary sha256", func(v *vendor) { v.bundleSum = sum([]byte("x")) }, "the sha256 of .codex-real is"},
 		{"bundle entry mismatch with Rekor", func(v *vendor) { v.rekor = `{"a":{"body":"e30="}}%.0[1]s` },
 			"the Rekor entry 42 is not the entry in the bundle"},
 		{"bad bundle signature", func(v *vendor) {

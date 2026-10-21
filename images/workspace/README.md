@@ -11,6 +11,7 @@ This image is the container of a Koodam Workspace pod. A user connects to it wit
 - `/usr/local/bin/koodam-workspace-start` is the start script (`start.sh`).
 - `/etc/profile.d/koodam-gateway.sh` (`gateway.sh`) exports each file in `/etc/koodam/gateway` as an environment variable in a login shell. sshd does not give the container environment to an SSH session, so the gateway key is a file and not an environment variable.
 - `/etc/profile.d/koodam-login.sh` (`login.sh`) exports `CLAUDE_CODE_OAUTH_TOKEN` in a login shell from the file `/etc/koodam/login/claude-code` (the token of `koodam login claude-code`). If the file is missing or empty, it does nothing. It does not replace a value that the user exported, and it never writes the token to the output. To test it, run `bash images/workspace/test/login_test.sh` from the root of the repo.
+- `/usr/local/bin/koodam-project` (`koodam-project.sh`) lets Claude Code read the `AGENTS.md` and the `.agents/skills` of a project folder. It writes `CLAUDE.md` with the text `@AGENTS.md` and links `.claude/skills` to `../.agents/skills`, only if these do not exist. It adds the files that it made to the git exclude file. It never replaces a file and never fails. `/etc/profile.d/koodam-project.sh` (`project.sh`) runs it at each login in each folder of the home with `AGENTS.md` or `.agents/skills`. The harness of an Agent run calls the same script first. To test it, run `bash images/workspace/test/project_test.sh`.
 
 The start script runs as uid 1000. It does these steps:
 

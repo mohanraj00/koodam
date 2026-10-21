@@ -78,7 +78,8 @@ type Installer struct {
 }
 
 // Install puts the binary of the harness in dir and returns the version. An empty version is
-// the latest version. libc is "glibc" or "musl" and applies to Claude Code only.
+// the latest version. libc is "glibc" or "musl" and applies to Claude Code only. The binary has a
+// dot name (see realName). The wrapper with the usual name runs koodam-project first (see wrap).
 func (in *Installer) Install(ctx context.Context, name, version, libc, dir string) (string, error) {
 	if version != "" && !ValidVersion(version) {
 		return "", fmt.Errorf("the version %q is not of the form 1.2.3", version)
@@ -86,13 +87,24 @@ func (in *Installer) Install(ctx context.Context, name, version, libc, dir strin
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return "", err
 	}
+	var (
+		got, bin string
+		err      error
+	)
 	switch name {
 	case ClaudeCode:
-		return in.claude(ctx, version, libc, dir)
+		bin = "claude"
+		got, err = in.claude(ctx, version, libc, dir)
 	case Codex:
-		return in.codex(ctx, version, dir)
+		bin = "codex"
+		got, err = in.codex(ctx, version, dir)
+	default:
+		return "", fmt.Errorf("the harness %q is not known", name)
 	}
-	return "", fmt.Errorf("the harness %q is not known", name)
+	if err != nil {
+		return "", err
+	}
+	return got, wrap(dir, bin)
 }
 
 func (in *Installer) claude(ctx context.Context, version, libc, dir string) (string, error) {
@@ -135,7 +147,7 @@ func (in *Installer) claude(ctx context.Context, version, libc, dir string) (str
 		return "", fmt.Errorf("the claude-code %s manifest has no checksum for %s", version, plat)
 	}
 	url := in.ClaudeBase + "/" + version + "/" + plat + "/claude"
-	if err := in.download(ctx, url, sum, filepath.Join(dir, "claude")); err != nil {
+	if err := in.download(ctx, url, sum, filepath.Join(dir, realName("claude"))); err != nil {
 		return "", err
 	}
 	return version, nil
@@ -236,7 +248,7 @@ func (in *Installer) codexArchive(ctx context.Context, url, sum, bin, dir string
 	if err := in.download(ctx, url, "", archive); err != nil {
 		return err
 	}
-	return extract(archive, bin, sum, filepath.Join(dir, "codex"))
+	return extract(archive, bin, sum, filepath.Join(dir, realName("codex")))
 }
 
 // get reads a small response body. A body larger than the limit is an error.

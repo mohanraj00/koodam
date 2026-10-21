@@ -22,6 +22,9 @@ RUN chmod 0755 /usr/local/bin/koodam-workspace-start
 COPY globals.sh /usr/local/bin/koodam-globals
 COPY profile-globals.sh /etc/profile.d/koodam-globals.sh
 RUN chmod 0755 /usr/local/bin/koodam-globals
+COPY koodam-project.sh /usr/local/bin/koodam-project
+COPY project.sh /etc/profile.d/koodam-project.sh
+RUN chmod 0755 /usr/local/bin/koodam-project
 
 USER 1000:1000
 WORKDIR /home/dev

@@ -12,3 +12,6 @@
 # Re-include Go module files
 !go.mod
 !go.sum
+
+# Re-include the script that the package images/workspace embeds for harness-install
+!images/workspace/koodam-project.sh
