@@ -17,6 +17,7 @@ RUN apt-get update \
 COPY sshd_config /etc/koodam/sshd_config
 COPY start.sh /usr/local/bin/koodam-workspace-start
 COPY gateway.sh /etc/profile.d/koodam-gateway.sh
+COPY login.sh /etc/profile.d/koodam-login.sh
 RUN chmod 0755 /usr/local/bin/koodam-workspace-start
 COPY globals.sh /usr/local/bin/koodam-globals
 COPY profile-globals.sh /etc/profile.d/koodam-globals.sh
