@@ -47,8 +47,9 @@ const (
 
 	// condGatewayKey tells the state of the gateway key. The reason "Revoking" is in the status
 	// before the block, so a retry finishes the revoke and does not renew a blocked key.
-	condGatewayKey = "GatewayKey"
-	reasonRevoking = "Revoking"
+	condGatewayKey    = "GatewayKey"
+	reasonRevoking    = "Revoking"
+	reasonRenewFailed = "RenewFailed"
 )
 
 func gatewaySecretName(ws *corev1alpha1.Workspace) string { return ws.Name + "-gateway" }
@@ -145,18 +146,67 @@ func (r *WorkspaceReconciler) applyKey(ctx context.Context, ws *corev1alpha1.Wor
 	spec := gateway.KeySpec{Value: key, Alias: ws.Status.KeyAlias, Model: g.Model,
 		Budget: g.BudgetPerDay.AsApproximateFloat64(), BudgetPeriod: 24 * time.Hour, TTL: r.keyTTL(),
 		Metadata: map[string]string{"uid": string(ws.UID), "namespace": ws.Namespace, "workspace": ws.Name}}
+	if r.untilRenew(ws.Status.KeyHash) > 0 {
+		return nil
+	}
 	// A renew of a key that is not in the gateway, after a crash before CreateKey, makes the key.
 	err = r.Gateway.RenewKey(ctx, spec)
 	if errors.Is(err, gateway.ErrKeyNotFound) {
 		err = r.Gateway.CreateKey(ctx, spec)
 	}
+	cond := metav1.Condition{Type: condGatewayKey, Status: metav1.ConditionTrue, Reason: "Active",
+		Message: "The gateway key is ready.", ObservedGeneration: ws.Generation}
 	if err != nil {
-		return err
+		// Do not stop the pod apply: the key stays valid until its TTL ends. Reconcile returns an
+		// error after the status update, so the controller tries again with a backoff.
+		logf.FromContext(ctx).Info("The renew of the gateway key failed", "keyAlias", ws.Status.KeyAlias,
+			"reason", err.Error())
+		cond.Status, cond.Reason = metav1.ConditionFalse, reasonRenewFailed
+		cond.Message = "The renew of the gateway key failed. The controller tries again."
+	} else {
+		r.setRenewed(ws.Status.KeyHash)
 	}
-	meta.SetStatusCondition(&ws.Status.Conditions, metav1.Condition{Type: condGatewayKey,
-		Status: metav1.ConditionTrue, Reason: "Active", Message: "The gateway key is ready.",
-		ObservedGeneration: ws.Generation})
+	meta.SetStatusCondition(&ws.Status.Conditions, cond)
 	return nil
+}
+
+// errRenewFailed is the Reconcile error after a failed renew. It gives the backoff of the
+// controller. It does not contain the key.
+var errRenewFailed = errors.New("the renew of the gateway key failed")
+
+// untilRenew returns the time until the next renew of the key with this hash. The time of the
+// last renew is in memory only, by the key hash. Thus a new key has no entry, and after a
+// restart the controller renews each key one time. The hash is not a credential.
+func (r *WorkspaceReconciler) untilRenew(hash string) time.Duration {
+	r.renewMu.Lock()
+	defer r.renewMu.Unlock()
+	last, ok := r.renewed[hash]
+	if !ok {
+		return 0
+	}
+	return max(0, last.Add(r.keyTTL()/4).Sub(r.now()))
+}
+
+func (r *WorkspaceReconciler) setRenewed(hash string) {
+	r.renewMu.Lock()
+	defer r.renewMu.Unlock()
+	if r.renewed == nil {
+		r.renewed = map[string]time.Time{}
+	}
+	r.renewed[hash] = r.now()
+}
+
+func (r *WorkspaceReconciler) forgetRenewed(hash string) {
+	r.renewMu.Lock()
+	defer r.renewMu.Unlock()
+	delete(r.renewed, hash)
+}
+
+func (r *WorkspaceReconciler) now() time.Time {
+	if r.Now != nil {
+		return r.Now()
+	}
+	return time.Now()
 }
 
 // updateMeta writes the finalizers. It keeps the status in memory, which Reconcile writes later,
@@ -190,6 +240,7 @@ func (r *WorkspaceReconciler) revokeKey(ctx context.Context, ws *corev1alpha1.Wo
 	if err := r.Gateway.BlockKey(ctx, hash); err != nil {
 		return err
 	}
+	r.forgetRenewed(hash)
 	cond.Reason, cond.Message = "Revoked", "The gateway key is blocked and its Secret is deleted."
 	u, err := r.Gateway.Usage(ctx, hash)
 	switch {

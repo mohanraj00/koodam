@@ -22,6 +22,7 @@ import (
 	"fmt"
 	"regexp"
 	"strings"
+	"sync"
 	"time"
 
 	appsv1 "k8s.io/api/apps/v1"
@@ -103,7 +104,14 @@ type WorkspaceReconciler struct {
 	// GatewayURL is the gateway address for the workspace pods.
 	GatewayURL string
 	// KeyTTL is the TTL of a gateway key. If it is 0, the controller uses DefaultWorkspaceKeyTTL.
+	// The controller renews a key when the last renew is older than KeyTTL/4.
 	KeyTTL time.Duration
+	// Now gives the time for the renew. If it is nil, the controller uses time.Now.
+	Now func() time.Time
+
+	renewMu sync.Mutex
+	// renewed has the time of the last renew for each key hash.
+	renewed map[string]time.Time
 }
 
 // +kubebuilder:rbac:groups=core.koodam.dev,resources=workspaces,verbs=get;list;watch;update
@@ -149,14 +157,21 @@ func (r *WorkspaceReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 	}
 	meta.SetStatusCondition(&ws.Status.Conditions, keysCond)
 	res := ctrl.Result{}
-	if wantKey(ws) && ws.Status.KeyHash != "" {
-		res.RequeueAfter = r.keyTTL() / 2
+	var keyErr error
+	if c := meta.FindStatusCondition(ws.Status.Conditions, condGatewayKey); wantKey(ws) && c != nil &&
+		c.Reason == reasonRenewFailed {
+		keyErr = errRenewFailed
+	} else if wantKey(ws) && ws.Status.KeyHash != "" {
+		res.RequeueAfter = max(time.Second, r.untilRenew(ws.Status.KeyHash))
 	}
 	if old.Phase == ws.Status.Phase && old.Pod == ws.Status.Pod && old.HostKey == ws.Status.HostKey &&
 		conditionsEqual(old.Conditions, ws.Status.Conditions) {
-		return res, nil
+		return res, keyErr
 	}
-	return res, r.Status().Update(ctx, ws)
+	if err := r.Status().Update(ctx, ws); err != nil {
+		return res, err
+	}
+	return res, keyErr
 }
 
 // apply makes or updates the 3 objects of the Workspace. It returns the phase, and the reason

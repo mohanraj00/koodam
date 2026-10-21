@@ -5,7 +5,7 @@ if [ -d /etc/koodam/gateway ]; then
   for f in /etc/koodam/gateway/*; do
     n=${f##*/}
     case $n in
-      '' | *[!A-Z0-9_]*) continue ;;
+      '' | [0-9]* | *[!A-Z0-9_]*) continue ;;
     esac
     [ -f "$f" ] && export "$n=$(cat "$f")"
   done

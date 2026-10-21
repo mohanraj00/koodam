@@ -61,6 +61,7 @@ type wsGateway struct {
 	specs    []gateway.KeySpec
 	order    []string
 	blockErr error
+	renewErr error
 	atBlock  func()
 }
 
@@ -76,6 +77,9 @@ func (g *wsGateway) CreateKey(_ context.Context, s gateway.KeySpec) error {
 func (g *wsGateway) RenewKey(_ context.Context, s gateway.KeySpec) error {
 	g.mu.Lock()
 	defer g.mu.Unlock()
+	if g.renewErr != nil {
+		return g.renewErr
+	}
 	if !g.keys[gateway.HashKey(s.Value)] {
 		return gateway.ErrKeyNotFound
 	}
@@ -108,14 +112,20 @@ var _ = Describe("Workspace gateway key", func() {
 		ctx  context.Context
 		logs *bytes.Buffer
 		gw   *wsGateway
+		rec  *WorkspaceReconciler
+		now  time.Time
 		name string
 		n    int
 	)
 	nn := func(s string) types.NamespacedName { return types.NamespacedName{Namespace: ns, Name: s} }
+	// restart makes a new reconciler with no renew times in memory, as after a controller restart.
+	restart := func() {
+		rec = &WorkspaceReconciler{Client: k8sClient, Scheme: k8sClient.Scheme(), APIReader: k8sClient,
+			Image: "img:test", Gateway: gw, GatewayURL: "http://gw.test:4000", KeyTTL: ttl,
+			Now: func() time.Time { return now }}
+	}
 	reconcileOnce := func() (ctrl.Result, error) {
-		r := &WorkspaceReconciler{Client: k8sClient, Scheme: k8sClient.Scheme(), APIReader: k8sClient,
-			Image: "img:test", Gateway: gw, GatewayURL: "http://gw.test:4000", KeyTTL: ttl}
-		return r.Reconcile(ctx, reconcile.Request{NamespacedName: nn(name)})
+		return rec.Reconcile(ctx, reconcile.Request{NamespacedName: nn(name)})
 	}
 	mustReconcile := func() ctrl.Result {
 		res, err := reconcileOnce()
@@ -154,6 +164,8 @@ var _ = Describe("Workspace gateway key", func() {
 			logs.WriteString(p + " " + a + "\n")
 		}, funcr.Options{Verbosity: 1}))
 		gw = &wsGateway{keys: map[string]bool{}}
+		now = time.Date(2026, 10, 21, 9, 0, 0, 0, time.UTC)
+		restart()
 		ws := &corev1alpha1.Workspace{
 			ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: ns},
 			Spec: corev1alpha1.WorkspaceSpec{Storage: resource.MustParse("1Gi"),
@@ -177,7 +189,7 @@ var _ = Describe("Workspace gateway key", func() {
 
 	It("makes the key, mounts its Secret and writes only the alias and the hash", func() {
 		res := mustReconcile()
-		Expect(res.RequeueAfter).To(Equal(ttl / 2))
+		Expect(res.RequeueAfter).To(Equal(ttl / 4))
 		ws := workspace()
 		key := secretKey()
 		Expect(key).To(HavePrefix("sk-kd-"))
@@ -213,14 +225,45 @@ var _ = Describe("Workspace gateway key", func() {
 		Expect(logs.String()).NotTo(ContainSubstring(key))
 	})
 
-	It("renews the key at each reconcile and does not make a new key", func() {
+	It("renews the key after TTL/4 and one time after a restart, and makes no new key", func() {
 		mustReconcile()
 		key := secretKey()
+		now = now.Add(ttl / 8)
 		res := mustReconcile()
-		Expect(res.RequeueAfter).To(Equal(ttl / 2))
+		Expect(res.RequeueAfter).To(Equal(ttl / 8))
+		Expect(gw.order).To(Equal([]string{opCreate}))
+
+		now = now.Add(ttl / 8)
+		res = mustReconcile()
+		Expect(res.RequeueAfter).To(Equal(ttl / 4))
 		Expect(gw.order).To(Equal([]string{opCreate, opRenew}))
 		Expect(gw.specs[1].Value).To(Equal(key))
 		Expect(gw.specs[1].TTL).To(Equal(ttl))
+
+		restart()
+		mustReconcile()
+		mustReconcile()
+		Expect(gw.order).To(Equal([]string{opCreate, opRenew, opRenew}))
+	})
+
+	It("applies the pod when the renew fails, and tries again", func() {
+		mustReconcile()
+		now = now.Add(ttl / 4)
+		gw.renewErr = errors.New("gateway down")
+		edit(func(ws *corev1alpha1.Workspace) { ws.Spec.Image = "img:new" })
+		_, err := reconcileOnce()
+		Expect(err).To(MatchError(errRenewFailed))
+		c := meta.FindStatusCondition(workspace().Status.Conditions, condGatewayKey)
+		Expect(c.Reason).To(Equal(reasonRenewFailed))
+		Expect(c.Message).NotTo(ContainSubstring(secretKey()))
+		sts := &appsv1.StatefulSet{}
+		Expect(k8sClient.Get(ctx, nn(name), sts)).To(Succeed())
+		Expect(sts.Spec.Template.Spec.Containers[0].Image).To(Equal("img:new"))
+
+		gw.renewErr = nil
+		mustReconcile()
+		Expect(meta.IsStatusConditionTrue(workspace().Status.Conditions, condGatewayKey)).To(BeTrue())
+		Expect(gw.order).To(Equal([]string{opCreate, opRenew}))
 	})
 
 	It("blocks the key before it scales to 0 on suspend, and makes a new key on resume", func() {
