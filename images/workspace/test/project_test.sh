@@ -71,6 +71,23 @@ for sh in $shells; do
   check "$sh: .claude/skills exists: quiet" quiet
   check "$sh: .claude/skills exists: no change" test ! -L "$p/.claude/skills" -a -d "$p/.claude/skills/mine"
 
+  new; mkdir -p "$p/.agents/skills" "$work/out$n"; ln -s "$work/out$n" "$p/.claude"; run "$sh" "$p"
+  check "$sh: .claude is a link: warning, exit 0" warned
+  check "$sh: .claude is a link: no write through it" test -z "$(ls -A "$work/out$n")"
+
+  new; mkdir -p "$p/AGENTS.md"; run "$sh" "$p"
+  check "$sh: AGENTS.md is a folder: quiet" quiet
+  check "$sh: AGENTS.md is a folder: no CLAUDE.md" test ! -e "$p/CLAUDE.md"
+
+  for name in "a b" "-x"; do
+    q=$work/q$n/$name; mkdir -p "$q"; echo agents >"$q/AGENTS.md"; run "$sh" "$q"
+    check "$sh: folder '$name': CLAUDE.md" test -f "$q/CLAUDE.md"
+  done
+
+  new; mkdir -p "$p/c" "$work/cd$n/c"; echo agents >"$p/c/AGENTS.md"
+  (cd "$p" && CDPATH=$work/cd$n run "$sh" c)
+  check "$sh: CDPATH: the right folder" test -f "$p/c/CLAUDE.md" -a ! -e "$work/cd$n/c/CLAUDE.md"
+
   new; echo agents >"$p/AGENTS.md"; (cd "$p" && run "$sh" "")
   check "$sh: current folder: CLAUDE.md" test -f "$p/CLAUDE.md"
 
@@ -87,6 +104,11 @@ for sh in $shells; do
     check "$sh: git: CLAUDE.md once" test "$(lines "$ex" /CLAUDE.md)" -eq 1
     check "$sh: git: .claude/skills once" test "$(lines "$ex" /.claude/skills)" -eq 1
     check "$sh: git: status hides the files" test "$(git -C "$p" status --porcelain --untracked-files=all)" = "?? AGENTS.md"
+
+    new; git init -q "$p"; echo agents >"$p/AGENTS.md"; echo keep >"$work/target$n"
+    rm -f "$p/.git/info/exclude"; ln -s "$work/target$n" "$p/.git/info/exclude"; run "$sh" "$p"
+    check "$sh: exclude is a link: warning, exit 0" warned
+    check "$sh: exclude is a link: no append" test "$(cat "$work/target$n")" = keep
 
     new; git init -q "$p"; mkdir -p "$p/sub"; echo agents >"$p/sub/AGENTS.md"; run "$sh" "$p/sub"
     check "$sh: git subfolder: entry" test "$(lines "$p/.git/info/exclude" /sub/CLAUDE.md)" -eq 1

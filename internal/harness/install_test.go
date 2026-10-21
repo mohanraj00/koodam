@@ -206,6 +206,7 @@ func TestClaudePinnedMusl(t *testing.T) {
 		}
 	}
 	expectBinary(t, filepath.Join(v.installDir, ".claude-real"), v.claude)
+	expectInstalled(t, v, "claude")
 }
 
 func TestClaudeChecksumMismatch(t *testing.T) {
