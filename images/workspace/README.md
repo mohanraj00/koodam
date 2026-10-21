@@ -28,7 +28,7 @@ The controller mounts these paths. The pod passes the Pod Security `restricted` 
 |---|---|---|
 | `/home/dev` | the PVC from the StatefulSet `volumeClaimTemplates` (`spec.storage`) | read-write |
 | `/etc/koodam/ssh/authorized_keys` | the ConfigMap `<workspace>-ssh`, key `authorized_keys` | read-only |
-| `/etc/koodam/ssh/host/ssh_host_ed25519_key` | the Secret `<workspace>-ssh-host`, key `ssh_host_ed25519_key`, file mode 0400 | read-only |
+| `/etc/koodam/ssh/host/ssh_host_ed25519_key` | the Secret `<workspace>-ssh-host`, key `ssh_host_ed25519_key`, `defaultMode` 0440 with the pod `fsGroup` 1000 (owner root, group 1000) | read-only |
 | `/etc/koodam/globals` | the ConfigMap `koodam-globals`, optional | read-only |
 | `/etc/koodam/login` | the Secret `koodam-login`, optional | read-only |
 | `/etc/koodam/memory` | the PVC `koodam-memory`, optional | read-write |
@@ -37,7 +37,7 @@ sshd uses `Port 2222`, public key login only, `AllowUsers dev`, `MaxSessions 10`
 
 The readiness probe is a TCP check on port 2222.
 
-Note: uid 1000 must be able to read the host key. Set `fsGroup: 1000` in the pod security context. Then the kubelet gives the group 1000 read access to the Secret file and write access to the PVC.
+Note: uid 1000 must be able to read the host key. Set `fsGroup: 1000` in the pod security context and `defaultMode: 0440` on the Secret volume. Then the host key file has the owner root and the group 1000, and the kubelet gives the group 1000 write access to the PVC.
 
 ## Build
 
