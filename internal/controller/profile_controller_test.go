@@ -41,6 +41,7 @@ var _ = Describe("Profile Controller", func() {
 			ns.Labels = map[string]string{corev1alpha1.ProfileLabel: profile}
 		}
 		Expect(k8sClient.Create(ctx, ns)).To(Succeed())
+		DeferCleanup(func() { Expect(client.IgnoreNotFound(k8sClient.Delete(ctx, ns))).To(Succeed()) })
 	}
 
 	// reconcileProfile runs one reconcile and returns the Profile after it.
