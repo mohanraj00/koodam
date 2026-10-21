@@ -26,34 +26,54 @@ import (
 	"strings"
 )
 
+// remoteClaude is the tag of a Claude Code line in the remote output. Codex lines have the tag
+// Codex.
+const remoteClaude = "claude"
+
 // RemoteScript is the script that koodam usage sends to "sh -s" in the Workspace pod. It is a
-// fixed string: no user input goes into it. It needs only find, cat, grep, sed and tail.
+// fixed string: no user input goes into it. It needs only find, cat, grep, sed and tail. If HOME
+// is empty, it prints nothing.
 //
 // Claude Code: the script keeps the assistant lines with a usage object. It removes the text
 // from "content" to the last "usage", so the message text and the tool input are not printed.
+// The removal fails closed: if a line has "content" and the removal does not match, or if a
+// "usage" comes before the first "content", the script prints nothing for the line.
 // Codex: for each session file, it keeps the last model of the turn context and the last
 // total_token_usage object, which holds only numbers.
 //
 // grep -o prints only a message id, a model name or a token count. A quote in the text of a
-// JSON line is escaped (\"), so the text cannot match these patterns.
+// JSON line is escaped (\"), so the text cannot match these patterns. For the same reason, a
+// grep -F match of a quoted key cannot match a message text.
 const RemoteScript = `set -u
-c="$HOME/.claude/projects"
-x="$HOME/.codex/sessions"
+h="${HOME:-}"
+[ -n "$h" ] || exit 0
+c="$h/.claude/projects"
+x="$h/.codex/sessions"
 if [ -d "$c" ]; then
   find "$c" -type f -name '*.jsonl' -exec cat {} + 2>/dev/null |
     grep -F '"type":"assistant"' | grep -F '"usage":{' |
-    sed -e 's/"content":\[.*"usage":{/"usage":{/' -e 's/^/"koodam_line":1,/' |
+    sed -n '
+/"usage":{.*"content":/d
+/"content":/{
+s/"content":\[.*"usage":{/"usage":{/
+t keep
+d
+}
+:keep
+s/^/"koodam_line":1,/p
+' |
     grep -o -E '"koodam_line":1|"id":"msg_[A-Za-z0-9_]{1,64}"|"model":"[A-Za-z0-9._:@-]{1,100}"|"(input|output|cache_read_input|cache_creation_input)_tokens":[0-9]{1,15}' |
-    sed 's/^/claude /'
+    sed 's/^/` + remoteClaude + ` /'
 fi
 if [ -d "$x" ]; then
   find "$x" -type f -name '*.jsonl' 2>/dev/null | while IFS= read -r f; do
-    echo 'codex "koodam_line":1'
+    echo '` + Codex + ` "koodam_line":1'
+    # JSON escapes each quote in a string, so this match and the next one cannot match a text.
     grep -F '"type":"turn_context"' "$f" | grep -o -E '"model":"[A-Za-z0-9._:@-]{1,100}"' |
-      tail -n 1 | sed 's/^/codex /'
+      tail -n 1 | sed 's/^/` + Codex + ` /'
     grep -F '"total_token_usage":{' "$f" | tail -n 1 |
       sed -n 's/.*"total_token_usage":{\([^}]*\)}.*/\1/p' | grep -o -E '"[a-z_]{1,40}":[0-9]{1,15}' |
-      sed 's/^/codex /'
+      sed 's/^/` + Codex + ` /'
   done
 fi
 exit 0
@@ -77,7 +97,7 @@ func Parse(r io.Reader) ([]Row, error) {
 	for n := 1; sc.Scan(); n++ {
 		harness, field, ok := strings.Cut(sc.Text(), " ")
 		m := item.FindStringSubmatch(field)
-		if !ok || m == nil || (harness != "claude" && harness != Codex) {
+		if !ok || m == nil || (harness != remoteClaude && harness != Codex) {
 			return nil, fmt.Errorf("line %d of the remote output is not in the usage format", n)
 		}
 		key, value := m[1], strings.Trim(m[2], `"`)
@@ -132,7 +152,11 @@ func sum(claude, codex []*tokens) []Row {
 			continue
 		}
 		if byID[t.id] == nil {
-			byID[t.id] = &tokens{model: t.model, n: map[string]int64{}}
+			byID[t.id] = &tokens{n: map[string]int64{}}
+		}
+		if byID[t.id].model == "" {
+			// The first line of a message can have no model, and a later line can have it.
+			byID[t.id].model = t.model
 		}
 		for k, v := range t.n {
 			byID[t.id].n[k] = max(byID[t.id].n[k], v)

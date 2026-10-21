@@ -46,7 +46,8 @@ func TestRemoteScriptPrintsOnlyModelsAndCounts(t *testing.T) {
 		t.Fatal(err)
 	}
 	out := remoteOutput(t, home)
-	for _, bad := range []string{"FIXTURE-TEXT", "text-model", "tool-model", "toolu_", "req_", "/home/dev", "999", "777"} {
+	for _, bad := range []string{"FIXTURE-TEXT", "text-model", "tool-model", "claude-wrong-order", "toolu_", "req_",
+		"/home/dev", "999", "777", "4001", "5001", "6001", "7001", "8001", "9001"} {
 		if strings.Contains(out, bad) {
 			t.Errorf("the remote output has %q:\n%s", bad, out)
 		}
@@ -57,7 +58,9 @@ func TestRemoteScriptPrintsOnlyModelsAndCounts(t *testing.T) {
 	}
 	want := []Row{
 		{Harness: ClaudeCode, Model: "claude-fixture-unpriced", Input: 7, Output: 8},
-		{Harness: ClaudeCode, Model: "claude-haiku-4-5", Input: 20, Output: 30},
+		// msg_fixtureB, msg_fixtureG, and msg_fixtureF with the model of its second line. The lines
+		// with a usage before the content, or with a content that is not a list, do not count.
+		{Harness: ClaudeCode, Model: "claude-haiku-4-5", Input: 23, Output: 37},
 		// 2 lines of 1 message count 1 time, with the largest output count.
 		{Harness: ClaudeCode, Model: "claude-sonnet-4-5-20250929", Input: 10, Output: 50, CacheRead: 3000,
 			CacheWrite: 200},
@@ -66,6 +69,12 @@ func TestRemoteScriptPrintsOnlyModelsAndCounts(t *testing.T) {
 	}
 	if !slices.Equal(rows, want) {
 		t.Errorf("rows:\n got %+v\nwant %+v", rows, want)
+	}
+}
+
+func TestRemoteScriptWithNoHome(t *testing.T) {
+	if out := remoteOutput(t, ""); out != "" {
+		t.Errorf("got output %q", out)
 	}
 }
 
