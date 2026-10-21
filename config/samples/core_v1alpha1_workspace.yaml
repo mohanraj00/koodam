@@ -1,0 +1,15 @@
+apiVersion: core.koodam.dev/v1alpha1
+kind: Workspace
+metadata:
+  labels:
+    app.kubernetes.io/name: koodam
+    app.kubernetes.io/managed-by: kustomize
+  name: workspace-sample
+spec:
+  # Public keys only. Each item is one authorized_keys line. Put your own public key here.
+  sshPublicKeys:
+  - "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOnlyAnExampleKeyOnlyAnExampleKeyOnly00 dev@laptop"
+  harnesses:
+  - name: claude-code
+  - name: codex
+  storage: 20Gi

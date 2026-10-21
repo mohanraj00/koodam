@@ -4,6 +4,7 @@
 resources:
 - bases/core.koodam.dev_agents.yaml
 - bases/core.koodam.dev_profiles.yaml
+- bases/core.koodam.dev_workspaces.yaml
 # +kubebuilder:scaffold:crdkustomizeresource
 
 patches:
