@@ -25,12 +25,13 @@ This chart installs the Koodam controller and the Agent CRD. The controller uses
    kubectl create namespace koodam-system
    ```
 
-4. Make the Secret with the LiteLLM master key. Read the key from a file, so that the key is not in your shell history. Write the file with `printf %s`, not with `echo`:
+4. Make the Secret with the LiteLLM master key. Read the key from a file, so that the key is not in your shell history. Write the file with `printf %s`, not with `echo`. The `umask 077` subshell makes a file that only you can read:
 
    ```sh
-   printf 'sk-%s' "$(openssl rand -hex 32)" > master-key
+   (umask 077; printf 'sk-%s' "$(openssl rand -hex 32)" > master-key)
    kubectl -n koodam-system create secret generic koodam-gateway \
      --from-file=master-key=./master-key
+   rm master-key
    ```
 
    Do not write the key file with `echo`. `echo` adds a newline at the end, and the newline goes into the Secret. Then LiteLLM refuses each key with `401 token_not_found_in_db`.
@@ -67,14 +68,16 @@ This chart installs the Koodam controller and the Agent CRD. The controller uses
 
 A real model needs an upstream key, for example `ANTHROPIC_API_KEY` or `OPENAI_API_KEY`. Put the key in a Secret that you make. The chart gives the key to LiteLLM as an env variable with `secretKeyRef`. The chart does not make or read this Secret.
 
-1. Make the Secret. Replace `<your-key>` with your key:
+1. Make the Secret. `read -rs` reads the key and does not show it. Type or paste the key, then push Enter:
 
    ```sh
-   kubectl -n koodam-system create secret generic upstream-keys \
-     --from-literal=anthropic=<your-key>
+   read -rs KEY
+   printf %s "$KEY" | kubectl -n koodam-system create secret generic upstream-keys \
+     --from-file=anthropic=/dev/stdin
+   unset KEY
    ```
 
-   `--from-literal` puts the key in your shell history. To prevent this, write each key to a file with `printf %s` and use `--from-file`.
+   The key goes to `kubectl` on stdin. Thus the key is not in the shell history or the process list. Do not use `--from-literal` for a key, because the key then goes into the shell history and the process list.
 
 2. Add the env variables and the models to a values file, for example `upstream.yaml`:
 
