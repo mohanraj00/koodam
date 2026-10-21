@@ -30,7 +30,7 @@ sshd does not run as root, so it can log in only the user `dev`. It writes no PI
 5. It makes the links `~/.claude/CLAUDE.md`, `~/.codex/AGENTS.md`, `~/.claude/skills/NAME` and `~/.codex/skills/NAME` to `~/.koodam/globals`. It makes one link for each skill and never replaces the folder `skills`, because Codex writes `~/.codex/skills/.system`.
 6. It removes each link that it made (a link into `~/.koodam/globals`) for a file or a skill that is no longer in the ConfigMap.
 
-The script never replaces a file, a folder or a link of the user. If `/etc/koodam/globals` is missing, the result is an empty tree. The script never fails: it writes each error on stderr and exits 0. Do not edit the files under `~/.koodam/globals`, because the next push replaces them.
+The script never replaces a file, a folder or a link of the user. If `~/.koodam/globals` is not a link to a `.globals-tree.*` folder, the script does not change it and makes no links. If another run holds the lock, the script stops at once. If `/etc/koodam/globals` is missing, the result is an empty tree. The script never fails: it writes each error on stderr and exits 0. Do not edit the files under `~/.koodam/globals`, because the next push replaces them.
 
 To test the script with a temporary `HOME` and a fake ConfigMap folder, run `bash images/workspace/test/globals_test.sh` from the root of the repo.
 

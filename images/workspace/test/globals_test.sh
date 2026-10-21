@@ -111,7 +111,89 @@ check "missing again: CLAUDE.md link removed" test ! -L "$HOME/.claude/CLAUDE.md
 check "missing again: skill link removed" test ! -L "$HOME/.codex/skills/review"
 check "missing again: AGENTS.md of the user kept" test "$(cat "$HOME/.codex/AGENTS.md")" = mine
 
-# 7. A home that is not writable: exit 0.
+# 7. ours: a link into $globals with a ".." segment is not a link of koodam, so it stays.
+st=$HOME/.koodam
+configmap 'skills_sreview_sSKILL.md=r'
+ln -s "$g/../../.ssh/x" "$HOME/.claude/skills/evil"
+ln -s "$g/skills/gone" "$HOME/.claude/skills/gone"
+run
+check "ours: .. target kept" test "$(readlink "$HOME/.claude/skills/evil")" = "$g/../../.ssh/x"
+check "ours: own dangling link removed" test ! -L "$HOME/.claude/skills/gone"
+rm "$HOME/.claude/skills/evil"
+
+# 8. Globs: a dangling link of the user stays, an empty ConfigMap gives no literal "*" entry.
+ln -s "$work/nothing" "$HOME/.codex/skills/dangling"
+configmap
+run
+check "globs: dangling user link kept" test -L "$HOME/.codex/skills/dangling"
+check "globs: no literal * entry" test ! -e "$HOME/.claude/skills/*" -a ! -L "$HOME/.claude/skills/*"
+check "globs: skill link removed" test ! -L "$HOME/.claude/skills/review"
+check "globs: exit 0 and quiet" test ! -s "$work/stderr"
+
+# 9. Swap: a stale temp link does not stop the swap.
+ln -s nowhere "$st/.globals-link.stale1"
+configmap 'skills_sreview_sSKILL.md=r9'
+run
+check "swap: new tree" test "$(cat "$g/skills/review/SKILL.md")" = r9
+check "swap: no new temp link" test "$(ls -a "$st" | grep -c '^.globals-link')" -eq 1
+
+# 10. Stamp: a symlink at the stamp path is not written through.
+rm -f "$st/.globals-stamp"
+ln -s "$work/stamp-target" "$st/.globals-stamp"
+configmap 'skills_sreview_sSKILL.md=r10'
+run
+check "stamp: target not written" test ! -e "$work/stamp-target"
+check "stamp: regular file now" test -f "$st/.globals-stamp" -a ! -L "$st/.globals-stamp"
+check "stamp: tree updated" test "$(cat "$g/skills/review/SKILL.md")" = r10
+
+# 11. $globals that is not a link of koodam: keep it, do not link from it, exit 0.
+#     The no-change path (same ..data) checks it too.
+tree=$(readlink "$g")
+rm "$g"
+mkdir -p "$work/other/skills/foreign"
+ln -s "$work/other" "$g"
+run
+check "globals: exit 0" test $? -eq 0
+check "globals: message (no change)" grep -q 'is not a link of koodam' "$work/stderr"
+check "globals: link kept" test "$(readlink "$g")" = "$work/other"
+check "globals: no foreign link" test ! -L "$HOME/.claude/skills/foreign"
+configmap 'skills_sreview_sSKILL.md=r11'
+run
+check "globals: message (change)" grep -q 'is not a link of koodam' "$work/stderr"
+check "globals: link still kept" test "$(readlink "$g")" = "$work/other"
+rm "$g"
+mkdir "$g"
+run
+check "globals: folder kept" test -d "$g" -a ! -L "$g"
+rmdir "$g"
+ln -s "$tree" "$g"
+
+# 12. Lock (only if flock is available, as in the image).
+if command -v flock >/dev/null 2>&1; then
+  lock=$st/.globals-lock
+  rm -f "$lock"
+  ln -s "$work/lock-target" "$lock"
+  run
+  check "lock: symlink refused" grep -q 'is a symlink' "$work/stderr"
+  check "lock: target not made" test ! -e "$work/lock-target"
+  rm "$lock"
+  printf 'keep' >"$lock"
+  flock "$lock" sleep 5 &
+  holder=$!
+  sleep 1
+  t0=$(date +%s)
+  run
+  t1=$(date +%s)
+  check "lock: held lock skips at once" test $((t1 - t0)) -lt 3
+  check "lock: message" grep -q 'another run holds the lock' "$work/stderr"
+  check "lock: no truncation" test "$(cat "$lock")" = keep
+  kill "$holder" 2>/dev/null
+  wait "$holder" 2>/dev/null
+else
+  printf 'skip lock checks: flock is not available\n'
+fi
+
+# 13. A home that is not writable: exit 0.
 HOME=$work/nohome bash "$script" 2>/dev/null
 check "no home: exit 0" test $? -eq 0
 

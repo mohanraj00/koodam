@@ -11,6 +11,7 @@ src=${KOODAM_GLOBALS_SRC:-/etc/koodam/globals}
 state=$HOME/.koodam
 globals=$state/globals
 stampfile=$state/.globals-stamp
+lockfile=$state/.globals-lock
 
 warn() { printf 'koodam-globals: %s\n' "$*" >&2; }
 
@@ -41,11 +42,30 @@ check_path() {
   return 0
 }
 
-# ours returns 0 if the path is a symlink that this script made (it points into the globals tree).
+# ours returns 0 if the path is a symlink that this script made. Its target (not resolved) must
+# start with "$globals/" and must have no ".." segment.
 ours() {
+  local t
   [ -L "$1" ] || return 1
-  case $(readlink "$1") in "$globals"/*) return 0 ;; esac
-  return 1
+  t=$(readlink "$1") || return 1
+  case $t in "$globals"/*) ;; *) return 1 ;; esac
+  case /$t/ in */../*) return 1 ;; esac
+  return 0
+}
+
+# globals_ok returns 0 if $globals is missing, or is a link that this script made: a link to a
+# .globals-tree.* folder next to it. Else the script does not use or replace $globals.
+globals_ok() {
+  local t
+  if [ -L "$globals" ]; then
+    t=$(readlink "$globals") || return 1
+    case $t in
+      */*) return 1 ;;
+      .globals-tree.?*) return 0 ;;
+    esac
+    return 1
+  fi
+  [ ! -e "$globals" ]
 }
 
 # link makes the symlink dst -> target. It replaces only a symlink that this script made, and
@@ -67,29 +87,26 @@ link() {
 
 # swap points the symlink $globals to the new tree $1 in one rename, then removes the old trees.
 swap() {
-  local new=$1 tmp=$state/.globals-link.$$
+  local new=$1 tmp d
+  tmp=$(mktemp -u "$state/.globals-link.XXXXXX") || return 1
   ln -s "${new##*/}" "$tmp" || return 1
   if ! mv -T "$tmp" "$globals" 2>/dev/null && ! mv -fh "$tmp" "$globals" 2>/dev/null; then
     rm -f "$tmp"
     return 1
   fi
-  local d
   for d in "$state"/.globals-tree.*; do
-    [ "$d" = "$new" ] || [ ! -d "$d" ] || rm -rf "$d"
+    [ -e "$d" ] || [ -L "$d" ] || continue
+    [ "$d" = "$new" ] || rm -rf "$d"
   done
 }
 
 # rebuild copies each valid key of $src to a new tree, then swaps the tree.
 rebuild() {
   local new key p f
-  # If the globals path is a folder or a file that this script did not make, keep it.
-  if [ -e "$globals" ] && [ ! -L "$globals" ]; then
-    warn "skip: $globals is not a link of koodam"
-    return 1
-  fi
   new=$(mktemp -d "$state/.globals-tree.XXXXXX") || return 1
   if [ -d "$src" ]; then
     for f in "$src"/*; do
+      [ -e "$f" ] || [ -L "$f" ] || continue
       key=${f##*/}
       # Kubernetes adds the ..data link and the ..<time> folder. The glob skips dot entries.
       [ "$key" = manifest.json ] && continue
@@ -128,6 +145,7 @@ relink() {
     done
     [ -d "$dir" ] || continue
     for f in "$dir"/* "$dir"/.[!.]*; do
+      [ -e "$f" ] || [ -L "$f" ] || continue
       ours "$f" && [ ! -e "$f" ] && rm -f "$f"
     done
   done
@@ -137,25 +155,39 @@ main() {
   [ -n "$HOME" ] && [ -d "$HOME" ] && [ -w "$HOME" ] || { warn "the home is not writable"; return 0; }
   mkdir -p "$state" || return 0
 
-  # Two logins can run at the same time. If flock is available, let one run do the work.
+  # Two logins can run at the same time. If flock is available, let one run do the work, and
+  # skip at once if another run holds the lock. Open the lock file with no truncation.
   if command -v flock >/dev/null 2>&1; then
-    exec 9>"$state/.globals-lock" || return 0
-    flock -w 10 9 || { warn "another run holds the lock"; return 0; }
+    if [ -L "$lockfile" ]; then
+      warn "skip: $lockfile is a symlink"
+      return 0
+    fi
+    exec 9>>"$lockfile" || return 0
+    flock -n 9 || { warn "skip: another run holds the lock"; return 0; }
+  fi
+
+  # If $globals is not a link of this script, keep it, and do not link from it.
+  if ! globals_ok; then
+    warn "skip: $globals is not a link of koodam, so koodam does not change it"
+    return 0
   fi
 
   # The kubelet changes the target of ..data for each new version of the ConfigMap. If the
   # target did not change, keep the tree. A folder with no ..data (a test) always gives a rebuild.
-  local stamp=missing old=
+  local stamp=missing old= changed tmp
   if [ -d "$src" ]; then
     stamp=$(readlink "$src/..data" 2>/dev/null) || stamp=
   fi
-  [ -f "$stampfile" ] && old=$(cat "$stampfile" 2>/dev/null)
+  [ -f "$stampfile" ] && [ ! -L "$stampfile" ] && old=$(cat "$stampfile" 2>/dev/null)
   changed=0
   if [ -z "$stamp" ] || [ "$stamp" != "$old" ] || [ ! -d "$globals" ]; then
     changed=1
     rebuild || return 0
-    if [ -n "$stamp" ]; then
-      printf '%s\n' "$stamp" >"$stampfile"
+    # Write the stamp through a new file and a rename. Never write through a symlink.
+    if [ -d "$stampfile" ] && [ ! -L "$stampfile" ]; then
+      warn "skip the stamp: $stampfile is a folder"
+    elif [ -n "$stamp" ] && tmp=$(mktemp "$state/.globals-stamp.XXXXXX"); then
+      printf '%s\n' "$stamp" >"$tmp" && mv -f "$tmp" "$stampfile" || rm -f "$tmp"
     else
       rm -f "$stampfile"
     fi
