@@ -20,7 +20,9 @@ import (
 	"bytes"
 	"fmt"
 	"io"
+	"maps"
 	"os/exec"
+	"slices"
 	"strings"
 	"text/tabwriter"
 
@@ -32,19 +34,22 @@ import (
 	"github.com/mohanraj00/koodam/internal/usage"
 )
 
-// outputProgram runs a program with the stdin in and gives its stdout. The stderr of the
-// program goes to the stderr of cmd. It uses no shell. Tests replace it.
+// outputProgram runs a program with the stdin in and gives its stdout. It drops the stderr of
+// the program, because a remote stderr can hold any text from the pod. It uses no shell. Tests
+// replace it.
 var outputProgram = func(cmd *cobra.Command, in string, name string, args ...string) ([]byte, error) {
 	c := exec.CommandContext(cmd.Context(), name, args...)
 	out := &bytes.Buffer{}
-	c.Stdin, c.Stdout, c.Stderr = strings.NewReader(in), out, cmd.ErrOrStderr()
+	c.Stdin, c.Stdout, c.Stderr = strings.NewReader(in), out, io.Discard
 	err := c.Run()
 	return out.Bytes(), err
 }
 
-// usageGatewayNote tells that a Workspace with a gateway key has a real spend.
-const usageGatewayNote = "note: this Workspace has a gateway key. The gateway spend is the real spend " +
-	"(see koodam spend). The session files also count the calls through the gateway."
+// usageGatewayNote tells that a Workspace with a gateway key has a real spend. The controller
+// writes the gateway usage of a Workspace to its status.
+const usageGatewayNote = "note: this Workspace has a gateway key. The gateway spend is the real spend: " +
+	"kubectl get workspace %s -n %s -o jsonpath='{.status.usage}'. The session files also count the calls " +
+	"through the gateway."
 
 func usageCmd(conn connect) *cobra.Command {
 	return &cobra.Command{
@@ -55,6 +60,8 @@ func usageCmd(conn connect) *cobra.Command {
 			"script reads ~/.claude/projects and ~/.codex/sessions and prints only the model names and the\n" +
 			"token counts, not the text. koodam multiplies the counts by the embedded LiteLLM prices.\n\n" +
 			"The cost is projected: it is the API price of the tokens, not the bill of a subscription plan.\n" +
+			"Limits: the cache write price is the 5-minute price, and the price tiers above 200k tokens\n" +
+			"are not used. If a Codex session file has more than 1 model, all its tokens go to the last model.\n\n" +
 			"Run koodam ssh setup WORKSPACE first.",
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -70,6 +77,10 @@ func usageCmd(conn connect) *cobra.Command {
 			if err != nil {
 				return apiError("get the Workspace", err)
 			}
+			if w.Status.Phase != corev1alpha1.WorkspaceRunning {
+				return fmt.Errorf("workspace %s/%s is not Running (phase %q): start it, then run koodam usage again",
+					ns, ws, w.Status.Phase)
+			}
 			if err := needEntry(ns, ws); err != nil {
 				return err
 			}
@@ -79,17 +90,17 @@ func usageCmd(conn connect) *cobra.Command {
 			}
 			raw, err := outputProgram(cmd, usage.RemoteScript, sshProgram, "-T", hostAlias(ns, ws), "sh", "-s")
 			if err != nil {
-				return fmt.Errorf("the usage script failed (%w): run koodam ssh test -n %s %s", err, ns, ws)
+				return fmt.Errorf("the usage script failed in Workspace %s/%s: run koodam ssh test -n %s %s",
+					ns, ws, ns, ws)
 			}
 			rows, err := usage.Parse(bytes.NewReader(raw))
 			if err != nil {
 				return err
 			}
-			out := cmd.OutOrStdout()
 			if w.Spec.Gateway != nil {
-				_, _ = fmt.Fprintln(cmd.ErrOrStderr(), usageGatewayNote)
+				_, _ = fmt.Fprintf(cmd.ErrOrStderr(), usageGatewayNote+"\n", ws, ns)
 			}
-			return printUsage(out, rows, prices)
+			return printUsage(cmd.OutOrStdout(), rows, prices)
 		},
 	}
 }
@@ -105,7 +116,7 @@ func printUsage(out io.Writer, rows []usage.Row, prices *usage.Table) error {
 	_, _ = fmt.Fprintln(w, "HARNESS\tMODEL\tINPUT\tOUTPUT\tCACHE-READ\tCACHE-WRITE\tCOST\tSOURCE")
 	var total usage.Row
 	var cost float64
-	unpriced := 0
+	unpriced := map[string]bool{}
 	for _, r := range rows {
 		c, ok := prices.Cost(r)
 		text := "no price"
@@ -113,16 +124,24 @@ func printUsage(out io.Writer, rows []usage.Row, prices *usage.Table) error {
 			text = fmt.Sprintf("projected %.4f USD", c)
 			cost += c
 		} else {
-			unpriced++
+			unpriced[r.Model] = true
 		}
 		_, _ = fmt.Fprintf(w, "%s\t%s\t%d\t%d\t%d\t%d\t%s\tsource: subscription\n",
 			r.Harness, r.Model, r.Input, r.Output, r.CacheRead, r.CacheWrite, text)
 		total.Input, total.Output = total.Input+r.Input, total.Output+r.Output
 		total.CacheRead, total.CacheWrite = total.CacheRead+r.CacheRead, total.CacheWrite+r.CacheWrite
 	}
-	text := fmt.Sprintf("projected %.4f USD", cost)
-	if unpriced > 0 {
-		text += fmt.Sprintf(" (no price for %d of the models)", unpriced)
+	models := map[string]bool{}
+	for _, r := range rows {
+		models[r.Model] = true
+	}
+	text := "no price"
+	if len(unpriced) < len(models) {
+		text = fmt.Sprintf("projected %.4f USD", cost)
+		if len(unpriced) > 0 {
+			text += fmt.Sprintf(" (no price for %d of the models: %s)", len(unpriced),
+				strings.Join(slices.Sorted(maps.Keys(unpriced)), ", "))
+		}
 	}
 	_, _ = fmt.Fprintf(w, "total\t-\t%d\t%d\t%d\t%d\t%s\tsource: subscription\n",
 		total.Input, total.Output, total.CacheRead, total.CacheWrite, text)
@@ -130,6 +149,14 @@ func printUsage(out io.Writer, rows []usage.Row, prices *usage.Table) error {
 		return err
 	}
 	_, err := fmt.Fprintf(out, "The prices are from LiteLLM commit %s. A subscription plan does not bill "+
-		"this cost.\n", prices.Commit[:12])
+		"this cost.\n", shortCommit(prices.Commit))
 	return err
+}
+
+// shortCommit gives the first 12 characters of a commit.
+func shortCommit(c string) string {
+	if len(c) > 12 {
+		return c[:12]
+	}
+	return c
 }

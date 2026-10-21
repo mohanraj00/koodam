@@ -21,6 +21,13 @@ If a run ends with no gateway spend in the status, `koodam get`, `koodam spend` 
 
 For a Workspace with a subscription login, `koodam usage WORKSPACE` shows a projected API cost from the session files of the harnesses. It is the API price of the tokens. It is not a bill, and it gives no budget and no revoke.
 
+The projected cost has 2 limits:
+
+- The cache write price is the 5-minute price of LiteLLM. The price tiers above 200k tokens are not used.
+- If a Codex session file has more than 1 model, all the tokens of the file go to the last model.
+
+For a Workspace with a gateway key, the controller writes the gateway usage to the status. Read it with `kubectl get workspace NAME -o jsonpath='{.status.usage}'`.
+
 ## Install the chart with a gateway
 
 The chart has 2 gateway modes. [charts/koodam/README.md](../charts/koodam/README.md) has all the steps and values.
