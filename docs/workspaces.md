@@ -1,6 +1,8 @@
 # Workspaces
 
-A Workspace is a long-lived pod for 1 developer. You connect to it with SSH from a terminal, the Claude desktop app or the Codex app. You run the harnesses in `tmux`, so a session stays after a disconnect.
+A Workspace is a long-lived pod for 1 developer. You connect to it with SSH, and you run the harnesses in `tmux`. A session stays after a disconnect.
+
+The terminal works. The checks with the Claude desktop app and the Codex app are in #15.
 
 For each Workspace, the controller makes these objects:
 
@@ -13,12 +15,32 @@ The pod has no public port. `koodam tunnel` connects SSH to port 2222 through th
 
 ## Before you start
 
-- **Bind the namespace to a Profile.** The controller runs a Workspace only in a namespace that a Profile binds. Else the Workspace stays `Pending`, and the condition `ProfileBound` is `False`. A cluster admin applies the sample Profile `profile-sample`, which permits `dev-sample`. Then the namespace gets the Profile label:
+- **Make the namespace.** This guide uses the namespace `dev-sample` of the [quick start](quickstart.md#3-run-1-agent). If it does not exist, make it:
 
   ```sh
-  kubectl apply -f config/samples/core_v1alpha1_profile.yaml
+  kubectl create namespace dev-sample
+  ```
+
+- **Bind the namespace to a Profile.** The controller runs a Workspace only in a namespace that a Profile binds. Else the Workspace stays `Pending`, and the condition `ProfileBound` is `False`. A cluster admin applies a Profile that permits `dev-sample`:
+
+  ```sh
+  kubectl apply -f - <<'EOF'
+  apiVersion: core.koodam.dev/v1alpha1
+  kind: Profile
+  metadata:
+    name: profile-sample
+  spec:
+    namespaces:
+    - dev-sample
+  EOF
+  ```
+
+  Then the namespace gets the Profile label:
+
+  ```sh
   kubectl label namespace dev-sample koodam.dev/profile=profile-sample
   ```
+
 - **Get the Workspace image.** A Workspace with no `spec.image` uses the chart value `workspace.image`. The default is `ghcr.io/mohanraj00/koodam-workspace`, with the chart `appVersion` as the tag. A new GHCR package is private. The pod can pull the image only after the maintainer makes the package public.
 - **Get the RBAC.** For `koodam ssh setup`, you need `get` and `patch` on workspaces in the namespace. For the tunnel, you need `get` on pods and `create` on pods/portforward.
 
@@ -49,12 +71,17 @@ These fields are optional:
 | `gateway.model`, `gateway.budgetPerDay` | A gateway key for the pod, for 1 model, with a budget for each day. Without `gateway`, the harnesses use the subscription login only. |
 | `harnesses` | The harness names (`claude-code`, `codex`). In v0.2, the controller does not install them in the pod. |
 
-Apply it and wait for the phase `Running`:
+1. Apply the Workspace:
 
-```sh
-kubectl apply -f workspace.yaml
-kubectl get workspaces -n dev-sample
-```
+   ```sh
+   kubectl apply -f workspace.yaml
+   ```
+
+2. Wait for the phase `Running`:
+
+   ```sh
+   kubectl wait workspace/main -n dev-sample --for=jsonpath='{.status.phase}'=Running --timeout=5m
+   ```
 
 The phase is `Pending`, `Running`, `Suspended` or `Failed`. If the phase is not `Running`, read the conditions with `kubectl describe workspace main -n dev-sample`.
 
@@ -96,11 +123,11 @@ In v0.2, the Workspace image does not contain Claude Code or Codex, and the cont
 
    The command runs `ssh` and attaches to the tmux session `main`. If the session does not exist, tmux makes it.
 
-If a step fails, run `koodam ssh doctor`. It checks the ssh program, the `Include` line, the file modes, the kube context, the RBAC for the port-forward and the phase of the Workspace. Without a Workspace name, it checks each Workspace in `~/.ssh/config.d/koodam`.
+If a step fails, run `koodam ssh doctor main -n dev-sample`. It checks the ssh program, the `Include` line, the file modes, the kube context, the RBAC for the port-forward and the phase of the Workspace. Without a Workspace name, it checks each Workspace in `~/.ssh/config.d/koodam`.
 
 ## The host name
 
-The host name of a Workspace is `koodam-<workspace>.<namespace>`, for example `koodam-main.dev-sample`. If only 1 Workspace in `~/.ssh/config.d/koodam` has the name `<workspace>`, the short name `koodam-<workspace>` also works. Any SSH client that reads `~/.ssh/config` can use these names:
+The host name of a Workspace is `koodam-<workspace>.<namespace>`, for example `koodam-main.dev-sample`. If only 1 Workspace in `~/.ssh/config.d/koodam` has the name `<workspace>`, the short name `koodam-<workspace>` also works. Each SSH client that reads `~/.ssh/config` can use these names:
 
 ```sh
 ssh koodam-main.dev-sample
@@ -110,23 +137,24 @@ The host entry uses the user `dev`, the key `~/.ssh/koodam_ed25519`, the file `~
 
 ## Use tmux
 
-`koodam ssh` always attaches to the session `main`. Start the harness in tmux. If the connection stops, the harness continues in the pod. Run `koodam ssh main` again to attach to the same session.
+`koodam ssh` always attaches to the session `main`. Start the harness in tmux. If the connection stops, the harness continues in the pod. To attach to the same session again, run `koodam ssh main -n dev-sample`.
 
-To use more sessions, run `tmux` commands in the pod. sshd permits 10 sessions on each connection.
+To use more sessions, run `tmux` commands in the pod. sshd permits 10 sessions on each connection (`MaxSessions 10` in [images/workspace/sshd_config](../images/workspace/sshd_config)).
 
 ## Connect the Claude desktop app
 
-1. Run `koodam ssh setup` and `koodam ssh test` for the Workspace.
-2. In the Claude desktop app, add an SSH connection to a remote host.
-3. Use the host name `koodam-<workspace>.<namespace>`. The app reads the host entry from `~/.ssh/config`.
-
-The manual check of these steps is not done yet (issue #15).
+1. Run `koodam ssh setup main -n dev-sample`.
+2. Run `koodam ssh test main -n dev-sample`.
+3. In the Claude desktop app, add an SSH connection to a remote host.
+4. Use the host name `koodam-main.dev-sample`. The app reads the host entry from `~/.ssh/config`.
 
 ## Connect the Codex app
 
-1. Run `koodam ssh setup` and `koodam ssh test` for the Workspace.
-2. In the Codex app, add an SSH connection with the host name `koodam-<workspace>.<namespace>`.
-3. If the app shows "Sign in to Codex", log in to Codex in the pod. Codex keeps 1 login for each Workspace in its home:
+1. Install Codex in the pod. See [Install the harnesses](#install-the-harnesses).
+2. Run `koodam ssh setup main -n dev-sample`.
+3. Run `koodam ssh test main -n dev-sample`.
+4. In the Codex app, add an SSH connection with the host name `koodam-main.dev-sample`.
+5. If the app shows "Sign in to Codex", log in to Codex in the pod. Codex keeps 1 login for each Workspace in its home:
 
    ```sh
    koodam ssh main -n dev-sample
@@ -135,6 +163,6 @@ The manual check of these steps is not done yet (issue #15).
 
 ## Suspend and delete
 
-- **Suspend.** Set `spec.suspend` to `true`. The controller blocks the gateway key first, then it stops the pod. The PVC stays. Set it to `false` to start the pod again.
-- **Delete.** `kubectl delete workspace main -n dev-sample`. If the Workspace has a gateway key, a finalizer keeps the Workspace until the controller blocks the key. The home PVC stays. Delete the PVC yourself if you do not need the files.
+- **Suspend.** Set `spec.suspend` to `true`. The controller blocks the gateway key first, then it stops the pod. The PVC stays. To start the pod again, set `spec.suspend` to `false`.
+- **Delete.** Run `kubectl delete workspace main -n dev-sample`. If the Workspace has a gateway key, a finalizer keeps the Workspace until the controller blocks the key. The home PVC stays. If you do not need the files, delete the PVC yourself.
 - **Remove the SSH entry.** `koodam ssh remove main -n dev-sample` removes the host entry and the host key. With `--key`, it also removes your public key from the Workspace. It does not remove the `Include` line or the key files.

@@ -15,7 +15,7 @@ I run coding harnesses (Claude Code, Codex) and my own agents on a dev cluster. 
 
 ## Docs
 
-v0.2 adds Workspaces. A Workspace is a pod with a home on a PVC. I connect to it over SSH from a terminal, the Claude desktop app or the Codex app, and run the harnesses in tmux.
+v0.2 adds Workspaces. A Workspace is a pod with a home on a PVC. I connect to it over SSH and run the harnesses in tmux.
 
 - [Quick start](docs/quickstart.md): install the chart and the CLI, then run 1 Agent.
 - [Workspaces](docs/workspaces.md): make a Workspace and connect with `koodam ssh`.
