@@ -90,6 +90,8 @@ koodam ssh main           # ssh, then the tmux session main
 koodam ssh remove main    # --key also removes the public key from the Workspace
 ```
 
+`koodam profile push` copies `~/.claude/CLAUDE.md`, `~/.codex/AGENTS.md` and the folders in `~/.claude/skills` to the ConfigMap `koodam-globals`. Each Workspace pod mounts it read-only at `/etc/koodam/globals`. A `/` in a path becomes `__` in the key (`skills__NAME__PATH`), and `manifest.json` lists each key and its path. It refuses credential files (`.credentials.json`, `auth.json`, `*.key`, `.env`), binary files and more than 900 KiB. It skips symlinks. `--dry-run` shows only the keys and the sizes. It needs `get`, `create` and `update` on configmaps in the namespace.
+
 The controller deletes a finished Job and its pod 24 h after the end (the chart value `jobTTLSeconds`). After that, `koodam logs` has no log. The Agent keeps the status and the spend. The controller records the result before it deletes the Job, so a controller restart does not lose the result. If the controller is down, finished Jobs stay until it starts again.
 
 ## Install
