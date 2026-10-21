@@ -45,6 +45,14 @@ import (
 	"github.com/mohanraj00/koodam/internal/gateway"
 )
 
+// The calls that wsGateway records.
+const (
+	opCreate = "create"
+	opRenew  = "renew"
+	opBlock  = "block"
+	opUsage  = "usage"
+)
+
 // wsGateway is a fake gateway for the Workspace tests. atBlock runs at each BlockKey, before
 // the block, so a test can see the objects at the time of the block.
 type wsGateway struct {
@@ -61,7 +69,7 @@ func (g *wsGateway) CreateKey(_ context.Context, s gateway.KeySpec) error {
 	defer g.mu.Unlock()
 	g.keys[gateway.HashKey(s.Value)] = true
 	g.specs = append(g.specs, s)
-	g.order = append(g.order, "create")
+	g.order = append(g.order, opCreate)
 	return nil
 }
 
@@ -72,7 +80,7 @@ func (g *wsGateway) RenewKey(_ context.Context, s gateway.KeySpec) error {
 		return gateway.ErrKeyNotFound
 	}
 	g.specs = append(g.specs, s)
-	g.order = append(g.order, "renew")
+	g.order = append(g.order, opRenew)
 	return nil
 }
 
@@ -82,14 +90,14 @@ func (g *wsGateway) BlockKey(context.Context, string) error {
 	}
 	g.mu.Lock()
 	defer g.mu.Unlock()
-	g.order = append(g.order, "block")
+	g.order = append(g.order, opBlock)
 	return g.blockErr
 }
 
 func (g *wsGateway) Usage(context.Context, string) (gateway.Usage, error) {
 	g.mu.Lock()
 	defer g.mu.Unlock()
-	g.order = append(g.order, "usage")
+	g.order = append(g.order, opUsage)
 	return gateway.Usage{Spend: 0.5, Calls: 2, InputTokens: 10, OutputTokens: 5}, nil
 }
 
@@ -186,7 +194,7 @@ var _ = Describe("Workspace gateway key", func() {
 		Expect(string(s.Data["ANTHROPIC_BASE_URL"])).To(Equal("http://gw.test:4000"))
 		Expect(string(s.Data[modelField])).To(Equal("local-model"))
 
-		Expect(gw.order).To(Equal([]string{"create"}))
+		Expect(gw.order).To(Equal([]string{opCreate}))
 		sp := gw.specs[0]
 		Expect(sp.Alias).To(Equal(ws.Status.KeyAlias))
 		Expect(sp.Budget).To(Equal(5.0))
@@ -210,7 +218,7 @@ var _ = Describe("Workspace gateway key", func() {
 		key := secretKey()
 		res := mustReconcile()
 		Expect(res.RequeueAfter).To(Equal(ttl / 2))
-		Expect(gw.order).To(Equal([]string{"create", "renew"}))
+		Expect(gw.order).To(Equal([]string{opCreate, opRenew}))
 		Expect(gw.specs[1].Value).To(Equal(key))
 		Expect(gw.specs[1].TTL).To(Equal(ttl))
 	})
@@ -229,7 +237,7 @@ var _ = Describe("Workspace gateway key", func() {
 		Expect(secretAtBlock).To(BeTrue())
 		Expect(replicas()).To(Equal(int32(0)))
 		Expect(secretGone()).To(BeTrue())
-		Expect(gw.order).To(Equal([]string{"create", "block", "usage"}))
+		Expect(gw.order).To(Equal([]string{opCreate, opBlock, opUsage}))
 		ws := workspace()
 		Expect(ws.Status.KeyHash).To(BeEmpty())
 		Expect(ws.Status.KeyAlias).To(BeEmpty())
@@ -269,7 +277,7 @@ var _ = Describe("Workspace gateway key", func() {
 		mustReconcile()
 		edit(func(ws *corev1alpha1.Workspace) { ws.Spec.Gateway = nil })
 		mustReconcile()
-		Expect(gw.order).To(Equal([]string{"create", "block", "usage"}))
+		Expect(gw.order).To(Equal([]string{opCreate, opBlock, opUsage}))
 		Expect(secretGone()).To(BeTrue())
 		ws := workspace()
 		Expect(controllerutil.ContainsFinalizer(ws, workspaceFinalizer)).To(BeFalse())
@@ -284,7 +292,7 @@ var _ = Describe("Workspace gateway key", func() {
 		old := secretKey()
 		edit(func(ws *corev1alpha1.Workspace) { ws.Spec.Gateway.Model = "other-model" })
 		mustReconcile()
-		Expect(gw.order).To(Equal([]string{"create", "block", "usage", "create"}))
+		Expect(gw.order).To(Equal([]string{opCreate, opBlock, opUsage, opCreate}))
 		Expect(secretKey()).NotTo(Equal(old))
 		s := &corev1.Secret{}
 		Expect(k8sClient.Get(ctx, nn(name+"-gateway"), s)).To(Succeed())
