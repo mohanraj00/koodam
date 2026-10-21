@@ -29,8 +29,11 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
+	authv1 "k8s.io/api/authorization/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	k8sruntime "k8s.io/apimachinery/pkg/runtime"
 	kubefake "k8s.io/client-go/kubernetes/fake"
+	k8stesting "k8s.io/client-go/testing"
 	"k8s.io/client-go/tools/clientcmd"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
@@ -55,8 +58,9 @@ func sshHome(t *testing.T) (sshPaths, *[][]string) {
 	t.Setenv("HOME", home)
 	t.Setenv("USERPROFILE", home)
 	var calls [][]string
-	old := runProgram
-	t.Cleanup(func() { runProgram = old })
+	old, oldLook := runProgram, lookPath
+	t.Cleanup(func() { runProgram, lookPath = old, oldLook })
+	lookPath = func(name string) (string, error) { return "/usr/bin/" + name, nil }
 	runProgram = func(_ *cobra.Command, name string, args ...string) error {
 		calls = append(calls, append([]string{name}, args...))
 		if name == "ssh-keygen" {
@@ -84,9 +88,15 @@ func runSSH(kube client.WithWatch, in string, args ...string) (string, error) {
 	return runSSHEnv(&env{kube: kube, namespace: testNS, context: "kind-test"}, in, args...)
 }
 
-// runSSHEnv runs koodam with the env e and stdin in.
+// runSSHEnv runs koodam with the env e and stdin in. If e has no clientset, each access review
+// is allowed.
 func runSSHEnv(e *env, in string, args ...string) (string, error) {
-	e.clientset, e.poll = kubefake.NewClientset(), time.Millisecond
+	if e.clientset == nil {
+		cs := kubefake.NewClientset()
+		allow(cs, true)
+		e.clientset = cs
+	}
+	e.poll = time.Millisecond
 	root := newRoot(func() (*env, error) { return e, nil })
 	out := &bytes.Buffer{}
 	root.SetOut(out)
@@ -96,6 +106,13 @@ func runSSHEnv(e *env, in string, args ...string) (string, error) {
 	root.SetContext(context.Background())
 	err := root.Execute()
 	return out.String(), err
+}
+
+func allow(cs *kubefake.Clientset, allowed bool) {
+	cs.PrependReactor("create", "selfsubjectaccessreviews",
+		func(k8stesting.Action) (bool, k8sruntime.Object, error) {
+			return true, &authv1.SelfSubjectAccessReview{Status: authv1.SubjectAccessReviewStatus{Allowed: allowed}}, nil
+		})
 }
 
 func read(t *testing.T, path string) string {
@@ -426,7 +443,7 @@ func TestSSHRemoveWithoutKeyKeepsTheKeys(t *testing.T) {
 	}
 }
 
-func TestSSHConnectRunsSSH(t *testing.T) {
+func TestSSHConnectAndTestRunSSH(t *testing.T) {
 	_, calls := sshHome(t)
 	kube := newKube(t, nil, testWorkspace(hostKey, corev1alpha1.WorkspaceRunning))
 	if _, err := runSSH(kube, "", "ssh", wsName); err == nil || !strings.Contains(err.Error(), "ssh setup") {
@@ -439,8 +456,60 @@ func TestSSHConnectRunsSSH(t *testing.T) {
 	if out, err := runSSH(kube, "", "ssh", wsName); err != nil {
 		t.Fatalf("connect: %v\n%s", err, out)
 	}
-	want := []string{sshProgram, "-t", wsAlias, "tmux", "new-session", "-A", "-s", "main"}
-	if len(*calls) != 1 || !slices.Equal((*calls)[0], want) {
+	out, err := runSSH(kube, "", "ssh", "test", wsName)
+	if err != nil {
+		t.Fatalf("test: %v\n%s", err, out)
+	}
+	wantAll(t, out, "The SSH test passed")
+	want := [][]string{{sshProgram, "-t", wsAlias, "tmux", "new-session", "-A", "-s", "main"},
+		{sshProgram, wsAlias, testScript}}
+	if len(*calls) != 2 || !slices.Equal((*calls)[0], want[0]) || !slices.Equal((*calls)[1], want[1]) {
 		t.Errorf("calls: got %q, want %q", *calls, want)
+	}
+}
+
+func TestSSHDoctorFindsEachFault(t *testing.T) {
+	p, _ := sshHome(t)
+	ok := newKube(t, nil, testWorkspace(hostKey, corev1alpha1.WorkspaceRunning))
+	if out, err := runSSH(ok, "", "ssh", "setup", wsName, "--yes"); err != nil {
+		t.Fatalf("setup: %v\n%s", err, out)
+	}
+	if out, err := runSSH(ok, "", "ssh", "doctor"); err != nil || strings.Contains(out, "FAULT") {
+		t.Fatalf("doctor on a good setup: %v\n%s", err, out)
+	}
+
+	if err := os.WriteFile(p.config(), []byte(userLines+includeLine+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(p.key(), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	suspended := testWorkspace(hostKey, corev1alpha1.WorkspaceSuspended)
+	suspended.Spec.Suspend = true
+	cs := kubefake.NewClientset()
+	allow(cs, false)
+	out, err := runSSHEnv(&env{kube: newKube(t, nil, suspended), clientset: cs, namespace: testNS}, "", "ssh", "doctor")
+	if err == nil {
+		t.Fatalf("doctor found no fault:\n%s", out)
+	}
+	faults := []string{"Include", "mode of " + p.key(), "pods/portforward", "is not suspended", "is Running"}
+	if onWindows {
+		faults = slices.Delete(faults, 1, 2)
+	}
+	for _, f := range faults {
+		if !slices.ContainsFunc(strings.Split(out, "\n"), func(l string) bool {
+			return strings.HasPrefix(l, "FAULT") && strings.Contains(l, f)
+		}) {
+			t.Errorf("no FAULT line for %q:\n%s", f, out)
+		}
+	}
+
+	root := newRoot(func() (*env, error) { return nil, errors.New("no context") })
+	buf := &bytes.Buffer{}
+	root.SetOut(buf)
+	root.SetErr(buf)
+	root.SetArgs([]string{"ssh", "doctor"})
+	if err := root.Execute(); err == nil || !strings.Contains(buf.String(), "FAULT  the kube context") {
+		t.Errorf("doctor with no kube context: %v\n%s", err, buf.String())
 	}
 }

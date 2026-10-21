@@ -29,7 +29,9 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
+	authv1 "k8s.io/api/authorization/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	corev1alpha1 "github.com/mohanraj00/koodam/api/v1alpha1"
@@ -38,6 +40,11 @@ import (
 // sshProgram is the OpenSSH client.
 const sshProgram = "ssh"
 
+// testScript is the remote command of koodam ssh test. A login shell gives the PATH of the
+// harnesses.
+const testScript = `sh -lc 'tmux -V && git --version && for h in claude codex; do ` +
+	`if command -v $h >/dev/null 2>&1; then $h --version; fi; done'`
+
 // runProgram runs a program with the stdin, stdout and stderr of cmd. It uses no shell.
 // Tests replace it.
 var runProgram = func(cmd *cobra.Command, name string, args ...string) error {
@@ -45,6 +52,9 @@ var runProgram = func(cmd *cobra.Command, name string, args ...string) error {
 	c.Stdin, c.Stdout, c.Stderr = cmd.InOrStdin(), cmd.OutOrStdout(), cmd.ErrOrStderr()
 	return c.Run()
 }
+
+// lookPath finds a program on the PATH. Tests replace it.
+var lookPath = exec.LookPath
 
 // sshCmd connects to a Workspace. Its subcommands configure the SSH connection.
 func sshCmd(conn connect) *cobra.Command {
@@ -67,7 +77,7 @@ func sshCmd(conn connect) *cobra.Command {
 			return runProgram(cmd, sshProgram, "-t", hostAlias(ns, ws), "tmux", "new-session", "-A", "-s", "main")
 		},
 	}
-	cmd.AddCommand(sshSetupCmd(conn), sshRemoveCmd(conn))
+	cmd.AddCommand(sshSetupCmd(conn), sshTestCmd(conn), sshRemoveCmd(conn), sshDoctorCmd(conn))
 	return cmd
 }
 
@@ -178,9 +188,9 @@ func (e *env) sshSetup(cmd *cobra.Command, ns, ws string, yes bool) error {
 	}
 	targets, _ := readEntries(p.hostFile())
 	host := strings.Fields(hostNames(targets)[ns+"/"+ws] + " " + hostAlias(ns, ws))[0]
-	_, _ = fmt.Fprintf(out, "SSH is configured for Workspace %s/%s.\n"+
+	_, _ = fmt.Fprintf(out, "SSH is configured for Workspace %s/%s.\n  Test:     koodam ssh test %s\n"+
 		"  Terminal: koodam ssh %s, or ssh %s\n  Desktop app: add an SSH connection to the host %s\n",
-		ns, ws, ws, host, host)
+		ns, ws, ws, ws, host, host)
 	return nil
 }
 
@@ -293,4 +303,139 @@ func sshRemoveCmd(conn connect) *cobra.Command {
 	}
 	cmd.Flags().BoolVar(&key, "key", false, "also remove your public key from the Workspace")
 	return cmd
+}
+
+func sshTestCmd(conn connect) *cobra.Command {
+	return &cobra.Command{
+		Use:   "test WORKSPACE",
+		Short: "Connect to a Workspace and show the versions of tmux, git and the harnesses",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			_, ns, ws, err := sshTarget(conn, args[0])
+			if err != nil {
+				return err
+			}
+			if err := needEntry(ns, ws); err != nil {
+				return err
+			}
+			if err := runProgram(cmd, sshProgram, hostAlias(ns, ws), testScript); err != nil {
+				return fmt.Errorf("the SSH test failed (%w): run koodam ssh doctor %s", err, ws)
+			}
+			_, err = fmt.Fprintf(cmd.OutOrStdout(), "The SSH test passed for Workspace %s/%s.\n", ns, ws)
+			return err
+		},
+	}
+}
+
+// doctor writes the result of each check and counts the faults.
+type doctor struct {
+	out    io.Writer
+	faults int
+}
+
+func (d *doctor) check(what string, ok bool, fix string) {
+	if ok {
+		_, _ = fmt.Fprintf(d.out, "ok     %s\n", what)
+		return
+	}
+	d.faults++
+	_, _ = fmt.Fprintf(d.out, "FAULT  %s: %s\n", what, fix)
+}
+
+func sshDoctorCmd(conn connect) *cobra.Command {
+	return &cobra.Command{
+		Use:   "doctor [WORKSPACE]",
+		Short: "Find the usual faults of the SSH connection to a Workspace",
+		Long: "Check the ssh program, the Include line, the file modes, the kube context, the RBAC\n" +
+			"for the port-forward and the phase of the Workspace. Without WORKSPACE, check each\n" +
+			"Workspace in ~/.ssh/config.d/koodam.",
+		Args: cobra.MaximumNArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			d := &doctor{out: cmd.OutOrStdout()}
+			p, err := userSSH()
+			if err != nil {
+				return err
+			}
+			_, err = lookPath(sshProgram)
+			d.check("the ssh program is on the PATH", err == nil, "install the OpenSSH client")
+			cfg, _ := readOptional(p.config())
+			d.check("~/.ssh/config has '"+includeLine+"' before the first Host line", hasInclude(cfg),
+				"run koodam ssh setup, or add the line at the top of ~/.ssh/config")
+			d.modes(p)
+			if e, err := conn(); err != nil {
+				d.check("the kube context", false, "select a kube context, or use --context or --kubeconfig")
+			} else {
+				d.cluster(cmd.Context(), e, p, args)
+			}
+			if d.faults > 0 {
+				return fmt.Errorf("koodam ssh doctor found %d faults", d.faults)
+			}
+			return nil
+		},
+	}
+}
+
+// modes checks that only the user can read the SSH files of koodam. Windows has no file modes.
+func (d *doctor) modes(p sshPaths) {
+	if onWindows {
+		return
+	}
+	for _, f := range []struct {
+		path string
+		max  fs.FileMode
+	}{{p.dir, 0o700}, {p.hostDir(), 0o700}, {p.key(), 0o600}, {p.knownHosts(), 0o600}, {p.hostFile(), 0o600}} {
+		if fi, err := os.Stat(f.path); err == nil {
+			d.check(fmt.Sprintf("the mode of %s is %o or less", f.path, f.max), fi.Mode().Perm()&^f.max == 0,
+				fmt.Sprintf("run chmod %o %s", f.max, f.path))
+		}
+	}
+}
+
+// cluster checks the RBAC for the tunnel and the phase of each Workspace.
+func (d *doctor) cluster(ctx context.Context, e *env, p sshPaths, args []string) {
+	targets, _ := readEntries(p.hostFile())
+	if len(args) == 1 {
+		targets = []string{e.namespace + "/" + args[0]}
+	}
+	d.check("the kube context", true, "")
+	if len(targets) == 0 {
+		_, _ = fmt.Fprintln(d.out, "No Workspace in ~/.ssh/config.d/koodam: run koodam ssh setup WORKSPACE.")
+	}
+	for _, t := range targets {
+		ns, ws, err := parseTarget(t)
+		if err != nil {
+			d.check("the Workspace name", false, err.Error())
+			continue
+		}
+		allowed, err := e.canTunnel(ctx, ns)
+		d.check("RBAC: get on pods and create on pods/portforward in namespace "+ns, allowed && err == nil,
+			"ask the cluster admin for these verbs")
+		w := &corev1alpha1.Workspace{}
+		if err := e.kube.Get(ctx, client.ObjectKey{Namespace: ns, Name: ws}, w); err != nil {
+			d.check("Workspace "+t+" exists", false, apiError("get the Workspace", err).Error())
+			continue
+		}
+		d.check("Workspace "+t+" is not suspended", !w.Spec.Suspend, "set spec.suspend to false")
+		d.check("Workspace "+t+" is Running", w.Status.Phase == corev1alpha1.WorkspaceRunning,
+			fmt.Sprintf("the phase is %q: wait, or read the Workspace conditions", w.Status.Phase))
+	}
+}
+
+// canTunnel asks the API server if the user can open the tunnel in namespace ns.
+func (e *env) canTunnel(ctx context.Context, ns string) (bool, error) {
+	for _, ra := range []authv1.ResourceAttributes{
+		{Namespace: ns, Verb: "get", Resource: "pods"},
+		{Namespace: ns, Verb: "create", Resource: "pods", Subresource: "portforward"},
+	} {
+		r, err := e.clientset.AuthorizationV1().SelfSubjectAccessReviews().Create(ctx,
+			&authv1.SelfSubjectAccessReview{Spec: authv1.SelfSubjectAccessReviewSpec{ResourceAttributes: &ra}},
+			metav1.CreateOptions{})
+		if err != nil {
+			return false, apiError("create the SelfSubjectAccessReview", err)
+		}
+		if !r.Status.Allowed {
+			return false, nil
+		}
+	}
+	return true, nil
 }
