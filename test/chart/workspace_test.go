@@ -83,6 +83,14 @@ func TestWorkspaceImage(t *testing.T) {
 			set:  []string{"workspace.image.tag=0.2.0"},
 			want: "ghcr.io/mohanraj00/koodam-workspace:0.2.0",
 		},
+		"repository only": {
+			set:  []string{"workspace.image.repository=registry.example/ws"},
+			want: "registry.example/ws:" + appVersion(t),
+		},
+		"digest": {
+			set:  []string{"workspace.image.tag=sha256:" + strings.Repeat("a", 64)},
+			want: "ghcr.io/mohanraj00/koodam-workspace@sha256:" + strings.Repeat("a", 64),
+		},
 		"repository and tag": {
 			set:  []string{"workspace.image.repository=registry.example/ws", "workspace.image.tag=dev"},
 			want: "registry.example/ws:dev",
@@ -106,11 +114,23 @@ func TestWorkspaceImage(t *testing.T) {
 }
 
 func TestWorkspaceImageRefusesEmptyRepository(t *testing.T) {
-	out, err := helmTemplate(t, "", "workspace.image.repository=")
-	if err == nil {
-		t.Fatal("helm template must fail")
+	cases := map[string]struct {
+		values string
+		set    []string
+	}{
+		"empty repository": {set: []string{"workspace.image.repository="}},
+		"null workspace":   {values: "workspace: null\n"},
+		"null image":       {values: "workspace:\n  image: null\n"},
 	}
-	if !strings.Contains(out, "workspace.image.repository is necessary.") {
-		t.Errorf("the error does not give the value name:\n%s", out)
+	for name, c := range cases {
+		t.Run(name, func(t *testing.T) {
+			out, err := helmTemplate(t, c.values, c.set...)
+			if err == nil {
+				t.Fatal("helm template must fail")
+			}
+			if !strings.Contains(out, "workspace.image.repository is necessary.") {
+				t.Errorf("the error does not give the value name:\n%s", out)
+			}
+		})
 	}
 }

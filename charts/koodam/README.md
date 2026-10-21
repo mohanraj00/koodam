@@ -127,7 +127,7 @@ helm install koodam charts/koodam -n koodam-system -f charts/koodam/values-bundl
 
 ## The workspace image
 
-A Workspace with no `spec.image` uses the image in `workspace.image`. The default is `ghcr.io/mohanraj00/koodam-workspace`. If `workspace.image.tag` is empty, the chart uses the chart `appVersion` as the tag. Thus the controller image and the workspace image are on the same release. The chart always passes this image to the controller with the flag `--workspace-image`.
+A Workspace with no `spec.image` uses the image in `workspace.image`. The default is `ghcr.io/mohanraj00/koodam-workspace`. If `workspace.image.tag` is empty, the chart uses the chart `appVersion` as the tag. Then the controller image and the workspace image are on the same release. If the tag starts with `sha256:`, the chart uses it as a digest: `<repository>@<digest>`. The chart always passes this image to the controller with the flag `--workspace-image`.
 
 If you set `image.tag`, also set `workspace.image.tag` to the same release:
 
