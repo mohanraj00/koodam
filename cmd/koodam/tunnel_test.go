@@ -66,21 +66,28 @@ func (s *fakeStream) Write(p []byte) (int, error) {
 // fakeConn is an in-process port-forward. The remote side sends the SSH banner, reads the
 // client data to the end, and then ends. errMsg is the text on the error stream.
 type fakeConn struct {
-	errMsg  string
-	closed  chan bool
-	once    sync.Once
-	got     bytes.Buffer
-	headers []http.Header
-	done    chan struct{}
+	errMsg string
+	banner string
+	// errBlock, if set, keeps the error stream open with no data.
+	errBlock bool
+	closed   chan bool
+	once     sync.Once
+	got      bytes.Buffer
+	headers  []http.Header
+	done     chan struct{}
 }
 
 func newFakeConn(errMsg string) *fakeConn {
-	return &fakeConn{errMsg: errMsg, closed: make(chan bool), done: make(chan struct{})}
+	return &fakeConn{errMsg: errMsg, banner: sshBanner, closed: make(chan bool), done: make(chan struct{})}
 }
 
 func (c *fakeConn) CreateStream(h http.Header) (httpstream.Stream, error) {
 	c.headers = append(c.headers, h.Clone())
 	nop := func() error { return nil }
+	if h.Get(corev1.StreamType) == corev1.StreamTypeError && c.errBlock {
+		r, _ := io.Pipe()
+		return &fakeStream{Reader: r, headers: h, close: nop, reset: nop}, nil
+	}
 	if h.Get(corev1.StreamType) == corev1.StreamTypeError {
 		return &fakeStream{Reader: strings.NewReader(c.errMsg), headers: h, close: nop, reset: nop}, nil
 	}
@@ -88,7 +95,7 @@ func (c *fakeConn) CreateStream(h http.Header) (httpstream.Stream, error) {
 	remoteIn, toRemote := io.Pipe()
 	go func() {
 		defer close(c.done)
-		_, _ = remoteOut.Write([]byte(sshBanner))
+		_, _ = remoteOut.Write([]byte(c.banner))
 		_, _ = io.Copy(&c.got, remoteIn)
 		_ = remoteOut.Close()
 	}()
@@ -192,6 +199,8 @@ func TestTunnelData(t *testing.T) {
 // TestTunnelErrors checks that each failure gives a non-zero exit, an error on stderr and
 // nothing on stdout.
 func TestTunnelErrors(t *testing.T) {
+	remoteErr := newFakeConn("connection refused\x1b")
+	remoteErr.banner = ""
 	cases := []struct {
 		name, want string
 		conn       *fakeConn
@@ -203,7 +212,7 @@ func TestTunnelErrors(t *testing.T) {
 		{name: "dial fails", want: "you need create on pods/portforward", pod: workspacePod(corev1.PodRunning),
 			dialErr: errors.New("the API server denied the port-forward (HTTP 403): you need create on pods/portforward")},
 		{name: "remote error", want: "port-forward to port 22 failed: connection refused",
-			pod: workspacePod(corev1.PodRunning), conn: newFakeConn("connection refused\x1b")},
+			pod: workspacePod(corev1.PodRunning), conn: remoteErr},
 	}
 	for _, tc := range cases {
 		dial := func(context.Context, string, string) (httpstream.Connection, error) {
@@ -224,10 +233,7 @@ func TestTunnelErrors(t *testing.T) {
 		if !strings.Contains(strings.Join(strings.Fields(errOut), " "), tc.want) {
 			t.Errorf("%s: stderr %q, want %q", tc.name, errOut, tc.want)
 		}
-		if tc.conn != nil && out != sshBanner {
-			t.Errorf("%s: stdout %q, want only the remote data", tc.name, out)
-		}
-		if tc.conn == nil && out != "" {
+		if out != "" {
 			t.Errorf("%s: stdout %q, want nothing", tc.name, out)
 		}
 		if strings.Contains(errOut, "\x1b") {
@@ -266,5 +272,30 @@ func TestSpdyDialErrors(t *testing.T) {
 		if msg := e.Error(); strings.Contains(msg, token) || strings.Contains(msg, srv.URL) {
 			t.Errorf("the error shows the token or the server address: %q", msg)
 		}
+	}
+}
+
+// errReader is a stdin that fails.
+type errReader struct{}
+
+func (errReader) Read([]byte) (int, error) { return 0, errors.New("stdin failed") }
+
+// TestTunnelStdinError checks that a stdin error ends the tunnel when the error stream stays open.
+func TestTunnelStdinError(t *testing.T) {
+	old := errWait
+	errWait = 50 * time.Millisecond
+	defer func() { errWait = old }()
+	c := newFakeConn("")
+	c.banner = ""
+	c.errBlock = true
+	done := make(chan error, 1)
+	go func() { done <- forward(context.Background(), c, errReader{}, io.Discard) }()
+	select {
+	case err := <-done:
+		if err == nil || !strings.Contains(err.Error(), "stdin failed") {
+			t.Errorf("got %v, want the stdin error", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("forward did not end after a stdin error")
 	}
 }

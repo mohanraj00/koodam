@@ -46,6 +46,9 @@ const (
 	portForwardProtocol = "portforward.k8s.io"
 )
 
+// errWait is the maximum time to wait for the error stream after the data stops.
+var errWait = 2 * time.Second
+
 // dialFunc opens a port-forward connection to a pod.
 type dialFunc func(ctx context.Context, ns, pod string) (httpstream.Connection, error)
 
@@ -164,12 +167,25 @@ func forward(ctx context.Context, c httpstream.Connection, in io.Reader, out io.
 	}
 	// Reset the data stream before the read of the error stream. Unsent data can block it.
 	_ = data.Reset()
+	// Wait for the error stream, but not with no end: a stdin error or a stopped server can
+	// keep it open.
+	var msg []byte
+	limit := time.NewTimer(errWait)
+	defer limit.Stop()
 	select {
-	case msg := <-errMsg:
-		if len(msg) > 0 {
-			return fmt.Errorf("the port-forward to port %d failed: %s", sshPort, printable(string(msg)))
-		}
+	case msg = <-errMsg:
 	case <-c.CloseChan():
+		// The server can send the error and then close. Read it if it is there.
+		select {
+		case msg = <-errMsg:
+		default:
+		}
+	case <-limit.C:
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+	if len(msg) > 0 {
+		return fmt.Errorf("the port-forward to port %d failed: %s", sshPort, printable(string(msg)))
 	}
 	if copyErr != nil {
 		return fmt.Errorf("copy the data: %w", copyErr)
