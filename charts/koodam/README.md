@@ -25,16 +25,14 @@ This chart installs the Koodam controller and the Agent CRD. The controller uses
    kubectl create namespace koodam-system
    ```
 
-4. Make the Secret with the LiteLLM master key. Read the key from a file, so that the key is not in your shell history. Write the file with `printf %s`, not with `echo`. The `umask 077` subshell makes a file that only you can read:
+4. Make the Secret with the LiteLLM master key. The command makes a random key and gives it to `kubectl` on stdin. Thus the key is not in your shell history, and no key file stays on the disk:
 
    ```sh
-   (umask 077; printf 'sk-%s' "$(openssl rand -hex 32)" > master-key)
-   kubectl -n koodam-system create secret generic koodam-gateway \
-     --from-file=master-key=./master-key
-   rm master-key
+   printf 'sk-%s' "$(openssl rand -hex 32)" | kubectl -n koodam-system \
+     create secret generic koodam-gateway --from-file=master-key=/dev/stdin
    ```
 
-   Do not write the key file with `echo`. `echo` adds a newline at the end, and the newline goes into the Secret. Then LiteLLM refuses each key with `401 token_not_found_in_db`.
+   Do not use `echo` for the key. `echo` adds a newline at the end, and the newline goes into the Secret. Then LiteLLM refuses each key with `401 token_not_found_in_db`.
 
 5. Install the chart. Set the gateway address in `gateway.url`. The existing mode has no default address. If `gateway.url` is empty, the install fails. `values-ollama.yaml` sets the address:
 

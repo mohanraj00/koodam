@@ -188,10 +188,11 @@ func TestUpstreamKeysDefaultIsEmpty(t *testing.T) {
 
 func TestUpstreamKeysRefuseBadItems(t *testing.T) {
 	item := "gateway.bundled.litellm.extraEnvFromSecrets[0]"
-	cases := map[string]struct {
+	type badItem struct {
 		set  []string
 		want string
-	}{
+	}
+	cases := map[string]badItem{
 		"no secret key": {
 			set:  []string{item + ".name=ANTHROPIC_API_KEY", item + ".secretName=upstream-keys"},
 			want: item + ".secretKey is necessary.",
@@ -204,11 +205,13 @@ func TestUpstreamKeysRefuseBadItems(t *testing.T) {
 			set:  []string{item + ".secretName=upstream-keys", item + ".secretKey=anthropic"},
 			want: item + ".name is necessary.",
 		},
-		"a chart variable": {
-			set: []string{item + ".name=LITELLM_MASTER_KEY", item + ".secretName=upstream-keys",
+	}
+	for _, reserved := range []string{"LITELLM_MASTER_KEY", "POSTGRES_PASSWORD", "DATABASE_URL"} {
+		cases["the chart variable "+reserved] = badItem{
+			set: []string{item + ".name=" + reserved, item + ".secretName=upstream-keys",
 				item + ".secretKey=anthropic"},
-			want: "must not be LITELLM_MASTER_KEY",
-		},
+			want: "must not be " + reserved,
+		}
 	}
 	for name, c := range cases {
 		t.Run(name, func(t *testing.T) {

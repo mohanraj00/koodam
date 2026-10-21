@@ -26,16 +26,15 @@ The chart has 2 gateway modes. [charts/koodam/README.md](../charts/koodam/README
 - `bundled`: the chart also installs LiteLLM and PostgreSQL. Use `values-bundled.yaml`.
 - `existing`: the controller uses a LiteLLM gateway that you install. Set `gateway.url`. LiteLLM must have a database, because the controller makes keys and reads the spend.
 
-For the 2 modes, make the Secret with the LiteLLM master key first. Read the key from a file, so that the key is not in your shell history. Write the file with `printf %s`. The `umask 077` subshell makes a file that only you can read:
+For the 2 modes, make the Secret with the LiteLLM master key first. The command makes a random key and gives it to `kubectl` on stdin. Thus the key is not in your shell history, and no key file stays on the disk:
 
 ```sh
 kubectl create namespace koodam-system
-(umask 077; printf 'sk-%s' "$(openssl rand -hex 32)" > master-key)
-kubectl -n koodam-system create secret generic koodam-gateway --from-file=master-key=./master-key
-rm master-key
+printf 'sk-%s' "$(openssl rand -hex 32)" | kubectl -n koodam-system \
+  create secret generic koodam-gateway --from-file=master-key=/dev/stdin
 ```
 
-Do not write the key file with `echo`. `echo` adds a newline at the end, and the newline goes into the Secret. Then LiteLLM refuses each key with `401 token_not_found_in_db`.
+Do not use `echo` for the key. `echo` adds a newline at the end, and the newline goes into the Secret. Then LiteLLM refuses each key with `401 token_not_found_in_db`.
 
 Then install the chart:
 
@@ -88,6 +87,8 @@ gateway:
 The chart renders each item as an env variable with `secretKeyRef`. Thus the key value is not in the values, the ConfigMap or the Helm release.
 
 Do not put a key value in `modelList`. Helm writes `modelList` into a ConfigMap and the release values.
+
+Each item of `extraEnvFromSecrets` needs `name`, `secretName` and `secretKey`. The `name` must not be `LITELLM_MASTER_KEY`, `POSTGRES_PASSWORD` or `DATABASE_URL`, because the chart sets these variables. If you change a key in the Secret, restart LiteLLM with `kubectl rollout restart deployment/<fullname>-litellm`.
 
 ## Write the Agent
 
