@@ -18,11 +18,11 @@ package main
 
 import (
 	"bufio"
+	"bytes"
 	"errors"
 	"fmt"
 	"io"
 	"os"
-	"strings"
 
 	"github.com/spf13/cobra"
 	"golang.org/x/term"
@@ -51,11 +51,14 @@ const (
 	loginUpdated = "updated"
 )
 
+// errNotTerminal tells the user to use --stdin. It contains no input.
+var errNotTerminal = errors.New("stdin is not a terminal: use --stdin to read the token from a pipe")
+
 // readTerminal reads 1 line from the terminal with no echo. Tests replace it.
 var readTerminal = func() ([]byte, error) {
 	fd := int(os.Stdin.Fd()) //nolint:gosec // A file descriptor fits in an int.
 	if !term.IsTerminal(fd) {
-		return nil, errors.New("stdin is not a terminal: use --stdin to read the token from a pipe")
+		return nil, errNotTerminal
 	}
 	return term.ReadPassword(fd)
 }
@@ -94,11 +97,11 @@ func loginCmd(conn connect) *cobra.Command {
 				}
 				return e.removeLogin(cmd, harnessClaude)
 			}
-			token, err := readToken(cmd, stdin)
+			e, err := conn()
 			if err != nil {
 				return err
 			}
-			e, err := conn()
+			token, err := readToken(cmd, stdin)
 			if err != nil {
 				return err
 			}
@@ -129,14 +132,17 @@ func readToken(cmd *cobra.Command, stdin bool) ([]byte, error) {
 		raw, err = readTerminal()
 		_, _ = fmt.Fprintln(cmd.ErrOrStderr())
 	}
-	if err != nil {
+	switch {
+	case errors.Is(err, errNotTerminal):
+		return nil, errNotTerminal
+	case err != nil:
 		return nil, errors.New("read the token: the read failed")
 	}
-	token := []byte(strings.TrimSpace(string(raw)))
+	token := bytes.TrimSpace(raw)
 	switch {
 	case len(token) == 0:
 		return nil, errors.New("the token is empty: run claude setup-token, then paste its token")
-	case !strings.HasPrefix(string(token), tokenPrefix):
+	case !bytes.HasPrefix(token, []byte(tokenPrefix)):
 		return nil, fmt.Errorf("the token does not start with %s: use the token from claude setup-token", tokenPrefix)
 	case len(token) < minToken || len(token) > maxToken:
 		return nil, fmt.Errorf("the token has %d bytes, but a token has %d to %d bytes", len(token), minToken, maxToken)
@@ -190,8 +196,9 @@ func (e *env) removeLogin(cmd *cobra.Command, key string) error {
 	ctx := cmd.Context()
 	out := cmd.OutOrStdout()
 	var op, result string
-	var notOurs bool
+	var notOurs, removed bool
 	err := retry.OnError(retry.DefaultRetry, apierrors.IsConflict, func() error {
+		removed = false
 		s := &corev1.Secret{}
 		op = "get the Secret"
 		err := e.kube.Get(ctx, client.ObjectKey{Namespace: e.namespace, Name: loginName}, s)
@@ -210,6 +217,7 @@ func (e *env) removeLogin(cmd *cobra.Command, key string) error {
 			return nil
 		}
 		delete(s.Data, key)
+		removed = true
 		if len(s.Data) > 0 {
 			op = "update the Secret"
 			result = fmt.Sprintf("key %s removed from secret/%s in namespace %s", key, loginName, e.namespace)
@@ -231,7 +239,9 @@ func (e *env) removeLogin(cmd *cobra.Command, key string) error {
 		return e.loginError(op, err)
 	}
 	_, _ = fmt.Fprintln(out, result)
-	_, _ = fmt.Fprintln(out, revokeNote)
+	if removed {
+		_, _ = fmt.Fprintln(out, revokeNote)
+	}
 	return nil
 }
 

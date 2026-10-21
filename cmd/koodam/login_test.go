@@ -19,6 +19,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"errors"
 	"strings"
 	"testing"
 
@@ -132,18 +133,19 @@ func TestLoginRefusesASecretThatKoodamDidNotMake(t *testing.T) {
 }
 
 func TestLoginRefusesABadToken(t *testing.T) {
-	cases := map[string]string{
-		"bad prefix": "sk-ant-api03-" + strings.Repeat("z", 80),
-		"too short":  tokenPrefix + "01-zz",
-		"too long":   tokenPrefix + strings.Repeat("z", maxToken),
-		"empty":      " \n",
+	cases := map[string]struct{ input, want string }{
+		"bad prefix": {"sk-ant-api03-" + strings.Repeat("z", 80), "does not start with"},
+		"too short":  {tokenPrefix + "01-zz", "bytes, but a token has"},
+		"too long":   {tokenPrefix + strings.Repeat("z", maxToken), "bytes, but a token has"},
+		"empty":      {" \n", "the token is empty"},
 	}
-	for name, input := range cases {
+	for name, c := range cases {
+		input := c.input
 		t.Run(name, func(t *testing.T) {
 			kube := newKube(t, nil)
 			_, err := runLogin(t, kube, input, strings.TrimSpace(input), "login", "claude-code", "--stdin")
-			if err == nil {
-				t.Fatal("got no error")
+			if err == nil || !strings.Contains(err.Error(), c.want) {
+				t.Fatalf("got error %v, want an error with %q", err, c.want)
 			}
 			if _, err := getLogin(t, kube); !apierrors.IsNotFound(err) {
 				t.Errorf("the command made a Secret: %v", err)
@@ -205,5 +207,15 @@ func TestLoginRefusesAnUnknownHarness(t *testing.T) {
 	_, err := runLogin(t, newKube(t, nil), "", "", "login", "gemini")
 	if err == nil || !strings.Contains(err.Error(), "unknown harness") {
 		t.Errorf("got %v, want an unknown harness error", err)
+	}
+}
+
+func TestLoginWithNoTerminalSaysUseStdin(t *testing.T) {
+	old := readTerminal
+	readTerminal = func() ([]byte, error) { return nil, errNotTerminal }
+	t.Cleanup(func() { readTerminal = old })
+	_, err := runLogin(t, newKube(t, nil), "", "", "login", "claude-code")
+	if !errors.Is(err, errNotTerminal) {
+		t.Fatalf("got error %v, want %v", err, errNotTerminal)
 	}
 }
