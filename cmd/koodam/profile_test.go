@@ -34,8 +34,9 @@ import (
 )
 
 const (
-	secretText = "do-not-show-this-text"
-	credErr    = "credential"
+	secretText   = "do-not-show-this-text"
+	credErr      = "credential"
+	notPermitted = "is not permitted"
 )
 
 // profileHome makes a home with CLAUDE.md, AGENTS.md and 1 skill.
@@ -150,9 +151,9 @@ func TestProfilePushRefusesBadFiles(t *testing.T) {
 		"credentials.json":  credErr,
 		"token.json":        credErr,
 		"notes.md":          "has a private key",
-		"a__b.md":           "is not permitted",
-		"_a.md":             "is not permitted",
-		"a.md_":             "is not permitted",
+		"a__b.md":           notPermitted,
+		"_a.md":             notPermitted,
+		"a.md_":             notPermitted,
 		"bad name.md":       "not a valid ConfigMap key",
 		"logo.png":          "not UTF-8",
 		"large.md":          "limit is 900 KiB",

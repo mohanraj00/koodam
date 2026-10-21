@@ -243,7 +243,7 @@ func checkRel(rel string) error {
 	if rel == "" || path.IsAbs(rel) || filepath.IsAbs(rel) {
 		return errors.New("the path must be relative")
 	}
-	for _, p := range strings.Split(rel, "/") {
+	for p := range strings.SplitSeq(rel, "/") {
 		switch {
 		case p == "" || p == "." || p == "..":
 			return fmt.Errorf("the segment %q is not permitted", p)
