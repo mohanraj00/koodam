@@ -84,6 +84,8 @@ For SSH to a Workspace, `koodam ssh setup` makes the key `~/.ssh/koodam_ed25519`
 
 ```sh
 koodam ssh setup main     # asks before it adds 1 Include line to ~/.ssh/config
+koodam ssh test main      # tmux, git and harness versions in the pod
+koodam ssh doctor         # kube context, RBAC, Workspace phase, Include line, file modes
 koodam ssh main           # ssh, then the tmux session main
 koodam ssh remove main    # --key also removes the public key from the Workspace
 ```
