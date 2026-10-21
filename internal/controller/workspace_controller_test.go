@@ -147,13 +147,16 @@ var _ = Describe("Workspace Controller", func() {
 		Expect(src[0].ConfigMap.Items).To(Equal([]corev1.KeyToPath{{Key: "authorized_keys", Path: "authorized_keys"}}))
 		Expect(src[1].Secret.Name).To(Equal(name + "-ssh-host"))
 		Expect(src[1].Secret.Items).To(Equal([]corev1.KeyToPath{{Key: "ssh_host_ed25519_key",
-			Path: "host/ssh_host_ed25519_key", Mode: new(int32(0o400))}}))
+			Path: "host/ssh_host_ed25519_key", Mode: new(int32(0o440))}}))
+		// The group of the secret files is the fsGroup, so sshd (uid 1000) can read them.
+		Expect(pod.SecurityContext.FSGroup).To(HaveValue(Equal(int64(1000))))
 		globals := vols[mounts["/etc/koodam/globals"].Name].ConfigMap
 		Expect(globals.Name).To(Equal("koodam-globals"))
 		Expect(globals.Optional).To(HaveValue(BeTrue()))
 		login := vols[mounts["/etc/koodam/login"].Name].Secret
 		Expect(login.SecretName).To(Equal("koodam-login"))
 		Expect(login.Optional).To(HaveValue(BeTrue()))
+		Expect(login.DefaultMode).To(HaveValue(Equal(int32(0o440))))
 
 		Expect(c.Ports).To(ConsistOf(HaveField("ContainerPort", int32(2222))))
 		Expect(c.ReadinessProbe.TCPSocket.Port.IntValue()).To(Equal(2222))

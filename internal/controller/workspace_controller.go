@@ -317,6 +317,8 @@ func (r *WorkspaceReconciler) statefulSet(ws *corev1alpha1.Workspace) (*appsv1.S
 	labels := map[string]string{WorkspaceLabel: ws.Name}
 	volumes := []corev1.Volume{
 		// One projected volume gives the 2 files of the contract. The kubelet updates the files.
+		// The secret files are owner root, group fsGroup 1000, mode 0440. Thus sshd (uid 1000)
+		// reads the host key, and sshd accepts the mode because the owner is not uid 1000.
 		{Name: ssh, VolumeSource: corev1.VolumeSource{Projected: &corev1.ProjectedVolumeSource{
 			Sources: []corev1.VolumeProjection{
 				{ConfigMap: &corev1.ConfigMapProjection{
@@ -325,12 +327,12 @@ func (r *WorkspaceReconciler) statefulSet(ws *corev1alpha1.Workspace) (*appsv1.S
 				{Secret: &corev1.SecretProjection{
 					LocalObjectReference: corev1.LocalObjectReference{Name: hostKeySecretName(ws)},
 					Items: []corev1.KeyToPath{{Key: hostKeyField, Path: "host/" + hostKeyField,
-						Mode: new(int32(0o400))}}}},
+						Mode: new(int32(0o440))}}}},
 			}}}},
 		{Name: globals, VolumeSource: corev1.VolumeSource{ConfigMap: &corev1.ConfigMapVolumeSource{
 			LocalObjectReference: corev1.LocalObjectReference{Name: globalsConfigMap}, Optional: new(true)}}},
 		{Name: login, VolumeSource: corev1.VolumeSource{Secret: &corev1.SecretVolumeSource{
-			SecretName: loginSecret, Optional: new(true), DefaultMode: new(int32(0o400))}}},
+			SecretName: loginSecret, Optional: new(true), DefaultMode: new(int32(0o440))}}},
 	}
 	container := corev1.Container{
 		Name: "workspace", Image: image,
