@@ -198,8 +198,8 @@ func isKeyNotFound(data []byte) bool {
 
 // CreateKey implements Gateway.
 func (l *LiteLLM) CreateKey(ctx context.Context, s KeySpec) error {
-	if s.Value == "" || s.Model == "" || s.TTL <= 0 {
-		return errors.New("litellm: key value, model and TTL are required")
+	if s.Value == "" || s.Model == "" || s.TTL < time.Second {
+		return errors.New("litellm: key value, model and a TTL of 1s or more are required")
 	}
 	md := map[string]any{"koodam": true}
 	for k, v := range s.Metadata {
@@ -232,12 +232,14 @@ func keyBody(s KeySpec) map[string]any {
 
 // RenewKey implements Gateway. LiteLLM sets the end of the key to the duration from now.
 func (l *LiteLLM) RenewKey(ctx context.Context, s KeySpec) error {
-	if s.Value == "" || s.Model == "" || s.TTL <= 0 {
-		return errors.New("litellm: key value, model and TTL are required")
+	if s.Value == "" || s.Model == "" || s.TTL < time.Second {
+		return errors.New("litellm: key value, model and a TTL of 1s or more are required")
 	}
 	err := l.do(ctx, http.MethodPost, "/key/update", keyBody(s), s.Value, nil)
-	if _, ok := errors.AsType[*HTTPError](err); ok {
-		// The error body of /key/update for a missing key is not stable. Ask /key/info.
+	if he, ok := errors.AsType[*HTTPError](err); ok &&
+		(he.Status == http.StatusBadRequest || he.Status == http.StatusNotFound) {
+		// LiteLLM gives 400 or 404 for a missing key, and the error body is not stable. Ask
+		// /key/info only for these codes. A 401, a 429 or a 5xx is not proof of a missing key.
 		if found, e := l.exists(ctx, s.Value); e == nil && !found {
 			return fmt.Errorf("%w: %w", ErrKeyNotFound, err)
 		}
