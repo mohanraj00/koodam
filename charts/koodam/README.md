@@ -25,12 +25,15 @@ This chart installs the Koodam controller and the Agent CRD. The controller uses
    kubectl create namespace koodam-system
    ```
 
-4. Make the Secret with the LiteLLM master key. Read the key from a file, so that the key is not in your shell history:
+4. Make the Secret with the LiteLLM master key. Read the key from a file, so that the key is not in your shell history. Write the file with `printf %s`, not with `echo`:
 
    ```sh
+   printf 'sk-%s' "$(openssl rand -hex 32)" > master-key
    kubectl -n koodam-system create secret generic koodam-gateway \
      --from-file=master-key=./master-key
    ```
+
+   Do not write the key file with `echo`. `echo` adds a newline at the end, and the newline goes into the Secret. Then LiteLLM refuses each key with `401 token_not_found_in_db`.
 
 5. Install the chart. Set the gateway address in `gateway.url`. The existing mode has no default address. If `gateway.url` is empty, the install fails. `values-ollama.yaml` sets the address:
 
@@ -59,6 +62,44 @@ This chart installs the Koodam controller and the Agent CRD. The controller uses
    ```
 
 3. Set the `model` of your Agent to `mock-1`, or add your models to `gateway.bundled.litellm.modelList`.
+
+### Upstream provider keys
+
+A real model needs an upstream key, for example `ANTHROPIC_API_KEY` or `OPENAI_API_KEY`. Put the key in a Secret that you make. The chart gives the key to LiteLLM as an env variable with `secretKeyRef`. The chart does not make or read this Secret.
+
+1. Make the Secret. Replace `<your-key>` with your key:
+
+   ```sh
+   kubectl -n koodam-system create secret generic upstream-keys \
+     --from-literal=anthropic=<your-key>
+   ```
+
+   `--from-literal` puts the key in your shell history. To prevent this, write each key to a file with `printf %s` and use `--from-file`.
+
+2. Add the env variables and the models to a values file, for example `upstream.yaml`:
+
+   ```yaml
+   gateway:
+     bundled:
+       litellm:
+         extraEnvFromSecrets:
+         - name: ANTHROPIC_API_KEY
+           secretName: upstream-keys
+           secretKey: anthropic
+         modelList:
+         - model_name: claude
+           litellm_params:
+             model: anthropic/claude-sonnet-4-5
+             api_key: os.environ/ANTHROPIC_API_KEY
+   ```
+
+3. Install the chart with `-f charts/koodam/values-bundled.yaml -f upstream.yaml`.
+
+Do not put a key value in `modelList`. Helm writes `modelList` into a ConfigMap and the release values. Use `os.environ/<NAME>` for each `api_key`.
+
+Each item of `extraEnvFromSecrets` needs `name`, `secretName` and `secretKey`. The chart has no field for a literal value. The `name` must not be `LITELLM_MASTER_KEY`, `POSTGRES_PASSWORD` or `DATABASE_URL`, because the chart sets these variables. If you change a key in the Secret, restart LiteLLM with `kubectl rollout restart deployment/<fullname>-litellm`.
+
+### Other bundled settings
 
 The controller uses the bundled LiteLLM Service `<fullname>-litellm`. LiteLLM and the controller read the same master key Secret.
 
@@ -94,6 +135,7 @@ helm install koodam charts/koodam -n koodam-system -f charts/koodam/values-bundl
 | `gateway.masterKeySecret.name`, `.key` | `koodam-gateway`, `master-key` | The Secret with the master key. |
 | `gateway.bundled.litellm.image` | `ghcr.io/berriai/litellm-database:v1.104.2` | The LiteLLM image. |
 | `gateway.bundled.litellm.modelList` | `[]` | The LiteLLM `model_list`. |
+| `gateway.bundled.litellm.extraEnvFromSecrets` | `[]` | The env variables for the upstream keys. Each item has `name`, `secretName` and `secretKey`. |
 | `gateway.bundled.litellm.batchWriteSeconds` | `1` | The LiteLLM `proxy_batch_write_at`. |
 | `gateway.bundled.mock.enabled` | `false` | Add the mock model `mock-1`. |
 | `gateway.bundled.postgres.image` | `docker.io/library/postgres:16-alpine` | The PostgreSQL image. |

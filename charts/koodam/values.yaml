@@ -39,7 +39,16 @@ gateway:
       batchWriteSeconds: 1
       # The LiteLLM model_list. Each Agent model must be an alias in this list.
       # Helm writes small floats as "1e-06". Do not set a cost per token here.
+      # To use an upstream key, write "api_key: os.environ/<NAME>" in a model.
+      # Do not put a key value here. Helm writes modelList into a ConfigMap and the release values.
       modelList: []
+      # The env variables for the upstream provider keys. Each variable comes from a Secret
+      # that you make. The chart does not make or read these Secrets. For example:
+      #   extraEnvFromSecrets:
+      #   - name: ANTHROPIC_API_KEY
+      #     secretName: upstream-keys
+      #     secretKey: anthropic
+      extraEnvFromSecrets: []
       resources: {}
       # The image user is root. LiteLLM also runs as the user "nobody" (65534).
       podSecurityContext:

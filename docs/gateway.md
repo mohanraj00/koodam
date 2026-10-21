@@ -26,12 +26,15 @@ The chart has 2 gateway modes. [charts/koodam/README.md](../charts/koodam/README
 - `bundled`: the chart also installs LiteLLM and PostgreSQL. Use `values-bundled.yaml`.
 - `existing`: the controller uses a LiteLLM gateway that you install. Set `gateway.url`. LiteLLM must have a database, because the controller makes keys and reads the spend.
 
-For the 2 modes, make the Secret with the LiteLLM master key first. Read the key from a file, so that the key is not in your shell history:
+For the 2 modes, make the Secret with the LiteLLM master key first. Read the key from a file, so that the key is not in your shell history. Write the file with `printf %s`:
 
 ```sh
 kubectl create namespace koodam-system
+printf 'sk-%s' "$(openssl rand -hex 32)" > master-key
 kubectl -n koodam-system create secret generic koodam-gateway --from-file=master-key=./master-key
 ```
+
+Do not write the key file with `echo`. `echo` adds a newline at the end, and the newline goes into the Secret. Then LiteLLM refuses each key with `401 token_not_found_in_db`.
 
 Then install the chart:
 
@@ -51,6 +54,35 @@ The `model` of an Agent is a model name in the LiteLLM config. The key permits o
 - With an existing gateway, add the model to the LiteLLM config of that gateway.
 
 If the model name is not in the LiteLLM config, the gateway refuses the calls.
+
+### Upstream keys for the bundled gateway
+
+A real model needs an upstream key, for example `ANTHROPIC_API_KEY`. Put the key in a Secret that you make. Replace `<your-key>` with your key:
+
+```sh
+kubectl -n koodam-system create secret generic upstream-keys --from-literal=anthropic=<your-key>
+```
+
+Then give the key to LiteLLM with `extraEnvFromSecrets`, and refer to the env variable in `modelList`:
+
+```yaml
+gateway:
+  bundled:
+    litellm:
+      extraEnvFromSecrets:
+      - name: ANTHROPIC_API_KEY
+        secretName: upstream-keys
+        secretKey: anthropic
+      modelList:
+      - model_name: claude
+        litellm_params:
+          model: anthropic/claude-sonnet-4-5
+          api_key: os.environ/ANTHROPIC_API_KEY
+```
+
+The chart renders each item as an env variable with `secretKeyRef`. Thus the key value is not in the values, the ConfigMap or the Helm release.
+
+Do not put a key value in `modelList`. Helm writes `modelList` into a ConfigMap and the release values.
 
 ## Write the Agent
 
