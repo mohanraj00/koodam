@@ -47,7 +47,7 @@ const (
 )
 
 // errWait is the maximum time to wait for the error stream after the data stops.
-var errWait = 2 * time.Second
+const errWait = 2 * time.Second
 
 // dialFunc opens a port-forward connection to a pod.
 type dialFunc func(ctx context.Context, ns, pod string) (httpstream.Connection, error)
@@ -114,13 +114,14 @@ func (e *env) tunnel(ctx context.Context, ns, ws string, in io.Reader, out io.Wr
 		return err
 	}
 	defer func() { _ = c.Close() }()
-	return forward(ctx, c, in, out)
+	return forward(ctx, c, in, out, errWait)
 }
 
 // forward copies the data of port 22 in the 2 directions. It stops when the remote side ends,
 // when the connection closes, or when ctx ends. At the end of stdin, it closes the write side
-// of the data stream, so that the remote side can end.
-func forward(ctx context.Context, c httpstream.Connection, in io.Reader, out io.Writer) error {
+// of the data stream, so that the remote side can end. After the data stops, it waits for the
+// error stream for the time wait at most.
+func forward(ctx context.Context, c httpstream.Connection, in io.Reader, out io.Writer, wait time.Duration) error {
 	h := http.Header{}
 	h.Set(corev1.StreamType, corev1.StreamTypeError)
 	h.Set(corev1.PortHeader, strconv.Itoa(sshPort))
@@ -158,8 +159,10 @@ func forward(ctx context.Context, c httpstream.Connection, in io.Reader, out io.
 	}()
 
 	var copyErr error
+	remoteEnded := false
 	select {
 	case copyErr = <-remoteDone:
+		remoteEnded = true
 	case copyErr = <-localErr:
 	case <-c.CloseChan():
 	case <-ctx.Done():
@@ -167,22 +170,25 @@ func forward(ctx context.Context, c httpstream.Connection, in io.Reader, out io.
 	}
 	// Reset the data stream before the read of the error stream. Unsent data can block it.
 	_ = data.Reset()
-	// Wait for the error stream, but not with no end: a stdin error or a stopped server can
-	// keep it open.
+	// Wait for the error stream, also after a close of the connection, because the server can
+	// send the error and then close. Do not wait with no end: a stdin error or a stopped server
+	// can keep the error stream open.
+	wctx, cancel := context.WithTimeout(ctx, wait)
+	defer cancel()
 	var msg []byte
-	limit := time.NewTimer(errWait)
-	defer limit.Stop()
 	select {
 	case msg = <-errMsg:
-	case <-c.CloseChan():
-		// The server can send the error and then close. Read it if it is there.
+	case <-wctx.Done():
+	}
+	// Wait for the copy to stdout to end, so that it does not write after the return.
+	if !remoteEnded {
 		select {
-		case msg = <-errMsg:
-		default:
+		case <-remoteDone:
+		case <-wctx.Done():
 		}
-	case <-limit.C:
-	case <-ctx.Done():
-		return ctx.Err()
+	}
+	if err := ctx.Err(); err != nil {
+		return err
 	}
 	if len(msg) > 0 {
 		return fmt.Errorf("the port-forward to port %d failed: %s", sshPort, printable(string(msg)))

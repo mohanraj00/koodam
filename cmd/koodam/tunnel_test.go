@@ -63,18 +63,35 @@ func (s *fakeStream) Write(p []byte) (int, error) {
 	return s.Writer.Write(p)
 }
 
+// slowReader waits for delay before the first read.
+type slowReader struct {
+	r     io.Reader
+	delay time.Duration
+	once  sync.Once
+}
+
+func (s *slowReader) Read(p []byte) (int, error) {
+	s.once.Do(func() { time.Sleep(s.delay) })
+	return s.r.Read(p)
+}
+
 // fakeConn is an in-process port-forward. The remote side sends the SSH banner, reads the
 // client data to the end, and then ends. errMsg is the text on the error stream.
 type fakeConn struct {
 	errMsg string
 	banner string
-	// errBlock, if set, keeps the error stream open with no data.
+	// errBlock, if set, keeps the error stream open with no data until errW closes.
 	errBlock bool
-	closed   chan bool
-	once     sync.Once
-	got      bytes.Buffer
-	headers  []http.Header
-	done     chan struct{}
+	errW     *io.PipeWriter
+	// errDelay is a delay before the error stream gives errMsg.
+	errDelay time.Duration
+	// closeAtEnd, if set, closes the connection when the remote side ends.
+	closeAtEnd bool
+	closed     chan bool
+	once       sync.Once
+	got        bytes.Buffer
+	headers    []http.Header
+	done       chan struct{}
 }
 
 func newFakeConn(errMsg string) *fakeConn {
@@ -85,11 +102,13 @@ func (c *fakeConn) CreateStream(h http.Header) (httpstream.Stream, error) {
 	c.headers = append(c.headers, h.Clone())
 	nop := func() error { return nil }
 	if h.Get(corev1.StreamType) == corev1.StreamTypeError && c.errBlock {
-		r, _ := io.Pipe()
+		r, w := io.Pipe()
+		c.errW = w
 		return &fakeStream{Reader: r, headers: h, close: nop, reset: nop}, nil
 	}
 	if h.Get(corev1.StreamType) == corev1.StreamTypeError {
-		return &fakeStream{Reader: strings.NewReader(c.errMsg), headers: h, close: nop, reset: nop}, nil
+		r := &slowReader{r: strings.NewReader(c.errMsg), delay: c.errDelay}
+		return &fakeStream{Reader: r, headers: h, close: nop, reset: nop}, nil
 	}
 	fromRemote, remoteOut := io.Pipe()
 	remoteIn, toRemote := io.Pipe()
@@ -98,6 +117,9 @@ func (c *fakeConn) CreateStream(h http.Header) (httpstream.Stream, error) {
 		_, _ = remoteOut.Write([]byte(c.banner))
 		_, _ = io.Copy(&c.got, remoteIn)
 		_ = remoteOut.Close()
+		if c.closeAtEnd {
+			_ = c.Close()
+		}
 	}()
 	return &fakeStream{Reader: fromRemote, Writer: toRemote, headers: h,
 		close: toRemote.Close,
@@ -282,14 +304,16 @@ func (errReader) Read([]byte) (int, error) { return 0, errors.New("stdin failed"
 
 // TestTunnelStdinError checks that a stdin error ends the tunnel when the error stream stays open.
 func TestTunnelStdinError(t *testing.T) {
-	old := errWait
-	errWait = 50 * time.Millisecond
-	defer func() { errWait = old }()
 	c := newFakeConn("")
 	c.banner = ""
 	c.errBlock = true
+	t.Cleanup(func() {
+		if c.errW != nil {
+			_ = c.errW.Close()
+		}
+	})
 	done := make(chan error, 1)
-	go func() { done <- forward(context.Background(), c, errReader{}, io.Discard) }()
+	go func() { done <- forward(context.Background(), c, errReader{}, io.Discard, 50*time.Millisecond) }()
 	select {
 	case err := <-done:
 		if err == nil || !strings.Contains(err.Error(), "stdin failed") {
@@ -297,5 +321,22 @@ func TestTunnelStdinError(t *testing.T) {
 		}
 	case <-time.After(5 * time.Second):
 		t.Fatal("forward did not end after a stdin error")
+	}
+}
+
+// TestTunnelErrorAfterClose checks that an error from the server is not lost when the server
+// closes the connection before the reader of the error stream gives the error.
+func TestTunnelErrorAfterClose(t *testing.T) {
+	c := newFakeConn("connection refused")
+	c.banner = ""
+	c.errDelay = 100 * time.Millisecond
+	c.closeAtEnd = true
+	out := &bytes.Buffer{}
+	err := forward(context.Background(), c, strings.NewReader(""), out, 5*time.Second)
+	if err == nil || !strings.Contains(err.Error(), "port-forward to port 22 failed: connection refused") {
+		t.Errorf("got %v, want the error from the server", err)
+	}
+	if out.Len() != 0 {
+		t.Errorf("stdout %q, want nothing", out.String())
 	}
 }
