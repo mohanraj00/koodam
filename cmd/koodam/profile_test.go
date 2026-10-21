@@ -34,9 +34,8 @@ import (
 )
 
 const (
-	secretText   = "do-not-show-this-text"
-	credErr      = "credential"
-	notPermitted = "is not permitted"
+	secretText = "do-not-show-this-text"
+	credErr    = "credential"
 )
 
 // profileHome makes a home with CLAUDE.md, AGENTS.md and 1 skill.
@@ -86,8 +85,8 @@ func TestProfilePushCreatesThenUpdatesTheConfigMap(t *testing.T) {
 	want := map[string]string{
 		"CLAUDE.md":                  "CLAUDE.md",
 		"AGENTS.md":                  "AGENTS.md",
-		"skills__review__SKILL.md":   "skills/review/SKILL.md",
-		"skills__review__refs__a.md": "skills/review/refs/a.md",
+		"skills_sreview_sSKILL.md":   "skills/review/SKILL.md",
+		"skills_sreview_srefs_sa.md": "skills/review/refs/a.md",
 	}
 	var m globalsManifest
 	if err := json.Unmarshal([]byte(cm.Data[manifestKey]), &m); err != nil {
@@ -111,7 +110,7 @@ func TestProfilePushCreatesThenUpdatesTheConfigMap(t *testing.T) {
 		t.Fatalf("second push: %v\n%s", err, out)
 	}
 	wantAll(t, out, "configmap/koodam-globals updated", "3 files")
-	if _, ok := getGlobals(t, kube).Data["skills__review__refs__a.md"]; ok {
+	if _, ok := getGlobals(t, kube).Data["skills_sreview_srefs_sa.md"]; ok {
 		t.Error("the update kept a removed file")
 	}
 }
@@ -123,7 +122,7 @@ func TestProfilePushDryRunShowsKeysAndSizesOnly(t *testing.T) {
 	if err != nil {
 		t.Fatalf("dry run: %v\n%s", err, out)
 	}
-	wantAll(t, out, "CLAUDE.md\t34", "skills__review__SKILL.md\t12", "(dry run)")
+	wantAll(t, out, "CLAUDE.md\t34", "skills_sreview_sSKILL.md\t12", "(dry run)")
 	if strings.Contains(out, secretText) {
 		t.Errorf("the dry run showed the content:\n%s", out)
 	}
@@ -151,9 +150,6 @@ func TestProfilePushRefusesBadFiles(t *testing.T) {
 		"credentials.json":  credErr,
 		"token.json":        credErr,
 		"notes.md":          "has a private key",
-		"a__b.md":           notPermitted,
-		"_a.md":             notPermitted,
-		"a.md_":             notPermitted,
 		"bad name.md":       "not a valid ConfigMap key",
 		"logo.png":          "not UTF-8",
 		"large.md":          "limit is 900 KiB",
@@ -221,7 +217,7 @@ func TestProfilePushSkipsSymlinksAndMissingDefaults(t *testing.T) {
 	wantAll(t, out, "skip "+filepath.Join(home, ".claude", "CLAUDE.md"),
 		"skip "+filepath.Join(real, "review", "link.md")+": a symlink",
 		"skip "+filepath.Join(real, "linked")+": a symlink", "1 files")
-	if data := getGlobals(t, kube).Data; len(data) != 2 || data["skills__review__SKILL.md"] == "" {
+	if data := getGlobals(t, kube).Data; len(data) != 2 || data["skills_sreview_sSKILL.md"] == "" {
 		t.Errorf("got keys %v, want only the skill and the manifest", data)
 	}
 }
@@ -267,7 +263,7 @@ func TestProfilePushRefusesASymlinkOutOfTheFolder(t *testing.T) {
 }
 
 func TestCheckRelRefusesUnsafePaths(t *testing.T) {
-	for _, rel := range []string{"", "/etc/passwd", "..", "skills/../x", "skills/./x", "skills//x", "a_/b", "a/_b"} {
+	for _, rel := range []string{"", "/etc/passwd", "..", "skills/../x", "skills/./x", "skills//x"} {
 		if checkRel(rel) == nil {
 			t.Errorf("checkRel accepted %q", rel)
 		}
@@ -277,8 +273,48 @@ func TestCheckRelRefusesUnsafePaths(t *testing.T) {
 	}
 }
 
+func TestKeyEncodingIsReversible(t *testing.T) {
+	paths := []string{"CLAUDE.md", "skills/review/SKILL.md", "skills/py/__init__.py", "skills/t/_template.md",
+		"skills/a_/b", "skills/a/_b", "skills/a__b/c", "skills/x_s/y", "skills/x/_sy", "skills/x_u/y"}
+	keys := map[string]string{}
+	for _, p := range paths {
+		key := encodeKey(p)
+		got, err := decodeKey(key)
+		if err != nil || got != p {
+			t.Errorf("decodeKey(%q) = %q, %v, want %q", key, got, err, p)
+		}
+		if other, ok := keys[key]; ok {
+			t.Errorf("%q and %q give the same key %q", p, other, key)
+		}
+		keys[key] = p
+	}
+	if got := encodeKey("skills/py/__init__.py"); got != "skills_spy_s_u_uinit_u_u.py" {
+		t.Errorf("got key %q", got)
+	}
+	for _, bad := range []string{"a_", "a_xb"} {
+		if _, err := decodeKey(bad); err == nil {
+			t.Errorf("decodeKey accepted %q", bad)
+		}
+	}
+}
+
+func TestProfilePushAcceptsUnderscoreNames(t *testing.T) {
+	home := profileHome(t)
+	writeTestFile(t, filepath.Join(home, ".claude", "skills", "py", "__init__.py"), "")
+	writeTestFile(t, filepath.Join(home, ".claude", "skills", "py", "_template.md"), "template")
+	kube := newKube(t, nil)
+	out, err := run(t, kube, "profile", "push")
+	if err != nil {
+		t.Fatalf("push: %v\n%s", err, out)
+	}
+	data := getGlobals(t, kube).Data
+	if _, ok := data["skills_spy_s_u_uinit_u_u.py"]; !ok || data["skills_spy_s_utemplate.md"] != "template" {
+		t.Errorf("got keys %v", data)
+	}
+}
+
 func TestGlobalsDataRefusesADuplicateKey(t *testing.T) {
-	files := []globalFile{{Key: "skills__a__b", Path: "skills/a/b"}, {Key: "skills__a__b", Path: "skills/a_/b"}}
+	files := []globalFile{{Key: "k", Path: "a"}, {Key: "k", Path: "b"}}
 	if _, err := globalsData(files); err == nil || !strings.Contains(err.Error(), "2 files give the key") {
 		t.Fatalf("got %v, want a duplicate key error", err)
 	}

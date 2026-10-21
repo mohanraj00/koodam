@@ -51,8 +51,6 @@ const (
 	managedBy      = "koodam"
 	// manifestKey is the key with the list of the files and their paths.
 	manifestKey = "manifest.json"
-	// keySep replaces "/" in a key, because a ConfigMap key cannot hold "/".
-	keySep = "__"
 	// maxGlobals is the maximum total size. The ConfigMap limit is 1 MiB.
 	maxGlobals = 900 << 10
 )
@@ -66,7 +64,10 @@ type globalFile struct {
 	data string
 }
 
-// globalsManifest is the value of manifest.json.
+// globalsManifest is the value of manifest.json, for example
+// {"version":1,"files":[{"key":"skills_sreview_sSKILL.md","path":"skills/review/SKILL.md","size":12}]}.
+// The pod writes the value of each key to its path under the globals tree. encodeKey gives the
+// key format, and decodeKey gives the path of a key.
 type globalsManifest struct {
 	Version int          `json:"version"`
 	Files   []globalFile `json:"files"`
@@ -90,9 +91,10 @@ func profilePushCmd(conn connect) *cobra.Command {
 		Short: "Push CLAUDE.md, AGENTS.md and the skill folders to the ConfigMap koodam-globals",
 		Long: "Push your global files to the ConfigMap koodam-globals in the namespace. Each Workspace\n" +
 			"pod mounts it read-only at /etc/koodam/globals.\n\n" +
-			"The keys are CLAUDE.md, AGENTS.md and skills__NAME__PATH, with \"__\" for each \"/\" in PATH.\n" +
-			"The key manifest.json lists each key and its path. The command refuses a name with \"__\"\n" +
-			"or with \"_\" at the start or the end, a file that is not UTF-8 text, a credential file\n" +
+			"The key of a path is the path with \"_u\" for each \"_\", then \"_s\" for each \"/\". For\n" +
+			"example, skills/my_skill/SKILL.md has the key skills_smy_uskill_sSKILL.md. The key\n" +
+			"manifest.json lists each key and its path. The command refuses a file that is not UTF-8\n" +
+			"text, a credential file\n" +
 			"(for example .credentials.json, auth.json, *.key, *.pem, id_*, .env, .netrc, or a file with\n" +
 			"a private key) and a total size above 900 KiB.\n\n" +
 			"It skips symlinks and files that are not regular, and shows each skipped path. Thus it\n" +
@@ -237,22 +239,50 @@ func readSkills(cmd *cobra.Command, dir string) ([]globalFile, error) {
 	return files, err
 }
 
-// checkRel refuses a path that the pod cannot rebuild as a safe and unique file. A key has "__"
-// for each "/", so a segment must not hold "__" or start or end with "_".
+// checkRel refuses a path that the pod cannot rebuild as a safe file: an absolute path, and a
+// path with a "..", "." or empty segment.
 func checkRel(rel string) error {
 	if rel == "" || path.IsAbs(rel) || filepath.IsAbs(rel) {
 		return errors.New("the path must be relative")
 	}
 	for p := range strings.SplitSeq(rel, "/") {
-		switch {
-		case p == "" || p == "." || p == "..":
+		if p == "" || p == "." || p == ".." {
 			return fmt.Errorf("the segment %q is not permitted", p)
-		case strings.Contains(p, keySep), strings.HasPrefix(p, "_"), strings.HasSuffix(p, "_"):
-			return fmt.Errorf("a name with %q, or with \"_\" at the start or the end, is not permitted, "+
-				"because %q replaces \"/\" in a key", keySep, keySep)
 		}
 	}
 	return nil
+}
+
+// encodeKey makes the ConfigMap key of a relative path. A key cannot hold "/". First each "_"
+// becomes "_u", then each "/" becomes "_s". After this, each "_" in the key starts "_u" or "_s",
+// so decodeKey gives the path again and 2 paths never give the same key. For example,
+// skills/review/__init__.py becomes skills_sreview_s_u_uinit_u_u.py.
+func encodeKey(rel string) string {
+	return strings.ReplaceAll(strings.ReplaceAll(rel, "_", "_u"), "/", "_s")
+}
+
+// decodeKey is the reverse of encodeKey. The pod can use manifest.json, or this rule.
+func decodeKey(key string) (string, error) {
+	var b strings.Builder
+	for i := 0; i < len(key); i++ {
+		if key[i] != '_' {
+			b.WriteByte(key[i])
+			continue
+		}
+		if i+1 == len(key) {
+			return "", fmt.Errorf("the key %s ends with \"_\"", key)
+		}
+		i++
+		switch key[i] {
+		case 'u':
+			b.WriteByte('_')
+		case 's':
+			b.WriteByte('/')
+		default:
+			return "", fmt.Errorf("the key %s has \"_\" that is not \"_u\" or \"_s\"", key)
+		}
+	}
+	return b.String(), nil
 }
 
 // readGlobal reads name in root to the relative path rel. shown is the path in the errors. It
@@ -264,7 +294,7 @@ func readGlobal(root *os.Root, name, shown, rel string) (globalFile, error) {
 	if err := checkRel(rel); err != nil {
 		return globalFile{}, fmt.Errorf("%s: %w", shown, err)
 	}
-	key := strings.ReplaceAll(rel, "/", keySep)
+	key := encodeKey(rel)
 	if errs := validation.IsConfigMapKey(key); len(errs) > 0 || key == manifestKey {
 		return globalFile{}, fmt.Errorf("%s: %s is not a valid ConfigMap key (use only letters, digits, '-', '_' and '.')",
 			shown, key)
