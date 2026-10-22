@@ -15,11 +15,14 @@ I run coding harnesses (Claude Code, Codex) and my own agents on a dev cluster. 
 
 ## Docs
 
-v0.2 adds Workspaces. A Workspace is a pod with a home on a PVC. I connect to it over SSH and run the harnesses in tmux.
+v0.2 adds Workspaces. A Workspace is a pod with a home on a PVC. I connect to it over SSH and run the harnesses in tmux. A Profile binds my namespaces, so each Workspace in them gets my Claude Code login, my global files and my skills.
 
 - [Quick start](docs/quickstart.md): install the chart and the CLI, then run 1 Agent.
 - [Workspaces](docs/workspaces.md): make a Workspace and connect with `koodam ssh`.
+- [Profiles](docs/profiles.md): the namespace binding, the shared login, the global files, the project files and the memory.
+- [The CLI](docs/cli.md): each command, and the spend and the projected cost.
 - [The gateway](docs/gateway.md): the budget, the revoke and the spend.
+- [Architecture](docs/architecture.md): the controller, the gateway, the Workspace pod, the PVC home and the tunnel.
 
 ## What one Agent gets (v0.1 target)
 
@@ -100,7 +103,7 @@ koodam ssh remove main    # --key also removes the public key from the Workspace
 
 `koodam usage main` shows the tokens and the projected API cost of the Claude Code and Codex sessions in a Workspace with a subscription login. It runs a fixed script over the SSH entry of `koodam ssh setup`. The script reads `~/.claude/projects` and `~/.codex/sessions` in the pod and prints only the model names and the token counts, not the text. The CLI multiplies the counts by a pinned subset of the LiteLLM price file ([internal/usage/prices](internal/usage/prices/README.md)). Each line says `projected` and `source: subscription`, because a plan does not bill this cost. A model with no price shows its tokens and `no price`.
 
-`koodam profile push` copies `~/.claude/CLAUDE.md`, `~/.codex/AGENTS.md` and the folders in `~/.claude/skills` to the ConfigMap `koodam-globals`. Each Workspace pod mounts it read-only at `/etc/koodam/globals`. The key of a path has `_u` for each `_`, then `_s` for each `/` (`skills/my_skill/SKILL.md` becomes `skills_smy_uskill_sSKILL.md`), and `manifest.json` lists each key and its path. It refuses credential files (for example `auth.json`, `*.key`, `*.pem`, `id_*`, `.env`, or a file with a private key), binary files and more than 900 KiB. It skips symlinks, so it skips a symlinked skill folder. It does not replace a `koodam-globals` that it did not make, except with `--force`. `--dry-run` does the same checks, shows only the keys and the sizes, and does not connect to the cluster. It needs `get`, `create` and `update` on configmaps in the namespace.
+`koodam profile push` copies `~/.claude/CLAUDE.md`, `~/.codex/AGENTS.md` and the folders in `~/.claude/skills` to the ConfigMap `koodam-globals`. Each Workspace pod mounts it read-only at `/etc/koodam/globals`. The key of a path has `_u` for each `_`, then `_s` for each `/` (`skills/my_skill/SKILL.md` becomes `skills_smy_uskill_sSKILL.md`), and `manifest.json` lists each key and its path. It refuses credential files (for example `auth.json`, `*.key`, `*.pem`, `id_*`, `.env`, or a file with a private key) and more than 900 KiB in total, and then pushes nothing. It skips a skill with a binary file or a file above 900 KiB, and pushes the other skills. It skips dot folders, dot files and symlinks, so it skips a symlinked skill folder. [docs/profiles.md](docs/profiles.md) has the rules. It does not replace a `koodam-globals` that it did not make, except with `--force`. `--dry-run` does the same checks, shows the keys, the sizes and the skips, and does not connect to the cluster. It needs `get`, `create` and `update` on configmaps in the namespace.
 
 `koodam login claude-code` reads a token from `claude setup-token` with no echo (or 1 line with `--stdin`) and stores it in the key `claude-code` of the Secret `koodam-login`. It never shows the token. It checks only the prefix `sk-ant-oat` and the length. It does not change a `koodam-login` that it did not make. `koodam login codex` stores nothing: run `codex login --device-auth` in the Workspace after `koodam ssh`. `koodam login --remove claude-code` deletes the key, and deletes the Secret when no key is left. Also revoke the token in your Anthropic account. It needs `get`, `create`, `update` and `delete` on secrets in the namespace.
 
