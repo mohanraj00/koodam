@@ -49,8 +49,9 @@ The controller mounts these paths. The pod passes the Pod Security `restricted` 
 | `/etc/koodam/ssh/host/ssh_host_ed25519_key` | the Secret `<workspace>-ssh-host`, key `ssh_host_ed25519_key`, `defaultMode` 0440 with the pod `fsGroup` 1000 (owner root, group 1000) | read-only |
 | `/etc/koodam/globals` | the ConfigMap `koodam-globals`, optional. `koodam-globals` copies it to `~/.koodam/globals` | read-only |
 | `/etc/koodam/login` | the Secret `koodam-login`, optional. The key `claude-code` holds the token of `koodam login claude-code`. `defaultMode` 0440 | read-only |
-| `/etc/koodam/gateway` | the Secret `<workspace>-gateway`, only if the Workspace has `spec.gateway`. One file for each variable: `ANTHROPIC_BASE_URL`, `ANTHROPIC_AUTH_TOKEN`, the model variables, `OPENAI_BASE_URL` and `OPENAI_API_KEY`. `defaultMode` 0440 | read-only |
-| `/etc/koodam/memory` | the PVC `koodam-memory`, optional | read-write |
+| `/etc/koodam/gateway` | the Secret `<workspace>-gateway`, only if the Workspace has `spec.gateway`. One file for each variable: `ANTHROPIC_BASE_URL`, `ANTHROPIC_AUTH_TOKEN`, `ANTHROPIC_MODEL`, `ANTHROPIC_DEFAULT_HAIKU_MODEL`, `ANTHROPIC_DEFAULT_SONNET_MODEL`, `ANTHROPIC_DEFAULT_OPUS_MODEL`, `ANTHROPIC_SMALL_FAST_MODEL`, `CLAUDE_CODE_SUBAGENT_MODEL`, `OPENAI_BASE_URL` and `OPENAI_API_KEY`. `defaultMode` 0440 | read-only |
+
+The controller does not mount a shared memory folder. A shared memory PVC is planned in #91.
 
 sshd uses `Port 2222`, public key login only, `AllowUsers dev`, `MaxSessions 10`, SFTP (`internal-sftp`), `AllowTcpForwarding local` and `StrictModes no`. The mounted files belong to root, so `StrictModes` must be off.
 

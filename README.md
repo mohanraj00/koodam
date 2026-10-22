@@ -13,6 +13,14 @@ I run coding harnesses (Claude Code, Codex) and my own agents on a dev cluster. 
 
 > Status: pre-alpha. The API will change.
 
+## Docs
+
+v0.2 adds Workspaces. A Workspace is a pod with a home on a PVC. I connect to it over SSH and run the harnesses in tmux.
+
+- [Quick start](docs/quickstart.md): install the chart and the CLI, then run 1 Agent.
+- [Workspaces](docs/workspaces.md): make a Workspace and connect with `koodam ssh`.
+- [The gateway](docs/gateway.md): the budget, the revoke and the spend.
+
 ## What one Agent gets (v0.1 target)
 
 ```yaml
