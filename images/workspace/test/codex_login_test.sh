@@ -55,7 +55,7 @@ rm "$HOME/.codex"
 # Parallel copies publish a complete file. Trace output contains no login data.
 for i in {1..8}; do bash "$work/copy.sh" >"$work/out.$i" 2>"$work/err.$i" & done
 wait
-for i in {1..8}; do test ! -s "$work/out.$i" && test ! -s "$work/err.$i"; done
+for i in {1..8}; do test ! -s "$work/out.$i"; test ! -s "$work/err.$i"; done
 cmp -s "$work/login/codex" "$HOME/.codex/auth.json"
 test -z "$(find "$HOME/.codex" -name '.login.*' -print)"
 rm "$HOME/.codex/auth.json"
