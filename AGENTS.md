@@ -41,6 +41,14 @@ A PR merges only when all 4 gates pass. The PR template lists them.
    The other harness does it. It checks credential leaks (logs, status, errors, fixtures, PR text), each RBAC verb and its reason, the revoke-first order, and input that reaches a shell, a URL or a file path. Post the result as a PR comment that starts with `Security review (<harness>):`.
 4. **Findings closed.** Fix each finding, or write the reason to not fix it in the PR. A finding out of scope becomes a new issue.
 
+### Outside PRs
+
+An outside PR comes from a fork, by a person who is not the maintainer. [CONTRIBUTING.md](CONTRIBUTING.md) has the rules for the contributor.
+
+- Do not run a cross review or a security review on an outside PR until the maintainer adds the label `ready-for-review`.
+- Never run the code of a contributor with credentials, a gateway key, a token or a cluster kubeconfig. Read the diff. Do not execute it.
+- Do not add the labels `accepted`, `ok-to-test` or `ready-for-review`. Only the maintainer adds them.
+
 Never pass `--dangerously-skip-permissions`, `--dangerously-bypass-approvals-and-sandbox` or `--dangerously-bypass-hook-trust` to a reviewer.
 
 ## Autofix

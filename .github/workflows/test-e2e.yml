@@ -3,11 +3,20 @@ name: E2E Tests
 on:
   push:
   pull_request:
+    types: [opened, synchronize, reopened, labeled]
 
 permissions: {}
 
 jobs:
   test-e2e:
+    # A PR from a fork runs this job only after the maintainer adds the label ok-to-test.
+    # A label event runs it only for that label.
+    if: >-
+      github.event_name == 'push' ||
+      (github.event.action == 'labeled' && github.event.label.name == 'ok-to-test') ||
+      (github.event.action != 'labeled' &&
+        (github.event.pull_request.head.repo.full_name == github.repository ||
+         contains(github.event.pull_request.labels.*.name, 'ok-to-test')))
     permissions:
       contents: read
     name: E2E on kind
