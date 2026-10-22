@@ -1,0 +1,6 @@
+# The maintainer reviews each change to these paths.
+/api/                @mohanraj00
+/config/rbac/        @mohanraj00
+/internal/gateway/   @mohanraj00
+/charts/             @mohanraj00
+/.github/            @mohanraj00

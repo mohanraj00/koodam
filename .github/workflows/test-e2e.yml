@@ -13,6 +13,18 @@ jobs:
     name: E2E on kind
     runs-on: ubuntu-latest
     steps:
+      # A PR from a fork fails here until the maintainer adds the label ok-to-test.
+      # This job fails and does not skip, because a skipped job counts as a pass for a required check.
+      # There is no labeled trigger, because each other label then makes a skipped check run.
+      - name: Check the label ok-to-test
+        if: >-
+          github.event_name == 'pull_request' &&
+          github.event.pull_request.head.repo.full_name != github.repository &&
+          !contains(github.event.pull_request.labels.*.name, 'ok-to-test')
+        run: |
+          echo "::error::A PR from a fork needs the label ok-to-test. After the maintainer adds it, push a commit or close and reopen the PR."
+          exit 1
+
       - name: Clone the code
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
