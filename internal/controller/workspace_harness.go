@@ -41,19 +41,26 @@ func addWorkspaceHarnesses(pod *corev1.PodSpec, harnesses []corev1alpha1.Harness
 		if libc == "" {
 			libc = "glibc"
 		}
-		pod.InitContainers = append(pod.InitContainers, corev1.Container{
-			Name: vol + "-" + h.Name, Image: image,
-			Command: []string{"/harness-install", "-harness", h.Name, "-version", h.Version, "-libc", libc,
-				"-dir", harnessDir},
-			VolumeMounts: []corev1.VolumeMount{{Name: vol, MountPath: harnessDir}},
-			SecurityContext: &corev1.SecurityContext{
-				RunAsNonRoot: new(true), RunAsUser: new(int64(65532)), AllowPrivilegeEscalation: new(false),
-				ReadOnlyRootFilesystem: new(true),
-				Capabilities:           &corev1.Capabilities{Drop: []corev1.Capability{"ALL"}},
-				SeccompProfile:         &corev1.SeccompProfile{Type: corev1.SeccompProfileTypeRuntimeDefault},
-			},
-		})
+		pod.InitContainers = append(pod.InitContainers,
+			installerContainer(vol+"-"+h.Name, vol, h.Name, h.Version, libc, image))
 	}
 	c := &pod.Containers[0]
 	c.VolumeMounts = append(c.VolumeMounts, corev1.VolumeMount{Name: vol, MountPath: harnessDir, ReadOnly: true})
+}
+
+// installerContainer is an init container that runs /harness-install for one harness. It writes
+// the binary into the volume vol at harnessDir. It has no credential env.
+func installerContainer(name, vol, harness, version, libc, image string) corev1.Container {
+	return corev1.Container{
+		Name: name, Image: image,
+		Command: []string{"/harness-install", "-harness", harness, "-version", version, "-libc", libc,
+			"-dir", harnessDir},
+		VolumeMounts: []corev1.VolumeMount{{Name: vol, MountPath: harnessDir}},
+		SecurityContext: &corev1.SecurityContext{
+			RunAsNonRoot: new(true), RunAsUser: new(int64(65532)), AllowPrivilegeEscalation: new(false),
+			ReadOnlyRootFilesystem: new(true),
+			Capabilities:           &corev1.Capabilities{Drop: []corev1.Capability{"ALL"}},
+			SeccompProfile:         &corev1.SeccompProfile{Type: corev1.SeccompProfileTypeRuntimeDefault},
+		},
+	}
 }

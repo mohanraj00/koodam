@@ -26,7 +26,7 @@ import (
 )
 
 var _ = Describe("Workspace harnesses", func() {
-	const installer = "example.com/koodam:1"
+	const installer, muslLibc = "example.com/koodam:1", "musl"
 	ws := func(h ...corev1alpha1.HarnessSpec) *corev1alpha1.Workspace {
 		return &corev1alpha1.Workspace{ObjectMeta: metav1.ObjectMeta{Name: "h", Namespace: "n"},
 			Spec: corev1alpha1.WorkspaceSpec{Harnesses: h}}
@@ -37,13 +37,13 @@ var _ = Describe("Workspace harnesses", func() {
 	}
 
 	It("adds one checked install for each harness and mounts the folder read-only", func() {
-		p := pod(ws(corev1alpha1.HarnessSpec{Name: "claude-code", Version: "2.1.0", Libc: "musl"},
-			corev1alpha1.HarnessSpec{Name: "codex"}), installer)
+		p := pod(ws(corev1alpha1.HarnessSpec{Name: claudeName, Version: "2.1.0", Libc: muslLibc},
+			corev1alpha1.HarnessSpec{Name: codexName}), installer)
 
 		Expect(p.InitContainers).To(HaveLen(2))
-		Expect(p.InitContainers[0].Name).To(Equal("harness-claude-code"))
-		Expect(p.InitContainers[0].Command).To(Equal([]string{"/harness-install", "-harness", "claude-code",
-			"-version", "2.1.0", "-libc", "musl", "-dir", harnessDir}))
+		Expect(p.InitContainers[0].Name).To(Equal("harness-" + claudeName))
+		Expect(p.InitContainers[0].Command).To(Equal([]string{"/harness-install", "-harness", claudeName,
+			"-version", "2.1.0", "-libc", muslLibc, "-dir", harnessDir}))
 		Expect(p.InitContainers[1].Name).To(Equal("harness-codex"))
 		Expect(p.InitContainers[1].Command).To(ContainElements("-libc", "glibc"))
 		for _, c := range p.InitContainers {
@@ -63,6 +63,6 @@ var _ = Describe("Workspace harnesses", func() {
 	It("does not change the pod with no harness or no installer image", func() {
 		want := pod(ws(), installer)
 		Expect(want.InitContainers).To(BeEmpty())
-		Expect(pod(ws(corev1alpha1.HarnessSpec{Name: "codex"}), "")).To(Equal(want))
+		Expect(pod(ws(corev1alpha1.HarnessSpec{Name: codexName}), "")).To(Equal(want))
 	})
 })
