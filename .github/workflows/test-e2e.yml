@@ -9,6 +9,8 @@ permissions: {}
 
 jobs:
   changes:
+    # A push to main runs each job, so it does not need the docs check.
+    if: github.event_name == 'pull_request'
     permissions:
       pull-requests: read
     uses: ./.github/workflows/docs-only.yml
