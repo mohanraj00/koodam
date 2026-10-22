@@ -49,6 +49,32 @@ The controller writes the bound namespaces to `status.boundNamespaces`. `kubectl
 
 The controller runs a Workspace only in a bound namespace. If you remove the label or the list item, the controller blocks the gateway key of the Workspace first. Then it stops the pod. The home PVC stays.
 
+## The Workspace network
+
+The chart can make a NetworkPolicy for the Workspace pods in each Profile namespace. The chart does not read the Profiles. Thus, add each Profile namespace to the chart values, and run `helm upgrade` after each change. The namespace must exist before the upgrade.
+
+```yaml
+workspace:
+  networkPolicy:
+    namespaces: [dev-sample]
+```
+
+The policy permits only this traffic:
+
+| Direction | Permitted |
+| --- | --- |
+| Ingress | TCP 2222, the sshd port. `koodam tunnel` uses a port-forward to this port. |
+| Egress | UDP and TCP 53 to the DNS pods (`workspace.networkPolicy.dns`). |
+| Egress | TCP 4000 to the bundled LiteLLM pods, only in the bundled gateway mode. |
+| Egress | Each public address, if `publicInternet` is `true`. The harnesses use it for the vendor APIs, the harness downloads, git and the package registries. |
+| Egress | The rules of `workspace.networkPolicy.extraEgress`. |
+
+The public internet rule blocks the private ranges (`10.0.0.0/8`, `172.16.0.0/12`, `192.168.0.0/16`, `fc00::/7`), the shared range `100.64.0.0/10`, the link-local ranges with the cloud metadata address, and the loopback ranges. Thus a Workspace pod cannot reach the API server, the nodes or the other pods of the cluster. If the gateway is not bundled, add an `extraEgress` rule for it. A rule can only use IP ranges, not host names.
+
+> **Caution:** Use a CNI that enforces NetworkPolicy, for example Calico, Cilium or the kindnet of kind. If the CNI does not enforce it, the policy has no effect and the pods can reach each address.
+
+This policy is a basic limit. It does not trace the calls. Traced egress with a proxy comes in v0.3 (#8).
+
 ## The shared login
 
 ### Claude Code

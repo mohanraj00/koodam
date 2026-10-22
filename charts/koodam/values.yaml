@@ -15,6 +15,24 @@ workspace:
   image:
     repository: ghcr.io/mohanraj00/koodam-workspace
     tag: ""
+  # A NetworkPolicy for the Workspace pods in each namespace of this list. The chart does not
+  # read the Profiles, so add each Profile namespace here and run "helm upgrade". Each namespace
+  # must exist before the install. The policy has an effect only if the CNI enforces it.
+  # Ingress: only TCP 2222 (sshd). Egress: DNS, the bundled gateway, the public internet if
+  # publicInternet is true, and the rules of extraEgress. Other traffic is blocked.
+  networkPolicy:
+    namespaces: []
+    # The DNS pods. The pods can send UDP and TCP port 53 only to these pods.
+    dns:
+      namespace: kube-system
+      podLabels:
+        k8s-app: kube-dns
+    # If true, the pods can reach each address outside the private, shared, link-local and
+    # loopback ranges. These ranges include the cluster, the nodes and the cloud metadata address.
+    publicInternet: true
+    # More egress rules (NetworkPolicyEgressRule). Use them for a gateway outside the bundled
+    # mode, or for a cluster address that the pods must reach.
+    extraEgress: []
 
 # Use 1 replica. The controller uses leader election, so more replicas are standby replicas.
 replicaCount: 1

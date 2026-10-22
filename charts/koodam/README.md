@@ -158,6 +158,10 @@ helm install koodam charts/koodam -n koodam-system -f charts/koodam/values-bundl
 | --- | --- | --- |
 | `image.repository`, `image.tag` | `ghcr.io/mohanraj00/koodam`, empty | The controller image. If the tag is empty, the chart uses the chart `appVersion`. |
 | `workspace.image.repository`, `workspace.image.tag` | `ghcr.io/mohanraj00/koodam-workspace`, empty | The image for a Workspace with no `spec.image`. If the tag is empty, the chart uses the chart `appVersion`. |
+| `workspace.networkPolicy.namespaces` | empty | The namespaces that get a NetworkPolicy for the Workspace pods. See [The Workspace network](../../docs/profiles.md#the-workspace-network). |
+| `workspace.networkPolicy.dns.namespace`, `.podLabels` | `kube-system`, `k8s-app: kube-dns` | The DNS pods that the Workspace pods can reach on port 53. |
+| `workspace.networkPolicy.publicInternet` | `true` | If `true`, the Workspace pods can reach each public address. |
+| `workspace.networkPolicy.extraEgress` | empty | More egress rules (`NetworkPolicyEgressRule`). |
 | `gateway.mode` | `existing` | `existing` or `bundled`. |
 | `gateway.url` | empty | The LiteLLM admin address for the controller. The existing mode needs it. The bundled mode ignores it. |
 | `gateway.agentUrl` | empty | The gateway address for the agent pods. If empty, the pods use `gateway.url`. |
