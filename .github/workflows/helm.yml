@@ -2,12 +2,23 @@ name: Helm
 
 on:
   push:
+    branches: [main]
   pull_request:
 
 permissions: {}
 
 jobs:
+  changes:
+    # A push to main runs each job, so it does not need the docs check.
+    if: github.event_name == 'pull_request'
+    permissions:
+      pull-requests: read
+    uses: ./.github/workflows/docs-only.yml
+
   chart:
+    needs: changes
+    # Run if the docs check fails, so that a failure never skips the CI.
+    if: ${{ !cancelled() && needs.changes.outputs.docs-only != 'true' }}
     permissions:
       contents: read
     name: Lint and render the chart
