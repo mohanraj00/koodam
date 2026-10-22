@@ -108,6 +108,9 @@ type WorkspaceReconciler struct {
 	APIReader client.Reader
 	// Image is the workspace image if spec.image is empty.
 	Image string
+	// InstallerImage has /harness-install. The pod uses it as an init container for each
+	// harness of spec.harnesses.
+	InstallerImage string
 	// Gateway makes, renews and blocks the gateway keys.
 	Gateway gateway.Gateway
 	// GatewayURL is the gateway address for the workspace pods.
@@ -454,6 +457,7 @@ func (r *WorkspaceReconciler) statefulSet(ws *corev1alpha1.Workspace, bound bool
 		Containers: []corev1.Container{container},
 		Volumes:    volumes,
 	}}
+	addWorkspaceHarnesses(&tmpl.Spec, ws.Spec.Harnesses, r.InstallerImage)
 	sts := &appsv1.StatefulSet{ObjectMeta: workspaceMeta(ws, ws.Name), Spec: appsv1.StatefulSetSpec{
 		Replicas: &replicas,
 		Selector: &metav1.LabelSelector{MatchLabels: labels},

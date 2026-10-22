@@ -135,6 +135,7 @@ var _ = Describe("Workspaces", Ordered, Label("workspace"), func() {
 				SSHPublicKeys: []string{strings.TrimSpace(string(pub))},
 				Image:         workspaceImage, Storage: resource.MustParse("1Gi"),
 				Gateway: &corev1alpha1.WorkspaceGateway{Model: mockModel, BudgetPerDay: resource.MustParse("1")},
+				Harnesses: []corev1alpha1.HarnessSpec{{Name: "claude-code"}, {Name: "codex"}},
 			}}
 		b := make([]byte, 8)
 		_, err = rand.Read(b)
@@ -175,6 +176,10 @@ var _ = Describe("Workspaces", Ordered, Label("workspace"), func() {
 		_, err = ssh(`test -f ~/.codex/auth.json && cmp -s /etc/koodam/login/codex ~/.codex/auth.json && ` +
 			`test "$(stat -c %a ~/.codex)" = 700 && test "$(stat -c %a ~/.codex/auth.json)" = 600`)
 		Expect(err).NotTo(HaveOccurred(), "The Workspace did not get a private, writable Codex login.")
+		By("finding the checked harnesses of spec.harnesses in the login PATH")
+		bins, err := ssh(`sh -lc 'command -v claude codex && claude --version && codex --version'`)
+		Expect(err).NotTo(HaveOccurred(), bins)
+		Expect(bins).To(HavePrefix("/koodam/bin/claude\n/koodam/bin/codex\n"), "The harnesses are not in /koodam/bin.")
 		_, err = ssh("tmux new-session -d -s e2e && tmux send-keys -t e2e 'echo " + marker +
 			" | tee ~/e2e-marker' Enter")
 		Expect(err).NotTo(HaveOccurred())
