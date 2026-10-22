@@ -140,6 +140,14 @@ var _ = Describe("Workspaces", Ordered, Label("workspace"), func() {
 		_, err = rand.Read(b)
 		Expect(err).NotTo(HaveOccurred())
 		marker = "koodam-e2e-" + hex.EncodeToString(b)
+
+		By("storing a synthetic Codex login before the Workspace starts")
+		cmd := exec.Command(koodam, "-n", wsNS, "login", "codex", "--stdin")
+		cmd.Env = env
+		login := rand.Text()
+		cmd.Stdin = strings.NewReader(fmt.Sprintf(`{"tokens":{"id_token":%q,"access_token":%q,"refresh_token":%q}}`,
+			login, login, login))
+		Expect(cmd.Run()).To(Succeed(), "Cannot store the synthetic Codex login.")
 	})
 
 	AfterEach(func() { dumpWorkspaces() })
@@ -163,6 +171,10 @@ var _ = Describe("Workspaces", Ordered, Label("workspace"), func() {
 
 		By("connecting through koodam tunnel and running a command in tmux")
 		Eventually(func() error { _, err := ssh("true"); return err }, 2*time.Minute, 5*time.Second).Should(Succeed())
+		By("checking the login copy before an SSH login shell runs")
+		_, err = ssh(`test -f ~/.codex/auth.json && cmp -s /etc/koodam/login/codex ~/.codex/auth.json && ` +
+			`test "$(stat -c %a ~/.codex)" = 700 && test "$(stat -c %a ~/.codex/auth.json)" = 600`)
+		Expect(err).NotTo(HaveOccurred(), "The Workspace did not get a private, writable Codex login.")
 		_, err = ssh("tmux new-session -d -s e2e && tmux send-keys -t e2e 'echo " + marker +
 			" | tee ~/e2e-marker' Enter")
 		Expect(err).NotTo(HaveOccurred())

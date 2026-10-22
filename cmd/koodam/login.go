@@ -71,7 +71,8 @@ func loginCmd(conn connect) *cobra.Command {
 		Long: "koodam login claude-code reads a token from claude setup-token with no echo, or 1 line\n" +
 			"from stdin with --stdin. It stores the token in the key claude-code of the Secret\n" +
 			"koodam-login. It never shows the token.\n\n" +
-			"koodam login codex stores nothing. It shows the login step in the Workspace.\n\n" +
+			"koodam login codex --stdin reads the Codex login JSON from stdin. It stores the\n" +
+			"login in the key codex of the same Secret. It never shows the login.\n\n" +
 			"--remove deletes the key. If no key is left, it deletes the Secret. The command\n" +
 			"refuses a koodam-login Secret that koodam did not make.",
 		Args: cobra.ExactArgs(1),
@@ -79,13 +80,7 @@ func loginCmd(conn connect) *cobra.Command {
 			out := cmd.OutOrStdout()
 			switch args[0] {
 			case harnessCodex:
-				if remove {
-					_, _ = fmt.Fprintln(out, "koodam stores no Codex login. To log out, run codex logout in the Workspace.")
-					return nil
-				}
-				_, _ = fmt.Fprintln(out, "koodam stores no Codex login. Codex keeps 1 login for each Workspace in its home.\n"+
-					"Do these steps:\n  1. koodam ssh <workspace>\n  2. codex login --device-auth")
-				return nil
+				return runCodexLogin(cmd, conn, stdin, remove)
 			case harnessClaude:
 			default:
 				return fmt.Errorf("unknown harness %q: use %s or %s", args[0], harnessClaude, harnessCodex)
@@ -113,7 +108,7 @@ func loginCmd(conn connect) *cobra.Command {
 			return nil
 		},
 	}
-	cmd.Flags().BoolVar(&stdin, "stdin", false, "read the token as 1 line from stdin")
+	cmd.Flags().BoolVar(&stdin, "stdin", false, "read the login from stdin (Claude Code: 1 line; Codex: JSON)")
 	cmd.Flags().BoolVar(&remove, "remove", false, "remove the login of the harness")
 	return cmd
 }
@@ -240,7 +235,7 @@ func (e *env) removeLogin(cmd *cobra.Command, key string) error {
 	}
 	_, _ = fmt.Fprintln(out, result)
 	if removed {
-		_, _ = fmt.Fprintln(out, revokeNote)
+		_, _ = fmt.Fprintln(out, revokeNoteFor(key))
 	}
 	return nil
 }
@@ -252,6 +247,11 @@ func (e *env) notOursError() error {
 
 // loginError cleans an API error. On Forbidden, it gives the verbs that the user needs.
 func (e *env) loginError(op string, err error) error {
+	// A client or transport error can contain the request data. Do not return its text.
+	var status apierrors.APIStatus
+	if !errors.As(err, &status) {
+		return fmt.Errorf("%s: the request failed", op)
+	}
 	err = apiError(op, err)
 	switch {
 	case apierrors.IsForbidden(err):

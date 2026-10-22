@@ -159,11 +159,7 @@ To use more sessions, run `tmux` commands in the pod. sshd permits 10 sessions o
 1. Run `koodam ssh setup main -n dev-sample`.
 2. Run `koodam ssh test main -n dev-sample`.
 3. Connect with `koodam ssh main -n dev-sample`. Install Codex in the pod. See [Install the harnesses](#install-the-harnesses) and #98.
-4. In the same SSH session, sign in to Codex. Codex keeps 1 login for each Workspace in its home:
-
-   ```sh
-   codex login --device-auth
-   ```
+4. Store the shared Codex login with `koodam login codex --stdin -n dev-sample`. See [The shared login](profiles.md#codex). A new Workspace gets this login before sshd starts. An existing Workspace with no local login gets it at the next SSH login shell. A new pod can use the stored login while it is valid. A refresh in another Workspace or on the source machine can make it stale. See [Refresh with a shared login](profiles.md#refresh-with-a-shared-login). The login file stays writable so Codex can refresh it.
 
 5. In the Codex app, add an SSH connection with the host name `koodam-main.dev-sample`.
 

@@ -17,4 +17,7 @@ mkdir -p "$home/.local/bin"
 # Copy the global files of koodam profile push to the home. This step never fails.
 /usr/local/bin/koodam-globals || true
 
+# Copy the Codex login before an SSH app starts a remote command. This step never fails.
+/usr/local/bin/koodam-codex-login || true
+
 exec /usr/sbin/sshd -D -e -f /etc/koodam/sshd_config
