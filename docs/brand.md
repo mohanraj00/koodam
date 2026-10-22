@@ -1,6 +1,6 @@
 # Brand
 
-The Koodam mark is a K made of 7 hexagon pods: a stem of 3 pods and 2 arms of 2 pods each. The cluster is its pods, and the hall (கூடம்) is the people and the agents that work in it. One pod is saffron: it is the agent at work now. The same honeycomb fills the social preview and the blog images.
+The Koodam mark is a K made of 7 hexagon pods: a stem of 3 pods and 2 arms of 2 pods each. The cluster is its pods, and the workspace (தொழில்கூடம்) is the people and the agents that work in it. One pod is saffron: it is the agent at work now. The same honeycomb fills the social preview and the blog images.
 
 ## Files
 
