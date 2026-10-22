@@ -1,0 +1,66 @@
+name: PR Gate
+
+# Checks each outside PR before the maintainer or an agent spends time on it.
+# The token can only read. If a check fails, the job fails. It does not write a label or a comment.
+on:
+  pull_request:
+    types: [opened, edited, synchronize, reopened]
+
+permissions: {}
+
+jobs:
+  gate:
+    # The maintainer and the branches in this repo do not need the gate.
+    if: >-
+      github.event.pull_request.head.repo.full_name != github.repository &&
+      github.event.pull_request.user.login != 'mohanraj00'
+    permissions:
+      issues: read
+      pull-requests: read
+    name: Linked issue and size
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check the linked issue and the size
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          PR: ${{ github.event.pull_request.number }}
+          BODY: ${{ github.event.pull_request.body }}
+          MAX_LINES: "400"
+          # Generated files do not count to the size.
+          GENERATED: '(^|/)zz_generated\.|^config/crd/bases/|^config/rbac/role\.yaml$|^charts/koodam/files/|^charts/koodam/crds/|^internal/usage/prices/[^/]+\.json$'
+        run: |
+          set -euo pipefail
+          fail=0
+
+          issue=$(printf '%s\n' "$BODY" | grep -oiE '\b(fixes|part of):?[[:blank:]]+#[0-9]+' | head -n 1 | grep -oE '[0-9]+' || true)
+          if [ -z "$issue" ]; then
+            echo "::error::The PR body must have 'Fixes #N' or 'Part of #N'. Read CONTRIBUTING.md."
+            fail=1
+          else
+            info=$(gh api "repos/$REPO/issues/$issue" \
+              --jq '{state, pr: (.pull_request != null), accepted: ([.labels[].name] | index("accepted") != null), decision: ([.labels[].name] | index("decision") != null)}' 2>/dev/null || echo '{}')
+            if [ "$(jq -r '.state' <<<"$info")" != "open" ] || [ "$(jq -r '.pr' <<<"$info")" != "false" ]; then
+              echo "::error::#$issue is not an open issue."
+              fail=1
+            elif [ "$(jq -r '.accepted' <<<"$info")" != "true" ]; then
+              echo "::error::Issue #$issue does not have the label accepted. Wait for the maintainer, then edit the PR body to run this check again."
+              fail=1
+            elif [ "$(jq -r '.decision' <<<"$info")" = "true" ]; then
+              echo "::error::Issue #$issue has the label decision. Wait for the maintainer to decide."
+              fail=1
+            else
+              echo "Issue #$issue is open and accepted."
+            fi
+          fi
+
+          lines=$(gh api --paginate "repos/$REPO/pulls/$PR/files" \
+            --jq ".[] | select(.filename | test(\$ENV.GENERATED) | not) | .changes" | awk '{s += $1} END {print s + 0}')
+          if [ "$lines" -gt "$MAX_LINES" ]; then
+            echo "::error::The PR changes $lines lines without generated files. The limit is about $MAX_LINES. Split the PR. Read CONTRIBUTING.md."
+            fail=1
+          else
+            echo "The PR changes $lines lines without generated files."
+          fi
+
+          exit "$fail"

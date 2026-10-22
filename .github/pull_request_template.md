@@ -1,5 +1,7 @@
 Fixes #
 
+<!-- Use `Fixes #N` or `Part of #N` for an issue with the label `accepted`. Read https://github.com/mohanraj00/koodam/blob/main/CONTRIBUTING.md first. -->
+
 ## Change
 
 ## Gates

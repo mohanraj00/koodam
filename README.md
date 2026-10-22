@@ -163,6 +163,10 @@ make run    # against the cluster in your current kubeconfig
 
 Koodam is built with [Kubebuilder](https://book.kubebuilder.io). [docs/kubebuilder-guide.md](docs/kubebuilder-guide.md) is the generated guide for the layout.
 
+## Contributing
+
+Open an issue first. [CONTRIBUTING.md](CONTRIBUTING.md) has the rules.
+
 ## License
 
 Apache-2.0.
