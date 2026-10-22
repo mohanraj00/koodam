@@ -2,12 +2,21 @@ name: Lint
 
 on:
   push:
+    branches: [main]
   pull_request:
 
 permissions: {}
 
 jobs:
+  changes:
+    permissions:
+      pull-requests: read
+    uses: ./.github/workflows/docs-only.yml
+
   lint:
+    needs: changes
+    # Run if the docs check fails, so that a failure never skips the CI.
+    if: ${{ !cancelled() && needs.changes.outputs.docs-only != 'true' }}
     permissions:
       contents: read
     name: Lint

@@ -1,0 +1,37 @@
+name: Docs only
+
+# The CI workflows call this workflow. It finds a PR that changes only docs files: *.md, docs/,
+# assets/ and LICENSE. For such a PR, the CI jobs skip. A skipped job counts as a pass for a
+# required check. The file list comes from the GitHub API, not from the code of the PR.
+on:
+  workflow_call:
+    outputs:
+      docs-only:
+        description: "true if the PR changes only docs files"
+        value: ${{ jobs.check.outputs.docs-only }}
+
+permissions: {}
+
+jobs:
+  check:
+    permissions:
+      pull-requests: read
+    name: Find a docs-only change
+    runs-on: ubuntu-latest
+    outputs:
+      docs-only: ${{ steps.files.outputs.docs-only }}
+    steps:
+      - name: List the changed files
+        id: files
+        if: github.event_name == 'pull_request'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          PR: ${{ github.event.pull_request.number }}
+        run: |
+          files=$(gh api --paginate "repos/$REPO/pulls/$PR/files" --jq '.[].filename')
+          other=$(printf '%s\n' "$files" | grep -Ev '(\.md$|^docs/|^assets/|^LICENSE$)' || true)
+          docs=false
+          if [ -n "$files" ] && [ -z "$other" ]; then docs=true; fi
+          echo "docs-only=$docs" >> "$GITHUB_OUTPUT"
+          echo "docs-only=$docs"
