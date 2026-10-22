@@ -80,7 +80,7 @@ type vendor struct {
 	kind      string
 	sigstore  *fakeSigstore
 	status    int
-	// The first fails requests get failStatus and the Retry-After header retryAfter.
+	// The server sends failStatus and the Retry-After header retryAfter to the first fails requests.
 	fails      int
 	failStatus int
 	retryAfter string
@@ -353,7 +353,7 @@ func TestBadResponses(t *testing.T) {
 	}
 }
 
-// fastRetry makes the retry waits short for 1 test.
+// fastRetry sets retry waits of 1 to 5 ms for 1 test.
 func fastRetry(t *testing.T) {
 	t.Helper()
 	f, m := firstWait, maxWait
@@ -397,7 +397,7 @@ func TestRetryStops(t *testing.T) {
 func TestRetryContext(t *testing.T) {
 	v := newVendor(t)
 	v.fails, v.failStatus, v.retryAfter = 1, http.StatusTooManyRequests, "20"
-	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	ctx, cancel := context.WithTimeout(context.Background(), 300*time.Millisecond)
 	defer cancel()
 	in := &Installer{HTTP: v.srv.Client(), ClaudeBase: v.srv.URL + "/claude", Arch: amd64}
 	start := time.Now()
@@ -406,6 +406,9 @@ func TestRetryContext(t *testing.T) {
 	}
 	if d := time.Since(start); d > 5*time.Second {
 		t.Fatalf("the install waited %v after the context end", d)
+	}
+	if len(v.requests) != 1 {
+		t.Fatalf("requests = %v, want 1 request before the wait", v.requests)
 	}
 }
 
@@ -418,7 +421,8 @@ func TestRetryAfter(t *testing.T) {
 		{"", 3 * time.Second},
 		{"bad", 3 * time.Second},
 		{"2", 2 * time.Second},
-		{"-5", 0},
+		{"-5", 3 * time.Second},
+		{"10000000000", maxWait},
 		{"600", maxWait},
 		{now.Add(10 * time.Second).Format(http.TimeFormat), 10 * time.Second},
 		{now.Add(-time.Hour).Format(http.TimeFormat), 0},
