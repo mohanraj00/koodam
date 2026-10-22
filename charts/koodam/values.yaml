@@ -45,7 +45,8 @@ gateway:
   bundled:
     litellm:
       # LiteLLM uses the MIT License. Use the image with the database support.
-      image: ghcr.io/berriai/litellm-database:v1.104.2
+      # The digest pins the image. Do not use v1.107.0, latest or main-* (see the chart README).
+      image: ghcr.io/berriai/litellm-database:v1.104.2@sha256:5a9ff0fd7177372f2ccd8949cb121f67e281f4d13d026af51f9c096c0626f50a
       # The time in seconds between the spend writes to the database.
       batchWriteSeconds: 1
       # The LiteLLM model_list. Each Agent model must be an alias in this list.
@@ -83,8 +84,8 @@ gateway:
       inputCostPerToken: "0.000001"
       outputCostPerToken: "0.000002"
     postgres:
-      # PostgreSQL uses the PostgreSQL License.
-      image: docker.io/library/postgres:16-alpine
+      # PostgreSQL uses the PostgreSQL License. The digest pins the image.
+      image: docker.io/library/postgres:16-alpine@sha256:721873c34ceb9f8d8fc265984940dc982404c105f19ad51be9fdc5970a6080ea
       # The Secret with the database password. If name is empty, the chart makes the
       # Secret "<fullname>-postgres" with a random password and keeps the password on upgrade.
       # Use only URL-safe characters in a password that you supply.
