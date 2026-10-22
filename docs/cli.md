@@ -61,8 +61,8 @@ For `koodam logs` and `run --wait`, you need `get` on jobs, `list` on pods and `
 | Command | Description |
 |---|---|
 | `koodam login claude-code` | Store a Claude Code token in the Secret `koodam-login`. `--stdin` reads 1 line from stdin. |
-| `koodam login codex` | Store nothing. Show the login step in the Workspace. |
-| `koodam login HARNESS --remove` | Remove the login of the harness. For `codex`, the command removes nothing and shows the logout step. |
+| `koodam login codex --stdin` | Read Codex ChatGPT login JSON from stdin and store it under key `codex` in `koodam-login`. |
+| `koodam login HARNESS --remove` | Remove the login of the harness. Local Codex login copies stay in Workspace homes. Revoke the login first. Then remove the local copies. |
 | `koodam profile push` | Push `CLAUDE.md`, `AGENTS.md` and the skill folders to the ConfigMap `koodam-globals`. The flags are `--claude-md`, `--agents-md`, `--skills`, `--dry-run` and `--force`. |
 
 [profiles.md](profiles.md) has the steps for these commands.

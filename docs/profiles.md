@@ -76,22 +76,19 @@ The command deletes the key. If the Secret has no other key, the command deletes
 
 ### Codex
 
-`koodam login codex` stores nothing. Codex keeps 1 login for each Workspace in its home.
+`koodam login codex --stdin -n dev-sample` reads Codex ChatGPT login JSON from a pipe. It stores the JSON in the key `codex` of `koodam-login`. It checks the format without a provider call. It refuses API keys and never shows the login. Supply the login through a pipe that you control. Do not put it in a command argument, a shell trace or a log.
 
-1. Connect to the Workspace:
+The Workspace copies `/etc/koodam/login/codex` to `$HOME/.codex/auth.json` before sshd starts and at each new login shell. The folder is private, and the file is writable only by its owner. The copy uses a temporary file and an atomic hard link. It refuses a link at the destination. It keeps an existing local login, including tokens that Codex refreshed. A custom `CODEX_HOME` is not changed. Codex must use file login storage at the default home.
 
-   ```sh
-   koodam ssh main -n dev-sample
-   ```
+A change to the Secret is used only when the local file is absent. To use a new shared login in an existing Workspace, stop Codex, remove `~/.codex/auth.json` and any `~/.codex/.login.*` files, then open a new SSH login shell after Kubernetes updates the mounted Secret.
 
-2. Install Codex in `~/.local/bin` of the Workspace. See [Install the harnesses](workspaces.md#install-the-harnesses). The controller does not install it yet (issue #98).
-3. Log in to Codex in the Workspace:
+To remove the shared login, first revoke it in your OpenAI account. Then run `koodam login codex --remove -n dev-sample` to remove the Secret key. Stop Codex and remove `~/.codex/auth.json` and all `~/.codex/.login.*` files from each Workspace, including suspended Workspaces. Temporary copies can stay after an interrupted copy. A Secret delete does not revoke a login or delete its PVC copies.
 
-   ```sh
-   codex login --device-auth
-   ```
+#### Refresh with a shared login
 
-To log out, run `codex logout` in the Workspace.
+The [Codex refresh source](https://github.com/openai/codex/blob/22db5847c834266986a53b782f2de21e8e834e0a/codex-rs/login/src/auth/manager.rs) saves replacement tokens and the refresh time in local storage. It handles expired, reused and revoked refresh tokens as failures that need a new login. The [file storage source](https://github.com/openai/codex/blob/22db5847c834266986a53b782f2de21e8e834e0a/codex-rs/login/src/auth/storage.rs) writes the updated login to the Codex home.
+
+Each Workspace has an independent copy. Koodam does not send refreshed tokens back to the Secret or coordinate refreshes between pods. From the source behavior, the stored login in the Secret can become stale after the first refresh in a Workspace or on the source machine. New Workspaces can then get a stale login and fail when the access token expires. Do not keep the imported login in use on the source machine. Run `koodam login codex --stdin` again with a new login when the stored login becomes stale. Use a separate login for each Workspace if concurrent refresh must be reliable. This result is from source inspection and synthetic tests. No real login or provider call was used. Concurrent provider refresh was not tested.
 
 In v0.2, only Workspaces use the login. An Agent run uses a gateway key.
 

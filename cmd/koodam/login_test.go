@@ -32,6 +32,8 @@ import (
 // otherValue is the value of a key for another harness.
 const otherValue = "other-harness-value"
 
+const loginCommand = "login"
+
 // fakeToken makes a token at run time, so that no token is in the source.
 func fakeToken(fill string) string {
 	return tokenPrefix + "01-" + strings.Repeat(fill, 80)
@@ -49,10 +51,10 @@ func runLogin(t *testing.T, kube client.WithWatch, stdin, token string, args ...
 	root.SetContext(context.Background())
 	err := root.Execute()
 	if token != "" && strings.Contains(out.String(), token) {
-		t.Errorf("the output has the token:\n%s", out.String())
+		t.Error("the output has the token")
 	}
 	if token != "" && err != nil && strings.Contains(err.Error(), token) {
-		t.Errorf("the error has the token: %v", err)
+		t.Error("the error has the token")
 	}
 	return out.String(), err
 }
@@ -71,7 +73,7 @@ func loginSecret(labels map[string]string, data map[string][]byte) *corev1.Secre
 func TestLoginCreatesThenUpdatesTheSecret(t *testing.T) {
 	kube := newKube(t, nil)
 	first := fakeToken("x")
-	out, err := runLogin(t, kube, "  "+first+"\n", first, "login", "claude-code", "--stdin")
+	out, err := runLogin(t, kube, "  "+first+"\n", first, loginCommand, "claude-code", "--stdin")
 	if err != nil {
 		t.Fatalf("login: %v\n%s", err, out)
 	}
@@ -91,7 +93,7 @@ func TestLoginCreatesThenUpdatesTheSecret(t *testing.T) {
 		t.Fatal(err)
 	}
 	second := fakeToken("y")
-	out, err = runLogin(t, kube, second, second, "login", "claude-code", "--stdin")
+	out, err = runLogin(t, kube, second, second, loginCommand, "claude-code", "--stdin")
 	if err != nil {
 		t.Fatalf("second login: %v\n%s", err, out)
 	}
@@ -108,7 +110,7 @@ func TestLoginReadsTheTerminal(t *testing.T) {
 	readTerminal = func() ([]byte, error) { return []byte(token), nil }
 	t.Cleanup(func() { readTerminal = old })
 	kube := newKube(t, nil)
-	out, err := runLogin(t, kube, "", token, "login", "claude-code")
+	out, err := runLogin(t, kube, "", token, loginCommand, "claude-code")
 	if err != nil {
 		t.Fatalf("login: %v\n%s", err, out)
 	}
@@ -121,7 +123,7 @@ func TestLoginReadsTheTerminal(t *testing.T) {
 func TestLoginRefusesASecretThatKoodamDidNotMake(t *testing.T) {
 	kube := newKube(t, nil, loginSecret(nil, map[string][]byte{"x": []byte("theirs")}))
 	token := fakeToken("x")
-	for _, args := range [][]string{{"login", "claude-code", "--stdin"}, {"login", "--remove", "claude-code"}} {
+	for _, args := range [][]string{{loginCommand, "claude-code", "--stdin"}, {loginCommand, "--remove", "claude-code"}} {
 		_, err := runLogin(t, kube, token, token, args...)
 		if err == nil || !strings.Contains(err.Error(), "koodam did not make it") {
 			t.Errorf("%v: got %v, want a refusal", args, err)
@@ -143,7 +145,7 @@ func TestLoginRefusesABadToken(t *testing.T) {
 		input := c.input
 		t.Run(name, func(t *testing.T) {
 			kube := newKube(t, nil)
-			_, err := runLogin(t, kube, input, strings.TrimSpace(input), "login", "claude-code", "--stdin")
+			_, err := runLogin(t, kube, input, strings.TrimSpace(input), loginCommand, "claude-code", "--stdin")
 			if err == nil || !strings.Contains(err.Error(), c.want) {
 				t.Fatalf("got error %v, want an error with %q", err, c.want)
 			}
@@ -158,7 +160,7 @@ func TestLoginRemoveKeepsTheOtherKeys(t *testing.T) {
 	token := fakeToken("x")
 	kube := newKube(t, nil, loginSecret(map[string]string{managedByLabel: managedBy},
 		map[string][]byte{harnessClaude: []byte(token), "other": []byte(otherValue)}))
-	out, err := runLogin(t, kube, "", token, "login", "--remove", "claude-code")
+	out, err := runLogin(t, kube, "", token, loginCommand, "--remove", "claude-code")
 	if err != nil {
 		t.Fatalf("remove: %v\n%s", err, out)
 	}
@@ -176,7 +178,7 @@ func TestLoginRemoveDeletesTheSecretWithTheLastKey(t *testing.T) {
 	token := fakeToken("x")
 	kube := newKube(t, nil, loginSecret(map[string]string{managedByLabel: managedBy},
 		map[string][]byte{harnessClaude: []byte(token)}))
-	out, err := runLogin(t, kube, "", token, "login", "--remove", "claude-code")
+	out, err := runLogin(t, kube, "", token, loginCommand, "--remove", "claude-code")
 	if err != nil {
 		t.Fatalf("remove: %v\n%s", err, out)
 	}
@@ -184,27 +186,15 @@ func TestLoginRemoveDeletesTheSecretWithTheLastKey(t *testing.T) {
 	if _, err := getLogin(t, kube); !apierrors.IsNotFound(err) {
 		t.Errorf("the Secret is still there: %v", err)
 	}
-	out, err = runLogin(t, kube, "", "", "login", "--remove", "claude-code")
+	out, err = runLogin(t, kube, "", "", loginCommand, "--remove", "claude-code")
 	if err != nil {
 		t.Fatalf("second remove: %v", err)
 	}
 	wantAll(t, out, "nothing to remove")
 }
 
-func TestLoginCodexStoresNothing(t *testing.T) {
-	kube := newKube(t, nil)
-	out, err := runLogin(t, kube, "", "", "login", "codex")
-	if err != nil {
-		t.Fatal(err)
-	}
-	wantAll(t, out, "koodam ssh <workspace>", "codex login --device-auth")
-	if _, err := getLogin(t, kube); !apierrors.IsNotFound(err) {
-		t.Errorf("codex login made a Secret: %v", err)
-	}
-}
-
 func TestLoginRefusesAnUnknownHarness(t *testing.T) {
-	_, err := runLogin(t, newKube(t, nil), "", "", "login", "gemini")
+	_, err := runLogin(t, newKube(t, nil), "", "", loginCommand, "gemini")
 	if err == nil || !strings.Contains(err.Error(), "unknown harness") {
 		t.Errorf("got %v, want an unknown harness error", err)
 	}
@@ -214,7 +204,7 @@ func TestLoginWithNoTerminalSaysUseStdin(t *testing.T) {
 	old := readTerminal
 	readTerminal = func() ([]byte, error) { return nil, errNotTerminal }
 	t.Cleanup(func() { readTerminal = old })
-	_, err := runLogin(t, newKube(t, nil), "", "", "login", "claude-code")
+	_, err := runLogin(t, newKube(t, nil), "", "", loginCommand, "claude-code")
 	if !errors.Is(err, errNotTerminal) {
 		t.Fatalf("got error %v, want %v", err, errNotTerminal)
 	}
