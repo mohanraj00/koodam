@@ -42,11 +42,9 @@ var _ = Describe("Workspace harnesses", func() {
 
 		Expect(p.InitContainers).To(HaveLen(2))
 		Expect(p.InitContainers[0].Name).To(Equal("harness-" + claudeName))
-		Expect(p.InitContainers[0].Command).To(Equal([]string{"/harness-install", "-harness", claudeName,
-			"-version", "2.1.0", "-libc", muslLibc, "-dir", harnessDir}))
+		Expect(p.InitContainers[0].Command).To(Equal(installArgs(claudeName, "2.1.0", muslLibc)))
 		Expect(p.InitContainers[1].Name).To(Equal("harness-codex"))
-		Expect(p.InitContainers[1].Command).To(Equal([]string{"/harness-install", "-harness", codexName,
-			"-version", "", "-libc", "glibc", "-dir", harnessDir}))
+		Expect(p.InitContainers[1].Command).To(Equal(installArgs(codexName, "", "glibc")))
 		for _, c := range p.InitContainers {
 			Expect(c.Image).To(Equal(installer))
 			Expect(c.Env).To(BeEmpty())
