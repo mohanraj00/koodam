@@ -62,6 +62,14 @@ This chart installs the Koodam controller and the Agent CRD. The controller uses
 
 3. Set the `model` of your Agent to `mock-1`, or add your models to `gateway.bundled.litellm.modelList`.
 
+### The pinned images
+
+The chart pins the LiteLLM and PostgreSQL images by tag and digest. A tag can move to a different image, and a digest cannot.
+
+Do not use LiteLLM v1.107.0 or the tags `latest`, `main-latest` and `main-stable`. On 2026-10-21, Wiz reported that these images steal credentials. If you ran one of them, rotate the upstream provider keys and the master key.
+
+If you set a different image, use a tag and a digest. To get the digest, run `docker buildx imagetools inspect IMAGE:TAG`.
+
 ### Upstream provider keys
 
 A real model needs an upstream key, for example `ANTHROPIC_API_KEY` or `OPENAI_API_KEY`. Put the key in a Secret that you make. The chart gives the key to LiteLLM as an env variable with `secretKeyRef`. The chart does not make or read this Secret.
@@ -146,12 +154,12 @@ helm install koodam charts/koodam -n koodam-system -f charts/koodam/values-bundl
 | `gateway.url` | empty | The LiteLLM admin address for the controller. The existing mode needs it. The bundled mode ignores it. |
 | `gateway.agentUrl` | empty | The gateway address for the agent pods. If empty, the pods use `gateway.url`. |
 | `gateway.masterKeySecret.name`, `.key` | `koodam-gateway`, `master-key` | The Secret with the master key. |
-| `gateway.bundled.litellm.image` | `ghcr.io/berriai/litellm-database:v1.104.2` | The LiteLLM image. |
+| `gateway.bundled.litellm.image` | `ghcr.io/berriai/litellm-database:v1.104.2@sha256:5a9ff0fd7177372f2ccd8949cb121f67e281f4d13d026af51f9c096c0626f50a` | The LiteLLM image. |
 | `gateway.bundled.litellm.modelList` | `[]` | The LiteLLM `model_list`. |
 | `gateway.bundled.litellm.extraEnvFromSecrets` | `[]` | The env variables for the upstream keys. Each item has `name`, `secretName` and `secretKey`. |
 | `gateway.bundled.litellm.batchWriteSeconds` | `1` | The LiteLLM `proxy_batch_write_at`. |
 | `gateway.bundled.mock.enabled` | `false` | Add the mock model `mock-1`. |
-| `gateway.bundled.postgres.image` | `docker.io/library/postgres:16-alpine` | The PostgreSQL image. |
+| `gateway.bundled.postgres.image` | `docker.io/library/postgres:16-alpine@sha256:721873c34ceb9f8d8fc265984940dc982404c105f19ad51be9fdc5970a6080ea` | The PostgreSQL image. |
 | `gateway.bundled.postgres.passwordSecret.name`, `.key` | empty, `password` | The Secret with the database password. If empty, the chart makes it. |
 | `gateway.bundled.postgres.persistence.enabled` | `false` | Use a PVC, not an `emptyDir`. |
 | `keyGrace` | `1m` | The time that the controller adds to `deadlineSeconds` for the key TTL. |
