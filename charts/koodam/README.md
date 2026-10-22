@@ -66,9 +66,17 @@ This chart installs the Koodam controller and the Agent CRD. The controller uses
 
 The chart pins the LiteLLM and PostgreSQL images by tag and digest. A tag can move to a different image, and a digest cannot.
 
-Do not use LiteLLM v1.107.0 or the tags `latest`, `main-latest` and `main-stable`. On 2026-10-21, Wiz reported that these images steal credentials. If you ran one of them, rotate the upstream provider keys and the master key.
+Do not use LiteLLM v1.107.0 or the tags `latest`, `main-latest` and `main-stable`. On 2026-10-21, Wiz reported that these images steal credentials.
 
-If you set a different image, use a tag and a digest. To get the digest, run `docker buildx imagetools inspect IMAGE:TAG`.
+If you ran one of these images, do these steps in this order:
+
+1. Stop the LiteLLM pod. Install the chart again with the pinned image. A bad pod that runs can read the new keys.
+2. Revoke the upstream provider keys in the provider console. Then make new keys and put them in your Secret.
+3. Change the master key and the PostgreSQL password.
+4. The LiteLLM database holds the virtual keys of the Agents and the Workspaces. Delete the running Agents and the Workspaces, or block their keys in LiteLLM.
+5. Look at the usage logs of each provider for calls that you did not make.
+
+If you set a different image, use a tag and a digest. A digest pins the bytes, but it does not show that the image is safe. Get the digest from a release that you trust, then run `docker buildx imagetools inspect IMAGE:TAG` and compare.
 
 ### Upstream provider keys
 
