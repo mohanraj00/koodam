@@ -17,8 +17,10 @@ jobs:
 
   test-e2e:
     needs: changes
-    # Run if the docs check fails, so that a failure never skips the CI.
-    if: ${{ !cancelled() && needs.changes.outputs.docs-only != 'true' }}
+    # The job always runs and reports a check. A skipped job can report no check, and then the
+    # ruleset blocks the PR. For a docs-only PR, the steps skip. If the docs check fails, the
+    # steps run, so that a failure never skips the CI.
+    if: ${{ !cancelled() }}
     permissions:
       contents: read
     name: E2E on kind
@@ -29,6 +31,7 @@ jobs:
       # There is no labeled trigger, because each other label then makes a skipped check run.
       - name: Check the label ok-to-test
         if: >-
+          needs.changes.outputs.docs-only != 'true' &&
           github.event_name == 'pull_request' &&
           github.event.pull_request.head.repo.full_name != github.repository &&
           !contains(github.event.pull_request.labels.*.name, 'ok-to-test')
@@ -37,30 +40,36 @@ jobs:
           exit 1
 
       - name: Clone the code
+        if: needs.changes.outputs.docs-only != 'true'
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           persist-credentials: false
 
       - name: Setup Go
+        if: needs.changes.outputs.docs-only != 'true'
         uses: actions/setup-go@4b73464bb391d4059bd26b0524d20df3927bd417 # v6.3.0
         with:
           go-version-file: go.mod
 
       - name: Install the latest version of kind
+        if: needs.changes.outputs.docs-only != 'true'
         run: |
           curl -Lo ./kind https://kind.sigs.k8s.io/dl/latest/kind-linux-$(go env GOARCH)
           chmod +x ./kind
           sudo mv ./kind /usr/local/bin/kind
 
       - name: Verify kind installation
+        if: needs.changes.outputs.docs-only != 'true'
         run: kind version
 
       - name: Setup Helm
+        if: needs.changes.outputs.docs-only != 'true'
         uses: azure/setup-helm@9bc31f4ebc9c6b171d7bfbaa5d006ae7abdb4310 # v5.0.1
         with:
           version: v4.2.3
 
       - name: Running Test e2e
+        if: needs.changes.outputs.docs-only != 'true'
         run: |
           go mod tidy
           make test-e2e

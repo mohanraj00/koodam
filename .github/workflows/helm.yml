@@ -17,28 +17,34 @@ jobs:
 
   chart:
     needs: changes
-    # Run if the docs check fails, so that a failure never skips the CI.
-    if: ${{ !cancelled() && needs.changes.outputs.docs-only != 'true' }}
+    # The job always runs and reports a check. A skipped job can report no check, and then the
+    # ruleset blocks the PR. For a docs-only PR, the steps skip. If the docs check fails, the
+    # steps run, so that a failure never skips the CI.
+    if: ${{ !cancelled() }}
     permissions:
       contents: read
     name: Lint and render the chart
     runs-on: ubuntu-latest
     steps:
       - name: Clone the code
+        if: needs.changes.outputs.docs-only != 'true'
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           persist-credentials: false
 
       - name: Setup Go
+        if: needs.changes.outputs.docs-only != 'true'
         uses: actions/setup-go@4b73464bb391d4059bd26b0524d20df3927bd417 # v6.3.0
         with:
           go-version-file: go.mod
 
       - name: Setup Helm
+        if: needs.changes.outputs.docs-only != 'true'
         uses: azure/setup-helm@9bc31f4ebc9c6b171d7bfbaa5d006ae7abdb4310 # v5.0.1
         with:
           version: v4.2.3
 
       # The check fails if the chart CRD or the chart RBAC is not the same as config/.
       - name: Check the chart
+        if: needs.changes.outputs.docs-only != 'true'
         run: make helm-check

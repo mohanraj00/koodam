@@ -1,8 +1,8 @@
 name: Docs only
 
 # The CI workflows call this workflow for a PR. It finds a PR that changes only docs files:
-# *.md, the images in assets/ (png, svg, ico) and LICENSE. For such a PR, the CI jobs skip. A
-# skipped job counts as a pass for a required check. The file list comes from the GitHub API, not
+# *.md, the images in assets/ (png, svg, ico) and LICENSE. For such a PR, the steps of the CI
+# jobs skip, and each job reports a pass. The file list comes from the GitHub API, not
 # from the code of the PR.
 on:
   workflow_call:
