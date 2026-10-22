@@ -27,8 +27,9 @@ import (
 // policies returns the rendered Workspace NetworkPolicies.
 func policies(t *testing.T, out string) []networkingv1.NetworkPolicy {
 	t.Helper()
-	var nps []networkingv1.NetworkPolicy
-	for _, doc := range objects(t, out, "NetworkPolicy") {
+	docs := objects(t, out, "NetworkPolicy")
+	nps := make([]networkingv1.NetworkPolicy, 0, len(docs))
+	for _, doc := range docs {
 		var np networkingv1.NetworkPolicy
 		if err := yaml.Unmarshal([]byte(doc), &np); err != nil {
 			t.Fatal(err)
@@ -95,7 +96,7 @@ func TestWorkspaceNetworkPolicy(t *testing.T) {
 			t.Errorf("the public internet rule does not block %s", private)
 		}
 	}
-	var ports []int
+	ports := make([]int, 0, len(eg[2].Ports))
 	for _, p := range eg[2].Ports {
 		ports = append(ports, p.Port.IntValue())
 	}
