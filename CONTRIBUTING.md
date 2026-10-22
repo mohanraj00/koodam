@@ -38,7 +38,7 @@ make manifests generate helm-sync
 
 Do not edit the generated files by hand. [docs/kubebuilder-guide.md](docs/kubebuilder-guide.md) has the layout.
 
-The kind e2e tests do not run on a PR from a fork until the maintainer adds the label `ok-to-test`.
+The kind e2e job does not run on a PR from a fork until the maintainer adds the label `ok-to-test`. Until then, the job fails at once. After the maintainer adds the label, push a commit to run the job.
 
 ## 4. Dependencies
 
