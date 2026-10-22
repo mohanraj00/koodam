@@ -22,14 +22,26 @@ workspace:
   # publicInternet is true, and the rules of extraEgress. Other traffic is blocked.
   networkPolicy:
     namespaces: []
-    # The DNS pods. The pods can send UDP and TCP port 53 only to these pods.
+    # The cluster DNS pods. The pods can send UDP and TCP port 53 to these pods.
     dns:
       namespace: kube-system
       podLabels:
         k8s-app: kube-dns
-    # If true, the pods can reach each address outside the private, shared, link-local and
-    # loopback ranges. These ranges include the cluster, the nodes and the cloud metadata address.
+    # If true, the pods can reach each address outside the private, shared, link-local,
+    # loopback, IPv4-mapped and NAT64 ranges. These ranges include the cloud metadata address.
     publicInternet: true
+    # The ports of the public internet rule. An empty list permits all ports. The default has
+    # no port 53, so the pods can use only the cluster DNS.
+    publicInternetPorts:
+    - protocol: TCP
+      port: 443
+    - protocol: TCP
+      port: 80
+    - protocol: TCP
+      port: 22
+    # More ranges that the public internet rule blocks. Add the public addresses of the API
+    # server and the nodes, and the IPv6 ranges of the cluster, if they are public.
+    blockedCIDRs: []
     # More egress rules (NetworkPolicyEgressRule). Use them for a gateway outside the bundled
     # mode, or for a cluster address that the pods must reach.
     extraEgress: []

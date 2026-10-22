@@ -43,7 +43,7 @@ var _ = Describe("Workspace NetworkPolicy", Ordered, Label("workspace"), func() 
 	// reach is true if the probe pod opens a TCP connection to addr in 5 seconds.
 	reach := func(addr string) bool {
 		_, err := utils.Run(exec.Command("kubectl", "exec", "-n", npNS, probe, "--",
-			"timeout", "5", "bash", "-c", "exec 3<>/dev/tcp/"+addr))
+			"timeout", "5", "bash", "-c", `exec 3<>"/dev/tcp/$1"`, "--", addr))
 		return err == nil
 	}
 	// podAddr returns the IP and the port of the gateway pod with the component label c.
@@ -74,12 +74,17 @@ var _ = Describe("Workspace NetworkPolicy", Ordered, Label("workspace"), func() 
 
 	It("lets a Workspace pod reach only DNS, the gateway and the public internet", func() {
 		gw, db := podAddr("litellm", "4000"), podAddr("postgres", "5432")
-		api := &corev1.Service{}
-		Expect(k8s.Get(ctx, client.ObjectKey{Namespace: "default", Name: "kubernetes"}, api)).To(Succeed())
-		apiAddr := api.Spec.ClusterIP + "/443"
+		svcAddr := func(ns, name, port string) string {
+			svc := &corev1.Service{}
+			Expect(k8s.Get(ctx, client.ObjectKey{Namespace: ns, Name: name}, svc)).To(Succeed())
+			return svc.Spec.ClusterIP + "/" + port
+		}
+		apiAddr, gwSvc := svcAddr("default", "kubernetes", "443"), svcAddr(systemNS, release+"-litellm", "4000")
+		// public is a public address on a permitted port. dnsOut is a public DNS server.
+		const public, dnsOut = "1.1.1.1/443", "1.1.1.1/53"
 
 		By("reaching each target before the policy")
-		for _, a := range []string{gw, db, apiAddr} {
+		for _, a := range []string{gw, gwSvc, db, apiAddr, public, dnsOut} {
 			Expect(reach(a)).To(BeTrue(), "The probe cannot reach "+a+" with no policy.")
 		}
 
@@ -94,11 +99,14 @@ var _ = Describe("Workspace NetworkPolicy", Ordered, Label("workspace"), func() 
 		out, err = utils.Run(exec.Command("kubectl", "apply", "-f", file))
 		Expect(err).NotTo(HaveOccurred(), out)
 
-		By("blocking the database and the API server, and keeping the gateway and DNS")
+		By("blocking the database, the API server and public DNS, and keeping the gateway, DNS and the internet")
 		Eventually(func() bool { return reach(db) }, time.Minute, 2*time.Second).Should(BeFalse(),
 			"The policy does not block the gateway database.")
 		Expect(reach(apiAddr)).To(BeFalse(), "The policy does not block the API server.")
+		Expect(reach(dnsOut)).To(BeFalse(), "The policy does not block a public DNS server.")
 		Expect(reach(gw)).To(BeTrue(), "The policy blocks the gateway.")
+		Expect(reach(gwSvc)).To(BeTrue(), "The policy blocks the gateway Service.")
+		Expect(reach(public)).To(BeTrue(), "The policy blocks the public internet.")
 		out, err = utils.Run(exec.Command("kubectl", "exec", "-n", npNS, probe, "--",
 			"getent", "hosts", "kubernetes.default.svc.cluster.local"))
 		Expect(err).NotTo(HaveOccurred(), "The policy blocks DNS: "+out)

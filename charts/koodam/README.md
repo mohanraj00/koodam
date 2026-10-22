@@ -161,6 +161,8 @@ helm install koodam charts/koodam -n koodam-system -f charts/koodam/values-bundl
 | `workspace.networkPolicy.namespaces` | empty | The namespaces that get a NetworkPolicy for the Workspace pods. See [The Workspace network](../../docs/profiles.md#the-workspace-network). |
 | `workspace.networkPolicy.dns.namespace`, `.podLabels` | `kube-system`, `k8s-app: kube-dns` | The DNS pods that the Workspace pods can reach on port 53. |
 | `workspace.networkPolicy.publicInternet` | `true` | If `true`, the Workspace pods can reach each public address. |
+| `workspace.networkPolicy.publicInternetPorts` | TCP 443, 80, 22 | The ports of the public internet rule. An empty list permits all ports. |
+| `workspace.networkPolicy.blockedCIDRs` | empty | More ranges that the public internet rule blocks, for example a public API server address. |
 | `workspace.networkPolicy.extraEgress` | empty | More egress rules (`NetworkPolicyEgressRule`). |
 | `gateway.mode` | `existing` | `existing` or `bundled`. |
 | `gateway.url` | empty | The LiteLLM admin address for the controller. The existing mode needs it. The bundled mode ignores it. |
