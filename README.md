@@ -23,6 +23,7 @@ v0.2 adds Workspaces. A Workspace is a pod with a home on a PVC. I connect to it
 - [The CLI](docs/cli.md): each command, and the spend and the projected cost.
 - [The gateway](docs/gateway.md): the budget, the revoke and the spend.
 - [Architecture](docs/architecture.md): the controller, the gateway, the Workspace pod, the PVC home and the tunnel.
+- [Bring your Claude Code to Kubernetes, not a new agent platform](https://mohanraj00.github.io/tech/introducing-koodam/): the blog post. Why I built Koodam, and a day with a Workspace.
 
 ## What one Agent gets (v0.1 target)
 
