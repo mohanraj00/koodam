@@ -34,9 +34,9 @@ jobs:
           set -euo pipefail
           fail=0
 
-          issue=$(printf '%s\n' "$BODY" | grep -oiE '(fixes|part of) #[0-9]+' | head -n 1 | grep -oE '[0-9]+' || true)
+          issue=$(printf '%s\n' "$BODY" | grep -oiE '\b(fixes|part of):?[[:blank:]]+#[0-9]+' | head -n 1 | grep -oE '[0-9]+' || true)
           if [ -z "$issue" ]; then
-            echo "::error::The PR body must have 'Fixes #N' or 'Part of #N'. The maintainer can add the label needs-issue. Read CONTRIBUTING.md."
+            echo "::error::The PR body must have 'Fixes #N' or 'Part of #N'. Read CONTRIBUTING.md."
             fail=1
           else
             info=$(gh api "repos/$REPO/issues/$issue" \
@@ -58,7 +58,7 @@ jobs:
           lines=$(gh api --paginate "repos/$REPO/pulls/$PR/files" \
             --jq ".[] | select(.filename | test(\$ENV.GENERATED) | not) | .changes" | awk '{s += $1} END {print s + 0}')
           if [ "$lines" -gt "$MAX_LINES" ]; then
-            echo "::error::The PR changes $lines lines without generated files. The limit is about $MAX_LINES. Split the PR. The maintainer can add the label too-large."
+            echo "::error::The PR changes $lines lines without generated files. The limit is about $MAX_LINES. Split the PR. Read CONTRIBUTING.md."
             fail=1
           else
             echo "The PR changes $lines lines without generated files."

@@ -48,6 +48,7 @@ An outside PR comes from a fork, by a person who is not the maintainer. [CONTRIB
 - Do not run a cross review or a security review on an outside PR until the maintainer adds the label `ready-for-review`.
 - Never run the code of a contributor with credentials, a gateway key, a token or a cluster kubeconfig. Read the diff. Do not execute it.
 - Do not add the labels `accepted`, `ok-to-test` or `ready-for-review`. Only the maintainer adds them.
+- The labels `needs-issue` and `too-large` are markers for the maintainer. The PR Gate does not read them.
 
 Never pass `--dangerously-skip-permissions`, `--dangerously-bypass-approvals-and-sandbox` or `--dangerously-bypass-hook-trust` to a reviewer.
 

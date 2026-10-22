@@ -26,8 +26,9 @@ jobs:
           set -euo pipefail
           cutoff=$(date -u -d "-${DAYS} days" +%Y-%m-%dT%H:%M:%SZ)
           gh pr list --state open --limit 500 --json number,isCrossRepository,author,updatedAt \
-            --jq ".[] | select(.isCrossRepository and .author.login != \"$MAINTAINER\" and .updatedAt < \"$cutoff\") | .number" |
+            --jq ".[] | select(.isCrossRepository and (.author.login // \"\") != \"$MAINTAINER\" and .updatedAt < \"$cutoff\") | .number" |
             while read -r pr; do
               echo "Close #$pr"
-              gh pr close "$pr" --comment "This PR has no activity for $DAYS days, so it is closed. If you continue the work, reopen it or open a new PR."
+              gh pr close "$pr" --comment "This PR has no activity for $DAYS days, so it is closed. If you continue the work, reopen it or open a new PR." ||
+                echo "::warning::Could not close #$pr."
             done
