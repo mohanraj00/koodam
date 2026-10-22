@@ -7,7 +7,7 @@
 
 # Koodam
 
-Koodam (கூடம், "hall", short for தொழில் கூடம், "workspace") is where your agents live on Kubernetes. One `Agent` resource gets a model key with a budget and a TTL, a ServiceAccount with only the access it asks for, and a Job. When the run ends, Koodam revokes all of it and writes the spend to the status.
+Koodam (short for தொழிற்கூடம், "workspace") is where your agents live on Kubernetes. One `Agent` resource gets a model key with a budget and a TTL, a ServiceAccount with only the access it asks for, and a Job. When the run ends, Koodam revokes all of it and writes the spend to the status.
 
 I run coding harnesses (Claude Code, Codex) and my own agents on a dev cluster. Each one needs a key, a Role, a login, my skills and my config. Today I wire that by hand for every run, and the credentials outlive the run. Koodam does the wiring and the cleanup.
 
