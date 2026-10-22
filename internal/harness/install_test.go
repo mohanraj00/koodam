@@ -24,6 +24,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -32,6 +33,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 )
 
 const pinned = "2.1.3"
@@ -78,6 +80,10 @@ type vendor struct {
 	kind      string
 	sigstore  *fakeSigstore
 	status    int
+	// The first fails requests get failStatus and the Retry-After header retryAfter.
+	fails      int
+	failStatus int
+	retryAfter string
 	// latestStatus and archiveStatus replace the usual status of /gh/latest and the archive.
 	latestStatus  int
 	archiveStatus int
@@ -99,6 +105,14 @@ func newVendor(t *testing.T) *vendor {
 	var body string
 	v.srv = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		v.requests = append(v.requests, r.URL.Path)
+		if v.fails > 0 {
+			v.fails--
+			if v.retryAfter != "" {
+				w.Header().Set("Retry-After", v.retryAfter)
+			}
+			w.WriteHeader(v.failStatus)
+			return
+		}
 		if v.status != 0 {
 			w.WriteHeader(v.status)
 			return
@@ -286,6 +300,7 @@ func TestCodexBadRelease(t *testing.T) {
 			"no file codex-x86_64-unknown-linux-musl"},
 	} {
 		t.Run(c.name, func(t *testing.T) {
+			fastRetry(t)
 			v := newVendor(t)
 			c.edit(v)
 			if _, err := v.install(amd64, Codex, "", ""); err == nil || !strings.Contains(err.Error(), c.want) {
@@ -324,6 +339,7 @@ func TestBadResponses(t *testing.T) {
 		}, "has 0 bytes"},
 	} {
 		t.Run(c.name, func(t *testing.T) {
+			fastRetry(t)
 			defer func(m int64) { maxBinary = m }(maxBinary)
 			v := newVendor(t)
 			c.edit(v)
@@ -334,5 +350,81 @@ func TestBadResponses(t *testing.T) {
 				t.Fatalf("a failed install left %v", f)
 			}
 		})
+	}
+}
+
+// fastRetry makes the retry waits short for 1 test.
+func fastRetry(t *testing.T) {
+	t.Helper()
+	f, m := firstWait, maxWait
+	firstWait, maxWait = time.Millisecond, 5*time.Millisecond
+	t.Cleanup(func() { firstWait, maxWait = f, m })
+}
+
+func TestRetryThenInstall(t *testing.T) {
+	fastRetry(t)
+	for _, code := range []int{http.StatusTooManyRequests, http.StatusServiceUnavailable} {
+		v := newVendor(t)
+		v.fails, v.failStatus, v.retryAfter = 2, code, "0"
+		got, err := v.install(amd64, ClaudeCode, "", "")
+		if err != nil || got != "2.1.3" {
+			t.Fatalf("%d: install = %q, %v, want 2.1.3", code, got, err)
+		}
+		if n := slices.Index(v.requests, "/claude/2.1.3/manifest.json"); n != 3 {
+			t.Fatalf("%d: requests = %v, want 3 tries of /claude/latest first", code, v.requests)
+		}
+	}
+}
+
+func TestRetryStops(t *testing.T) {
+	fastRetry(t)
+	v := newVendor(t)
+	v.fails, v.failStatus = 100, http.StatusTooManyRequests
+	if _, err := v.install(amd64, ClaudeCode, "", ""); err == nil || !strings.Contains(err.Error(), "429") {
+		t.Fatalf("install error = %v, want 429", err)
+	}
+	if len(v.requests) != retries+1 {
+		t.Fatalf("%d requests, want %d", len(v.requests), retries+1)
+	}
+
+	v = newVendor(t)
+	v.fails, v.failStatus = 1, http.StatusNotFound
+	if _, err := v.install(amd64, ClaudeCode, "", ""); err == nil || len(v.requests) != 1 {
+		t.Fatalf("a 404 got %d requests and error %v, want 1 request and an error", len(v.requests), err)
+	}
+}
+
+func TestRetryContext(t *testing.T) {
+	v := newVendor(t)
+	v.fails, v.failStatus, v.retryAfter = 1, http.StatusTooManyRequests, "20"
+	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer cancel()
+	in := &Installer{HTTP: v.srv.Client(), ClaudeBase: v.srv.URL + "/claude", Arch: amd64}
+	start := time.Now()
+	if _, err := in.Install(ctx, ClaudeCode, "", "", v.installDir); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("install error = %v, want a deadline error", err)
+	}
+	if d := time.Since(start); d > 5*time.Second {
+		t.Fatalf("the install waited %v after the context end", d)
+	}
+}
+
+func TestRetryAfter(t *testing.T) {
+	now := time.Date(2026, 10, 22, 8, 0, 0, 0, time.UTC)
+	for _, c := range []struct {
+		v    string
+		want time.Duration
+	}{
+		{"", 3 * time.Second},
+		{"bad", 3 * time.Second},
+		{"2", 2 * time.Second},
+		{"-5", 0},
+		{"600", maxWait},
+		{now.Add(10 * time.Second).Format(http.TimeFormat), 10 * time.Second},
+		{now.Add(-time.Hour).Format(http.TimeFormat), 0},
+	} {
+		if got := retryAfter(c.v, 3*time.Second, now); got != c.want {
+			t.Errorf("retryAfter(%q) = %v, want %v", c.v, got, c.want)
+		}
 	}
 }

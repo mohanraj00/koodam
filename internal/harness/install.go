@@ -36,6 +36,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"time"
 )
 
 // The harness names.
@@ -61,6 +62,15 @@ const (
 // maxBinary is the size limit of a download and of an extracted binary. The emptyDir of the run
 // pod also has a size limit. It is a variable for the tests.
 var maxBinary int64 = 1 << 30
+
+// retries is the number of extra tries after a 429 or a 5xx response. The first wait is firstWait,
+// and each next wait is 2 times longer. A Retry-After header replaces the wait. No wait is longer
+// than maxWait. They are variables for the tests.
+var (
+	retries   = 4
+	firstWait = time.Second
+	maxWait   = 30 * time.Second
+)
 
 var versionRE = regexp.MustCompile(`^[0-9]+\.[0-9]+\.[0-9]+$`)
 
@@ -284,7 +294,28 @@ func (in *Installer) client() *http.Client {
 	return in.HTTP
 }
 
+// do sends a GET. It tries again after a 429 or a 5xx response (see retries).
 func (in *Installer) do(ctx context.Context, hc *http.Client, url string) (*http.Response, error) {
+	wait := firstWait
+	for try := 0; ; try++ {
+		resp, err := in.doOnce(ctx, hc, url)
+		if err != nil || try == retries || !retryable(resp.StatusCode) {
+			return resp, err
+		}
+		d := retryAfter(resp.Header.Get("Retry-After"), wait, time.Now())
+		_ = resp.Body.Close()
+		t := time.NewTimer(d)
+		select {
+		case <-ctx.Done():
+			t.Stop()
+			return nil, fmt.Errorf("GET %s: %w", url, ctx.Err())
+		case <-t.C:
+		}
+		wait *= 2
+	}
+}
+
+func (in *Installer) doOnce(ctx context.Context, hc *http.Client, url string) (*http.Response, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
 		return nil, err
@@ -300,6 +331,20 @@ func (in *Installer) do(ctx context.Context, hc *http.Client, url string) (*http
 		return nil, fmt.Errorf("GET %s: %w", url, err)
 	}
 	return resp, nil
+}
+
+func retryable(code int) bool { return code == http.StatusTooManyRequests || code/100 == 5 }
+
+// retryAfter reads a Retry-After value in seconds or as an HTTP date. If the value is empty or
+// not valid, it returns def. The result is from 0 to maxWait.
+func retryAfter(v string, def time.Duration, now time.Time) time.Duration {
+	d := def
+	if n, err := strconv.Atoi(v); err == nil {
+		d = time.Duration(n) * time.Second
+	} else if t, err := http.ParseTime(v); err == nil {
+		d = t.Sub(now)
+	}
+	return min(max(d, 0), maxWait)
 }
 
 // download writes the body to dst only if its sha256 is sum. An empty sum skips the check. The file
