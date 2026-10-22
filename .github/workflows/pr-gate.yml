@@ -15,7 +15,6 @@ jobs:
       github.event.pull_request.head.repo.full_name != github.repository &&
       github.event.pull_request.user.login != 'mohanraj00'
     permissions:
-      contents: read
       issues: read
       pull-requests: read
     name: Linked issue and size
