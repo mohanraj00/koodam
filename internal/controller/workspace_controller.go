@@ -179,6 +179,7 @@ func (r *WorkspaceReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 		keysCond.Message = fmt.Sprintf("The controller skipped the keys at the indexes %v of spec.sshPublicKeys.", skipped)
 	}
 	meta.SetStatusCondition(&ws.Status.Conditions, keysCond)
+	meta.SetStatusCondition(&ws.Status.Conditions, harnessCondition(ws, r.InstallerImage))
 	res := ctrl.Result{}
 	var keyErr error
 	if c := meta.FindStatusCondition(ws.Status.Conditions, condGatewayKey); bound && wantKey(ws) && c != nil &&

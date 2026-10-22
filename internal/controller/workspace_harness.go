@@ -19,9 +19,28 @@ package controller
 import (
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	corev1alpha1 "github.com/mohanraj00/koodam/api/v1alpha1"
 )
+
+// condHarnesses tells if the pod installs the harnesses of spec.harnesses.
+const condHarnesses = "Harnesses"
+
+// harnessCondition is True if spec.harnesses is empty or the controller has an installer image.
+// With no installer image, addWorkspaceHarnesses adds no harness, and the condition says so.
+func harnessCondition(ws *corev1alpha1.Workspace, image string) metav1.Condition {
+	c := metav1.Condition{Type: condHarnesses, Status: metav1.ConditionTrue, Reason: "Installed",
+		Message: "The pod installs each harness of spec.harnesses.", ObservedGeneration: ws.Generation}
+	switch {
+	case len(ws.Spec.Harnesses) == 0:
+		c.Reason, c.Message = "None", "spec.harnesses is empty."
+	case image == "":
+		c.Status, c.Reason = metav1.ConditionFalse, "NoInstallerImage"
+		c.Message = "The controller has no --installer-image, so the pod has no harness."
+	}
+	return c
+}
 
 // addWorkspaceHarnesses adds one init container for each harness of the Workspace. Each init
 // container downloads its harness binary into the same emptyDir and checks its sha256, as for an

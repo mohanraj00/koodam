@@ -45,12 +45,14 @@ var _ = Describe("Workspace harnesses", func() {
 		Expect(p.InitContainers[0].Command).To(Equal([]string{"/harness-install", "-harness", claudeName,
 			"-version", "2.1.0", "-libc", muslLibc, "-dir", harnessDir}))
 		Expect(p.InitContainers[1].Name).To(Equal("harness-codex"))
-		Expect(p.InitContainers[1].Command).To(ContainElements("-libc", "glibc"))
+		Expect(p.InitContainers[1].Command).To(Equal([]string{"/harness-install", "-harness", codexName,
+			"-version", "", "-libc", "glibc", "-dir", harnessDir}))
 		for _, c := range p.InitContainers {
 			Expect(c.Image).To(Equal(installer))
 			Expect(c.Env).To(BeEmpty())
 			Expect(c.EnvFrom).To(BeEmpty())
 			Expect(c.SecurityContext.RunAsNonRoot).To(HaveValue(BeTrue()))
+			Expect(c.SecurityContext.ReadOnlyRootFilesystem).To(HaveValue(BeTrue()))
 			Expect(c.SecurityContext.AllowPrivilegeEscalation).To(HaveValue(BeFalse()))
 			Expect(c.SecurityContext.Capabilities.Drop).To(Equal([]corev1.Capability{"ALL"}))
 			Expect(c.SecurityContext.SeccompProfile.Type).To(Equal(corev1.SeccompProfileTypeRuntimeDefault))
@@ -58,6 +60,15 @@ var _ = Describe("Workspace harnesses", func() {
 		Expect(p.Containers[0].VolumeMounts).To(ContainElement(corev1.VolumeMount{
 			Name: "harness", MountPath: harnessDir, ReadOnly: true}))
 		Expect(p.Volumes).To(ContainElement(HaveField("Name", "harness")))
+	})
+
+	It("sets the condition False only for harnesses with no installer image", func() {
+		Expect(harnessCondition(ws(), "").Reason).To(Equal("None"))
+		Expect(harnessCondition(ws(corev1alpha1.HarnessSpec{Name: codexName}), installer).Status).
+			To(Equal(metav1.ConditionTrue))
+		c := harnessCondition(ws(corev1alpha1.HarnessSpec{Name: codexName}), "")
+		Expect(c.Status).To(Equal(metav1.ConditionFalse))
+		Expect(c.Reason).To(Equal("NoInstallerImage"))
 	})
 
 	It("does not change the pod with no harness or no installer image", func() {

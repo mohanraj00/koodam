@@ -27,7 +27,10 @@ COPY profile-globals.sh /etc/profile.d/koodam-globals.sh
 RUN chmod 0755 /usr/local/bin/koodam-globals
 COPY koodam-project.sh /usr/local/bin/koodam-project
 COPY project.sh /etc/profile.d/koodam-project.sh
-COPY harness.sh /etc/profile.d/koodam-harness.sh
+# The controller mounts the harnesses of spec.harnesses in /koodam/bin. The links are in the
+# PATH of each SSH command, also with no login shell. A link with no target is not a command.
+RUN ln -s /koodam/bin/claude /usr/local/bin/claude \
+ && ln -s /koodam/bin/codex /usr/local/bin/codex
 RUN chmod 0755 /usr/local/bin/koodam-project
 
 USER 1000:1000

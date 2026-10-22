@@ -75,7 +75,7 @@ These fields are optional:
 | `storage` | The size of the home PVC. The default is `20Gi`. |
 | `suspend` | If `true`, the controller blocks the gateway key and stops the pod. The PVC stays. |
 | `gateway.model`, `gateway.budgetPerDay` | A gateway key for the pod, for 1 model, with a budget for each day. Without `gateway`, the harnesses use the subscription login only. |
-| `harnesses` | The harnesses in the pod (`claude-code`, `codex`), each with an optional `version`. See [The harnesses](#the-harnesses). |
+| `harnesses` | The harnesses in the pod (`claude-code`, `codex`), each with an optional `version` and `libc` (`glibc` or `musl`, default `glibc`). See [The harnesses](#the-harnesses). |
 
 1. Apply the Workspace:
 
@@ -93,7 +93,7 @@ The phase is `Pending`, `Running`, `Suspended` or `Failed`. If the phase is not 
 
 ## The harnesses
 
-The controller installs each harness of `spec.harnesses` at each pod start. An init container downloads the binary from the vendor and checks its sha256, as for an Agent run. The binaries are in `/koodam/bin`, read-only. The login `PATH` has this folder.
+The controller installs each harness of `spec.harnesses` at each pod start. An init container downloads the binary from the vendor and checks its sha256, as for an Agent run. The binaries are in `/koodam/bin`, read-only. The image has links to them in `/usr/local/bin`, so each SSH command finds them, also with no login shell.
 
 ```yaml
 spec:
@@ -106,7 +106,8 @@ spec:
 - If `version` is empty, the pod gets the latest version at each start. Set `version` to keep the same version after a restart.
 - A change to `spec.harnesses` restarts the pod. The home PVC stays.
 - If the download or the sha256 check fails, the pod does not start. Read the log with `kubectl logs -n dev-sample main-0 -c harness-claude-code`.
-- A harness that you install in `~/.local/bin` has priority over `/koodam/bin`, because `~/.profile` puts `~/.local/bin` first.
+- In a login shell, a harness that you install in `~/.local/bin` has priority, because `~/.profile` puts `~/.local/bin` first.
+- If the controller has no installer image, the condition `Harnesses` is `False` with the reason `NoInstallerImage`, and the pod has no harness.
 
 ## Connect with SSH
 
