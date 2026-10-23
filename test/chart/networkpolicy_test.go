@@ -98,7 +98,7 @@ func checkPublicRule(t *testing.T, rule networkingv1.NetworkPolicyEgressRule) {
 		}
 	}
 	v6 := rule.To[1].IPBlock
-	for _, private := range []string{"::ffff:0:0/96", "64:ff9b::/96", "fc00::/7", "fe80::/10"} {
+	for _, private := range []string{"64:ff9b::/96", "fc00::/7", "fe80::/10"} {
 		if v6 == nil || v6.CIDR != "::/0" || !slices.Contains(v6.Except, private) {
 			t.Errorf("the public internet rule does not block %s", private)
 		}

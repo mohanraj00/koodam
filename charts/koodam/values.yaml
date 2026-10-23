@@ -28,7 +28,9 @@ workspace:
       podLabels:
         k8s-app: kube-dns
     # If true, the pods can reach each address outside the private, shared, link-local,
-    # loopback, IPv4-mapped and NAT64 ranges. These ranges include the cloud metadata address.
+    # loopback and NAT64 ranges. These ranges include the cloud metadata address. The API server
+    # refuses an IPv4-mapped range in a NetworkPolicy. The kernel sends an IPv4-mapped address as
+    # IPv4, so the IPv4 ranges apply to it.
     publicInternet: true
     # The ports of the public internet rule. An empty list permits all ports. The default has
     # no port 53, so the pods can use only the cluster DNS.
