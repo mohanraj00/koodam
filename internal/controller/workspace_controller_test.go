@@ -526,6 +526,9 @@ var _ = Describe("Workspace Profile binding", func() {
 		Expect(gw.order).To(Equal([]string{opCreate}))
 		sts := &appsv1.StatefulSet{}
 		Expect(k8sClient.Get(ctx, nn(name), sts)).To(Succeed())
+		Expect(sts.Spec.Template.Labels).To(HaveKeyWithValue(UserLabel, ns))
+		Expect(sts.Spec.Template.Labels).NotTo(HaveKey(RunLabel))
+		Expect(sts.Spec.Selector.MatchLabels).NotTo(HaveKey(UserLabel), "the selector cannot change")
 		sts.Status.Replicas, sts.Status.ReadyReplicas, sts.Status.ObservedGeneration = 1, 1, sts.Generation
 		Expect(k8sClient.Status().Update(ctx, sts)).To(Succeed())
 		reconcileOnce()

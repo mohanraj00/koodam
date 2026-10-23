@@ -144,11 +144,12 @@ func (r *WorkspaceReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 		return ctrl.Result{}, r.applyKey(ctx, ws)
 	}
 	old := ws.Status.DeepCopy()
-	bound, err := profileBinds(ctx, r.Client, ws.Namespace)
+	user, err := boundProfile(ctx, r.Client, ws.Namespace)
 	if err != nil {
 		return ctrl.Result{}, err
 	}
-	phase, reason, msg, err := r.apply(ctx, ws, bound)
+	bound := user != ""
+	phase, reason, msg, err := r.apply(ctx, ws, user)
 	if err != nil {
 		return ctrl.Result{}, err
 	}
@@ -200,14 +201,14 @@ func (r *WorkspaceReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 
 // apply makes or updates the 3 objects of the Workspace. It returns the phase, and the reason
 // and the message of the Ready condition. It returns an error only if a retry can fix it. If
-// bound is false, apply makes no object and stops the pod.
-func (r *WorkspaceReconciler) apply(ctx context.Context, ws *corev1alpha1.Workspace, bound bool) (
+// user (the bound Profile) is empty, apply makes no object and stops the pod.
+func (r *WorkspaceReconciler) apply(ctx context.Context, ws *corev1alpha1.Workspace, user string) (
 	corev1alpha1.WorkspacePhase, string, string, error) {
 	const failed = corev1alpha1.WorkspaceFailed
 	if len(ws.Name) > maxWorkspaceName {
 		return failed, "Invalid", "The Workspace name is too long for the StatefulSet. Use 52 characters or fewer.", nil
 	}
-	if !bound {
+	if user == "" {
 		if err := r.unbind(ctx, ws); err != nil {
 			return "", "", "", err
 		}
@@ -227,7 +228,7 @@ func (r *WorkspaceReconciler) apply(ctx context.Context, ws *corev1alpha1.Worksp
 		err = r.applyKey(ctx, ws)
 	}
 	if err == nil {
-		sts, err = r.applyStatefulSet(ctx, ws, true)
+		sts, err = r.applyStatefulSet(ctx, ws, user)
 	}
 	switch {
 	case errors.Is(err, errNotOwned):
@@ -333,16 +334,16 @@ func (r *WorkspaceReconciler) unbind(ctx context.Context, ws *corev1alpha1.Works
 	if err != nil {
 		return err
 	}
-	_, err = r.applyStatefulSet(ctx, ws, false)
+	_, err = r.applyStatefulSet(ctx, ws, "")
 	return err
 }
 
 // applyStatefulSet makes the StatefulSet. It updates the pod template only if it is not the
 // template of the controller, and the replicas if spec.suspend or the binding changed. The
 // volumeClaimTemplates cannot change.
-func (r *WorkspaceReconciler) applyStatefulSet(ctx context.Context, ws *corev1alpha1.Workspace, bound bool) (
+func (r *WorkspaceReconciler) applyStatefulSet(ctx context.Context, ws *corev1alpha1.Workspace, user string) (
 	*appsv1.StatefulSet, error) {
-	want := r.statefulSet(ws, bound)
+	want := r.statefulSet(ws, user)
 	have := &appsv1.StatefulSet{}
 	err := r.Get(ctx, types.NamespacedName{Namespace: ws.Namespace, Name: ws.Name}, have)
 	if apierrors.IsNotFound(err) {
@@ -383,16 +384,16 @@ func (r *WorkspaceReconciler) createOwned(ctx context.Context, ws *corev1alpha1.
 	return errors.New("the cache does not have the object yet")
 }
 
-// statefulSet makes the StatefulSet of the pod contract in issue #15. If bound is false, the
-// StatefulSet has 0 replicas.
-func (r *WorkspaceReconciler) statefulSet(ws *corev1alpha1.Workspace, bound bool) *appsv1.StatefulSet {
+// statefulSet makes the StatefulSet of the pod contract in issue #15. If user (the bound Profile)
+// is empty, the StatefulSet has 0 replicas.
+func (r *WorkspaceReconciler) statefulSet(ws *corev1alpha1.Workspace, user string) *appsv1.StatefulSet {
 	const home, ssh, globals, login = "home", "ssh", "globals", "login"
 	image := ws.Spec.Image
 	if image == "" {
 		image = r.Image
 	}
 	replicas := int32(1)
-	if ws.Spec.Suspend || !bound {
+	if ws.Spec.Suspend || user == "" {
 		replicas = 0
 	}
 	storage := ws.Spec.Storage
@@ -459,6 +460,7 @@ func (r *WorkspaceReconciler) statefulSet(ws *corev1alpha1.Workspace, bound bool
 		Volumes:    volumes,
 	}}
 	addWorkspaceHarnesses(&tmpl.Spec, ws.Spec.Harnesses, r.InstallerImage)
+	addIdentity(&tmpl.ObjectMeta, "", user)
 	sts := &appsv1.StatefulSet{ObjectMeta: workspaceMeta(ws, ws.Name), Spec: appsv1.StatefulSetSpec{
 		Replicas: &replicas,
 		Selector: &metav1.LabelSelector{MatchLabels: labels},

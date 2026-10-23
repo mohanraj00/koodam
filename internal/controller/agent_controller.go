@@ -350,6 +350,12 @@ func (r *AgentReconciler) provision(ctx context.Context, a *corev1alpha1.Agent) 
 	if err != nil {
 		return err
 	}
+	user, err := boundProfile(ctx, r.Client, a.Namespace)
+	if err != nil {
+		return err
+	}
+	job := runJob(a, r.InstallerImage, r.GatewayURL)
+	addIdentity(&job.Spec.Template.ObjectMeta, job.Name, user)
 	name := runName(a)
 	objs := []client.Object{
 		&corev1.ServiceAccount{ObjectMeta: runMeta(a)},
@@ -358,7 +364,7 @@ func (r *AgentReconciler) provision(ctx context.Context, a *corev1alpha1.Agent) 
 			RoleRef:  rbacv1.RoleRef{APIGroup: rbacv1.GroupName, Kind: "Role", Name: name},
 			Subjects: []rbacv1.Subject{{Kind: rbacv1.ServiceAccountKind, Name: name, Namespace: a.Namespace}},
 		},
-		runJob(a, r.InstallerImage, r.GatewayURL),
+		job,
 	}
 	for _, o := range objs {
 		err := r.Create(ctx, o)
