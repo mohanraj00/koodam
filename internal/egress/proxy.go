@@ -84,8 +84,13 @@ type Span struct {
 	// The identity of the source pod. Identify fills these fields.
 	Namespace string `json:"namespace,omitempty"`
 	Pod       string `json:"pod,omitempty"`
+	Agent     string `json:"agent,omitempty"`
+	Workspace string `json:"workspace,omitempty"`
 	Run       string `json:"run,omitempty"`
 	User      string `json:"user,omitempty"`
+	// The identity that the pod claims in a header. The proxy does not trust these fields.
+	ClaimedRun  string `json:"claimedRun,omitempty"`
+	ClaimedUser string `json:"claimedUser,omitempty"`
 }
 
 // Sink receives each span. Write must be safe for concurrent use.
