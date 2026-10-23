@@ -13,9 +13,9 @@ The [result file](results/codex-sandbox-72.json) records the commands, exit code
 | `codex sandbox` with a local read command | Namespace setup fails | Loopback setup fails |
 | `codex sandbox` with `sandbox_mode="workspace-write"` | Namespace setup fails | Loopback setup fails |
 
-Under runc, bubblewrap reports `No permissions to create a new namespace`. The node permits unprivileged user namespaces, but this pod cannot make one. The error alone does not show which runtime or host policy refused it.
+Under runc, bubblewrap reports `No permissions to create a new namespace`. The result file records the node sysctls for user namespaces and AppArmor. These values alone do not prove that the node permits a new user namespace. The test does not isolate AppArmor from the runtime seccomp policy. Do not change host sysctls in response to the error hint.
 
-Under gVisor, a user namespace works. With a network namespace, bubblewrap reports `loopback: Failed RTM_NEWADDR: No child process`. The same error stops both Codex commands before the test command runs. The plain shell control works, and the test files stay unchanged after the sandbox checks. gVisor does not make this Codex sandbox usable with the tested settings.
+Under gVisor, a user namespace works. With a network namespace, bubblewrap reports `loopback: Failed RTM_NEWADDR: No child process`. The same error stops both Codex commands before the test command runs. The plain shell control works, and the test files stay unchanged after the sandbox checks. This shows that no write occurred; it does not prove that sandbox file restrictions work. gVisor does not make this Codex sandbox usable with the tested settings.
 
 ## Scope and safe use
 
@@ -27,9 +27,17 @@ Keep the restricted pod settings. Do not add `SYS_ADMIN`, a privileged container
 
 ## Repeat the check
 
-Use a disposable kind cluster named `koodam-72`. Give kind an explicit `--kubeconfig` path in a local scratch folder. Do not use a real cluster or mount a real home. The script always selects the context `kind-koodam-72` from the file that you give it.
+Set `scratch_folder` to a new folder under LocalWork, outside iCloud. Do not use a real cluster or mount a real home. Make a fresh cluster for each run; an old pod can have stopped, or its spec can conflict. The script always selects the context `kind-koodam-72` from the file that you give it.
 
-1. Build `images/workspace` as `koodam-workspace:72-sandbox`.
+```sh
+test_kubeconfig="$scratch_folder/kubeconfig"
+probe_image_folder="$scratch_folder/probe-image"
+mkdir -p "$scratch_folder/tools" "$probe_image_folder"
+kind create cluster --name koodam-72 --kubeconfig "$test_kubeconfig" \
+  --image kindest/node@sha256:a1ed56cfb0e7b93589bdf97c8cd566405a265939e3620fc4f5de89adff580ae5
+```
+
+1. Run `docker build -t koodam-workspace:72-sandbox images/workspace`.
 2. Make empty scratch folders `tools` and `probe-image`, then set `probe_image_folder` to the latter. Build and run the Koodam harness installer. It checks the release signatures and checksums. The container gets no host home or inherited key variables:
 
    ```sh
@@ -55,7 +63,16 @@ Use a disposable kind cluster named `koodam-72`. Give kind an explicit `--kubeco
    kind load docker-image koodam-codex-probe:72 --name koodam-72
    ```
 
-4. Install the official gVisor bundle in the kind node, with its published checksum check. Keep `runsc`, `containerd-shim-runsc-v1` and `gvisor-bin/` together in `/usr/local/bin`. This test used the [point release](https://github.com/google/gvisor/releases/tag/release-20261019.0). Do not install it on a production node for this check.
+4. Install the official gVisor bundle in the kind node, with its published checksum check. Keep `runsc`, `containerd-shim-runsc-v1` and `gvisor-bin/` together in `/usr/local/bin`. This test used the [point release](https://github.com/google/gvisor/releases/tag/release-20261019.0). Do not install it on a production node for this check. Download and check the arm64 bundle:
+
+   ```sh
+   release_url=https://storage.googleapis.com/gvisor/releases/release/20261019.0/aarch64
+   curl -fsSLo "$scratch_folder/gvisor.tar.bz2" "$release_url/gvisor.tar.bz2"
+   curl -fsSLo "$scratch_folder/gvisor.tar.bz2.sha512" "$release_url/gvisor.tar.bz2.sha512"
+   (cd "$scratch_folder" && shasum -a 512 -c gvisor.tar.bz2.sha512)
+   ```
+
+   Unpack the checked bundle and copy its contents into `/usr/local/bin` of the kind node `koodam-72-control-plane`.
 5. Add this handler to the kind node's containerd config, then restart containerd in that node:
 
    ```toml
@@ -78,7 +95,8 @@ Use a disposable kind cluster named `koodam-72`. Give kind an explicit `--kubeco
 
    ```sh
    python3 test/sandbox/probe.py --kubeconfig "$test_kubeconfig" \
-     --image koodam-codex-probe:72 --output "$scratch_folder/results.json"
+     --image koodam-codex-probe:72 --gvisor-bundle "$scratch_folder/gvisor.tar.bz2" \
+     --output "$scratch_folder/results.json"
    ```
 
    It makes the restricted namespace, the RuntimeClass and both test pods. Exit 0 means that the recording finished. Read the exit code of each probe in the result file; a recorded sandbox failure is not a sandbox pass.
