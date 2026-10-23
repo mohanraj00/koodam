@@ -106,6 +106,7 @@ func TestRefused(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
+			_ = resp.Body.Close()
 			code := resp.StatusCode
 			sp := sink.next(t)
 			if code != http.StatusForbidden || sp.Result != ResultDenied || sp.Reason != tc.reason {
@@ -120,12 +121,17 @@ func TestForwardHTTP(t *testing.T) {
 		if r.Header.Get("Proxy-Authorization") != "" || r.Header.Get("X-Forwarded-For") != "" {
 			w.WriteHeader(http.StatusTeapot)
 		}
+		n, _ := io.Copy(io.Discard, r.Body)
+		if n != 4 {
+			w.WriteHeader(http.StatusBadRequest)
+		}
 		_, _ = io.WriteString(w, "ok")
 	}))
 	defer up.Close()
 	pu, sink := start(t, false, port(t, up.URL), nil)
 	c := &http.Client{Transport: &http.Transport{Proxy: http.ProxyURL(pu), ProxyConnectHeader: nil}}
-	req, _ := http.NewRequest(http.MethodGet, "http://"+net.JoinHostPort(testHost, port(t, up.URL))+"/a?token=q", nil)
+	target := "http://" + net.JoinHostPort(testHost, port(t, up.URL)) + "/a?token=q"
+	req, _ := http.NewRequest(http.MethodPost, target, strings.NewReader("body"))
 	req.Header.Set("Proxy-Authorization", "Basic "+testKey)
 	resp, err := c.Do(req)
 	if err != nil {
@@ -134,14 +140,14 @@ func TestForwardHTTP(t *testing.T) {
 	_ = resp.Body.Close()
 	sp := sink.next(t)
 	if resp.StatusCode != http.StatusOK || sp.Kind != KindHTTP || sp.Status != http.StatusOK || sp.Path != "/a" ||
-		sp.BytesIn != 2 {
+		sp.BytesIn != 2 || sp.BytesOut != 4 || sp.Host != net.JoinHostPort(testHost, port(t, up.URL)) {
 		t.Fatalf("status %d, span %+v", resp.StatusCode, sp)
 	}
 }
 
 func TestLLMRouteKeepsTheKeyOutOfTheSpan(t *testing.T) {
 	gw := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Header.Get("Authorization") != "Bearer "+testKey || r.URL.Path != "/v1/messages" ||
+		if r.Header.Get("Authorization") != "Bearer "+testKey || r.URL.Path != "/api/v1/messages" ||
 			r.URL.RawQuery != "key="+testKey {
 			w.WriteHeader(http.StatusUnauthorized)
 			return
@@ -149,7 +155,7 @@ func TestLLMRouteKeepsTheKeyOutOfTheSpan(t *testing.T) {
 		_, _ = io.WriteString(w, "done")
 	}))
 	defer gw.Close()
-	gu, _ := url.Parse(gw.URL)
+	gu, _ := url.Parse(gw.URL + "/api")
 	// The gateway is a private address. The proxy does not check the address of the gateway.
 	pu, sink := start(t, true, "443", gu)
 	req, _ := http.NewRequest(http.MethodPost, pu.String()+"/llm/v1/messages?key="+testKey, strings.NewReader("{}"))
@@ -199,4 +205,37 @@ func TestIsPublic(t *testing.T) {
 			t.Errorf("IsPublic(%s) = %v", s, got)
 		}
 	}
+}
+
+func TestDial(t *testing.T) {
+	addrs := []netip.Addr{netip.MustParseAddr("93.184.215.14"), netip.MustParseAddr("::ffff:127.0.0.1")}
+	p := &Proxy{Resolve: func(context.Context, string) ([]netip.Addr, error) { return addrs, nil }}
+	if _, err := p.dial(context.Background(), testHost, "80"); !errors.Is(err, errDenied) {
+		t.Fatalf("one private address of the name: %v", err)
+	}
+	p.Resolve = func(context.Context, string) ([]netip.Addr, error) { return nil, errors.New("no such host") }
+	if _, err := p.dial(context.Background(), testHost, "80"); err == nil || errors.Is(err, errDenied) {
+		t.Fatalf("a failed name lookup: %v", err)
+	}
+	p.Resolve = func(context.Context, string) ([]netip.Addr, error) { return nil, nil }
+	if _, err := p.dial(context.Background(), testHost, "80"); err == nil {
+		t.Fatal("a name with no address")
+	}
+}
+
+func TestDialTriesEachAddress(t *testing.T) {
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = ln.Close() }()
+	// The listener has only the IPv4 address, thus the dial to ::1 fails first.
+	addrs := []netip.Addr{netip.MustParseAddr("::1"), netip.MustParseAddr("127.0.0.1")}
+	p := &Proxy{Permit: func(netip.Addr) bool { return true },
+		Resolve: func(context.Context, string) ([]netip.Addr, error) { return addrs, nil }}
+	c, err := p.dial(context.Background(), testHost, port(t, "http://"+ln.Addr().String()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = c.Close()
 }

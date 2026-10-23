@@ -32,6 +32,7 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -106,6 +107,7 @@ var errDenied = errors.New("the address is not permitted")
 
 // Proxy is an http.Handler for plain HTTP with an absolute URI and for /llm/. A later change adds CONNECT.
 type Proxy struct {
+	// Sink is required.
 	Sink Sink
 	// Gateway is the target of /llm/. If it is nil, the proxy refuses /llm/.
 	Gateway *url.URL
@@ -145,7 +147,8 @@ func (p *Proxy) init() {
 func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	p.init()
 	start := time.Now()
-	sp := Span{Time: start.UTC(), Source: sourceIP(r.RemoteAddr), Method: r.Method, Kind: KindHTTP}
+	sp := Span{Time: start.UTC(), Source: sourceIP(r.RemoteAddr), Method: r.Method, Kind: KindHTTP,
+		Host: r.Host, Path: r.URL.Path}
 	switch {
 	case r.Method == http.MethodConnect:
 		sp.Kind = KindConnect
@@ -161,7 +164,7 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case sp.Kind == KindLLM && p.Gateway != nil:
 			p.llm(w, r, &sp)
-		case sp.Kind == KindHTTP && r.URL.IsAbs():
+		case sp.Kind == KindHTTP && r.URL.IsAbs() && r.URL.Host != "":
 			p.forward(w, r, &sp)
 		default:
 			p.deny(w, &sp, reasonNoProxy)
@@ -177,7 +180,7 @@ func (p *Proxy) deny(w http.ResponseWriter, sp *Span, reason string) {
 }
 
 func (p *Proxy) forward(w http.ResponseWriter, r *http.Request, sp *Span) {
-	sp.Host, sp.Path = r.URL.Host, r.URL.Path
+	sp.Host = r.URL.Host
 	port := r.URL.Port()
 	if port == "" {
 		port = "80"
@@ -186,17 +189,18 @@ func (p *Proxy) forward(w http.ResponseWriter, r *http.Request, sp *Span) {
 		p.deny(w, sp, reasonPort)
 		return
 	}
-	// The Rewrite keeps the absolute URL. ReverseProxy removes the hop-by-hop headers, for example
-	// Proxy-Authorization, and adds no X-Forwarded-For.
-	p.reverse(w, r, sp, p.direct, func(*httputil.ProxyRequest) {})
+	// The Rewrite keeps the absolute URL, and the Host header is the URL host. ReverseProxy removes
+	// the hop-by-hop headers, for example Proxy-Authorization, and adds no X-Forwarded-For.
+	p.reverse(w, r, sp, p.direct, func(pr *httputil.ProxyRequest) { pr.Out.Host = "" })
 }
 
 func (p *Proxy) llm(w http.ResponseWriter, r *http.Request, sp *Span) {
-	sp.Host, sp.Path = p.Gateway.Host, r.URL.Path
+	sp.Host = p.Gateway.Host
 	// The gateway key header passes through. The span has no header.
 	p.reverse(w, r, sp, p.toGateway, func(pr *httputil.ProxyRequest) {
-		pr.Out.URL.Path = strings.TrimPrefix(pr.In.URL.Path, strings.TrimSuffix(LLMPrefix, "/"))
-		pr.Out.URL.RawPath = ""
+		root := strings.TrimSuffix(LLMPrefix, "/")
+		pr.Out.URL.Path = strings.TrimPrefix(pr.In.URL.Path, root)
+		pr.Out.URL.RawPath = strings.TrimPrefix(pr.In.URL.RawPath, root)
 		pr.SetURL(p.Gateway)
 	})
 }
@@ -208,6 +212,8 @@ func (p *Proxy) reverse(w http.ResponseWriter, r *http.Request, sp *Span, rt htt
 	r.Body = body
 	rp := &httputil.ReverseProxy{
 		Rewrite: rewrite, Transport: rt,
+		// The gateway streams the tokens. Each write goes to the pod at once.
+		FlushInterval: -1,
 		// The error text can hold the URL with its query string. Thus the proxy does not log it.
 		ErrorLog: log.New(io.Discard, "", 0),
 		ErrorHandler: func(w http.ResponseWriter, _ *http.Request, err error) {
@@ -215,7 +221,7 @@ func (p *Proxy) reverse(w http.ResponseWriter, r *http.Request, sp *Span, rt htt
 		},
 	}
 	rp.ServeHTTP(cw, r)
-	sp.BytesIn, sp.BytesOut = cw.n, body.n
+	sp.BytesIn, sp.BytesOut = cw.n, body.n.Load()
 	if sp.Result == "" {
 		sp.Result, sp.Status = ResultOK, cw.status
 	}
@@ -258,7 +264,14 @@ func (p *Proxy) dial(ctx context.Context, host, port string) (net.Conn, error) {
 		}
 	}
 	d := net.Dialer{Timeout: 10 * time.Second}
-	return d.DialContext(ctx, "tcp", net.JoinHostPort(addrs[0].Unmap().String(), port))
+	var err error
+	for _, a := range addrs {
+		var c net.Conn
+		if c, err = d.DialContext(ctx, "tcp", net.JoinHostPort(a.Unmap().String(), port)); err == nil {
+			return c, nil
+		}
+	}
+	return nil, err
 }
 
 var sharedAddress = netip.MustParsePrefix("100.64.0.0/10")
@@ -291,7 +304,8 @@ type countWriter struct {
 }
 
 func (w *countWriter) WriteHeader(code int) {
-	if w.status == 0 {
+	// A 1xx status is not the final status.
+	if w.status == 0 && code >= http.StatusOK {
 		w.status = code
 	}
 	w.ResponseWriter.WriteHeader(code)
@@ -306,6 +320,8 @@ func (w *countWriter) Write(b []byte) (int, error) {
 	return n, err
 }
 
+func (w *countWriter) Unwrap() http.ResponseWriter { return w.ResponseWriter }
+
 // Flush keeps a streamed answer of the gateway streamed.
 func (w *countWriter) Flush() {
 	if f, ok := w.ResponseWriter.(http.Flusher); ok {
@@ -313,13 +329,15 @@ func (w *countWriter) Flush() {
 	}
 }
 
+// countReader counts the request body. The transport can read the body in a different goroutine,
+// thus n is atomic.
 type countReader struct {
 	io.ReadCloser
-	n int64
+	n atomic.Int64
 }
 
 func (r *countReader) Read(b []byte) (int, error) {
 	n, err := r.ReadCloser.Read(b)
-	r.n += int64(n)
+	r.n.Add(int64(n))
 	return n, err
 }
