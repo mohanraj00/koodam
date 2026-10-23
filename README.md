@@ -16,7 +16,7 @@ Developers and teams now run coding agents (Claude Code, Codex) and their own ag
 - Each run needs a model key, a Role, a login, skills and config. People wire these by hand for each run.
 - The credentials stay valid after the run stops.
 - A run has no model budget, and nothing records what it spent.
-- A coding session lives on a laptop. It stops when the laptop closes, and the login, the skills and the memory stay on that laptop.
+- A coding session lives on a laptop. It stops when the laptop closes, or it keeps the laptop awake, hot and on the charger. The login, the skills and the memory stay on that laptop.
 
 ## The solution
 
