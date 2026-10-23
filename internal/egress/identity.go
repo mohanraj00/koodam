@@ -21,6 +21,7 @@ import (
 	"errors"
 	"net/http"
 	"net/netip"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -172,20 +173,29 @@ func claim(v string) string {
 	return strings.ToValidUTF8(v, "")
 }
 
-// Watch fills the index from 2 pod informers in all namespaces: one for the Agent pods and one
-// for the Workspace pods. It needs get, list and watch on pods. It returns when the caches are
-// in sync, and the informers stop when ctx ends.
-func (x *PodIndex) Watch(ctx context.Context, cs kubernetes.Interface, resync time.Duration) error {
+// Watch fills the index from 2 pod informers for each namespace: one for the Agent pods and one
+// for the Workspace pods. If namespaces is empty, the informers watch all namespaces. It needs
+// get, list and watch on pods in these namespaces. It returns when the caches are in sync, and
+// the informers stop when ctx ends.
+func (x *PodIndex) Watch(ctx context.Context, cs kubernetes.Interface, resync time.Duration,
+	namespaces ...string) error {
+	if len(namespaces) == 0 {
+		namespaces = []string{metav1.NamespaceAll}
+	}
+	// One namespace two times gives 2 watches of the same pods.
+	namespaces = slices.Compact(slices.Sorted(slices.Values(namespaces)))
 	var synced []cache.InformerSynced
-	for _, label := range []string{AgentLabel, WorkspaceLabel} {
-		f := informers.NewSharedInformerFactoryWithOptions(cs, resync,
-			informers.WithTweakListOptions(func(o *metav1.ListOptions) { o.LabelSelector = label }))
-		inf := f.Core().V1().Pods().Informer()
-		if _, err := inf.AddEventHandler(x.handler()); err != nil {
-			return err
+	for _, namespace := range namespaces {
+		for _, label := range []string{AgentLabel, WorkspaceLabel} {
+			f := informers.NewSharedInformerFactoryWithOptions(cs, resync, informers.WithNamespace(namespace),
+				informers.WithTweakListOptions(func(o *metav1.ListOptions) { o.LabelSelector = label }))
+			inf := f.Core().V1().Pods().Informer()
+			if _, err := inf.AddEventHandler(x.handler()); err != nil {
+				return err
+			}
+			f.Start(ctx.Done())
+			synced = append(synced, inf.HasSynced)
 		}
-		f.Start(ctx.Done())
-		synced = append(synced, inf.HasSynced)
 	}
 	if !cache.WaitForCacheSync(ctx.Done(), synced...) {
 		return errors.New("the pod caches did not sync")
