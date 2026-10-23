@@ -131,6 +131,16 @@ The PostgreSQL data is in an `emptyDir` by default. If the pod stops, the keys a
 
 Licenses: LiteLLM uses the MIT License. PostgreSQL uses the PostgreSQL License.
 
+## Upgrade the CRDs
+
+Helm installs the CRDs in `crds/` only at the first install. `helm upgrade` does not change them. Before you upgrade the chart, apply the CRDs of the new version:
+
+```sh
+kubectl apply --server-side --force-conflicts -f charts/koodam/crds/
+```
+
+Use `--server-side`. The Agent and Workspace CRDs have the full Kubernetes pod spec in `spec.podTemplate`, so they are too large for the annotation of a client-side apply.
+
 ## The controller image
 
 The controller image is `ghcr.io/mohanraj00/koodam`. If `image.tag` is empty, the chart uses the chart `appVersion` as the tag. To use an image that you build, set `image.repository` and `image.tag`:

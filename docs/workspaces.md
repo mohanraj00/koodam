@@ -109,6 +109,45 @@ spec:
 - In a login shell, a harness that you install in `~/.local/bin` has priority, because `~/.profile` puts `~/.local/bin` first.
 - If the controller has no installer image, the condition `Harnesses` is `False` with the reason `NoInstallerImage`, and the pod has no harness.
 
+## The pod template
+
+`spec.podTemplate` changes the pod that Koodam makes for a Workspace or an Agent. The controller starts from your template and puts the Koodam parts on top. The Agent has the same field.
+
+```yaml
+apiVersion: core.koodam.dev/v1alpha1
+kind: Workspace
+metadata:
+  name: dev
+spec:
+  image: ghcr.io/mohanraj00/koodam-workspace:latest
+  podTemplate:
+    metadata:
+      labels:
+        team: data
+    spec:
+      runtimeClassName: gvisor
+      nodeSelector:
+        kubernetes.io/os: linux
+      containers:
+        - name: workspace
+          resources:
+            requests: {cpu: "1", memory: 2Gi}
+            limits: {memory: 4Gi}
+```
+
+The main container has the name `workspace` (or `agent` for an Agent). On the main container, you can set `image`, `command`, `args`, `workingDir`, `env`, `envFrom`, `resources` and `volumeMounts`. On the pod, you can set the other fields, for example `runtimeClassName`, `nodeSelector`, `tolerations`, `affinity`, `priorityClassName`, `imagePullSecrets`, extra volumes, sidecars and init containers.
+
+Koodam owns these fields:
+
+- On the pod: `serviceAccountName`, `serviceAccount`, `automountServiceAccountToken`, `enableServiceLinks`, `securityContext`, `restartPolicy`, `activeDeadlineSeconds` and `ephemeralContainers`.
+- On the main container: `ports`, `readinessProbe`, `securityContext`, and the env names and mount paths of Koodam.
+- On each container: `securityContext` and `hostPort`.
+- The names of the Koodam containers and volumes, and the label and annotation keys in the domain `koodam.dev`.
+
+The template cannot use `hostNetwork`, `hostPID`, `hostIPC`, `hostUsers: true`, `shareProcessNamespace` or a `hostPath` volume.
+
+The API server refuses the pod fields that Koodam owns. The controller refuses the other conflicts with the reason `InvalidPodTemplate`. If you change the template of a Workspace, the controller updates the StatefulSet, and Kubernetes makes the pod again. The home PVC stays. If the new template is not valid, the pod of the previous spec stays.
+
 ## Secrets in the pod template
 
 `spec.podTemplate` can refer to a Secret in the namespace of the Workspace or the Agent. The controller makes the pod, so the pod can read the Secret, also if your own account cannot read it. The controller refuses these references:
