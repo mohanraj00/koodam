@@ -229,3 +229,21 @@ func TestWatch(t *testing.T) {
 		time.Sleep(10 * time.Millisecond)
 	}
 }
+
+func TestWatchNamespaces(t *testing.T) {
+	cs := fake.NewClientset(agentPod(pod1, podA))
+	other := NewPodIndex()
+	if err := other.Watch(t.Context(), cs, 0, "other"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := identify(t, other, podA, nil); err == nil {
+		t.Fatal("the index has a pod from a namespace that it does not watch")
+	}
+	x := NewPodIndex()
+	if err := x.Watch(t.Context(), cs, 0, "other", ns); err != nil {
+		t.Fatal(err)
+	}
+	if sp, err := identify(t, x, podA, nil); err != nil || sp.Run != run1 {
+		t.Fatalf("%v %+v", err, sp)
+	}
+}
