@@ -48,33 +48,7 @@ spec:
   {{- end }}
   {{- if $np.publicInternet }}
   - to:
-    - ipBlock:
-        cidr: 0.0.0.0/0
-        except:
-        - 0.0.0.0/8
-        - 10.0.0.0/8
-        - 100.64.0.0/10
-        - 127.0.0.0/8
-        - 169.254.0.0/16
-        - 172.16.0.0/12
-        - 192.168.0.0/16
-        {{- range $np.blockedCIDRs }}
-        {{- if not (contains ":" .) }}
-        - {{ ternary . (printf "%s/32" .) (contains "/" .) }}
-        {{- end }}
-        {{- end }}
-    - ipBlock:
-        cidr: ::/0
-        except:
-        - ::1/128
-        - 64:ff9b::/96
-        - fc00::/7
-        - fe80::/10
-        {{- range $np.blockedCIDRs }}
-        {{- if contains ":" . }}
-        - {{ ternary . (printf "%s/128" .) (contains "/" .) }}
-        {{- end }}
-        {{- end }}
+    {{- include "koodam.publicPeers" $np.blockedCIDRs | nindent 4 }}
     {{- with $np.publicInternetPorts }}
     ports:
       {{- toYaml . | nindent 4 }}

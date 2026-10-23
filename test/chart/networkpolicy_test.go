@@ -85,11 +85,11 @@ func TestWorkspaceNetworkPolicy(t *testing.T) {
 		eg[1].Ports[0].Port.IntValue() != 4000 {
 		t.Errorf("the second egress rule is %v, want the bundled LiteLLM on 4000", eg[1])
 	}
-	checkPublicRule(t, eg[2])
+	checkPublicRule(t, eg[2], 443, 80, 22)
 }
 
 // checkPublicRule checks the ranges and the default ports of the public internet rule.
-func checkPublicRule(t *testing.T, rule networkingv1.NetworkPolicyEgressRule) {
+func checkPublicRule(t *testing.T, rule networkingv1.NetworkPolicyEgressRule, want ...int) {
 	t.Helper()
 	v4 := rule.To[0].IPBlock
 	for _, private := range []string{"10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16", "169.254.0.0/16"} {
@@ -107,8 +107,8 @@ func checkPublicRule(t *testing.T, rule networkingv1.NetworkPolicyEgressRule) {
 	for _, p := range rule.Ports {
 		ports = append(ports, p.Port.IntValue())
 	}
-	if !slices.Equal(ports, []int{443, 80, 22}) {
-		t.Errorf("the public internet ports are %v, want 443, 80 and 22", ports)
+	if !slices.Equal(ports, want) {
+		t.Errorf("the public internet ports are %v, want %v", ports, want)
 	}
 }
 

@@ -33,11 +33,19 @@ const (
 	releaseNS = "koodam-system"
 )
 
-// proxyValues turn on the proxy with a fixed ClusterIP.
+// proxyValues turn on the proxy with a fixed ClusterIP and an API server rule.
 const proxyValues = `
 egressProxy:
   enabled: true
   clusterIP: 10.96.0.50
+  networkPolicy:
+    apiServer:
+    - to:
+      - ipBlock:
+          cidr: 172.18.0.2/32
+      ports:
+      - protocol: TCP
+        port: 6443
 `
 
 // decode returns the rendered objects of one kind with the given name.
@@ -146,7 +154,34 @@ func TestEgressProxy(t *testing.T) {
 	if roles := decode[rbacv1.Role](t, out, "Role", proxyName); len(roles) != 0 {
 		t.Fatalf("got %d proxy Roles with no namespace, want 0", len(roles))
 	}
+}
 
+func TestEgressProxyNetworkPolicy(t *testing.T) {
+	nps := policies(t, render(t, proxyValues))
+	if len(nps) != 1 || nps[0].Name != proxyName {
+		t.Fatalf("got %d NetworkPolicies, want the proxy policy only", len(nps))
+	}
+	ing := nps[0].Spec.Ingress
+	if len(ing) != 2 || len(ing[0].Ports) != 1 || ing[0].Ports[0].Port.IntValue() != 3128 ||
+		len(ing[1].From) != 0 || len(ing[1].Ports) != 1 || ing[1].Ports[0].Port.IntValue() != 8081 {
+		t.Fatalf("got the ingress rules %+v, want the proxy port and the probe port", ing)
+	}
+	keys := make([]string, 0, len(ing[0].From))
+	for _, from := range ing[0].From {
+		if from.NamespaceSelector == nil || from.PodSelector == nil || len(from.PodSelector.MatchExpressions) != 1 {
+			t.Fatalf("the proxy port peer %+v does not select pods by a label", from)
+		}
+		keys = append(keys, from.PodSelector.MatchExpressions[0].Key)
+	}
+	if !slices.Equal(keys, []string{"koodam.dev/agent", "koodam.dev/workspace"}) {
+		t.Fatalf("the proxy port is open to %q, want the Agent and Workspace pods only", keys)
+	}
+	egress := nps[0].Spec.Egress
+	// DNS, the bundled gateway, the API server and the public internet.
+	if len(egress) != 4 || egress[2].To[0].IPBlock.CIDR != "172.18.0.2/32" {
+		t.Fatalf("got the egress rules %+v", egress)
+	}
+	checkPublicRule(t, egress[3], 80, 443)
 }
 
 func TestEgressProxyNamespaces(t *testing.T) {
@@ -183,12 +218,17 @@ func TestEgressProxyNamespaces(t *testing.T) {
 
 func TestEgressProxyRefusesBadValues(t *testing.T) {
 	for want, values := range map[string]string{
-		"clusterIP":    "egressProxy: {enabled: true}",
+		"clusterIP":    "egressProxy: {enabled: true, networkPolicy: {enabled: false}}",
+		"apiServer":    "egressProxy: {enabled: true, clusterIP: 10.96.0.50}",
 		"httpPorts":    "egressProxy: {enabled: true, clusterIP: 10.96.0.50, httpPorts: null}",
 		"connectPorts": "egressProxy: {enabled: true, clusterIP: 10.96.0.50, connectPorts: []}",
 	} {
 		if out, err := helmTemplate(t, values); err == nil || !strings.Contains(out, want) {
 			t.Errorf("got no error about %s:\n%s", want, out)
 		}
+	}
+	out := render(t, "egressProxy: {enabled: true, clusterIP: 10.96.0.50, networkPolicy: {enabled: false}}")
+	if nps := policies(t, out); len(nps) != 0 {
+		t.Fatal("the proxy NetworkPolicy is on, but networkPolicy.enabled is false")
 	}
 }

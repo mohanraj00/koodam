@@ -81,3 +81,38 @@ gives the "required" error.
 {{- printf "%s:%s" $repository $tag -}}
 {{- end -}}
 {{- end -}}
+
+{{/*
+The public internet peers of a NetworkPolicy egress rule. They exclude the private, shared,
+link-local, loopback and NAT64 ranges. The argument is the list of more blocked CIDRs.
+*/}}
+{{- define "koodam.publicPeers" -}}
+{{- $blocked := . | default list -}}
+- ipBlock:
+    cidr: 0.0.0.0/0
+    except:
+    - 0.0.0.0/8
+    - 10.0.0.0/8
+    - 100.64.0.0/10
+    - 127.0.0.0/8
+    - 169.254.0.0/16
+    - 172.16.0.0/12
+    - 192.168.0.0/16
+    {{- range $blocked }}
+    {{- if not (contains ":" .) }}
+    - {{ ternary . (printf "%s/32" .) (contains "/" .) }}
+    {{- end }}
+    {{- end }}
+- ipBlock:
+    cidr: ::/0
+    except:
+    - ::1/128
+    - 64:ff9b::/96
+    - fc00::/7
+    - fe80::/10
+    {{- range $blocked }}
+    {{- if contains ":" . }}
+    - {{ ternary . (printf "%s/128" .) (contains "/" .) }}
+    {{- end }}
+    {{- end }}
+{{- end -}}
