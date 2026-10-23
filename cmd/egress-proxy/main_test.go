@@ -20,6 +20,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"slices"
+	"strings"
 	"sync/atomic"
 	"testing"
 )
@@ -47,5 +48,20 @@ func TestProbes(t *testing.T) {
 	ready.Store(true)
 	if code("/readyz") != http.StatusOK {
 		t.Fatal("/readyz is not ready after the sync")
+	}
+}
+
+func TestParseGateway(t *testing.T) {
+	const host = "koodam-litellm.koodam-system.svc:4000"
+	if u, err := parseGateway("http://" + host); err != nil || u.Host != host {
+		t.Fatalf("got %v %v", u, err)
+	}
+	for _, bad := range []string{"ftp://gw", "http:///path", "gw:4000", "http://user:pass@gw",
+		"http://gw?key=x", "http://gw#x", "%"} {
+		if _, err := parseGateway(bad); err == nil {
+			t.Errorf("parseGateway(%q) gave no error", bad)
+		} else if strings.Contains(err.Error(), "pass") {
+			t.Errorf("the error of %q holds the URL: %v", bad, err)
+		}
 	}
 }

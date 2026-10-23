@@ -55,6 +55,7 @@ func run() error {
 	httpPorts := flag.String("http-ports", "80", "the permitted plain HTTP ports, separated by commas")
 	connectPorts := flag.String("connect-ports", "443", "the permitted CONNECT ports, separated by commas")
 	namespaces := flag.String("namespaces", "", "the pod namespaces, separated by commas. Empty is all")
+	syncTimeout := flag.Duration("sync-timeout", 2*time.Minute, "the time limit of the first pod cache sync")
 	flag.Parse()
 
 	p := &egress.Proxy{
@@ -63,9 +64,9 @@ func run() error {
 		ConnectPorts: list(*connectPorts),
 	}
 	if *gateway != "" {
-		u, err := url.Parse(*gateway)
-		if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
-			return errors.New("--gateway-url must be an http or https URL")
+		u, err := parseGateway(*gateway)
+		if err != nil {
+			return err
 		}
 		p.Gateway = u
 	}
@@ -74,10 +75,11 @@ func run() error {
 	defer stop()
 
 	var ready atomic.Bool
+	probeErr := make(chan error, 1)
 	probes := &http.Server{Addr: *probe, Handler: probeMux(&ready), ReadHeaderTimeout: 10 * time.Second}
 	go func() {
 		if err := probes.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
-			slog.Error("the probe server stopped", "error", err)
+			probeErr <- fmt.Errorf("the probe server: %w", err)
 			stop()
 		}
 	}()
@@ -91,8 +93,16 @@ func run() error {
 		return err
 	}
 	pods := egress.NewPodIndex()
-	if err := pods.Watch(ctx, cs, 0, list(*namespaces)...); err != nil {
-		return err
+	synced := make(chan error, 1)
+	go func() { synced <- pods.Watch(ctx, cs, 0, list(*namespaces)...) }()
+	select {
+	case err := <-synced:
+		if err != nil {
+			return errors.Join(err, firstError(probeErr))
+		}
+	case <-time.After(*syncTimeout):
+		// For example, the RBAC refuses the pod watch. A restart shows the problem.
+		return errors.New("the pod caches did not sync in the time limit")
 	}
 	p.Identify = pods.Identify
 
@@ -103,18 +113,49 @@ func run() error {
 	srv := &http.Server{Handler: p, ReadHeaderTimeout: 30 * time.Second}
 	ready.Store(true)
 	slog.Info("the egress proxy is ready", "address", ln.Addr().String())
+	stopped := make(chan struct{})
 	go func() {
+		defer close(stopped)
 		<-ctx.Done()
 		ready.Store(false)
-		shutdown, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer cancel()
-		_ = srv.Shutdown(shutdown)
-		_ = probes.Shutdown(shutdown)
+		shutdown(srv)
+		shutdown(probes)
 	}()
 	if err := srv.Serve(ln); !errors.Is(err, http.ErrServerClosed) {
 		return err
 	}
-	return nil
+	// Serve returns when the shutdown starts. Wait until the open calls end.
+	<-stopped
+	return firstError(probeErr)
+}
+
+// shutdown stops a server. It waits at most 5 seconds for the open calls.
+func shutdown(srv *http.Server) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	_ = srv.Shutdown(ctx)
+}
+
+// firstError returns the error in errs, or nil if errs is empty.
+func firstError(errs <-chan error) error {
+	select {
+	case err := <-errs:
+		return err
+	default:
+		return nil
+	}
+}
+
+// parseGateway returns the /llm/ target. The URL is a flag value, so it must hold no credential.
+func parseGateway(v string) (*url.URL, error) {
+	u, err := url.Parse(v)
+	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
+		return nil, errors.New("--gateway-url must be an http or https URL")
+	}
+	if u.User != nil || u.RawQuery != "" || u.Fragment != "" {
+		return nil, errors.New("--gateway-url must have no user info, no query and no fragment")
+	}
+	return u, nil
 }
 
 // probeMux returns 200 on /healthz, and 200 on /readyz when ready is true.

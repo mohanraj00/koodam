@@ -21,6 +21,7 @@ import (
 	"errors"
 	"net/http"
 	"net/netip"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -181,6 +182,8 @@ func (x *PodIndex) Watch(ctx context.Context, cs kubernetes.Interface, resync ti
 	if len(namespaces) == 0 {
 		namespaces = []string{metav1.NamespaceAll}
 	}
+	// One namespace two times gives 2 watches of the same pods.
+	namespaces = slices.Compact(slices.Sorted(slices.Values(namespaces)))
 	var synced []cache.InformerSynced
 	for _, namespace := range namespaces {
 		for _, label := range []string{AgentLabel, WorkspaceLabel} {

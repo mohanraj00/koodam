@@ -231,7 +231,8 @@ func TestWatch(t *testing.T) {
 }
 
 func TestWatchNamespaces(t *testing.T) {
-	cs := fake.NewClientset(agentPod(pod1, podA))
+	cs := fake.NewClientset(agentPod(pod1, podA),
+		pod("ws-0", podB, map[string]string{WorkspaceLabel: "ws", UserLabel: bob}))
 	other := NewPodIndex()
 	if err := other.Watch(t.Context(), cs, 0, "other"); err != nil {
 		t.Fatal(err)
@@ -240,10 +241,13 @@ func TestWatchNamespaces(t *testing.T) {
 		t.Fatal("the index has a pod from a namespace that it does not watch")
 	}
 	x := NewPodIndex()
-	if err := x.Watch(t.Context(), cs, 0, "other", ns); err != nil {
+	if err := x.Watch(t.Context(), cs, 0, ns, "other", ns); err != nil {
 		t.Fatal(err)
 	}
 	if sp, err := identify(t, x, podA, nil); err != nil || sp.Run != run1 {
+		t.Fatalf("%v %+v", err, sp)
+	}
+	if sp, err := identify(t, x, podB, nil); err != nil || sp.Workspace != "ws" {
 		t.Fatalf("%v %+v", err, sp)
 	}
 }
