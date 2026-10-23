@@ -53,10 +53,17 @@ var _ = Describe("Namespace resource limits", Ordered, Label("workspace"), func(
 		}
 		return ws
 	}
-	mainLimit := func(ws *corev1alpha1.Workspace) string {
+	// mainResources returns the resources of the workspace container. The init containers must
+	// have the default, because the pod template sets no value for them.
+	mainResources := func(ws *corev1alpha1.Workspace) corev1.ResourceRequirements {
 		pod := &corev1.Pod{}
 		Expect(k8s.Get(ctx, client.ObjectKey{Namespace: lrNS, Name: ws.Name + "-0"}, pod)).To(Succeed())
-		return pod.Spec.Containers[0].Resources.Limits.Memory().String()
+		for _, c := range pod.Spec.InitContainers {
+			Expect(c.Resources.Limits.Memory().String()).To(Equal("1Gi"), "The init container "+c.Name+" does not have the default.")
+		}
+		Expect(pod.Spec.Containers).NotTo(BeEmpty())
+		Expect(pod.Spec.Containers[0].Name).To(Equal("workspace"))
+		return pod.Spec.Containers[0].Resources
 	}
 
 	BeforeAll(func() {
@@ -64,7 +71,9 @@ var _ = Describe("Namespace resource limits", Ordered, Label("workspace"), func(
 			_ = k8s.DeleteAllOf(ctx, &corev1alpha1.Workspace{}, client.InNamespace(lrNS))
 			Eventually(func() int {
 				l := &corev1alpha1.WorkspaceList{}
-				_ = k8s.List(ctx, l, client.InNamespace(lrNS))
+				if err := k8s.List(ctx, l, client.InNamespace(lrNS)); err != nil {
+					return -1
+				}
 				return len(l.Items)
 			}, 2*time.Minute, time.Second).Should(BeZero(), "The finalizer kept a Workspace.")
 			_ = k8s.Delete(ctx, &corev1alpha1.Profile{ObjectMeta: metav1.ObjectMeta{Name: lrProfile}})
@@ -98,8 +107,14 @@ var _ = Describe("Namespace resource limits", Ordered, Label("workspace"), func(
 		Expect(k8s.Create(ctx, set)).To(Succeed())
 		waitPhase(plain, corev1alpha1.WorkspaceRunning)
 		waitPhase(set, corev1alpha1.WorkspaceRunning)
-		Expect(mainLimit(plain)).To(Equal("1Gi"), "The pod does not have the LimitRange default.")
-		Expect(mainLimit(set)).To(Equal("1536Mi"), "The pod does not have the value of the pod template.")
+		r := mainResources(plain)
+		Expect(r.Limits.Memory().String()).To(Equal("1Gi"), "The pod does not have the LimitRange default.")
+		Expect(r.Requests.Memory().String()).To(Equal("256Mi"), "The pod does not have the LimitRange default request.")
+		r = mainResources(set)
+		Expect(r.Limits.Memory().String()).To(Equal("1536Mi"), "The pod does not have the value of the pod template.")
+		// The next spec does not need these pods. Delete them to release the node memory.
+		Expect(k8s.Delete(ctx, plain)).To(Succeed())
+		Expect(k8s.Delete(ctx, set)).To(Succeed())
 	})
 
 	It("makes no pod for a value above the maximum", func() {
@@ -117,8 +132,7 @@ var _ = Describe("Namespace resource limits", Ordered, Label("workspace"), func(
 			}
 			return msgs
 		}, 2*time.Minute, 2*time.Second).Should(ContainElement(ContainSubstring("maximum memory usage")))
-		Expect(k8s.Get(ctx, client.ObjectKeyFromObject(ws), ws)).To(Succeed())
-		Expect(ws.Status.Phase).To(Equal(corev1alpha1.WorkspacePending))
+		waitPhase(ws, corev1alpha1.WorkspacePending)
 		Expect(k8s.Get(ctx, client.ObjectKey{Namespace: lrNS, Name: ws.Name}, &appsv1.StatefulSet{})).To(Succeed())
 		err := k8s.Get(ctx, client.ObjectKey{Namespace: lrNS, Name: ws.Name + "-0"}, &corev1.Pod{})
 		Expect(apierrors.IsNotFound(err)).To(BeTrue(), "The API server made a pod above the maximum.")

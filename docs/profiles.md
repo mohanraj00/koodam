@@ -82,7 +82,7 @@ This policy is a basic limit. It does not trace the calls. Traced egress with a 
 
 ## The resource limits
 
-Koodam sets no CPU or memory request or limit on its containers. A user sets them for each Workspace in `spec.podTemplate` (see [Workspaces](workspaces.md)). To cap the users of a namespace, add a Kubernetes LimitRange to it. Koodam does not read the LimitRange. The API server applies it to each pod.
+Koodam sets no CPU or memory request or limit on its containers. A user sets them for each Workspace in `spec.podTemplate` (see [Workspaces](workspaces.md)). To cap the users of a namespace, add a Kubernetes LimitRange to it. Koodam does not read the LimitRange. The API server applies it to each container of each new pod.
 
 ```yaml
 apiVersion: v1
@@ -98,12 +98,15 @@ spec:
       max: {cpu: "4", memory: 4Gi}
 ```
 
-- The `default` and `defaultRequest` values apply to each container with no value. This includes the harness init containers of a Workspace and the containers of the Agent runs.
-- The API server refuses a pod with a value above `max`. The Workspace stays in the phase `Pending`. To see the reason, run `kubectl describe statefulset <workspace>` and read the `FailedCreate` event.
-- The limits apply to each pod of the namespace, not only to the Koodam pods. To give different limits to different users, put the users in different namespaces.
+- If a container has no value for a resource, it gets `default` as the limit and `defaultRequest` as the request. This includes the harness init containers of a Workspace and the containers of the Agent runs.
+- If a container has only a limit, Kubernetes sets the request to the same value, not to `defaultRequest`.
+- The API server refuses a pod if one of its containers has a value above `max`. The Workspace stays in the phase `Pending`. To see the reason, run `kubectl describe statefulset <workspace>` and read the `FailedCreate` event.
+- The limits apply to each container of the namespace, not only to the Koodam containers. A `max` of the type `Container` does not cap the total of a pod. For this cap, add a limit of the type `Pod`. To give different limits to different users, put the users in different namespaces.
 - To cap the total of a namespace, also add a ResourceQuota.
 
-> **Caution:** Do not set `default` or `max` too low. The harness init containers and the agent containers get these values. If the memory limit is too low, the kernel stops the container.
+> **Caution:** Do not set `default` too low. The harness init containers and the agent containers get this value. If the memory limit is too low, the kernel stops the container.
+>
+> **Caution:** Do not set `max` below the value that a Workspace needs. If the value of a container is above `max`, the API server refuses the pod.
 
 ## The shared login
 
