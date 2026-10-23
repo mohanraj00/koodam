@@ -157,14 +157,15 @@ jobTTLSeconds: 86400
 # The egress proxy (traced egress). It writes one JSON line for each call of an Agent pod or a
 # Workspace pod to its stdout. It uses the manager image. If workspace.networkPolicy.namespaces
 # has items, the proxy watches the pods only in these namespaces, with a Role in each namespace.
-# Else it gets a ClusterRole. Both give get, list and watch on pods.
+# Else it gets a ClusterRole. Both give get, list and watch on pods. The proxy refuses a call from
+# a pod that it cannot find, for example a pod in a namespace that is not in the list.
 egressProxy:
   enabled: false
   # A fixed ClusterIP in the Service range of the cluster. The pods use this address, so they
   # need no DNS. It is necessary if enabled is true.
   clusterIP: ""
   port: 3128
-  # The permitted ports for plain HTTP and for CONNECT.
+  # The permitted ports for plain HTTP and for CONNECT. Each list must have items.
   httpPorts: ["80"]
   connectPorts: ["443"]
   replicas: 2

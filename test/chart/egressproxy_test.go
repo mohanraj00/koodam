@@ -17,6 +17,7 @@ limitations under the License.
 package chart
 
 import (
+	"maps"
 	"slices"
 	"strings"
 	"testing"
@@ -27,7 +28,10 @@ import (
 	"sigs.k8s.io/yaml"
 )
 
-const proxyName = "koodam-egress-proxy"
+const (
+	proxyName = "koodam-egress-proxy"
+	releaseNS = "koodam-system"
+)
 
 // proxyValues turn on the proxy with a fixed ClusterIP.
 const proxyValues = `
@@ -86,9 +90,13 @@ func TestEgressProxyDefaultIsOff(t *testing.T) {
 func TestEgressProxy(t *testing.T) {
 	out := render(t, proxyValues)
 
+	if sas := decode[corev1.ServiceAccount](t, out, "ServiceAccount", proxyName); len(sas) != 1 ||
+		sas[0].Namespace != releaseNS {
+		t.Fatalf("got the ServiceAccounts %+v, want 1 in koodam-system", sas)
+	}
 	svcs := decode[corev1.Service](t, out, "Service", proxyName)
-	if len(svcs) != 1 || svcs[0].Spec.ClusterIP != "10.96.0.50" ||
-		len(svcs[0].Spec.Ports) != 1 || svcs[0].Spec.Ports[0].Port != 3128 {
+	if len(svcs) != 1 || svcs[0].Spec.ClusterIP != "10.96.0.50" || len(svcs[0].Spec.Ports) != 1 ||
+		svcs[0].Spec.Ports[0].Port != 3128 || svcs[0].Spec.Ports[0].TargetPort.String() != "proxy" {
 		t.Fatalf("got the Services %+v, want 1 on 10.96.0.50:3128", svcs)
 	}
 
@@ -101,9 +109,18 @@ func TestEgressProxy(t *testing.T) {
 		pod.SecurityContext.RunAsNonRoot == nil || !*pod.SecurityContext.RunAsNonRoot {
 		t.Fatalf("the pod spec is wrong: %+v", pod)
 	}
+	if sel := deps[0].Spec.Selector.MatchLabels; !maps.Equal(sel, svcs[0].Spec.Selector) ||
+		!maps.Equal(sel, deps[0].Spec.Template.Labels) {
+		t.Fatalf("the Service selector %v, the Deployment selector %v and the pod labels %v do not agree",
+			svcs[0].Spec.Selector, sel, deps[0].Spec.Template.Labels)
+	}
 	c := pod.Containers[0]
 	if !slices.Equal(c.Command, []string{"/egress-proxy"}) {
 		t.Fatalf("got the command %q", c.Command)
+	}
+	if c.LivenessProbe.HTTPGet.Path != "/healthz" || c.ReadinessProbe.HTTPGet.Path != "/readyz" ||
+		!slices.Contains(c.Args, "--probe-address=:8081") {
+		t.Fatalf("the probes do not agree with the probe address: %q", c.Args)
 	}
 	for _, want := range []string{"--listen=:3128", "--gateway-url=http://koodam-litellm.koodam-system.svc:4000",
 		"--http-ports=80", "--connect-ports=443"} {
@@ -123,7 +140,7 @@ func TestEgressProxy(t *testing.T) {
 	}
 	checkPodRules(t, crs[0].Rules)
 	crbs := decode[rbacv1.ClusterRoleBinding](t, out, "ClusterRoleBinding", proxyName)
-	if len(crbs) != 1 || crbs[0].Subjects[0].Name != proxyName || crbs[0].Subjects[0].Namespace != "koodam-system" {
+	if len(crbs) != 1 || crbs[0].Subjects[0].Name != proxyName || crbs[0].Subjects[0].Namespace != releaseNS {
 		t.Fatalf("got the ClusterRoleBindings %+v", crbs)
 	}
 	if roles := decode[rbacv1.Role](t, out, "Role", proxyName); len(roles) != 0 {
@@ -141,11 +158,22 @@ func TestEgressProxyNamespaces(t *testing.T) {
 	for _, r := range roles {
 		checkPodRules(t, r.Rules)
 	}
-	if rbs := decode[rbacv1.RoleBinding](t, out, "RoleBinding", proxyName); len(rbs) != 2 {
+	rbs := decode[rbacv1.RoleBinding](t, out, "RoleBinding", proxyName)
+	if len(rbs) != 2 {
 		t.Fatalf("got %d proxy RoleBindings, want 2", len(rbs))
+	}
+	for i, rb := range rbs {
+		if rb.Namespace != roles[i].Namespace || rb.RoleRef.Kind != "Role" || rb.RoleRef.Name != proxyName ||
+			len(rb.Subjects) != 1 || rb.Subjects[0].Kind != "ServiceAccount" ||
+			rb.Subjects[0].Name != proxyName || rb.Subjects[0].Namespace != releaseNS {
+			t.Fatalf("the RoleBinding %+v does not bind the proxy ServiceAccount to the Role", rb)
+		}
 	}
 	if crs := decode[rbacv1.ClusterRole](t, out, "ClusterRole", proxyName); len(crs) != 0 {
 		t.Fatal("the proxy has a ClusterRole, but the namespaces are known")
+	}
+	if crbs := decode[rbacv1.ClusterRoleBinding](t, out, "ClusterRoleBinding", proxyName); len(crbs) != 0 {
+		t.Fatal("the proxy has a ClusterRoleBinding, but the namespaces are known")
 	}
 	deps := decode[appsv1.Deployment](t, out, "Deployment", proxyName)
 	if !slices.Contains(deps[0].Spec.Template.Spec.Containers[0].Args, "--namespaces=dev-a,dev-b") {
@@ -153,8 +181,14 @@ func TestEgressProxyNamespaces(t *testing.T) {
 	}
 }
 
-func TestEgressProxyRefusesNoClusterIP(t *testing.T) {
-	if out, err := helmTemplate(t, "", "egressProxy.enabled=true"); err == nil || !strings.Contains(out, "clusterIP") {
-		t.Fatalf("got no error about the clusterIP:\n%s", out)
+func TestEgressProxyRefusesBadValues(t *testing.T) {
+	for want, values := range map[string]string{
+		"clusterIP":    "egressProxy: {enabled: true}",
+		"httpPorts":    "egressProxy: {enabled: true, clusterIP: 10.96.0.50, httpPorts: null}",
+		"connectPorts": "egressProxy: {enabled: true, clusterIP: 10.96.0.50, connectPorts: []}",
+	} {
+		if out, err := helmTemplate(t, values); err == nil || !strings.Contains(out, want) {
+			t.Errorf("got no error about %s:\n%s", want, out)
+		}
 	}
 }

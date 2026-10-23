@@ -1,5 +1,8 @@
 {{- $ep := .Values.egressProxy | default dict -}}
 {{- if $ep.enabled }}
+{{- if or (not $ep.httpPorts) (not $ep.connectPorts) }}
+{{- fail "egressProxy.httpPorts and egressProxy.connectPorts must have items." }}
+{{- end }}
 {{- $name := printf "%s-egress-proxy" (include "koodam.fullname" .) -}}
 {{- $namespaces := dig "networkPolicy" "namespaces" list (.Values.workspace | default dict) | default list -}}
 apiVersion: v1
@@ -80,7 +83,7 @@ metadata:
 spec:
   type: ClusterIP
   # The pods use this fixed address, so they need no DNS.
-  clusterIP: {{ required "egressProxy.clusterIP is necessary if egressProxy.enabled is true." $ep.clusterIP }}
+  clusterIP: {{ required "egressProxy.clusterIP is necessary if egressProxy.enabled is true." $ep.clusterIP | quote }}
   selector:
     {{- include "koodam.gatewaySelector" (list . "egress-proxy") | nindent 4 }}
   ports:
@@ -123,13 +126,13 @@ spec:
         command:
         - /egress-proxy
         args:
-        - --listen=:{{ $ep.port }}
+        - "--listen=:{{ $ep.port }}"
         - --probe-address=:8081
-        - --gateway-url={{ include "koodam.gatewayUrl" . }}
-        - --http-ports={{ join "," $ep.httpPorts }}
-        - --connect-ports={{ join "," $ep.connectPorts }}
+        - "--gateway-url={{ include "koodam.gatewayUrl" . }}"
+        - "--http-ports={{ join "," $ep.httpPorts }}"
+        - "--connect-ports={{ join "," $ep.connectPorts }}"
         {{- with $namespaces }}
-        - --namespaces={{ join "," . }}
+        - "--namespaces={{ join "," . }}"
         {{- end }}
         ports:
         - containerPort: {{ $ep.port }}
@@ -164,5 +167,6 @@ spec:
       tolerations:
         {{- toYaml . | nindent 8 }}
       {{- end }}
-      terminationGracePeriodSeconds: 10
+      # The proxy waits at most 5 seconds for the open calls, and 5 seconds for the probe server.
+      terminationGracePeriodSeconds: 15
 {{- end }}
