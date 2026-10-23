@@ -354,9 +354,9 @@ func (r *AgentReconciler) provision(ctx context.Context, a *corev1alpha1.Agent) 
 	if err != nil {
 		return err
 	}
-	job := runJob(a, r.InstallerImage, r.GatewayURL)
-	addIdentity(&job.Spec.Template.ObjectMeta, job.Name, user)
 	name := runName(a)
+	job := runJob(a, r.InstallerImage, r.GatewayURL)
+	addIdentity(&job.Spec.Template.ObjectMeta, name, user)
 	objs := []client.Object{
 		&corev1.ServiceAccount{ObjectMeta: runMeta(a)},
 		&rbacv1.Role{ObjectMeta: runMeta(a), Rules: a.Spec.Rules},

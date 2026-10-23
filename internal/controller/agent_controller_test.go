@@ -258,13 +258,8 @@ var _ = Describe("Agent Controller", func() {
 		Expect(job.Spec.Template.Spec.InitContainers).To(BeEmpty(), "no harness, so no installer")
 		Expect(job.Spec.Template.Spec.Volumes).To(BeEmpty())
 		Expect(job.Spec.Template.Labels).To(HaveKeyWithValue(RunLabel, "kd-"+name))
-		user, err := boundProfile(ctx, k8sClient, ns)
-		Expect(err).NotTo(HaveOccurred())
-		if user == "" {
-			Expect(job.Spec.Template.Labels).NotTo(HaveKey(UserLabel))
-		} else {
-			Expect(job.Spec.Template.Labels).To(HaveKeyWithValue(UserLabel, user))
-		}
+		// The suite BeforeEach binds the namespace "default" to testProfile.
+		Expect(job.Spec.Template.Labels).To(HaveKeyWithValue(UserLabel, testProfile))
 		for _, o := range []client.Object{sec, role, job} {
 			Expect(o.GetLabels()).To(HaveKeyWithValue(agentLabel, name))
 			Expect(metav1.IsControlledBy(o, a)).To(BeTrue())

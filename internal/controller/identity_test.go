@@ -59,10 +59,10 @@ var _ = Describe("addIdentity", func() {
 var _ = Describe("boundProfile", func() {
 	It("returns the Profile name only if the Profile binds the namespace", func() {
 		ctx := context.Background()
-		const name = "identity-bound"
+		const name, team = "identity-bound", "identity-team"
 		ns := &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: name,
-			Labels: map[string]string{corev1alpha1.ProfileLabel: name}}}
-		p := &corev1alpha1.Profile{ObjectMeta: metav1.ObjectMeta{Name: name}}
+			Labels: map[string]string{corev1alpha1.ProfileLabel: team}}}
+		p := &corev1alpha1.Profile{ObjectMeta: metav1.ObjectMeta{Name: team}}
 		Expect(k8sClient.Create(ctx, ns)).To(Succeed())
 		Expect(k8sClient.Create(ctx, p)).To(Succeed())
 		DeferCleanup(func() {
@@ -74,7 +74,7 @@ var _ = Describe("boundProfile", func() {
 
 		p.Spec.Namespaces = []string{name}
 		Expect(k8sClient.Update(ctx, p)).To(Succeed())
-		Expect(boundProfile(ctx, k8sClient, name)).To(Equal(name))
+		Expect(boundProfile(ctx, k8sClient, name)).To(Equal(team), "the Profile name, not the namespace name")
 		Expect(boundProfile(ctx, k8sClient, "identity-missing")).To(BeEmpty())
 	})
 })

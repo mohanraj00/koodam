@@ -120,6 +120,8 @@ var _ = Describe("Workspace Controller", func() {
 			Expect(o.GetLabels()).To(HaveKeyWithValue(WorkspaceLabel, name))
 		}
 		Expect(sts.Spec.Replicas).To(HaveValue(Equal(int32(1))))
+		// The user label is the Profile name, not the namespace name.
+		Expect(sts.Spec.Template.Labels).To(HaveKeyWithValue(UserLabel, testProfile))
 		Expect(sts.Spec.PersistentVolumeClaimRetentionPolicy.WhenDeleted).To(Equal(appsv1.RetainPersistentVolumeClaimRetentionPolicyType))
 		Expect(sts.Spec.PersistentVolumeClaimRetentionPolicy.WhenScaled).To(Equal(appsv1.RetainPersistentVolumeClaimRetentionPolicyType))
 		Expect(sts.Spec.VolumeClaimTemplates).To(HaveLen(1))

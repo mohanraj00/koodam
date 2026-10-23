@@ -65,14 +65,17 @@ func boundProfile(ctx context.Context, c client.Reader, namespace string) (strin
 // value or a value that is not a valid label value. It copies the label map first, because a
 // selector can share the map.
 func addIdentity(m *metav1.ObjectMeta, run, user string) {
-	labels := maps.Clone(m.Labels)
-	if labels == nil {
-		labels = map[string]string{}
+	m.Labels = maps.Clone(m.Labels)
+	addLabel(m, RunLabel, run)
+	addLabel(m, UserLabel, user)
+}
+
+func addLabel(m *metav1.ObjectMeta, key, value string) {
+	if value == "" || len(validation.IsValidLabelValue(value)) > 0 {
+		return
 	}
-	for k, v := range map[string]string{RunLabel: run, UserLabel: user} {
-		if v != "" && len(validation.IsValidLabelValue(v)) == 0 {
-			labels[k] = v
-		}
+	if m.Labels == nil {
+		m.Labels = map[string]string{}
 	}
-	m.Labels = labels
+	m.Labels[key] = value
 }
