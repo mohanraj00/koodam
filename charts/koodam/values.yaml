@@ -40,7 +40,8 @@ workspace:
     - protocol: TCP
       port: 22
     # More ranges that the public internet rule blocks. Add the public addresses of the API
-    # server and the nodes, and the IPv6 ranges of the cluster, if they are public.
+    # server and the nodes, and the IPv6 ranges of the cluster, if they are public. An address
+    # with no prefix length gets /32 or /128.
     blockedCIDRs: []
     # More egress rules (NetworkPolicyEgressRule). Use them for a gateway outside the bundled
     # mode, or for a cluster address that the pods must reach.

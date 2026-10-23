@@ -60,7 +60,7 @@ spec:
         - 192.168.0.0/16
         {{- range $np.blockedCIDRs }}
         {{- if not (contains ":" .) }}
-        - {{ . }}
+        - {{ ternary . (printf "%s/32" .) (contains "/" .) }}
         {{- end }}
         {{- end }}
     - ipBlock:
@@ -73,7 +73,7 @@ spec:
         - fe80::/10
         {{- range $np.blockedCIDRs }}
         {{- if contains ":" . }}
-        - {{ . }}
+        - {{ ternary . (printf "%s/128" .) (contains "/" .) }}
         {{- end }}
         {{- end }}
     {{- with $np.publicInternetPorts }}

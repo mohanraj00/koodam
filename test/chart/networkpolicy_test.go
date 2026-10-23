@@ -76,7 +76,8 @@ func TestWorkspaceNetworkPolicy(t *testing.T) {
 	dns := eg[0]
 	if dns.To[0].NamespaceSelector.MatchLabels["kubernetes.io/metadata.name"] != "kube-system" ||
 		dns.To[0].PodSelector.MatchLabels["k8s-app"] != "kube-dns" || len(dns.Ports) != 2 ||
-		dns.Ports[0].Port.IntValue() != 53 || dns.Ports[1].Port.IntValue() != 53 {
+		dns.Ports[0].Port.IntValue() != 53 || dns.Ports[1].Port.IntValue() != 53 ||
+		*dns.Ports[0].Protocol != "UDP" || *dns.Ports[1].Protocol != "TCP" {
 		t.Errorf("the first egress rule is %v, want UDP and TCP 53 to kube-dns", dns)
 	}
 	if eg[1].To[0].NamespaceSelector.MatchLabels["kubernetes.io/metadata.name"] != "koodam-system" ||
@@ -84,20 +85,26 @@ func TestWorkspaceNetworkPolicy(t *testing.T) {
 		eg[1].Ports[0].Port.IntValue() != 4000 {
 		t.Errorf("the second egress rule is %v, want the bundled LiteLLM on 4000", eg[1])
 	}
-	v4 := eg[2].To[0].IPBlock
+	checkPublicRule(t, eg[2])
+}
+
+// checkPublicRule checks the ranges and the default ports of the public internet rule.
+func checkPublicRule(t *testing.T, rule networkingv1.NetworkPolicyEgressRule) {
+	t.Helper()
+	v4 := rule.To[0].IPBlock
 	for _, private := range []string{"10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16", "169.254.0.0/16"} {
 		if v4 == nil || !slices.Contains(v4.Except, private) {
 			t.Errorf("the public internet rule does not block %s", private)
 		}
 	}
-	v6 := eg[2].To[1].IPBlock
+	v6 := rule.To[1].IPBlock
 	for _, private := range []string{"::ffff:0:0/96", "64:ff9b::/96", "fc00::/7", "fe80::/10"} {
 		if v6 == nil || v6.CIDR != "::/0" || !slices.Contains(v6.Except, private) {
 			t.Errorf("the public internet rule does not block %s", private)
 		}
 	}
-	ports := make([]int, 0, len(eg[2].Ports))
-	for _, p := range eg[2].Ports {
+	ports := make([]int, 0, len(rule.Ports))
+	for _, p := range rule.Ports {
 		ports = append(ports, p.Port.IntValue())
 	}
 	if !slices.Equal(ports, []int{443, 80, 22}) {
@@ -107,7 +114,7 @@ func TestWorkspaceNetworkPolicy(t *testing.T) {
 
 func TestWorkspaceNetworkPolicyBlockedCIDRs(t *testing.T) {
 	out, err := helmTemplate(t, "", "workspace.networkPolicy.namespaces={dev-a}",
-		"workspace.networkPolicy.blockedCIDRs={203.0.113.0/24,2001:db8::/32}",
+		"workspace.networkPolicy.blockedCIDRs={203.0.113.0/24,2001:db8::/32,198.51.100.7,2001:db8::7}",
 		"workspace.networkPolicy.publicInternetPorts=null")
 	if err != nil {
 		t.Fatalf("helm template: %v\n%s", err, out)
@@ -117,7 +124,11 @@ func TestWorkspaceNetworkPolicyBlockedCIDRs(t *testing.T) {
 		slices.Contains(public.To[0].IPBlock.Except, "2001:db8::/32") {
 		t.Errorf("the IPv4 except list is %v, want the IPv4 range only", public.To[0].IPBlock.Except)
 	}
-	if !slices.Contains(public.To[1].IPBlock.Except, "2001:db8::/32") {
+	if !slices.Contains(public.To[0].IPBlock.Except, "198.51.100.7/32") {
+		t.Errorf("the IPv4 except list is %v, want the address with /32", public.To[0].IPBlock.Except)
+	}
+	if !slices.Contains(public.To[1].IPBlock.Except, "2001:db8::/32") ||
+		!slices.Contains(public.To[1].IPBlock.Except, "2001:db8::7/128") {
 		t.Errorf("the IPv6 except list is %v, want the IPv6 range", public.To[1].IPBlock.Except)
 	}
 	if len(public.Ports) != 0 {
