@@ -33,7 +33,7 @@ var _ = Describe("Workspace harnesses", func() {
 	}
 	pod := func(w *corev1alpha1.Workspace, image string) corev1.PodSpec {
 		r := &WorkspaceReconciler{Image: "example.com/ws:1", InstallerImage: image}
-		return r.statefulSet(w, true).Spec.Template.Spec
+		return r.statefulSet(w, testProfile).Spec.Template.Spec
 	}
 
 	It("adds one checked install for each harness and mounts the folder read-only", func() {
