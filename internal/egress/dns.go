@@ -235,6 +235,8 @@ func (r *Resolver) ServeTCP(ctx context.Context, ln net.Listener) error {
 				mu.Unlock()
 				<-slots
 			}()
+			// The shutdown closes the open connections too.
+			defer context.AfterFunc(ctx, func() { _ = c.Close() })()
 			end := time.Now().Add(tcpLifetime)
 			for {
 				deadline := time.Now().Add(10 * time.Second)
