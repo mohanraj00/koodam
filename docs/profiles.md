@@ -80,6 +80,31 @@ The public internet rule blocks the private ranges (`10.0.0.0/8`, `172.16.0.0/12
 
 This policy is a basic limit. It does not trace the calls. Traced egress with a proxy comes in v0.3 (#8).
 
+## The resource limits
+
+Koodam sets no CPU or memory request or limit on its containers. A user sets them for each Workspace in `spec.podTemplate` (see [Workspaces](workspaces.md)). To cap the users of a namespace, add a Kubernetes LimitRange to it. Koodam does not read the LimitRange. The API server applies it to each pod.
+
+```yaml
+apiVersion: v1
+kind: LimitRange
+metadata:
+  name: limits
+  namespace: dev-sample
+spec:
+  limits:
+    - type: Container
+      defaultRequest: {cpu: 250m, memory: 256Mi}
+      default: {cpu: "1", memory: 1Gi}
+      max: {cpu: "4", memory: 4Gi}
+```
+
+- The `default` and `defaultRequest` values apply to each container with no value. This includes the harness init containers of a Workspace and the containers of the Agent runs.
+- The API server refuses a pod with a value above `max`. The Workspace stays in the phase `Pending`. To see the reason, run `kubectl describe statefulset <workspace>` and read the `FailedCreate` event.
+- The limits apply to each pod of the namespace, not only to the Koodam pods. To give different limits to different users, put the users in different namespaces.
+- To cap the total of a namespace, also add a ResourceQuota.
+
+> **Caution:** Do not set `default` or `max` too low. The harness init containers and the agent containers get these values. If the memory limit is too low, the kernel stops the container.
+
 ## The shared login
 
 ### Claude Code
