@@ -17,6 +17,7 @@ limitations under the License.
 package egress
 
 import (
+	"bytes"
 	"context"
 	"encoding/binary"
 	"errors"
@@ -24,6 +25,7 @@ import (
 	"net"
 	"net/netip"
 	"strings"
+	"sync"
 	"time"
 
 	"golang.org/x/net/dns/dnsmessage"
@@ -33,7 +35,11 @@ const (
 	dnsTimeout = 5 * time.Second
 	// maxDNSQueries is the limit of the queries that the responder answers at the same time.
 	maxDNSQueries = 512
-	netUDP        = "udp"
+	// maxTCPPerSource is the limit of the open TCP connections from one source address.
+	maxTCPPerSource = 8
+	// tcpLifetime is the longest time that a TCP connection stays open.
+	tcpLifetime = 30 * time.Second
+	netUDP      = "udp"
 )
 
 // Resolver is the DNS server of the Agent and Workspace pods. It sends a name in the cluster
@@ -54,18 +60,26 @@ type Resolver struct {
 	Exchange func(ctx context.Context, query []byte, network string) ([]byte, error)
 }
 
-// Respond returns the response to query. It returns nil if query has no valid header.
+// Respond returns the response to query. It returns nil if query has no valid header, or if
+// query is a response.
 func (r *Resolver) Respond(ctx context.Context, query []byte, network string) []byte {
 	var p dnsmessage.Parser
 	h, err := p.Start(query)
-	if err != nil {
+	if err != nil || h.Response {
 		return nil
 	}
-	qs, err := p.AllQuestions()
-	if err != nil || len(qs) != 1 || qs[0].Class != dnsmessage.ClassINET {
+	if h.OpCode != 0 {
+		return r.reply(h, nil, dnsmessage.RCodeNotImplemented, nil)
+	}
+	// Check the question count before the parse, so that a large message costs no allocation.
+	// Start read the header, so query has at least 12 bytes.
+	if binary.BigEndian.Uint16(query[4:6]) != 1 {
 		return r.reply(h, nil, dnsmessage.RCodeFormatError, nil)
 	}
-	q := qs[0]
+	q, err := p.Question()
+	if err != nil || q.Class != dnsmessage.ClassINET {
+		return r.reply(h, nil, dnsmessage.RCodeFormatError, nil)
+	}
 	if r.inCluster(q.Name.String()) {
 		resp, err := r.exchange(ctx, query, network)
 		if err != nil {
@@ -153,8 +167,8 @@ func (r *Resolver) ServeUDP(ctx context.Context, pc net.PacketConn) error {
 		_ = pc.Close()
 	}()
 	slots := make(chan struct{}, maxDNSQueries)
+	buf := make([]byte, 65535)
 	for {
-		buf := make([]byte, 65535)
 		n, addr, err := pc.ReadFrom(buf)
 		if err != nil {
 			if ctx.Err() != nil {
@@ -168,9 +182,10 @@ func (r *Resolver) ServeUDP(ctx context.Context, pc net.PacketConn) error {
 			// Too many queries at the same time. The client sends the query again.
 			continue
 		}
+		query := bytes.Clone(buf[:n])
 		go func() {
 			defer func() { <-slots }()
-			if resp := r.Respond(ctx, buf[:n], netUDP); resp != nil {
+			if resp := r.Respond(ctx, query, netUDP); resp != nil {
 				_, _ = pc.WriteTo(resp, addr)
 			}
 		}()
@@ -184,6 +199,8 @@ func (r *Resolver) ServeTCP(ctx context.Context, ln net.Listener) error {
 		_ = ln.Close()
 	}()
 	slots := make(chan struct{}, maxDNSQueries)
+	var mu sync.Mutex
+	open := map[string]int{}
 	for {
 		c, err := ln.Accept()
 		if err != nil {
@@ -192,17 +209,39 @@ func (r *Resolver) ServeTCP(ctx context.Context, ln net.Listener) error {
 			}
 			return err
 		}
-		select {
-		case slots <- struct{}{}:
-		default:
+		src := sourceIP(c.RemoteAddr().String())
+		mu.Lock()
+		admit := open[src] < maxTCPPerSource
+		if admit {
+			select {
+			case slots <- struct{}{}:
+				open[src]++
+			default:
+				admit = false
+			}
+		}
+		mu.Unlock()
+		if !admit {
 			_ = c.Close()
 			continue
 		}
 		go func() {
-			defer func() { <-slots }()
-			defer func() { _ = c.Close() }()
+			defer func() {
+				_ = c.Close()
+				mu.Lock()
+				if open[src]--; open[src] == 0 {
+					delete(open, src)
+				}
+				mu.Unlock()
+				<-slots
+			}()
+			end := time.Now().Add(tcpLifetime)
 			for {
-				_ = c.SetDeadline(time.Now().Add(10 * time.Second))
+				deadline := time.Now().Add(10 * time.Second)
+				if deadline.After(end) {
+					deadline = end
+				}
+				_ = c.SetDeadline(deadline)
 				query, err := readTCPMessage(c)
 				if err != nil {
 					return

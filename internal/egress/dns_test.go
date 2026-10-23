@@ -153,6 +153,55 @@ func TestResolverBadQueries(t *testing.T) {
 	}
 }
 
+func TestResolverDropsResponsesAndOtherOpcodes(t *testing.T) {
+	up := &upstream{}
+	r := &Resolver{Answer: proxyIP, Exchange: up.exchange}
+	q := query(t, "a.svc.cluster.local.", dnsmessage.TypeA, 1)
+	q[2] |= 0x80 // QR: the message is a response.
+	if got := r.Respond(t.Context(), q, netUDP); got != nil || len(up.queries) != 0 {
+		t.Errorf("a response got %q and %d upstream queries", got, len(up.queries))
+	}
+	q = query(t, "a.svc.cluster.local.", dnsmessage.TypeA, 1)
+	q[2] |= 2 << 3 // OPCODE 2: a server status request.
+	if m := parse(t, r.Respond(t.Context(), q, netUDP)); m.RCode != dnsmessage.RCodeNotImplemented ||
+		len(up.queries) != 0 {
+		t.Errorf("opcode 2 got %v and %d upstream queries", m.RCode, len(up.queries))
+	}
+}
+
+func TestResolverTCPLimitForEachSource(t *testing.T) {
+	r := &Resolver{Answer: proxyIP, Exchange: (&upstream{}).exchange}
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	go func() { _ = r.ServeTCP(t.Context(), ln) }()
+	conns := make([]net.Conn, 0, maxTCPPerSource+1)
+	defer func() {
+		for _, c := range conns {
+			_ = c.Close()
+		}
+	}()
+	for i := range maxTCPPerSource + 1 {
+		c, err := net.DialTimeout("tcp", ln.Addr().String(), time.Second)
+		if err != nil {
+			t.Fatal(err)
+		}
+		conns = append(conns, c)
+		_ = c.SetDeadline(time.Now().Add(5 * time.Second))
+		err = writeTCPMessage(c, query(t, anthropicName, dnsmessage.TypeA, 1))
+		if err == nil {
+			_, err = readTCPMessage(c)
+		}
+		if i < maxTCPPerSource && err != nil {
+			t.Fatalf("connection %d: %v", i, err)
+		}
+		if i == maxTCPPerSource && err == nil {
+			t.Fatalf("connection %d from the same source got an answer", i)
+		}
+	}
+}
+
 func TestResolverServe(t *testing.T) {
 	cluster := &Resolver{Answer: netip.MustParseAddr(clusterAnswer), ClusterDomain: "unused.invalid"}
 	ctx, cancel := context.WithCancel(t.Context())
