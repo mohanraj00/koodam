@@ -49,6 +49,37 @@ The controller writes the bound namespaces to `status.boundNamespaces`. `kubectl
 
 The controller runs a Workspace only in a bound namespace. If you remove the label or the list item, the controller blocks the gateway key of the Workspace first. Then it stops the pod. The home PVC stays.
 
+## The Workspace network
+
+The chart can make a NetworkPolicy for the Workspace pods in each Profile namespace. The chart does not read the Profiles. Thus, add each Profile namespace to the chart values, and run `helm upgrade` after each change. The namespace must exist before the upgrade.
+
+```yaml
+workspace:
+  networkPolicy:
+    namespaces: [dev-sample]
+```
+
+The policy permits only this traffic:
+
+| Direction | Permitted |
+| --- | --- |
+| Ingress | TCP 2222, the sshd port. `koodam tunnel` uses a port-forward to this port. |
+| Egress | UDP and TCP 53 to the cluster DNS pods (`workspace.networkPolicy.dns`). This is the only DNS that the pods can use with the default ports. |
+| Egress | TCP 4000 to the bundled LiteLLM pods, only in the bundled gateway mode. |
+| Egress | Each public address on TCP 443, 80 and 22, if `publicInternet` is `true`. The harnesses use it for the vendor APIs, the harness downloads, git and the package registries. `publicInternetPorts` changes the ports. An empty list permits all ports, also public DNS. |
+| Egress | The rules of `workspace.networkPolicy.extraEgress`. |
+
+The public internet rule blocks the private ranges (`10.0.0.0/8`, `172.16.0.0/12`, `192.168.0.0/16`, `fc00::/7`), the shared range `100.64.0.0/10`, the link-local ranges with the cloud metadata address, the loopback ranges, and the NAT64 IPv6 range. The kernel sends an IPv4-mapped IPv6 address as IPv4, so the IPv4 ranges apply to it. Thus a Workspace pod cannot reach the cluster addresses in these ranges.
+
+- If the API server, the nodes or the IPv6 pod ranges have public addresses, add them to `workspace.networkPolicy.blockedCIDRs`. Many managed clusters have a public API server address.
+- If the gateway is not bundled, add an `extraEgress` rule for it. A rule can use `ipBlock`, `namespaceSelector` and `podSelector`, not host names.
+- The policy selects only the Workspace pods. The other pods of the namespace do not get it.
+- A NetworkPolicy has no effect on a pod with `hostNetwork: true`. The controller never sets it on a Workspace pod. Use the Pod Security label `restricted` on the namespace to refuse it for other pods.
+
+> **Caution:** Use a CNI that enforces NetworkPolicy, for example Calico, Cilium or the kindnet of kind. If the CNI does not enforce it, the policy has no effect and the pods can reach each address.
+
+This policy is a basic limit. It does not trace the calls. Traced egress with a proxy comes in v0.3 (#8).
+
 ## The shared login
 
 ### Claude Code
