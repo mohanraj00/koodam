@@ -187,6 +187,77 @@ func TestTransparentTLSShutdown(t *testing.T) {
 	}
 }
 
+func TestTransparentTLSShutdownStalledUpstream(t *testing.T) {
+	// The upstream accepts and never reads, so the copy to it stops in a write.
+	up, err := net.Listen("tcp", loopback+":0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = up.Close() }()
+	go func() {
+		for {
+			c, err := up.Accept()
+			if err != nil {
+				return
+			}
+			defer func() { _ = c.Close() }()
+		}
+	}()
+	sink := make(chanSink, 4)
+	p := &Proxy{Sink: sink, TLSPort: port(t, "http://"+up.Addr().String()),
+		ConnectPorts: []string{port(t, "http://"+up.Addr().String())},
+		Permit:       func(netip.Addr) bool { return true },
+		Resolve: func(context.Context, string) ([]netip.Addr, error) {
+			return []netip.Addr{netip.MustParseAddr(loopback)}, nil
+		}}
+	ln, err := net.Listen("tcp", loopback+":0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() { done <- p.ServeTLS(ctx, ln) }()
+	c, err := net.Dial("tcp", ln.Addr().String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = c.Close() }()
+	// Send a ClientHello, then fill the buffers to the upstream, so that the proxy blocks in a
+	// write.
+	a, b := net.Pipe()
+	go func() { _ = tls.Client(a, &tls.Config{ServerName: testHost, InsecureSkipVerify: true}).Handshake() }()
+	hello := make([]byte, 4096)
+	n, err := b.Read(hello)
+	_ = a.Close()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := c.Write(hello[:n]); err != nil {
+		t.Fatal(err)
+	}
+	go func() {
+		buf := make([]byte, 1<<16)
+		for {
+			if _, err := c.Write(buf); err != nil {
+				return
+			}
+		}
+	}()
+	time.Sleep(200 * time.Millisecond)
+	cancel()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("ServeTLS did not return")
+	}
+	if sp := sink.next(t); sp.Kind != KindTLS {
+		t.Fatalf("span %+v", sp)
+	}
+}
+
 func TestTransparentHTTP(t *testing.T) {
 	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_, _ = io.WriteString(w, r.Host+r.URL.Path)

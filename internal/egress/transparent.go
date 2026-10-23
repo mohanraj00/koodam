@@ -143,6 +143,8 @@ func (p *Proxy) transparentTLS(ctx context.Context, client net.Conn) {
 		return
 	}
 	defer func() { _ = upstream.Close() }()
+	// A write to an upstream that does not read stops only when the upstream is closed.
+	defer context.AfterFunc(ctx, func() { _ = upstream.Close() })()
 	if _, err := upstream.Write(hello); err != nil {
 		sp.Result, sp.Reason = ResultError, "upstream write"
 		return
