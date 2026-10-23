@@ -61,12 +61,18 @@ const (
 	reasonSNI      = "the SNI is not the CONNECT host"
 )
 
+// SpanVersion is the version of the span contract in docs/egress-spans.md. An added field keeps
+// the version. A removed field, a renamed field or a new meaning of a field changes it.
+const SpanVersion = 1
+
 // LLMPrefix is the path prefix of the reverse route to the gateway.
 const LLMPrefix = "/llm/"
 
-// Span is the record of one call. It has no header, no query string and no body, thus it cannot
-// hold a gateway key. BytesIn go to the pod, and BytesOut come from the pod.
+// Span is the record of one call. It has no header, no query string and no body. The path, the
+// host and the claimed fields are text from the pod (#170). BytesIn go to the pod, and BytesOut
+// come from the pod.
 type Span struct {
+	V          int       `json:"v"`
 	Time       time.Time `json:"time"`
 	DurationMS float64   `json:"durationMs"`
 	Source     string    `json:"source"`
@@ -74,6 +80,7 @@ type Span struct {
 	Method     string    `json:"method,omitempty"`
 	Host       string    `json:"host,omitempty"`
 	SNI        string    `json:"sni,omitempty"`
+	Port       string    `json:"port,omitempty"`
 	Path       string    `json:"path,omitempty"`
 	Status     int       `json:"status,omitempty"`
 	BytesIn    int64     `json:"bytesIn"`
@@ -171,7 +178,7 @@ func newTransport(header time.Duration) *http.Transport {
 func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	p.init()
 	start := time.Now()
-	sp := Span{Time: start.UTC(), Source: sourceIP(r.RemoteAddr), Method: r.Method, Kind: KindHTTP,
+	sp := Span{V: SpanVersion, Time: start.UTC(), Source: sourceIP(r.RemoteAddr), Method: r.Method, Kind: KindHTTP,
 		Host: r.Host, Path: r.URL.Path}
 	switch {
 	case r.Method == http.MethodConnect:
@@ -211,6 +218,7 @@ func (p *Proxy) connect(w http.ResponseWriter, r *http.Request, sp *Span) {
 	// The request target is the authority of a CONNECT, not the Host header.
 	sp.Host = r.URL.Host
 	host, port, err := net.SplitHostPort(r.URL.Host)
+	sp.Port = port
 	if err != nil || !slices.Contains(orDefault(p.ConnectPorts, "443"), port) {
 		p.deny(w, sp, reasonPort)
 		return
@@ -279,6 +287,7 @@ func (p *Proxy) forward(w http.ResponseWriter, r *http.Request, sp *Span) {
 	if port == "" {
 		port = "80"
 	}
+	sp.Port = port
 	if r.URL.Scheme != "http" || !slices.Contains(orDefault(p.HTTPPorts, "80"), port) {
 		p.deny(w, sp, reasonPort)
 		return
@@ -290,6 +299,10 @@ func (p *Proxy) forward(w http.ResponseWriter, r *http.Request, sp *Span) {
 
 func (p *Proxy) llm(w http.ResponseWriter, r *http.Request, sp *Span) {
 	sp.Host = p.Gateway.Host
+	sp.Port = p.Gateway.Port()
+	if sp.Port == "" {
+		sp.Port = map[string]string{"http": "80", "https": "443"}[p.Gateway.Scheme]
+	}
 	// The gateway key header passes through. The span has no header.
 	p.reverse(w, r, sp, p.toGateway, func(pr *httputil.ProxyRequest) {
 		root := strings.TrimSuffix(LLMPrefix, "/")

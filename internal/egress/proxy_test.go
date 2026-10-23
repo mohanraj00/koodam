@@ -98,7 +98,8 @@ func TestConnectReadsSNI(t *testing.T) {
 	_ = resp.Body.Close()
 	tr.CloseIdleConnections()
 	sp := sink.next(t)
-	if sp.Kind != KindConnect || sp.Result != ResultOK || sp.SNI != testHost || sp.Path != "" {
+	if sp.V != SpanVersion || sp.Kind != KindConnect || sp.Result != ResultOK || sp.SNI != testHost ||
+		sp.Path != "" || sp.Port != port(t, up.URL) {
 		t.Fatalf("span %+v", sp)
 	}
 	if sp.Source != "127.0.0.1" || sp.BytesIn == 0 || sp.BytesOut == 0 {
@@ -283,7 +284,8 @@ func TestForwardHTTP(t *testing.T) {
 	_ = resp.Body.Close()
 	sp := sink.next(t)
 	if resp.StatusCode != http.StatusOK || sp.Kind != KindHTTP || sp.Status != http.StatusOK || sp.Path != "/a" ||
-		sp.BytesIn != 2 || sp.BytesOut != 4 || sp.Host != net.JoinHostPort(testHost, port(t, up.URL)) {
+		sp.BytesIn != 2 || sp.BytesOut != 4 || sp.Host != net.JoinHostPort(testHost, port(t, up.URL)) ||
+		sp.V != SpanVersion || sp.Port != port(t, up.URL) {
 		t.Fatalf("status %d, span %+v", resp.StatusCode, sp)
 	}
 }
@@ -309,7 +311,8 @@ func TestLLMRouteKeepsTheKeyOutOfTheSpan(t *testing.T) {
 	}
 	_ = resp.Body.Close()
 	sp := sink.next(t)
-	if resp.StatusCode != http.StatusOK || sp.Kind != KindLLM || sp.Path != "/llm/v1/messages" || sp.BytesOut != 2 {
+	if resp.StatusCode != http.StatusOK || sp.Kind != KindLLM || sp.Path != "/llm/v1/messages" || sp.BytesOut != 2 ||
+		sp.V != SpanVersion || sp.Port != gu.Port() {
 		t.Fatalf("status %d, span %+v", resp.StatusCode, sp)
 	}
 	var out bytes.Buffer
@@ -318,7 +321,8 @@ func TestLLMRouteKeepsTheKeyOutOfTheSpan(t *testing.T) {
 		t.Fatalf("the span holds the key: %s", out.String())
 	}
 	var back Span
-	if err := json.Unmarshal(out.Bytes(), &back); err != nil || back.Result != ResultOK {
+	if err := json.Unmarshal(out.Bytes(), &back); err != nil || back.Result != ResultOK ||
+		!strings.HasPrefix(out.String(), `{"v":1,`) {
 		t.Fatalf("one JSON line: %v %s", err, out.String())
 	}
 }
