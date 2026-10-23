@@ -1,0 +1,168 @@
+{{- $ep := .Values.egressProxy | default dict -}}
+{{- if $ep.enabled }}
+{{- $name := printf "%s-egress-proxy" (include "koodam.fullname" .) -}}
+{{- $namespaces := dig "networkPolicy" "namespaces" list (.Values.workspace | default dict) | default list -}}
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ $name }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "koodam.labels" . | nindent 4 }}
+---
+# The proxy finds the pod of a call from the source IP. It reads the pod labels and the pod IPs.
+{{- if $namespaces }}
+{{- range $ns := $namespaces }}
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ $name }}
+  namespace: {{ $ns }}
+  labels:
+    {{- include "koodam.labels" $ | nindent 4 }}
+rules:
+- apiGroups: [""]
+  resources: ["pods"]
+  verbs: ["get", "list", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ $name }}
+  namespace: {{ $ns }}
+  labels:
+    {{- include "koodam.labels" $ | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: {{ $name }}
+subjects:
+- kind: ServiceAccount
+  name: {{ $name }}
+  namespace: {{ $.Release.Namespace }}
+---
+{{- end }}
+{{- else }}
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ $name }}
+  labels:
+    {{- include "koodam.labels" . | nindent 4 }}
+rules:
+- apiGroups: [""]
+  resources: ["pods"]
+  verbs: ["get", "list", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: {{ $name }}
+  labels:
+    {{- include "koodam.labels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: {{ $name }}
+subjects:
+- kind: ServiceAccount
+  name: {{ $name }}
+  namespace: {{ .Release.Namespace }}
+---
+{{- end }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ $name }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "koodam.labels" . | nindent 4 }}
+spec:
+  type: ClusterIP
+  # The pods use this fixed address, so they need no DNS.
+  clusterIP: {{ required "egressProxy.clusterIP is necessary if egressProxy.enabled is true." $ep.clusterIP }}
+  selector:
+    {{- include "koodam.gatewaySelector" (list . "egress-proxy") | nindent 4 }}
+  ports:
+  - name: proxy
+    protocol: TCP
+    port: {{ $ep.port }}
+    targetPort: proxy
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ $name }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "koodam.labels" . | nindent 4 }}
+    app.kubernetes.io/component: egress-proxy
+spec:
+  replicas: {{ $ep.replicas }}
+  selector:
+    matchLabels:
+      {{- include "koodam.gatewaySelector" (list . "egress-proxy") | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "koodam.gatewaySelector" (list . "egress-proxy") | nindent 8 }}
+    spec:
+      serviceAccountName: {{ $name }}
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      securityContext:
+        runAsNonRoot: true
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+      - name: proxy
+        image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
+        imagePullPolicy: {{ .Values.image.pullPolicy }}
+        command:
+        - /egress-proxy
+        args:
+        - --listen=:{{ $ep.port }}
+        - --probe-address=:8081
+        - --gateway-url={{ include "koodam.gatewayUrl" . }}
+        - --http-ports={{ join "," $ep.httpPorts }}
+        - --connect-ports={{ join "," $ep.connectPorts }}
+        {{- with $namespaces }}
+        - --namespaces={{ join "," . }}
+        {{- end }}
+        ports:
+        - containerPort: {{ $ep.port }}
+          name: proxy
+          protocol: TCP
+        - containerPort: 8081
+          name: health
+          protocol: TCP
+        securityContext:
+          readOnlyRootFilesystem: true
+          allowPrivilegeEscalation: false
+          capabilities:
+            drop:
+            - ALL
+        livenessProbe:
+          httpGet:
+            path: /healthz
+            port: health
+          periodSeconds: 20
+        readinessProbe:
+          httpGet:
+            path: /readyz
+            port: health
+          periodSeconds: 5
+        resources:
+          {{- toYaml $ep.resources | nindent 10 }}
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      terminationGracePeriodSeconds: 10
+{{- end }}

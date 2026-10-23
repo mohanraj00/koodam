@@ -154,6 +154,28 @@ keyGrace: 1m
 # The value must be from 60 to 2147483647. The default is 86400 (24 h).
 jobTTLSeconds: 86400
 
+# The egress proxy (traced egress). It writes one JSON line for each call of an Agent pod or a
+# Workspace pod to its stdout. It uses the manager image. If workspace.networkPolicy.namespaces
+# has items, the proxy watches the pods only in these namespaces, with a Role in each namespace.
+# Else it gets a ClusterRole. Both give get, list and watch on pods.
+egressProxy:
+  enabled: false
+  # A fixed ClusterIP in the Service range of the cluster. The pods use this address, so they
+  # need no DNS. It is necessary if enabled is true.
+  clusterIP: ""
+  port: 3128
+  # The permitted ports for plain HTTP and for CONNECT.
+  httpPorts: ["80"]
+  connectPorts: ["443"]
+  replicas: 2
+  resources:
+    limits:
+      cpu: "1"
+      memory: 256Mi
+    requests:
+      cpu: 50m
+      memory: 64Mi
+
 # The metrics endpoint (HTTPS). If true, the chart adds the metrics Service and the
 # metrics-auth ClusterRole (tokenreviews and subjectaccessreviews, verb create).
 metrics:
