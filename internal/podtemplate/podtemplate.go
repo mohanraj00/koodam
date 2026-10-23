@@ -22,6 +22,7 @@ package podtemplate
 import (
 	"fmt"
 	"maps"
+	pathpkg "path"
 	"strings"
 
 	corev1 "k8s.io/api/core/v1"
@@ -50,13 +51,13 @@ type User struct {
 func Merge(base corev1.PodTemplateSpec, user *User, main string, path *field.Path) (
 	corev1.PodTemplateSpec, field.ErrorList) {
 	if user == nil {
-		return base, nil
+		return *base.DeepCopy(), nil
 	}
 	errs := Validate(base, user, main, path)
 	if len(errs) > 0 {
 		return corev1.PodTemplateSpec{}, errs
 	}
-	b, u := base.Spec, user.Spec.DeepCopy()
+	b, u := base.Spec.DeepCopy(), user.Spec.DeepCopy()
 	out := corev1.PodTemplateSpec{ObjectMeta: *base.ObjectMeta.DeepCopy(), Spec: *u}
 	out.Labels = merged(user.Labels, base.Labels)
 	out.Annotations = merged(user.Annotations, base.Annotations)
@@ -74,7 +75,7 @@ func Merge(base corev1.PodTemplateSpec, user *User, main string, path *field.Pat
 	containers := make([]corev1.Container, 0, len(b.Containers)+len(u.Containers))
 	for _, c := range b.Containers {
 		if c.Name == main {
-			c = mergeMain(*c.DeepCopy(), find(u.Containers, main))
+			c = mergeMain(c, find(u.Containers, main))
 		}
 		containers = append(containers, c)
 	}
@@ -87,7 +88,8 @@ func Merge(base corev1.PodTemplateSpec, user *User, main string, path *field.Pat
 	return out, nil
 }
 
-// mergeMain adds the fields of the user main container u to the Koodam main container c.
+// mergeMain adds the fields of the user main container u to the Koodam main container c. A user
+// resource replaces the Koodam value of the same resource only. The other Koodam values stay.
 func mergeMain(c corev1.Container, u *corev1.Container) corev1.Container {
 	if u == nil {
 		return c
@@ -107,15 +109,18 @@ func mergeMain(c corev1.Container, u *corev1.Container) corev1.Container {
 	c.Env = append(c.Env, u.Env...)
 	c.EnvFrom = append(c.EnvFrom, u.EnvFrom...)
 	c.VolumeMounts = append(c.VolumeMounts, u.VolumeMounts...)
-	if !equality.Semantic.DeepEqual(u.Resources, corev1.ResourceRequirements{}) {
-		c.Resources = u.Resources
-	}
+	c.Resources.Limits = mergedResources(c.Resources.Limits, u.Resources.Limits)
+	c.Resources.Requests = mergedResources(c.Resources.Requests, u.Resources.Requests)
+	c.Resources.Claims = append(c.Resources.Claims, u.Resources.Claims...)
 	return c
 }
 
 // Validate returns an error for each user value that Koodam owns or that has the same name as
 // a Koodam object in base.
 func Validate(base corev1.PodTemplateSpec, user *User, main string, path *field.Path) field.ErrorList {
+	if user == nil {
+		return nil
+	}
 	var errs field.ErrorList
 	meta := path.Child("metadata")
 	errs = append(errs, reservedKeys(user.Labels, meta.Child("labels"))...)
@@ -134,6 +139,7 @@ func Validate(base corev1.PodTemplateSpec, user *User, main string, path *field.
 		"hostIPC":                      u.HostIPC,
 		"hostUsers":                    u.HostUsers != nil && *u.HostUsers,
 		"shareProcessNamespace":        u.ShareProcessNamespace != nil && *u.ShareProcessNamespace,
+		"ephemeralContainers":          len(u.EphemeralContainers) > 0,
 	}
 	for _, name := range ownedOrder {
 		if owned[name] {
@@ -147,21 +153,26 @@ func Validate(base corev1.PodTemplateSpec, user *User, main string, path *field.
 	for _, v := range b.Volumes {
 		vols[v.Name] = true
 	}
+	seen := map[string]bool{}
 	for i, c := range u.InitContainers {
 		p := spec.Child("initContainers").Index(i)
-		if taken[c.Name] {
+		if taken[c.Name] || seen[c.Name] {
 			errs = append(errs, field.Duplicate(p.Child("name"), c.Name))
 		}
+		seen[c.Name] = true
 		errs = append(errs, koodamVolumes(c, vols, p)...)
 	}
 	for i, c := range u.Containers {
 		p := spec.Child("containers").Index(i)
 		switch {
+		case seen[c.Name]:
+			errs = append(errs, field.Duplicate(p.Child("name"), c.Name))
 		case c.Name == main:
 			errs = append(errs, validateMain(find(b.Containers, main), c, p)...)
 		case taken[c.Name]:
 			errs = append(errs, field.Duplicate(p.Child("name"), c.Name))
 		}
+		seen[c.Name] = true
 		errs = append(errs, koodamVolumes(c, vols, p)...)
 	}
 	for i, v := range u.Volumes {
@@ -188,7 +199,7 @@ func koodamVolumes(c corev1.Container, vols map[string]bool, path *field.Path) f
 // ownedOrder gives the owned pod fields in a fixed order, so the errors have a fixed order.
 var ownedOrder = []string{"automountServiceAccountToken", "enableServiceLinks", "securityContext",
 	"serviceAccountName", "restartPolicy", "activeDeadlineSeconds", "hostNetwork", "hostPID", "hostIPC",
-	"hostUsers", "shareProcessNamespace"}
+	"hostUsers", "shareProcessNamespace", "ephemeralContainers"}
 
 // validateMain refuses the fields of the user main container u that are not in the permitted
 // list, and the env names and mount paths that the Koodam main container c has.
@@ -223,10 +234,11 @@ func validateMain(c *corev1.Container, u corev1.Container, path *field.Path) fie
 	return errs
 }
 
-// inside is true if path p is dir or a path in dir.
+// inside is true if path p is dir or a path in dir. It cleans the 2 paths first, because the
+// container runtime also cleans them: "/home//koodam" and "/home/x/../koodam" are "/home/koodam".
 func inside(p, dir string) bool {
-	p, dir = strings.TrimSuffix(p, "/"), strings.TrimSuffix(dir, "/")
-	return p == dir || strings.HasPrefix(p, dir+"/")
+	p, dir = pathpkg.Clean("/"+p), pathpkg.Clean("/"+dir)
+	return p == dir || dir == "/" || strings.HasPrefix(p, dir+"/")
 }
 
 // reservedKeys refuses each key with ReservedPrefix.
@@ -238,6 +250,17 @@ func reservedKeys(m map[string]string, path *field.Path) field.ErrorList {
 		}
 	}
 	return errs
+}
+
+// mergedResources returns the Koodam list k with the values of the user list u on top.
+func mergedResources(k, u corev1.ResourceList) corev1.ResourceList {
+	if len(u) == 0 {
+		return k
+	}
+	m := make(corev1.ResourceList, len(k)+len(u))
+	maps.Copy(m, k)
+	maps.Copy(m, u)
+	return m
 }
 
 // names returns the names of the containers in each list.

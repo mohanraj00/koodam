@@ -26,11 +26,14 @@ import (
 )
 
 const (
-	main   = "workspace"
-	login  = "koodam-login"
-	home   = "home"
-	data   = "data"
-	custom = "custom"
+	main     = "workspace"
+	login    = "koodam-login"
+	home     = "home"
+	data     = "data"
+	custom   = "custom"
+	homeDir  = "/home/koodam"
+	second   = "spec.podTemplate.spec.containers[1].name"
+	mainPath = "spec.podTemplate.spec.containers[0].volumeMounts[0].mountPath"
 )
 
 var root = field.NewPath("spec", "podTemplate")
@@ -49,8 +52,8 @@ func base() corev1.PodTemplateSpec {
 				Name:         main,
 				Image:        "koodam/workspace",
 				Ports:        []corev1.ContainerPort{{Name: "ssh", ContainerPort: 2222}},
-				Env:          []corev1.EnvVar{{Name: "HOME", Value: "/home/koodam"}},
-				VolumeMounts: []corev1.VolumeMount{{Name: home, MountPath: "/home/koodam"}},
+				Env:          []corev1.EnvVar{{Name: "HOME", Value: homeDir}},
+				VolumeMounts: []corev1.VolumeMount{{Name: home, MountPath: homeDir}},
 			}},
 			Volumes: []corev1.Volume{{Name: home}, {Name: login}},
 		},
@@ -177,7 +180,7 @@ func TestMergeRefuses(t *testing.T) {
 			"spec.podTemplate.spec.initContainers[0].name"},
 		{"sidecar name", User{Spec: corev1.PodSpec{Containers: []corev1.Container{
 			{Name: main}, {Name: login}}}},
-			"spec.podTemplate.spec.containers[1].name"},
+			second},
 		{"volume name", User{Spec: corev1.PodSpec{Volumes: []corev1.Volume{{Name: home}}}},
 			"spec.podTemplate.spec.volumes[0].name"},
 		{"main ports", User{Spec: corev1.PodSpec{Containers: []corev1.Container{{
@@ -200,10 +203,29 @@ func TestMergeRefuses(t *testing.T) {
 			"spec.podTemplate.spec.initContainers[0].volumeMounts[0].name"},
 		{"main mount path", User{Spec: corev1.PodSpec{Containers: []corev1.Container{{
 			Name: main, VolumeMounts: []corev1.VolumeMount{{Name: data, MountPath: "/home/koodam/.ssh"}}}}}},
-			"spec.podTemplate.spec.containers[0].volumeMounts[0].mountPath"},
+			mainPath},
+		{"main mount double slash", User{Spec: corev1.PodSpec{Containers: []corev1.Container{{
+			Name: main, VolumeMounts: []corev1.VolumeMount{{Name: data, MountPath: "/home//koodam"}}}}}},
+			mainPath},
+		{"main mount dot dot", User{Spec: corev1.PodSpec{Containers: []corev1.Container{{
+			Name: main, VolumeMounts: []corev1.VolumeMount{{Name: data, MountPath: "/home/x/../koodam"}}}}}},
+			mainPath},
+		{"main mount dot", User{Spec: corev1.PodSpec{Containers: []corev1.Container{{
+			Name: main, VolumeMounts: []corev1.VolumeMount{{Name: data, MountPath: "/home/./koodam/.ssh"}}}}}},
+			mainPath},
+		{"ephemeral", User{Spec: corev1.PodSpec{EphemeralContainers: []corev1.EphemeralContainer{{
+			EphemeralContainerCommon: corev1.EphemeralContainerCommon{Name: "debug"}}}}},
+			"spec.podTemplate.spec.ephemeralContainers"},
+		{"main twice", User{Spec: corev1.PodSpec{Containers: []corev1.Container{{Name: main}, {Name: main}}}},
+			second},
+		{"sidecar twice", User{Spec: corev1.PodSpec{Containers: []corev1.Container{{Name: "a"}, {Name: "a"}}}},
+			second},
+		{"init and sidecar", User{Spec: corev1.PodSpec{
+			InitContainers: []corev1.Container{{Name: "a"}}, Containers: []corev1.Container{{Name: "a"}}}},
+			"spec.podTemplate.spec.containers[0].name"},
 		{"main mount over path", User{Spec: corev1.PodSpec{Containers: []corev1.Container{{
 			Name: main, VolumeMounts: []corev1.VolumeMount{{Name: data, MountPath: "/home/"}}}}}},
-			"spec.podTemplate.spec.containers[0].volumeMounts[0].mountPath"},
+			mainPath},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -221,13 +243,47 @@ func TestMergeRefuses(t *testing.T) {
 	}
 }
 
-func TestMergeKeepsBaseResources(t *testing.T) {
+func TestMergeResources(t *testing.T) {
 	b := base()
-	b.Spec.Containers[0].Resources.Limits = corev1.ResourceList{corev1.ResourceMemory: resource.MustParse("1Gi")}
-	user := &User{Spec: corev1.PodSpec{Containers: []corev1.Container{{Name: main, Image: custom}}}}
+	b.Spec.Containers[0].Resources.Limits = corev1.ResourceList{
+		corev1.ResourceMemory: resource.MustParse("1Gi"), corev1.ResourceCPU: resource.MustParse("1")}
+	user := &User{Spec: corev1.PodSpec{Containers: []corev1.Container{{Name: main, Resources: corev1.ResourceRequirements{
+		Limits: corev1.ResourceList{corev1.ResourceCPU: resource.MustParse("2"), "nvidia.com/gpu": resource.MustParse("1")},
+	}}}}}
 	out, errs := Merge(b, user, main, root)
-	if len(errs) > 0 || out.Spec.Containers[0].Resources.Limits.Memory().String() != "1Gi" {
-		t.Errorf("Merge = %v, %v", out.Spec.Containers[0].Resources, errs)
+	if len(errs) > 0 {
+		t.Fatal(errs)
+	}
+	l := out.Spec.Containers[0].Resources.Limits
+	if l.Memory().String() != "1Gi" || l.Cpu().String() != "2" || len(l) != 3 {
+		t.Errorf("limits = %v", l)
+	}
+	if b.Spec.Containers[0].Resources.Limits.Cpu().String() != "1" {
+		t.Errorf("Merge changed the base limits: %v", b.Spec.Containers[0].Resources.Limits)
+	}
+}
+
+func TestMergeCopiesBase(t *testing.T) {
+	b := base()
+	for _, user := range []*User{nil, {Spec: corev1.PodSpec{NodeSelector: map[string]string{"a": "b"}}}} {
+		out, errs := Merge(b, user, main, root)
+		if len(errs) > 0 {
+			t.Fatal(errs)
+		}
+		*out.Spec.AutomountServiceAccountToken = true
+		out.Spec.SecurityContext.RunAsNonRoot = new(false)
+		out.Spec.InitContainers[0].Image = "changed"
+		out.Spec.Containers[0].Env[0].Value = "changed"
+		if *b.Spec.AutomountServiceAccountToken || !*b.Spec.SecurityContext.RunAsNonRoot ||
+			b.Spec.InitContainers[0].Image != "init" || b.Spec.Containers[0].Env[0].Value != homeDir {
+			t.Errorf("a change to the output changed base (user %v)", user)
+		}
+	}
+}
+
+func TestValidateNil(t *testing.T) {
+	if errs := Validate(base(), nil, main, root); errs != nil {
+		t.Errorf("Validate(nil) = %v", errs)
 	}
 }
 
