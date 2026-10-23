@@ -7,9 +7,26 @@
 
 # Koodam
 
-Koodam (short for தொழிற்கூடம், "workspace") is where your agents live on Kubernetes. One `Agent` resource gets a model key with a budget and a TTL, a ServiceAccount with only the access it asks for, and a Job. When the run ends, Koodam revokes all of it and writes the spend to the status.
+Koodam (short for தொழிற்கூடம், "workspace") is where your agents live on Kubernetes. It gives Kubernetes-aware developers and teams a first-class developer experience for agent work, built from Kubernetes constructs.
 
-I run coding harnesses (Claude Code, Codex) and my own agents on a dev cluster. Each one needs a key, a Role, a login, my skills and my config. Today I wire that by hand for every run, and the credentials outlive the run. Koodam does the wiring and the cleanup.
+## The problem
+
+Developers and teams now run coding agents (Claude Code, Codex) and their own agents every day. A team that already runs on Kubernetes has no standard way to run them on the cluster:
+
+- Each run needs a model key, a Role, a login, skills and config. People wire these by hand for each run.
+- The credentials stay valid after the run stops.
+- A run has no model budget, and nothing records what it spent.
+- A coding session lives on a laptop. It stops when the laptop closes, or it keeps the laptop awake, hot and on the charger. The login, the skills and the memory stay on that laptop.
+
+## The solution
+
+Koodam adds Kubernetes resources for agent work, and an operator that reconciles them:
+
+- **Agent.** One `Agent` gets a model key with a budget and a TTL, a ServiceAccount with only the access it asks for, and a Job. When the run ends, Koodam revokes all of it and writes the spend to the status.
+- **Workspace.** A pod with a home on a PVC. You connect over SSH and run the harnesses in tmux, so the session keeps running when you close the laptop.
+- **Profile.** It binds namespaces, so each Workspace in them gets the same login, global files and skills.
+
+Because these are Kubernetes resources, a platform team controls them with the tools it already uses: RBAC, NetworkPolicy, LimitRange, admission policy and GitOps.
 
 > Status: pre-alpha. The API will change.
 
