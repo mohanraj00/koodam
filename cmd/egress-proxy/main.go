@@ -36,11 +36,15 @@ import (
 	"syscall"
 	"time"
 
+	"golang.org/x/net/netutil"
 	"k8s.io/client-go/kubernetes"
 	ctrl "sigs.k8s.io/controller-runtime"
 
 	"github.com/mohanraj00/koodam/internal/egress"
 )
+
+// maxHTTPConns is the limit of the open connections on the transparent HTTP listener.
+const maxHTTPConns = 1024
 
 func main() {
 	if err := run(); err != nil {
@@ -63,6 +67,8 @@ func run() error {
 	clusterDNS := flag.String("cluster-dns", "kube-dns.kube-system.svc.cluster.local:53",
 		"the host:port of the cluster DNS")
 	clusterDomain := flag.String("cluster-domain", "cluster.local", "the cluster domain")
+	tlsListen := flag.String("tls-listen", ":8443", "the address of the transparent TLS listener")
+	httpListen := flag.String("http-listen", ":8080", "the address of the transparent HTTP listener")
 	flag.Parse()
 
 	var dns *egress.Resolver
@@ -91,7 +97,7 @@ func run() error {
 	defer stop()
 
 	var ready atomic.Bool
-	serveErr := make(chan error, 3)
+	serveErr := make(chan error, 4)
 	probes := &http.Server{Addr: *probe, Handler: probeMux(&ready), ReadHeaderTimeout: 10 * time.Second}
 	go func() {
 		if err := probes.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
@@ -131,7 +137,31 @@ func run() error {
 			return err
 		}
 	}
+	tlsLn, err := net.Listen("tcp", *tlsListen)
+	if err != nil {
+		return err
+	}
+	tlsDone := make(chan struct{})
+	go func() {
+		defer close(tlsDone)
+		if err := p.ServeTLS(ctx, tlsLn); err != nil {
+			serveErr <- fmt.Errorf("the TLS listener: %w", err)
+			stop()
+		}
+	}()
+	httpLn, err := net.Listen("tcp", *httpListen)
+	if err != nil {
+		return err
+	}
 	srv := &http.Server{Handler: p, ReadHeaderTimeout: 30 * time.Second}
+	transparent := &http.Server{Handler: p.Transparent(), ReadHeaderTimeout: 30 * time.Second,
+		IdleTimeout: 90 * time.Second}
+	go func() {
+		if err := transparent.Serve(netutil.LimitListener(httpLn, maxHTTPConns)); !errors.Is(err, http.ErrServerClosed) {
+			serveErr <- fmt.Errorf("the HTTP listener: %w", err)
+			stop()
+		}
+	}()
 	ready.Store(true)
 	slog.Info("the egress proxy is ready", "address", ln.Addr().String())
 	stopped := make(chan struct{})
@@ -140,13 +170,16 @@ func run() error {
 		<-ctx.Done()
 		ready.Store(false)
 		shutdown(srv)
+		shutdown(transparent)
 		shutdown(probes)
 	}()
 	if err := srv.Serve(ln); !errors.Is(err, http.ErrServerClosed) {
 		return err
 	}
-	// Serve returns when the shutdown starts. Wait until the open calls end.
+	// Serve returns when the shutdown starts. Wait until the open calls end and the TLS
+	// listener writes its last spans.
 	<-stopped
+	<-tlsDone
 	return firstError(serveErr)
 }
 

@@ -131,7 +131,8 @@ func TestEgressProxy(t *testing.T) {
 	}
 	for _, want := range []string{"--listen=:3128", "--gateway-url=http://koodam-litellm.koodam-system.svc:4000",
 		"--http-ports=80", "--connect-ports=443", "--answer-ip=10.96.0.50",
-		"--cluster-dns=kube-dns.kube-system.svc.cluster.local:53", "--cluster-domain=cluster.local"} {
+		"--cluster-dns=kube-dns.kube-system.svc.cluster.local:53", "--cluster-domain=cluster.local",
+		"--tls-listen=:8443", "--http-listen=:8080"} {
 		if !slices.Contains(c.Args, want) {
 			t.Errorf("the args %q have no %q", c.Args, want)
 		}
@@ -167,7 +168,8 @@ func TestEgressProxyPorts(t *testing.T) {
 	for _, sp := range svcs[0].Spec.Ports {
 		ports = append(ports, fmt.Sprintf("%s/%d->%s", sp.Protocol, sp.Port, sp.TargetPort.String()))
 	}
-	if !slices.Equal(ports, []string{"TCP/3128->proxy", "UDP/53->dns", "TCP/53->dns-tcp"}) {
+	if !slices.Equal(ports, []string{"TCP/3128->proxy", "UDP/53->dns", "TCP/53->dns-tcp",
+		"TCP/443->tls", "TCP/80->http"}) {
 		t.Fatalf("got the Service ports %q", ports)
 	}
 	c := deps[0].Spec.Template.Spec.Containers[0]
@@ -194,7 +196,7 @@ func TestEgressProxyNetworkPolicy(t *testing.T) {
 	for _, np := range ing[0].Ports {
 		podPorts = append(podPorts, fmt.Sprintf("%s/%d", *np.Protocol, np.Port.IntValue()))
 	}
-	if !slices.Equal(podPorts, []string{"TCP/3128", "UDP/5353", "TCP/5353"}) {
+	if !slices.Equal(podPorts, []string{"TCP/3128", "UDP/5353", "TCP/5353", "TCP/8443", "TCP/8080"}) {
 		t.Fatalf("the pods can use the ports %q, want the proxy and DNS ports", podPorts)
 	}
 	keys := make([]string, 0, len(ing[0].From))

@@ -42,6 +42,7 @@ const (
 	KindConnect = "connect"
 	KindHTTP    = "http"
 	KindLLM     = "llm"
+	KindTLS     = "tls"
 )
 
 // The results of a span.
@@ -59,11 +60,16 @@ const (
 	reasonNoProxy  = "not a proxy request"
 	reasonNoTLS    = "no TLS ClientHello"
 	reasonSNI      = "the SNI is not the CONNECT host"
+	reasonNoSNI    = "no SNI"
+	reasonLimit    = "connection limit"
 )
 
 // SpanVersion is the version of the span contract in docs/egress-spans.md. An added field keeps
 // the version. A removed field, a renamed field or a new meaning of a field changes it.
 const SpanVersion = 1
+
+// schemeHTTP is the URL scheme of plain HTTP.
+const schemeHTTP = "http"
 
 // LLMPrefix is the path prefix of the reverse route to the gateway.
 const LLMPrefix = "/llm/"
@@ -132,6 +138,8 @@ type Proxy struct {
 	ConnectPorts []string
 	// HelloTimeout is the time to read the TLS ClientHello. The default is 10 seconds.
 	HelloTimeout time.Duration
+	// TLSPort is the upstream port of the transparent TLS listener. The default is 443.
+	TLSPort string
 	// Permit returns true for an address that the proxy can dial. The default is IsPublic.
 	Permit func(netip.Addr) bool
 	// Resolve finds the addresses of a host name. The default is the system resolver.
@@ -246,29 +254,17 @@ func (p *Proxy) connect(w http.ResponseWriter, r *http.Request, sp *Span) {
 		sp.Result, sp.Reason = ResultError, "client write"
 		return
 	}
-	timeout := p.HelloTimeout
-	if timeout == 0 {
-		timeout = 10 * time.Second
+	hello, ok := p.clientHello(client, buf.Reader, sp)
+	if !ok {
+		return
 	}
-	_ = client.SetReadDeadline(time.Now().Add(timeout))
-	hello, sni, isTLS, readErr := readHello(client, buf.Reader)
-	_ = client.SetReadDeadline(time.Time{})
-	sp.SNI = sni
 	// A client sends no SNI for an IP address. For a name, the SNI must be that name, so that the
 	// TLS name is the name that the proxy checked.
 	want := strings.TrimSuffix(host, ".")
 	if _, err := netip.ParseAddr(host); err == nil {
 		want = ""
 	}
-	var ne net.Error
-	switch {
-	case !isTLS && errors.As(readErr, &ne) && ne.Timeout():
-		sp.Result, sp.Reason = ResultError, "hello timeout"
-		return
-	case !isTLS:
-		sp.Result, sp.Reason = ResultDenied, reasonNoTLS
-		return
-	case !strings.EqualFold(strings.TrimSuffix(sni, "."), want):
+	if !strings.EqualFold(strings.TrimSuffix(sp.SNI, "."), want) {
 		sp.Result, sp.Reason = ResultDenied, reasonSNI
 		return
 	}
@@ -288,7 +284,7 @@ func (p *Proxy) forward(w http.ResponseWriter, r *http.Request, sp *Span) {
 		port = "80"
 	}
 	sp.Port = port
-	if r.URL.Scheme != "http" || !slices.Contains(orDefault(p.HTTPPorts, "80"), port) {
+	if r.URL.Scheme != schemeHTTP || !slices.Contains(orDefault(p.HTTPPorts, "80"), port) {
 		p.deny(w, sp, reasonPort)
 		return
 	}
@@ -301,7 +297,7 @@ func (p *Proxy) llm(w http.ResponseWriter, r *http.Request, sp *Span) {
 	sp.Host = p.Gateway.Host
 	sp.Port = p.Gateway.Port()
 	if sp.Port == "" {
-		sp.Port = map[string]string{"http": "80", "https": "443"}[p.Gateway.Scheme]
+		sp.Port = map[string]string{schemeHTTP: "80", "https": "443"}[p.Gateway.Scheme]
 	}
 	// The gateway key header passes through. The span has no header.
 	p.reverse(w, r, sp, p.toGateway, func(pr *httputil.ProxyRequest) {
@@ -396,6 +392,29 @@ func IsPublic(a netip.Addr) bool {
 	a = a.Unmap()
 	return a.IsGlobalUnicast() && !a.IsPrivate() && !a.IsLinkLocalUnicast() &&
 		!sharedAddress.Contains(a) && !thisNetwork.Contains(a)
+}
+
+// clientHello reads the TLS ClientHello from r in the HelloTimeout and sets sp.SNI. If it cannot
+// read a ClientHello, it sets the result of sp and returns false.
+func (p *Proxy) clientHello(c net.Conn, r io.Reader, sp *Span) ([]byte, bool) {
+	timeout := p.HelloTimeout
+	if timeout == 0 {
+		timeout = 10 * time.Second
+	}
+	_ = c.SetReadDeadline(time.Now().Add(timeout))
+	hello, sni, isTLS, readErr := readHello(c, r)
+	_ = c.SetReadDeadline(time.Time{})
+	sp.SNI = sni
+	var ne net.Error
+	switch {
+	case !isTLS && errors.As(readErr, &ne) && ne.Timeout():
+		sp.Result, sp.Reason = ResultError, "hello timeout"
+		return nil, false
+	case !isTLS:
+		sp.Result, sp.Reason = ResultDenied, reasonNoTLS
+		return nil, false
+	}
+	return hello, true
 }
 
 // readHello reads the TLS ClientHello from r and returns its bytes and its SNI. It does not

@@ -62,7 +62,7 @@ func start(t *testing.T, strict bool, port string, gateway *url.URL, opts ...fun
 	sink := make(chanSink, 4)
 	p := &Proxy{Sink: sink, Gateway: gateway, ConnectPorts: []string{port}, HTTPPorts: []string{port},
 		Resolve: func(context.Context, string) ([]netip.Addr, error) {
-			return []netip.Addr{netip.MustParseAddr("127.0.0.1")}, nil
+			return []netip.Addr{netip.MustParseAddr(loopback)}, nil
 		}}
 	if !strict {
 		p.Permit = func(netip.Addr) bool { return true }
@@ -102,7 +102,7 @@ func TestConnectReadsSNI(t *testing.T) {
 		sp.Path != "" || sp.Port != port(t, up.URL) {
 		t.Fatalf("span %+v", sp)
 	}
-	if sp.Source != "127.0.0.1" || sp.BytesIn == 0 || sp.BytesOut == 0 {
+	if sp.Source != loopback || sp.BytesIn == 0 || sp.BytesOut == 0 {
 		t.Fatalf("span %+v", sp)
 	}
 }
@@ -230,7 +230,7 @@ func TestRefused(t *testing.T) {
 		strict                       bool
 	}{
 		{"a port that is not permitted", http.MethodGet, "http://" + net.JoinHostPort(testHost, "8080") + "/", reasonPort, false},
-		{"a loopback address", http.MethodGet, "http://" + net.JoinHostPort("127.0.0.1", upPort) + "/", reasonAddress, true},
+		{"a loopback address", http.MethodGet, "http://" + net.JoinHostPort(loopback, upPort) + "/", reasonAddress, true},
 		{"CONNECT to a port that is not permitted", http.MethodConnect, net.JoinHostPort(testHost, "443"), reasonPort, false},
 		{"CONNECT to a private address", http.MethodConnect, net.JoinHostPort(testHost, upPort), reasonAddress, true},
 		{"plain HTTP to a private address", http.MethodGet, "http://" + net.JoinHostPort(testHost, upPort) + "/", reasonAddress, true},
@@ -344,7 +344,7 @@ func TestIdentifyRefuses(t *testing.T) {
 func TestIsPublic(t *testing.T) {
 	for s, want := range map[string]bool{
 		"93.184.215.14": true, "2606:2800:21f:cb07:6820:80da:af6b:8b2c": true,
-		"10.0.0.1": false, "172.16.0.1": false, "192.168.1.1": false, "127.0.0.1": false,
+		"10.0.0.1": false, "172.16.0.1": false, "192.168.1.1": false, loopback: false,
 		"169.254.169.254": false, "100.64.0.1": false, "0.0.0.0": false, "0.0.0.1": false, "224.0.0.1": false,
 		"::1": false, "fd00::1": false, "fe80::1": false, "::ffff:10.0.0.1": false,
 	} {
@@ -377,7 +377,7 @@ func TestDialTriesEachAddress(t *testing.T) {
 	}
 	defer func() { _ = ln.Close() }()
 	// The listener has only the IPv4 address, thus the dial to ::1 fails first.
-	addrs := []netip.Addr{netip.MustParseAddr("::1"), netip.MustParseAddr("127.0.0.1")}
+	addrs := []netip.Addr{netip.MustParseAddr("::1"), netip.MustParseAddr(loopback)}
 	p := &Proxy{Permit: func(netip.Addr) bool { return true },
 		Resolve: func(context.Context, string) ([]netip.Addr, error) { return addrs, nil }}
 	c, err := p.dial(context.Background(), testHost, port(t, "http://"+ln.Addr().String()))

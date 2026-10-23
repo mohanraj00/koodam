@@ -2,7 +2,7 @@
 
 The egress proxy writes 1 JSON line to its stdout for each call from an Agent pod or a Workspace pod. This line is a span. This page is the contract for the programs that read the spans, for example `koodam trace` and Nookku.
 
-> Status: v0.3, in build. The proxy writes `v` and `port` from #168. The `tls` kind comes with #166.
+> Status: v0.3, in build. The proxy writes `v` and `port` from #168, and the `tls` kind from #166.
 
 ## Example
 
@@ -69,6 +69,8 @@ The proxy does not decrypt TLS. For `connect` and `tls`, the span has the host a
 | `not a proxy request` | `denied` | The request is not a CONNECT, an absolute URL or an `/llm/` path. |
 | `no TLS ClientHello` | `denied` | The first bytes in a tunnel are not a TLS ClientHello. |
 | `the SNI is not the CONNECT host` | `denied` | The SNI is not the name of the CONNECT request. |
+| `no SNI` | `denied` | A `tls` call has no SNI, so the proxy has no target. |
+| `connection limit` | `denied` | The TLS listener has too many open connections, in total or from the source. |
 | `upstream` | `error` | The proxy could not connect to the target, or the target failed. |
 | `hello timeout` | `error` | The pod sent no ClientHello in the time limit. |
 

@@ -101,6 +101,14 @@ spec:
     protocol: TCP
     port: 53
     targetPort: dns-tcp
+  - name: tls
+    protocol: TCP
+    port: 443
+    targetPort: tls
+  - name: http
+    protocol: TCP
+    port: 80
+    targetPort: http
 ---
 apiVersion: apps/v1
 kind: Deployment
@@ -144,6 +152,8 @@ spec:
         - "--answer-ip={{ $ep.clusterIP }}"
         - "--cluster-dns={{ $ep.dns.clusterDNS }}"
         - "--cluster-domain={{ $ep.dns.clusterDomain }}"
+        - --tls-listen=:8443
+        - --http-listen=:8080
         {{- with $namespaces }}
         - "--namespaces={{ join "," . }}"
         {{- end }}
@@ -156,6 +166,12 @@ spec:
           protocol: UDP
         - containerPort: 5353
           name: dns-tcp
+          protocol: TCP
+        - containerPort: 8443
+          name: tls
+          protocol: TCP
+        - containerPort: 8080
+          name: http
           protocol: TCP
         - containerPort: 8081
           name: health
@@ -222,6 +238,10 @@ spec:
       port: 5353
     - protocol: TCP
       port: 5353
+    - protocol: TCP
+      port: 8443
+    - protocol: TCP
+      port: 8080
   # The kubelet probes. Some network plugins apply the policy to the traffic from the node.
   - ports:
     - protocol: TCP
