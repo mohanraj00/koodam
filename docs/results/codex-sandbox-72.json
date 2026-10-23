@@ -1,0 +1,160 @@
+{
+  "environment": {
+    "base_commit": "c01cdbd84962397166d3a3831afc2ee6aa4d12eb",
+    "architecture": "aarch64",
+    "kind_node_image": "kindest/node@sha256:a1ed56cfb0e7b93589bdf97c8cd566405a265939e3620fc4f5de89adff580ae5",
+    "workspace_image_id": "sha256:8263fdb03c7904383fbba36b02fcd30a1716c825dbde19eb3a40655d640d7eea",
+    "probe_image_id": "sha256:80a8660bb0e97d3281fd7177af53965b4b8c6bc44415eeff27d0c58aae260e4c",
+    "kubernetes": "v1.37.0",
+    "containerd": "v2.3.4",
+    "runc": "1.4.3",
+    "gvisor": "release-20261019.0",
+    "gvisor_platform": "systrap",
+    "debian_bubblewrap": "0.12.0-1~deb13u1",
+    "codex": "0.163.0",
+    "gvisor_bundle_sha512": "6b14b582cd3185169df54275eed8721d94c9b40e6cb1533d0d0c46573271c6d2d03db586ea1caac46a45e805797f00b115bead9fb93636a1ffa69f2430958977",
+    "node_user_max_user_namespaces": 31517,
+    "node_kernel_unprivileged_userns_clone": 1,
+    "binary_sha256": {
+      ".codex-real": "8a96f66d059d653e68bfd5f3c79337e6f1d7d170d80bf705eb7d0249b34c0ece",
+      "bwrap": "c547cbdc762a70ed216789ffaa4c6c0e7d2beabe32245a498f8e365a9fc8dab4",
+      "codex-code-mode-host": "255eccc8a5c1d267dc0acbc815cc83aaa1f50955bd99943b29f00cafcdcab771"
+    },
+    "namespace_labels": {
+      "kubernetes.io/metadata.name": "koodam-sandbox-72",
+      "pod-security.kubernetes.io/enforce": "restricted",
+      "pod-security.kubernetes.io/enforce-version": "latest"
+    },
+    "pod_specs": {
+      "runc": {
+        "securityContext": {
+          "fsGroup": 1000,
+          "runAsGroup": 1000,
+          "runAsNonRoot": true,
+          "runAsUser": 1000,
+          "seccompProfile": {
+            "type": "RuntimeDefault"
+          }
+        },
+        "automountServiceAccountToken": false,
+        "enableServiceLinks": false,
+        "containers": [
+          {
+            "command": [
+              "/bin/sleep",
+              "3600"
+            ],
+            "image": "koodam-codex-probe:72",
+            "imagePullPolicy": "Never",
+            "name": "workspace",
+            "securityContext": {
+              "allowPrivilegeEscalation": false,
+              "capabilities": {
+                "drop": [
+                  "ALL"
+                ]
+              },
+              "runAsGroup": 1000,
+              "runAsNonRoot": true,
+              "runAsUser": 1000,
+              "seccompProfile": {
+                "type": "RuntimeDefault"
+              }
+            },
+            "volumeMounts": [
+              {
+                "mountPath": "/home/dev",
+                "name": "home"
+              }
+            ]
+          }
+        ],
+        "volumes": [
+          {
+            "emptyDir": {},
+            "name": "home"
+          }
+        ]
+      },
+      "gvisor": {
+        "securityContext": {
+          "fsGroup": 1000,
+          "runAsGroup": 1000,
+          "runAsNonRoot": true,
+          "runAsUser": 1000,
+          "seccompProfile": {
+            "type": "RuntimeDefault"
+          }
+        },
+        "automountServiceAccountToken": false,
+        "enableServiceLinks": false,
+        "runtimeClassName": "gvisor-72",
+        "containers": [
+          {
+            "command": [
+              "/bin/sleep",
+              "3600"
+            ],
+            "image": "koodam-codex-probe:72",
+            "imagePullPolicy": "Never",
+            "name": "workspace",
+            "securityContext": {
+              "allowPrivilegeEscalation": false,
+              "capabilities": {
+                "drop": [
+                  "ALL"
+                ]
+              },
+              "runAsGroup": 1000,
+              "runAsNonRoot": true,
+              "runAsUser": 1000,
+              "seccompProfile": {
+                "type": "RuntimeDefault"
+              }
+            },
+            "volumeMounts": [
+              {
+                "mountPath": "/home/dev",
+                "name": "home"
+              }
+            ]
+          }
+        ],
+        "volumes": [
+          {
+            "emptyDir": {},
+            "name": "home"
+          }
+        ]
+      }
+    }
+  },
+  "date_utc": "2026-10-23T14:30:35.805174+00:00",
+  "image": "koodam-codex-probe:72",
+  "probes": {
+    "runc": {
+      "runtime": {"command": ["/bin/sh", "-c", "uname -a; dmesg | head -5"], "exit_code": 0, "stdout": "Linux runc 6.8.0-117-generic #117-Ubuntu SMP PREEMPT_DYNAMIC Thu May  7 17:26:37 UTC 2026 aarch64 GNU/Linux\n", "stderr": "dmesg: read kernel buffer failed: Operation not permitted\n"},
+      "prepare": {"command": ["/bin/sh", "-c", "mkdir -p /home/dev/project /home/dev/.codex; printf fixture > /home/dev/project/input; printf outside > /home/dev/outside; rm -f /home/dev/project/output"], "exit_code": 0, "stdout": "", "stderr": ""},
+      "version": {"command": ["/koodam/bin/.codex-real", "--version"], "exit_code": 0, "stdout": "codex-cli 0.163.0\n", "stderr": ""},
+      "release_bwrap": {"command": ["/koodam/bin/bwrap", "--unshare-user", "--ro-bind", "/", "/", "--", "/bin/true"], "exit_code": 1, "stdout": "", "stderr": "bwrap: No permissions to create a new namespace, likely because the kernel does not allow non-privileged user namespaces. On e.g. debian this can be enabled with 'sysctl kernel.unprivileged_userns_clone=1'.\ncommand terminated with exit code 1\n"},
+      "debian_bwrap": {"command": ["/usr/bin/bwrap", "--unshare-user", "--ro-bind", "/", "/", "--", "/bin/true"], "exit_code": 1, "stdout": "", "stderr": "bwrap: No permissions to create a new namespace, likely because the kernel does not allow non-privileged user namespaces. See <https://deb.li/bubblewrap> or <file:///usr/share/doc/bubblewrap/README.Debian.gz>.\ncommand terminated with exit code 1\n"},
+      "release_bwrap_network": {"command": ["/koodam/bin/bwrap", "--unshare-user", "--unshare-net", "--ro-bind", "/", "/", "--", "/bin/true"], "exit_code": 1, "stdout": "", "stderr": "bwrap: No permissions to create a new namespace, likely because the kernel does not allow non-privileged user namespaces. On e.g. debian this can be enabled with 'sysctl kernel.unprivileged_userns_clone=1'.\ncommand terminated with exit code 1\n"},
+      "control": {"command": ["/bin/sh", "-c", "cat input; printf CONTROL_OK"], "exit_code": 0, "stdout": "fixtureCONTROL_OK", "stderr": ""},
+      "codex_read": {"command": ["/koodam/bin/.codex-real", "sandbox", "--", "/bin/sh", "-c", "cat input; printf SANDBOX_OK"], "exit_code": 1, "stdout": "", "stderr": "bwrap: No permissions to create a new namespace, likely because the kernel does not allow non-privileged user namespaces. On e.g. debian this can be enabled with 'sysctl kernel.unprivileged_userns_clone=1'.\ncommand terminated with exit code 1\n"},
+      "codex_write": {"command": ["/koodam/bin/.codex-real", "sandbox", "-c", "sandbox_mode=\"workspace-write\"", "--", "/bin/sh", "-c", "printf inside > output; if printf changed > /home/dev/outside; then exit 9; else printf OUTSIDE_DENIED; fi"], "exit_code": 1, "stdout": "", "stderr": "bwrap: No permissions to create a new namespace, likely because the kernel does not allow non-privileged user namespaces. On e.g. debian this can be enabled with 'sysctl kernel.unprivileged_userns_clone=1'.\ncommand terminated with exit code 1\n"},
+      "after": {"command": ["/bin/sh", "-c", "test ! -e output && test \"$(cat /home/dev/outside)\" = outside && printf FILES_UNCHANGED"], "exit_code": 0, "stdout": "FILES_UNCHANGED", "stderr": ""}
+    },
+    "gvisor": {
+      "runtime": {"command": ["/bin/sh", "-c", "uname -a; dmesg | head -5"], "exit_code": 0, "stdout": "Linux gvisor 4.19.0-gvisor #1 SMP Sun Jan 10 15:06:54 PST 2016 aarch64 GNU/Linux\n[    0.000000] Starting gVisor...\n[    0.280365] Feeding the init monster...\n[    0.671588] Letting the watchdogs out...\n[    0.973769] Mounting deweydecimalfs...\n[    1.022020] Conjuring /dev/null black hole...\n", "stderr": ""},
+      "prepare": {"command": ["/bin/sh", "-c", "mkdir -p /home/dev/project /home/dev/.codex; printf fixture > /home/dev/project/input; printf outside > /home/dev/outside; rm -f /home/dev/project/output"], "exit_code": 0, "stdout": "", "stderr": ""},
+      "version": {"command": ["/koodam/bin/.codex-real", "--version"], "exit_code": 0, "stdout": "codex-cli 0.163.0\n", "stderr": ""},
+      "release_bwrap": {"command": ["/koodam/bin/bwrap", "--unshare-user", "--ro-bind", "/", "/", "--", "/bin/true"], "exit_code": 0, "stdout": "", "stderr": ""},
+      "debian_bwrap": {"command": ["/usr/bin/bwrap", "--unshare-user", "--ro-bind", "/", "/", "--", "/bin/true"], "exit_code": 0, "stdout": "", "stderr": ""},
+      "release_bwrap_network": {"command": ["/koodam/bin/bwrap", "--unshare-user", "--unshare-net", "--ro-bind", "/", "/", "--", "/bin/true"], "exit_code": 1, "stdout": "", "stderr": "bwrap: loopback: Failed RTM_NEWADDR: No child process\ncommand terminated with exit code 1\n"},
+      "control": {"command": ["/bin/sh", "-c", "cat input; printf CONTROL_OK"], "exit_code": 0, "stdout": "fixtureCONTROL_OK", "stderr": ""},
+      "codex_read": {"command": ["/koodam/bin/.codex-real", "sandbox", "--", "/bin/sh", "-c", "cat input; printf SANDBOX_OK"], "exit_code": 1, "stdout": "", "stderr": "bwrap: loopback: Failed RTM_NEWADDR: No child process\ncommand terminated with exit code 1\n"},
+      "codex_write": {"command": ["/koodam/bin/.codex-real", "sandbox", "-c", "sandbox_mode=\"workspace-write\"", "--", "/bin/sh", "-c", "printf inside > output; if printf changed > /home/dev/outside; then exit 9; else printf OUTSIDE_DENIED; fi"], "exit_code": 1, "stdout": "", "stderr": "bwrap: loopback: Failed RTM_NEWADDR: No child process\ncommand terminated with exit code 1\n"},
+      "after": {"command": ["/bin/sh", "-c", "test ! -e output && test \"$(cat /home/dev/outside)\" = outside && printf FILES_UNCHANGED"], "exit_code": 0, "stdout": "FILES_UNCHANGED", "stderr": ""}
+    }
+  }
+}

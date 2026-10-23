@@ -216,7 +216,7 @@ spec:
 
 ### What works under gVisor
 
-The maintainer has not run a Workspace under gVisor yet. This table gets the results of the first run.
+A complete Workspace run under gVisor is not checked yet. The [Codex sandbox check](codex-sandbox.md) uses isolated pods with the Workspace image and security settings. The table keeps the limits of that check.
 
 | Feature | Under gVisor |
 | --- | --- |
@@ -224,8 +224,8 @@ The maintainer has not run a Workspace under gVisor yet. This table gets the res
 | tmux | Not checked |
 | The harness installers | Not checked |
 | Claude Code | Not checked |
-| Codex | Not checked |
-| The Codex bubblewrap sandbox (#72) | Not checked |
+| Codex | The version command passes in an isolated test pod; model calls are not checked |
+| The Codex bubblewrap sandbox (#72) | Fails at loopback setup with the tested versions. See [the sandbox check](codex-sandbox.md) |
 
 ## Secrets in the pod template
 
