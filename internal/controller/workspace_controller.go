@@ -218,7 +218,10 @@ func (r *WorkspaceReconciler) apply(ctx context.Context, ws *corev1alpha1.Worksp
 	}
 	// The template check comes before the key. A template that is not valid makes no key and no
 	// pod. The controller does not change a StatefulSet that exists.
-	want, err := r.mergedStatefulSet(ws, user)
+	want, err := r.mergedStatefulSet(ctx, ws, user)
+	if err != nil && !isInvalidTemplate(err) {
+		return "", "", "", err
+	}
 	if err != nil {
 		return failed, reasonInvalidPodTemplate, err.Error(), nil
 	}
@@ -340,7 +343,7 @@ func (r *WorkspaceReconciler) unbind(ctx context.Context, ws *corev1alpha1.Works
 	if err != nil {
 		return err
 	}
-	want, err := r.mergedStatefulSet(ws, "")
+	want, err := r.mergedStatefulSet(ctx, ws, "")
 	if err != nil {
 		// The StatefulSet has 0 replicas, so the template makes no pod.
 		want = r.statefulSet(ws, "")

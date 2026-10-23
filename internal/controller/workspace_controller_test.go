@@ -164,6 +164,40 @@ var _ = Describe("Workspace Controller", func() {
 		}
 	})
 
+	It("refuses a reference to a Secret that Koodam owns, and accepts a user Secret", func() {
+		owned := &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: "ws-b-gateway", Namespace: ns,
+			OwnerReferences: []metav1.OwnerReference{{APIVersion: corev1alpha1.GroupVersion.String(),
+				Kind: "Workspace", Name: "ws-b", UID: "ws-b-uid"}}}}
+		mine := &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: "github-token", Namespace: ns}}
+		for _, s := range []*corev1.Secret{owned, mine} {
+			Expect(k8sClient.Create(ctx, s)).To(Succeed())
+			DeferCleanup(k8sClient.Delete, ctx, s)
+		}
+		ref := func(secret string) *corev1alpha1.PodTemplate {
+			return &corev1alpha1.PodTemplate{Spec: corev1.PodSpec{Containers: []corev1.Container{{
+				Name: "helper", Image: image, EnvFrom: []corev1.EnvFromSource{{SecretRef: &corev1.SecretEnvSource{
+					LocalObjectReference: corev1.LocalObjectReference{Name: secret}}}}}}}}
+		}
+
+		ws := workspace()
+		ws.Spec.PodTemplate = ref(owned.Name)
+		Expect(k8sClient.Update(ctx, ws)).To(Succeed())
+		reconcileOnce()
+		ws = workspace()
+		Expect(ws.Status.Phase).To(Equal(corev1alpha1.WorkspaceFailed))
+		c := meta.FindStatusCondition(ws.Status.Conditions, condReady)
+		Expect(c).NotTo(BeNil())
+		Expect(c.Reason).To(Equal(reasonInvalidPodTemplate))
+		Expect(c.Message).To(ContainSubstring("spec.podTemplate.spec.containers[0].envFrom[0].secretRef.name"))
+		err := k8sClient.Get(ctx, types.NamespacedName{Namespace: ns, Name: name}, &appsv1.StatefulSet{})
+		Expect(apierrors.IsNotFound(err)).To(BeTrue())
+
+		ws.Spec.PodTemplate = ref(mine.Name)
+		Expect(k8sClient.Update(ctx, ws)).To(Succeed())
+		reconcileOnce()
+		Expect(workspace().Status.Phase).NotTo(Equal(corev1alpha1.WorkspaceFailed))
+	})
+
 	It("makes the 3 objects of the pod contract", func() {
 		reconcileOnce()
 		ws := workspace()

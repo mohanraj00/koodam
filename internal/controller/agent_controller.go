@@ -301,7 +301,11 @@ func (r *AgentReconciler) provision(ctx context.Context, a *corev1alpha1.Agent) 
 	job := runJob(a, r.InstallerImage, r.GatewayURL)
 	if msg == "" {
 		var err error
-		if job.Spec.Template, err = withPodTemplate(job.Spec.Template, a.Spec.PodTemplate, agentContainer); err != nil {
+		if job.Spec.Template, err = withPodTemplate(ctx, r.APIReader, a.Namespace, job.Spec.Template,
+			a.Spec.PodTemplate, agentContainer); err != nil {
+			if !isInvalidTemplate(err) {
+				return err
+			}
 			msg, reason = err.Error(), reasonInvalidPodTemplate
 		}
 	}
