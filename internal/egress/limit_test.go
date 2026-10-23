@@ -23,6 +23,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -210,5 +211,54 @@ func TestIdleCalls(t *testing.T) {
 				t.Fatalf("the call ended after %v, span %+v", took, sp)
 			}
 		})
+	}
+}
+
+func TestWatchStopWaitsForFire(t *testing.T) {
+	var a activity
+	started := make(chan struct{})
+	var done atomic.Bool
+	stop := a.watch(20*time.Millisecond, func() {
+		close(started)
+		time.Sleep(100 * time.Millisecond)
+		done.Store(true)
+	})
+	<-started
+	stop()
+	if !done.Load() {
+		t.Fatal("stop returned before fire was complete")
+	}
+	stop()
+}
+
+func TestKeepAliveAfterTheIdleLimit(t *testing.T) {
+	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = io.WriteString(w, "ok")
+	}))
+	defer up.Close()
+	idle := 200 * time.Millisecond
+	pu, sink := start(t, false, port(t, up.URL), nil, func(p *Proxy) { p.Idle = idle })
+	c, err := net.Dial("tcp", pu.Host)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = c.Close() }()
+	br := bufio.NewReader(c)
+	raw := "GET http://" + net.JoinHostPort(testHost, port(t, up.URL)) + "/ HTTP/1.1\r\nHost: " + testHost + "\r\n\r\n"
+	for i := range 2 {
+		if i == 1 {
+			// The deadlines of the first call end before the second call.
+			time.Sleep(2 * idle)
+		}
+		_, _ = io.WriteString(c, raw)
+		resp, err := http.ReadResponse(br, nil)
+		if err != nil {
+			t.Fatalf("call %d: %v", i, err)
+		}
+		_, _ = io.Copy(io.Discard, resp.Body)
+		_ = resp.Body.Close()
+		if sp := sink.next(t); resp.StatusCode != http.StatusOK || sp.Result != ResultOK {
+			t.Fatalf("call %d: status %d, span %+v", i, resp.StatusCode, sp)
+		}
 	}
 }

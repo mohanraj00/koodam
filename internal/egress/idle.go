@@ -18,6 +18,7 @@ package egress
 
 import (
 	"io"
+	"sync"
 	"sync/atomic"
 	"time"
 )
@@ -28,11 +29,14 @@ type activity struct{ last atomic.Int64 }
 func (a *activity) touch() { a.last.Store(time.Now().UnixNano()) }
 
 // watch calls fire once if no byte moves for idle. A blocked write also stops the reads, thus it
-// ends the same way. The returned function stops the watch.
+// ends the same way. The returned function stops the watch. When it returns, fire does not run,
+// or it is complete.
 func (a *activity) watch(idle time.Duration, fire func()) (stop func()) {
 	a.touch()
 	done := make(chan struct{})
+	finished := make(chan struct{})
 	go func() {
+		defer close(finished)
 		t := time.NewTicker(idle / 4)
 		defer t.Stop()
 		for {
@@ -47,7 +51,10 @@ func (a *activity) watch(idle time.Duration, fire func()) (stop func()) {
 			}
 		}
 	}()
-	return func() { close(done) }
+	return sync.OnceFunc(func() {
+		close(done)
+		<-finished
+	})
 }
 
 // activeReader records the activity of each read that moves bytes.

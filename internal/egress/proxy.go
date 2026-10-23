@@ -331,13 +331,15 @@ func (p *Proxy) reverse(w http.ResponseWriter, r *http.Request, sp *Span, rt htt
 	ctx, cancel := context.WithCancel(r.Context())
 	defer cancel()
 	rc := http.NewResponseController(w)
-	defer a.watch(p.idle(), func() {
+	idle := p.idle()
+	stop := a.watch(idle, func() {
 		fired.Store(true)
 		cancel()
 		now := time.Now()
 		_ = rc.SetReadDeadline(now)
 		_ = rc.SetWriteDeadline(now)
-	})()
+	})
+	defer stop()
 	r = r.WithContext(ctx)
 	cw := &countWriter{ResponseWriter: w, a: &a}
 	body := &countReader{ReadCloser: r.Body, a: &a}
@@ -357,6 +359,17 @@ func (p *Proxy) reverse(w http.ResponseWriter, r *http.Request, sp *Span, rt htt
 		},
 	}
 	defer func() {
+		// After the stop, fire cannot change the deadlines of a later call on this connection.
+		stop()
+		if !fired.Load() {
+			// After the handler, the server can drain the rest of the body and flush the
+			// response. These deadlines put a limit on that work. After the response, the server
+			// removes the write deadline and sets a new read deadline for the next request.
+			d := time.Now().Add(idle)
+			_ = rc.SetReadDeadline(d)
+			_ = rc.SetWriteDeadline(d)
+		}
+		// If fire ran, the past deadlines stay, and the server closes the connection.
 		sp.BytesIn, sp.BytesOut = cw.n, body.n.Load()
 		v := recover()
 		switch {
