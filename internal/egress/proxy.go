@@ -15,11 +15,12 @@ limitations under the License.
 */
 
 // Package egress is the egress proxy core. It forwards the calls of the Agent and Workspace pods
-// and writes one span for each call.
+// and writes one span for each call. It reads the SNI of a TLS call and does not decrypt it.
 package egress
 
 import (
 	"context"
+	"crypto/tls"
 	"encoding/json"
 	"errors"
 	"io"
@@ -56,6 +57,8 @@ const (
 	reasonAddress  = "address"
 	reasonIdentity = "identity"
 	reasonNoProxy  = "not a proxy request"
+	reasonNoTLS    = "no TLS ClientHello"
+	reasonSNI      = "the SNI is not the CONNECT host"
 )
 
 // LLMPrefix is the path prefix of the reverse route to the gateway.
@@ -105,7 +108,7 @@ func (s *JSONSink) Write(sp Span) {
 
 var errDenied = errors.New("the address is not permitted")
 
-// Proxy is an http.Handler for plain HTTP with an absolute URI and for /llm/. A later change adds CONNECT.
+// Proxy is an http.Handler for CONNECT, for plain HTTP with an absolute URI, and for /llm/.
 type Proxy struct {
 	// Sink is required.
 	Sink Sink
@@ -113,6 +116,10 @@ type Proxy struct {
 	Gateway *url.URL
 	// HTTPPorts are the permitted plain HTTP ports. The default is 80.
 	HTTPPorts []string
+	// ConnectPorts are the permitted CONNECT ports. The default is 443.
+	ConnectPorts []string
+	// HelloTimeout is the time to read the TLS ClientHello. The default is 10 seconds.
+	HelloTimeout time.Duration
 	// Permit returns true for an address that the proxy can dial. The default is IsPublic.
 	Permit func(netip.Addr) bool
 	// Resolve finds the addresses of a host name. The default is the system resolver.
@@ -174,6 +181,8 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	if sp.Result == "" {
 		switch {
+		case sp.Kind == KindConnect:
+			p.connect(w, r, &sp)
 		case sp.Kind == KindLLM && p.Gateway != nil:
 			p.llm(w, r, &sp)
 		case sp.Kind == KindHTTP && r.URL.IsAbs() && r.URL.Host != "":
@@ -189,6 +198,63 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 func (p *Proxy) deny(w http.ResponseWriter, sp *Span, reason string) {
 	sp.Result, sp.Reason, sp.Status = ResultDenied, reason, http.StatusForbidden
 	http.Error(w, "egress denied: "+reason, http.StatusForbidden)
+}
+
+// connect checks the port and the address, then reads the TLS ClientHello and refuses a
+// ClientHello with a different SNI. Then it copies the bytes in the 2 directions.
+func (p *Proxy) connect(w http.ResponseWriter, r *http.Request, sp *Span) {
+	host, port, err := net.SplitHostPort(r.Host)
+	if err != nil || !slices.Contains(orDefault(p.ConnectPorts, "443"), port) {
+		p.deny(w, sp, reasonPort)
+		return
+	}
+	upstream, err := p.dial(r.Context(), host, port)
+	if err != nil {
+		p.dialFailed(w, sp, err)
+		return
+	}
+	defer func() { _ = upstream.Close() }()
+	hj, ok := w.(http.Hijacker)
+	if !ok {
+		sp.Result, sp.Reason, sp.Status = ResultError, "no hijack", http.StatusInternalServerError
+		http.Error(w, "egress error", http.StatusInternalServerError)
+		return
+	}
+	client, buf, err := hj.Hijack()
+	if err != nil {
+		sp.Result, sp.Reason = ResultError, "hijack"
+		return
+	}
+	defer func() { _ = client.Close() }()
+	sp.Status = http.StatusOK
+	if _, err := io.WriteString(client, "HTTP/1.1 200 Connection Established\r\n\r\n"); err != nil {
+		sp.Result, sp.Reason = ResultError, "client write"
+		return
+	}
+	timeout := p.HelloTimeout
+	if timeout == 0 {
+		timeout = 10 * time.Second
+	}
+	_ = client.SetReadDeadline(time.Now().Add(timeout))
+	hello, sni, isTLS := readHello(client, buf.Reader)
+	_ = client.SetReadDeadline(time.Time{})
+	sp.SNI = sni
+	switch {
+	case !isTLS:
+		sp.Result, sp.Reason = ResultDenied, reasonNoTLS
+		return
+	case sni != "" && !strings.EqualFold(strings.TrimSuffix(sni, "."), strings.TrimSuffix(host, ".")):
+		// Domain fronting: the TLS name is not the name that the proxy checked.
+		sp.Result, sp.Reason = ResultDenied, reasonSNI
+		return
+	}
+	if _, err := upstream.Write(hello); err != nil {
+		sp.Result, sp.Reason = ResultError, "upstream write"
+		return
+	}
+	sp.BytesIn, sp.BytesOut = pipe(client, buf.Reader, upstream)
+	sp.BytesOut += int64(len(hello))
+	sp.Result = ResultOK
 }
 
 func (p *Proxy) forward(w http.ResponseWriter, r *http.Request, sp *Span) {
@@ -301,6 +367,47 @@ func IsPublic(a netip.Addr) bool {
 	a = a.Unmap()
 	return a.IsGlobalUnicast() && !a.IsPrivate() && !a.IsLinkLocalUnicast() &&
 		!sharedAddress.Contains(a) && !thisNetwork.Contains(a)
+}
+
+// readHello reads the TLS ClientHello from r and returns its bytes and its SNI. It does not
+// decrypt. isTLS is false if the bytes are not a ClientHello.
+func readHello(c net.Conn, r io.Reader) (hello []byte, sni string, isTLS bool) {
+	rc := &recordConn{Conn: c, r: r}
+	_ = tls.Server(rc, &tls.Config{GetConfigForClient: func(h *tls.ClientHelloInfo) (*tls.Config, error) {
+		sni, isTLS = h.ServerName, true
+		return nil, errDenied
+	}}).Handshake()
+	return rc.buf, sni, isTLS
+}
+
+// recordConn keeps a copy of the bytes that it reads, and it cannot write.
+type recordConn struct {
+	net.Conn
+	r   io.Reader
+	buf []byte
+}
+
+func (c *recordConn) Read(b []byte) (int, error) {
+	n, err := c.r.Read(b)
+	c.buf = append(c.buf, b[:n]...)
+	return n, err
+}
+
+func (c *recordConn) Write([]byte) (int, error) { return 0, net.ErrClosed }
+
+// pipe copies in the 2 directions until one side closes.
+func pipe(client net.Conn, fromClient io.Reader, upstream net.Conn) (in, out int64) {
+	done := make(chan int64, 1)
+	go func() {
+		n, _ := io.Copy(upstream, fromClient)
+		if tc, ok := upstream.(*net.TCPConn); ok {
+			_ = tc.CloseWrite()
+		}
+		done <- n
+	}()
+	in, _ = io.Copy(client, upstream)
+	_ = client.Close()
+	return in, <-done
 }
 
 func sourceIP(remote string) string {

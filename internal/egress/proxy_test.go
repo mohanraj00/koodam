@@ -20,6 +20,7 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"crypto/tls"
 	"encoding/json"
 	"errors"
 	"io"
@@ -59,7 +60,7 @@ func (c chanSink) next(t *testing.T) Span {
 func start(t *testing.T, strict bool, port string, gateway *url.URL) (*url.URL, chanSink) {
 	t.Helper()
 	sink := make(chanSink, 4)
-	p := &Proxy{Sink: sink, Gateway: gateway, HTTPPorts: []string{port},
+	p := &Proxy{Sink: sink, Gateway: gateway, ConnectPorts: []string{port}, HTTPPorts: []string{port},
 		Resolve: func(context.Context, string) ([]netip.Addr, error) {
 			return []netip.Addr{netip.MustParseAddr("127.0.0.1")}, nil
 		}}
@@ -78,6 +79,82 @@ func port(t *testing.T, raw string) string {
 	return u.Port()
 }
 
+func TestConnectReadsSNI(t *testing.T) {
+	up := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = io.WriteString(w, "hello")
+	}))
+	defer up.Close()
+	pu, sink := start(t, false, port(t, up.URL), nil)
+	tr := up.Client().Transport.(*http.Transport).Clone()
+	tr.Proxy = http.ProxyURL(pu)
+	resp, err := (&http.Client{Transport: tr}).Get("https://" + net.JoinHostPort(testHost, port(t, up.URL)) + "/a?q=1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, _ = io.Copy(io.Discard, resp.Body)
+	_ = resp.Body.Close()
+	tr.CloseIdleConnections()
+	sp := sink.next(t)
+	if sp.Kind != KindConnect || sp.Result != ResultOK || sp.SNI != testHost || sp.Path != "" {
+		t.Fatalf("span %+v", sp)
+	}
+	if sp.Source != "127.0.0.1" || sp.BytesIn == 0 || sp.BytesOut == 0 {
+		t.Fatalf("span %+v", sp)
+	}
+}
+
+// connect sends CONNECT to the proxy and returns the connection and the status code.
+func connect(t *testing.T, pu *url.URL, target string) (net.Conn, int) {
+	t.Helper()
+	c, err := net.Dial("tcp", pu.Host)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = c.Close() })
+	_, _ = io.WriteString(c, "CONNECT "+target+" HTTP/1.1\r\nHost: "+target+"\r\n\r\n")
+	resp, err := http.ReadResponse(bufio.NewReader(c), &http.Request{Method: http.MethodConnect})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return c, resp.StatusCode
+}
+
+func TestConnectRefusesFront(t *testing.T) {
+	up := httptest.NewTLSServer(http.NotFoundHandler())
+	defer up.Close()
+	pu, sink := start(t, false, port(t, up.URL), nil)
+	c, code := connect(t, pu, net.JoinHostPort(testHost, port(t, up.URL)))
+	if code != http.StatusOK {
+		t.Fatalf("status %d", code)
+	}
+	//nolint:gosec // The test server has a self-signed certificate.
+	if err := tls.Client(c, &tls.Config{ServerName: "front.example", InsecureSkipVerify: true}).Handshake(); err == nil {
+		t.Fatal("the handshake with a different SNI passed")
+	}
+	sp := sink.next(t)
+	if sp.Result != ResultDenied || sp.SNI != "front.example" || sp.Host != net.JoinHostPort(testHost, port(t, up.URL)) {
+		t.Fatalf("span %+v", sp)
+	}
+}
+
+func TestConnectRefusesNoTLS(t *testing.T) {
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = ln.Close() }()
+	lnPort := port(t, "http://"+ln.Addr().String())
+	pu, sink := start(t, false, lnPort, nil)
+	c, code := connect(t, pu, net.JoinHostPort(testHost, lnPort))
+	if code != http.StatusOK {
+		t.Fatalf("status %d", code)
+	}
+	_, _ = io.WriteString(c, "GET / HTTP/1.1\r\n\r\n")
+	if sp := sink.next(t); sp.Result != ResultDenied || sp.Reason != reasonNoTLS {
+		t.Fatalf("span %+v", sp)
+	}
+}
+
 func TestRefused(t *testing.T) {
 	up := httptest.NewServer(http.NotFoundHandler())
 	defer up.Close()
@@ -88,7 +165,8 @@ func TestRefused(t *testing.T) {
 	}{
 		{"a port that is not permitted", http.MethodGet, "http://" + net.JoinHostPort(testHost, "8080") + "/", reasonPort, false},
 		{"a loopback address", http.MethodGet, "http://" + net.JoinHostPort("127.0.0.1", upPort) + "/", reasonAddress, true},
-		{"CONNECT", http.MethodConnect, net.JoinHostPort(testHost, "443"), reasonNoProxy, false},
+		{"CONNECT to a port that is not permitted", http.MethodConnect, net.JoinHostPort(testHost, "443"), reasonPort, false},
+		{"CONNECT to a private address", http.MethodConnect, net.JoinHostPort(testHost, upPort), reasonAddress, true},
 		{"plain HTTP to a private address", http.MethodGet, "http://" + net.JoinHostPort(testHost, upPort) + "/", reasonAddress, true},
 		{"https without CONNECT", http.MethodGet, "https://" + net.JoinHostPort(testHost, upPort) + "/", reasonPort, false},
 		{"no gateway", http.MethodGet, "/llm/v1/messages", reasonNoProxy, false},
