@@ -38,6 +38,8 @@ import (
 
 const pinned = "2.1.3"
 
+const codexTestVersion = "0.9.1"
+
 func sum(b []byte) string { s := sha256.Sum256(b); return hex.EncodeToString(s[:]) }
 
 func tgz(t *testing.T, name string, body []byte) []byte {
@@ -68,6 +70,8 @@ func tgz(t *testing.T, name string, body []byte) []byte {
 
 // vendor serves a Claude Code release 2.1.3, a Codex release rust-v0.9.1 and a Rekor log.
 type vendor struct {
+	arch      string
+	helpers   map[string]*helperAsset
 	latest    string
 	claude    []byte
 	claudeSum string
@@ -94,14 +98,13 @@ type vendor struct {
 	installDir string
 }
 
-const codexRel = "/dl/rust-v0.9.1/codex-x86_64-unknown-linux-musl"
-
 func newVendor(t *testing.T) *vendor {
-	v := &vendor{latest: "2.1.3\n", claude: []byte("claude binary"), codexBin: []byte("codex binary"),
+	v := &vendor{arch: codexX86, latest: "2.1.3\n", claude: []byte("claude binary"), codexBin: []byte("codex binary"),
 		location: "https://github.com/openai/codex/releases/tag/rust-v0.9.1", kind: "hashedrekord"}
 	v.claudeSum = sum(v.claude)
 	v.codex = tgz(t, "codex-x86_64-unknown-linux-musl", v.codexBin)
 	v.bundleSum, v.sigstore = sum(v.codexBin), newFakeSigstore(t)
+	v.helpers = newHelperAssets(t, v.arch)
 	var body string
 	v.srv = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		v.requests = append(v.requests, r.URL.Path)
@@ -130,7 +133,7 @@ func newVendor(t *testing.T) *vendor {
 				w.Header().Set("Location", v.location)
 			}
 			w.WriteHeader(cmp.Or(v.latestStatus, http.StatusFound))
-		case codexRel + ".sigstore":
+		case "/dl/rust-v0.9.1/codex-" + v.arch + "-unknown-linux-musl.sigstore":
 			if v.noBundle {
 				http.NotFound(w, r)
 				return
@@ -139,7 +142,7 @@ func newVendor(t *testing.T) *vendor {
 				v.bundle, body = v.sigstore.bundle(t, v.bundleSum, func(o *fakeOpts) { o.kind = v.kind })
 			}
 			_, _ = fmt.Fprint(w, v.bundle)
-		case codexRel + ".tar.gz":
+		case "/dl/rust-v0.9.1/codex-" + v.arch + "-unknown-linux-musl.tar.gz":
 			if v.archiveStatus != 0 {
 				w.WriteHeader(v.archiveStatus)
 				return
@@ -152,7 +155,9 @@ func newVendor(t *testing.T) *vendor {
 			}
 			_, _ = fmt.Fprintf(w, cmp.Or(v.rekor, `{"108e9186":{"body":%[1]q,"logIndex":42}}`), body)
 		default:
-			http.NotFound(w, r)
+			if !v.serveHelper(t, w, r, &body) {
+				http.NotFound(w, r)
+			}
 		}
 	}))
 	t.Cleanup(v.srv.Close)
@@ -252,10 +257,10 @@ func TestClaudeBadInput(t *testing.T) {
 }
 
 func TestCodex(t *testing.T) {
-	for _, version := range []string{"", "0.9.1"} {
+	for _, version := range []string{"", codexTestVersion} {
 		v := newVendor(t)
 		got, err := v.install(amd64, Codex, version, "")
-		if err != nil || got != "0.9.1" {
+		if err != nil || got != codexTestVersion {
 			t.Fatalf("install(%q) = %q, %v", version, got, err)
 		}
 		expectBinary(t, filepath.Join(v.installDir, ".codex-real"), v.codexBin)
@@ -312,7 +317,7 @@ func TestCodexBadRelease(t *testing.T) {
 		})
 	}
 	v := newVendor(t)
-	if _, err := v.install(arm64, Codex, "", ""); err == nil || !strings.Contains(err.Error(), "aarch64") {
+	if _, err := v.install(arm64, Codex, "", ""); err == nil || !strings.Contains(err.Error(), codexARM) {
 		t.Fatalf("install error = %v, want no aarch64 bundle", err)
 	}
 	if _, err := v.install(amd64, "aider", "", ""); err == nil {

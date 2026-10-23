@@ -28,10 +28,14 @@ import (
 	"github.com/mohanraj00/koodam/images/workspace"
 )
 
-// expectInstalled checks that the install folder has only the binary, the wrapper and the script.
+// expectInstalled checks the binary, the wrapper, the script and the Codex helpers.
 func expectInstalled(t *testing.T, v *vendor, bin string) {
 	t.Helper()
 	want := []string{"." + bin + "-real", bin, projectScript}
+	if bin == Codex {
+		want = append(want, codeModeHost, bubblewrap)
+		slices.Sort(want)
+	}
 	if f := v.files(t); !slices.Equal(f, want) {
 		t.Fatalf("the install folder has %v, want %v", f, want)
 	}
