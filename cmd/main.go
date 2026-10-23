@@ -152,7 +152,7 @@ func main() {
 		"The time in seconds that the controller keeps a run Job and its pods after the Job ends. "+
 			"The value must be from 60 to 2147483647.")
 	flag.StringVar(&installerImage, "installer-image", "",
-		"The image with /harness-install, for an Agent with a harness. The chart gives the manager image.")
+		"The image with /harness-install, for an Agent or a Workspace with a harness. The chart gives the manager image.")
 	flag.StringVar(&workspaceImage, "workspace-image", defaultWorkspaceImage(),
 		"The workspace image for a Workspace with no spec.image.")
 	opts.BindFlags(flag.CommandLine)
@@ -292,12 +292,13 @@ func main() {
 		os.Exit(1)
 	}
 	if err := (&controller.WorkspaceReconciler{
-		Client:     mgr.GetClient(),
-		Scheme:     mgr.GetScheme(),
-		APIReader:  mgr.GetAPIReader(),
-		Image:      workspaceImage,
-		Gateway:    gw,
-		GatewayURL: strings.TrimRight(agentGatewayURL, "/"),
+		Client:         mgr.GetClient(),
+		Scheme:         mgr.GetScheme(),
+		APIReader:      mgr.GetAPIReader(),
+		Image:          workspaceImage,
+		InstallerImage: installerImage,
+		Gateway:        gw,
+		GatewayURL:     strings.TrimRight(agentGatewayURL, "/"),
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "Failed to create controller", "controller", "workspace")
 		os.Exit(1)

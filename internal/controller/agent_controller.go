@@ -498,18 +498,7 @@ func addHarness(pod *corev1.PodSpec, h *corev1alpha1.HarnessSpec, image string) 
 	limit := resource.MustParse("1Gi")
 	pod.Volumes = append(pod.Volumes, corev1.Volume{Name: vol, VolumeSource: corev1.VolumeSource{
 		EmptyDir: &corev1.EmptyDirVolumeSource{SizeLimit: &limit}}})
-	pod.InitContainers = append(pod.InitContainers, corev1.Container{
-		Name: vol, Image: image,
-		Command: []string{"/harness-install", "-harness", h.Name, "-version", h.Version, "-libc", h.Libc,
-			"-dir", harnessDir},
-		VolumeMounts: []corev1.VolumeMount{{Name: vol, MountPath: harnessDir}},
-		SecurityContext: &corev1.SecurityContext{
-			RunAsNonRoot: new(true), RunAsUser: new(int64(65532)), AllowPrivilegeEscalation: new(false),
-			ReadOnlyRootFilesystem: new(true),
-			Capabilities:           &corev1.Capabilities{Drop: []corev1.Capability{"ALL"}},
-			SeccompProfile:         &corev1.SeccompProfile{Type: corev1.SeccompProfileTypeRuntimeDefault},
-		},
-	})
+	pod.InitContainers = append(pod.InitContainers, installerContainer(vol, vol, h.Name, h.Version, h.Libc, image))
 	c := &pod.Containers[0]
 	c.VolumeMounts = append(c.VolumeMounts, corev1.VolumeMount{Name: vol, MountPath: harnessDir, ReadOnly: true})
 	if !slices.ContainsFunc(c.Env, func(e corev1.EnvVar) bool { return e.Name == "PATH" }) {
