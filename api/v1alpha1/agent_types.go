@@ -26,6 +26,7 @@ import (
 // AgentSpec is what the agent needs. The controller makes a gateway key with a budget and a TTL,
 // a ServiceAccount with a Role, and then a Job. When the Job ends or the Agent is deleted, the
 // controller revokes all of it and writes the spend to the status.
+// +kubebuilder:validation:XValidation:rule="!has(self.podTemplate) || !has(self.podTemplate.spec) || !has(self.podTemplate.spec.containers) || !self.podTemplate.spec.containers.exists(c, c.name == 'agent' && (has(c.image) || has(c.command)))",message="Set the image and the command in spec.image and spec.command, not in the pod template."
 type AgentSpec struct {
 	// Image is the agent container image.
 	// +required
@@ -69,6 +70,12 @@ type AgentSpec struct {
 	// controller does not change it, so that PATH must contain /koodam/bin.
 	// +optional
 	Harness *HarnessSpec `json:"harness,omitempty"`
+
+	// PodTemplate changes the run pod, for example its resources, runtime class or node selector.
+	// The main container has the name "agent". It cannot set image or command, because the
+	// Agent spec sets them.
+	// +optional
+	PodTemplate *PodTemplate `json:"podTemplate,omitempty"`
 }
 
 // HarnessSpec selects the harness binary. An init container downloads it from the vendor and
