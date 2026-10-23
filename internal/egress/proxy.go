@@ -68,8 +68,9 @@ const SpanVersion = 1
 // LLMPrefix is the path prefix of the reverse route to the gateway.
 const LLMPrefix = "/llm/"
 
-// Span is the record of one call. It has no header, no query string and no body, thus it cannot
-// hold a gateway key. BytesIn go to the pod, and BytesOut come from the pod.
+// Span is the record of one call. It has no header, no query string and no body. The path, the
+// host and the claimed fields are text from the pod (#170). BytesIn go to the pod, and BytesOut
+// come from the pod.
 type Span struct {
 	V          int       `json:"v"`
 	Time       time.Time `json:"time"`

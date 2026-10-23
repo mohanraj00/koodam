@@ -85,7 +85,9 @@ When the chart has `egressProxy.enabled` (#142, #143, #165, #166):
 | TLS without an SNI | Fails. | `denied` |
 | A name in the cluster domain, for example `toy-shop.shop.svc` | Resolves. It connects only if a rule in `extraEgress` permits it. | No |
 | The Kubernetes API server | Direct. | No |
-| A fixed external IP, IPv6, or DNS over HTTPS | Fails. The NetworkPolicy permits no such path. | No |
+| A direct connection to an external IP, or any IPv6 address | Fails. The NetworkPolicy permits no such path. | No |
+| HTTPS to a public IP literal through `HTTPS_PROXY` | Through the proxy. | `connect` |
+| DNS over HTTPS, for example to `dns.google` | Through the proxy, as for each HTTPS call. The proxy does not decrypt it. | `tls` with the DoH host |
 
 How the steering works:
 
@@ -98,7 +100,20 @@ The controller owns `dnsPolicy` and `dnsConfig` of the pod when the egress proxy
 
 ## Contract 4: the Workspace setup (K1)
 
-Nookku needs no CRD field. Use `spec.podTemplate` ([workspaces.md](workspaces.md)):
+Nookku needs no CRD field.
+
+**Step 1. Set the variables in the login shell.** sshd does not give the container environment to an SSH session. Thus a harness that you start over SSH or in tmux does not get the `env` of `podTemplate`. Add the variables to a profile in the home, because the home stays on its PVC:
+
+```sh
+cat >> ~/.profile <<'EOF'
+export CLAUDE_CODE_DISABLE_TERMINAL_TITLE=1
+export NOOKKU_TESTS_DIR=/tests
+EOF
+```
+
+For an Agent run, the harness is the main process of the pod. Thus for an Agent, set the 2 variables in the `env` of `spec.podTemplate`.
+
+**Step 2. Add a volume for the tests.** Use `spec.podTemplate` ([workspaces.md](workspaces.md)):
 
 ```yaml
 apiVersion: core.koodam.dev/v1alpha1
@@ -111,11 +126,6 @@ spec:
     spec:
       containers:
         - name: workspace
-          env:
-            - name: CLAUDE_CODE_DISABLE_TERMINAL_TITLE
-              value: "1"
-            - name: NOOKKU_TESTS_DIR
-              value: /tests
           volumeMounts:
             - name: nookku-tests
               mountPath: /tests
@@ -126,7 +136,7 @@ spec:
 ```
 
 - Make the PVC `dev-nookku-tests` first. The tests then stay after the pod stops.
-- The home of the Workspace (`/home/dev`) is also on a PVC. If you do not need a separate volume, set `NOOKKU_TESTS_DIR` to a folder in the home.
+- The home of the Workspace (`/home/dev`) is also on a PVC. If you do not need a separate volume, skip step 2, and set `NOOKKU_TESTS_DIR` to a folder in the home.
 - Install the Nookku plugin in the harness as usual. The home keeps it.
 
 For an app at a cluster Service, permit it in the chart values:
@@ -160,6 +170,7 @@ This traffic goes direct, so it has no span. The Nookku HTTP tap records it.
 ## Limits
 
 - A span is metadata. It has no request inside a TLS tunnel.
+- The proxy does not block DNS over HTTPS or other tunnels inside an HTTPS call. It records the host of each.
 - The `extraEgress` traffic, the API server traffic and the loopback traffic have no span.
 - An external database, or an app at a private address outside `extraEgress`, does not work in a Workspace with the egress proxy.
 - The pod has no IPv6 egress.

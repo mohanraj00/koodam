@@ -74,9 +74,17 @@ The proxy does not decrypt TLS. For `connect` and `tls`, the span has the host a
 
 A reader must accept other reason text. The reason is for people, and new reasons can come in v1.
 
-## What a span never holds
+## What a span holds from the pod
 
-A span has no request header, no query string and no body. Thus a span cannot hold a gateway key, a token or a password. The claimed fields are the only header values, and the proxy cuts them to a short length.
+A span has no request header, no query string and no body. Thus the `Authorization` header, a key in the query string and the request data are never in a span.
+
+Some fields hold text that the pod chose:
+
+- `path` of an `http` or `llm` span. Some APIs put a token in the path.
+- `host` and `sni`.
+- `claimedRun` and `claimedUser`, at most 63 bytes each.
+
+The proxy does not redact these fields (#170). Thus give the spans the same protection as the logs of the pods: only the people who can read the logs of a Workspace can read its spans.
 
 ## Identity
 
