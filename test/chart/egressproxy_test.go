@@ -17,6 +17,7 @@ limitations under the License.
 package chart
 
 import (
+	"fmt"
 	"maps"
 	"slices"
 	"strings"
@@ -103,11 +104,9 @@ func TestEgressProxy(t *testing.T) {
 		t.Fatalf("got the ServiceAccounts %+v, want 1 in koodam-system", sas)
 	}
 	svcs := decode[corev1.Service](t, out, "Service", proxyName)
-	if len(svcs) != 1 || svcs[0].Spec.ClusterIP != "10.96.0.50" || len(svcs[0].Spec.Ports) != 1 ||
-		svcs[0].Spec.Ports[0].Port != 3128 || svcs[0].Spec.Ports[0].TargetPort.String() != "proxy" {
-		t.Fatalf("got the Services %+v, want 1 on 10.96.0.50:3128", svcs)
+	if len(svcs) != 1 || svcs[0].Spec.ClusterIP != "10.96.0.50" {
+		t.Fatalf("got the Services %+v, want 1 on 10.96.0.50", svcs)
 	}
-
 	deps := decode[appsv1.Deployment](t, out, "Deployment", proxyName)
 	if len(deps) != 1 {
 		t.Fatalf("got %d proxy Deployments, want 1", len(deps))
@@ -131,7 +130,8 @@ func TestEgressProxy(t *testing.T) {
 		t.Fatalf("the probes do not agree with the probe address: %q", c.Args)
 	}
 	for _, want := range []string{"--listen=:3128", "--gateway-url=http://koodam-litellm.koodam-system.svc:4000",
-		"--http-ports=80", "--connect-ports=443"} {
+		"--http-ports=80", "--connect-ports=443", "--answer-ip=10.96.0.50",
+		"--cluster-dns=kube-dns.kube-system.svc.cluster.local:53", "--cluster-domain=cluster.local"} {
 		if !slices.Contains(c.Args, want) {
 			t.Errorf("the args %q have no %q", c.Args, want)
 		}
@@ -156,15 +156,46 @@ func TestEgressProxy(t *testing.T) {
 	}
 }
 
+func TestEgressProxyPorts(t *testing.T) {
+	out := render(t, proxyValues)
+	svcs := decode[corev1.Service](t, out, "Service", proxyName)
+	deps := decode[appsv1.Deployment](t, out, "Deployment", proxyName)
+	if len(svcs) != 1 || len(deps) != 1 {
+		t.Fatalf("got %d Services and %d Deployments, want 1 of each", len(svcs), len(deps))
+	}
+	ports := make([]string, 0, len(svcs[0].Spec.Ports))
+	for _, sp := range svcs[0].Spec.Ports {
+		ports = append(ports, fmt.Sprintf("%s/%d->%s", sp.Protocol, sp.Port, sp.TargetPort.String()))
+	}
+	if !slices.Equal(ports, []string{"TCP/3128->proxy", "UDP/53->dns", "TCP/53->dns-tcp"}) {
+		t.Fatalf("got the Service ports %q", ports)
+	}
+	c := deps[0].Spec.Template.Spec.Containers[0]
+	// Each Service target port is a container port with the same protocol.
+	for _, sp := range svcs[0].Spec.Ports {
+		if !slices.ContainsFunc(c.Ports, func(cp corev1.ContainerPort) bool {
+			return cp.Name == sp.TargetPort.String() && cp.Protocol == sp.Protocol
+		}) {
+			t.Errorf("the container has no %s port %q", sp.Protocol, sp.TargetPort.String())
+		}
+	}
+}
+
 func TestEgressProxyNetworkPolicy(t *testing.T) {
 	nps := policies(t, render(t, proxyValues))
 	if len(nps) != 1 || nps[0].Name != proxyName {
 		t.Fatalf("got %d NetworkPolicies, want the proxy policy only", len(nps))
 	}
 	ing := nps[0].Spec.Ingress
-	if len(ing) != 2 || len(ing[0].Ports) != 1 || ing[0].Ports[0].Port.IntValue() != 3128 ||
-		len(ing[1].From) != 0 || len(ing[1].Ports) != 1 || ing[1].Ports[0].Port.IntValue() != 8081 {
-		t.Fatalf("got the ingress rules %+v, want the proxy port and the probe port", ing)
+	if len(ing) != 2 || len(ing[1].From) != 0 || len(ing[1].Ports) != 1 || ing[1].Ports[0].Port.IntValue() != 8081 {
+		t.Fatalf("got the ingress rules %+v, want the pod ports and the probe port", ing)
+	}
+	podPorts := make([]string, 0, len(ing[0].Ports))
+	for _, np := range ing[0].Ports {
+		podPorts = append(podPorts, fmt.Sprintf("%s/%d", *np.Protocol, np.Port.IntValue()))
+	}
+	if !slices.Equal(podPorts, []string{"TCP/3128", "UDP/5353", "TCP/5353"}) {
+		t.Fatalf("the pods can use the ports %q, want the proxy and DNS ports", podPorts)
 	}
 	keys := make([]string, 0, len(ing[0].From))
 	for _, from := range ing[0].From {
