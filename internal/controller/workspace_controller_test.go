@@ -33,6 +33,7 @@ import (
 	. "github.com/onsi/gomega"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -96,6 +97,42 @@ var _ = Describe("Workspace Controller", func() {
 		cleanup(&corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: name + "-ssh-host", Namespace: ns}})
 		cleanup(&corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Name: name + "-ssh", Namespace: ns}})
 		cleanup(&appsv1.StatefulSet{ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: ns}})
+	})
+
+	It("merges spec.podTemplate into the StatefulSet", func() {
+		ws := workspace()
+		ws.Spec.PodTemplate = &corev1alpha1.PodTemplate{Spec: corev1.PodSpec{
+			NodeSelector: map[string]string{"pool": "agents"},
+			Containers:   []corev1.Container{{Name: "sidecar", Image: "busybox"}},
+		}}
+		Expect(k8sClient.Update(ctx, ws)).To(Succeed())
+		reconcileOnce()
+		sts := &appsv1.StatefulSet{}
+		get(sts, name)
+		Expect(sts.Spec.Template.Spec.NodeSelector).To(HaveKeyWithValue("pool", "agents"))
+		cs := sts.Spec.Template.Spec.Containers
+		Expect(cs).To(HaveLen(2))
+		Expect(cs[0].Name).To(Equal(workspaceContainer))
+		Expect(cs[1].Name).To(Equal("sidecar"))
+	})
+
+	It("fails a Workspace with a spec.podTemplate that the merge refuses, and makes no pod", func() {
+		ws := workspace()
+		ws.Spec.PodTemplate = &corev1alpha1.PodTemplate{Spec: corev1.PodSpec{
+			Volumes: []corev1.Volume{{Name: "ssh", VolumeSource: corev1.VolumeSource{
+				EmptyDir: &corev1.EmptyDirVolumeSource{}}}},
+		}}
+		Expect(k8sClient.Update(ctx, ws)).To(Succeed())
+		reconcileOnce()
+		ws = workspace()
+		Expect(ws.Status.Phase).To(Equal(corev1alpha1.WorkspaceFailed))
+		Expect(ws.Status.Pod).To(BeEmpty())
+		c := meta.FindStatusCondition(ws.Status.Conditions, condReady)
+		Expect(c).NotTo(BeNil())
+		Expect(c.Reason).To(Equal(reasonInvalidPodTemplate))
+		Expect(c.Message).To(ContainSubstring("spec.podTemplate.spec.volumes[0].name"))
+		err := k8sClient.Get(ctx, types.NamespacedName{Namespace: ns, Name: name}, &appsv1.StatefulSet{})
+		Expect(apierrors.IsNotFound(err)).To(BeTrue())
 	})
 
 	It("makes the 3 objects of the pod contract", func() {

@@ -389,6 +389,43 @@ wire_api = "responses"
 		Expect(exists(&batchv1.Job{})).To(BeFalse())
 	})
 
+	setTemplate := func(c corev1.Container) {
+		a := agent()
+		a.Spec.PodTemplate = &corev1alpha1.PodTemplate{
+			Metadata: corev1alpha1.PodTemplateMetadata{Labels: map[string]string{"team": "a"}},
+			Spec:     corev1.PodSpec{RuntimeClassName: new("gvisor"), Containers: []corev1.Container{c}},
+		}
+		Expect(k8sClient.Update(ctx, a)).To(Succeed())
+	}
+
+	It("merges spec.podTemplate into the run Job", func() {
+		setTemplate(corev1.Container{Name: agentContainer, Resources: corev1.ResourceRequirements{
+			Limits: corev1.ResourceList{corev1.ResourceMemory: resource.MustParse("1Gi")}}})
+		reconcileOnce(newReconciler())
+		job := &batchv1.Job{}
+		Expect(exists(job)).To(BeTrue())
+		t := job.Spec.Template
+		Expect(t.Spec.RuntimeClassName).To(HaveValue(Equal("gvisor")))
+		Expect(t.Labels).To(HaveKeyWithValue("team", "a"))
+		Expect(t.Labels).To(HaveKeyWithValue(RunLabel, "kd-"+name))
+		Expect(t.Spec.Containers).To(HaveLen(1))
+		Expect(t.Spec.Containers[0].Resources.Limits.Memory().String()).To(Equal("1Gi"))
+		Expect(t.Spec.Containers[0].EnvFrom[0].SecretRef.Name).To(Equal("kd-" + name))
+	})
+
+	It("fails an Agent with a spec.podTemplate that the merge refuses, and makes no key", func() {
+		setTemplate(corev1.Container{Name: agentContainer, Ports: []corev1.ContainerPort{{ContainerPort: 80}}})
+		reconcileOnce(newReconciler())
+		a := agent()
+		Expect(a.Status.Phase).To(Equal(corev1alpha1.AgentFailed))
+		c := meta.FindStatusCondition(a.Status.Conditions, condProvisioned)
+		Expect(c).NotTo(BeNil())
+		Expect(c.Reason).To(Equal(reasonInvalidPodTemplate))
+		Expect(c.Message).To(ContainSubstring("spec.podTemplate.spec.containers"))
+		Expect(gw.created).To(BeEmpty())
+		Expect(exists(&batchv1.Job{})).To(BeFalse())
+	})
+
 	It("refuses a harness version that is not of the form 1.2.3", func() {
 		a := agent()
 		a.Spec.Harness = &corev1alpha1.HarnessSpec{Name: codexName, Version: "1.2.3; rm -rf /"}

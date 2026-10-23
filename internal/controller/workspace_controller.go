@@ -230,7 +230,11 @@ func (r *WorkspaceReconciler) apply(ctx context.Context, ws *corev1alpha1.Worksp
 	if err == nil {
 		sts, err = r.applyStatefulSet(ctx, ws, user)
 	}
+	var invalidTemplate *invalidTemplateError
 	switch {
+	case errors.As(err, &invalidTemplate):
+		// The controller does not change the StatefulSet. A pod from a previous spec stays.
+		return failed, reasonInvalidPodTemplate, invalidTemplate.Error(), nil
 	case errors.Is(err, errNotOwned):
 		return failed, "NameConflict", "An object with a Workspace object name is not from this Workspace.", nil
 	case permanent(err):
@@ -344,8 +348,13 @@ func (r *WorkspaceReconciler) unbind(ctx context.Context, ws *corev1alpha1.Works
 func (r *WorkspaceReconciler) applyStatefulSet(ctx context.Context, ws *corev1alpha1.Workspace, user string) (
 	*appsv1.StatefulSet, error) {
 	want := r.statefulSet(ws, user)
+	tmpl, err := withPodTemplate(want.Spec.Template, ws.Spec.PodTemplate, workspaceContainer)
+	if err != nil {
+		return nil, err
+	}
+	want.Spec.Template = tmpl
 	have := &appsv1.StatefulSet{}
-	err := r.Get(ctx, types.NamespacedName{Namespace: ws.Namespace, Name: ws.Name}, have)
+	err = r.Get(ctx, types.NamespacedName{Namespace: ws.Namespace, Name: ws.Name}, have)
 	if apierrors.IsNotFound(err) {
 		return want, r.createOwned(ctx, ws, want)
 	}
@@ -421,7 +430,7 @@ func (r *WorkspaceReconciler) statefulSet(ws *corev1alpha1.Workspace, user strin
 			SecretName: loginSecret, Optional: new(true), DefaultMode: new(int32(0o440))}}},
 	}
 	container := corev1.Container{
-		Name: "workspace", Image: image,
+		Name: workspaceContainer, Image: image,
 		Ports: []corev1.ContainerPort{{Name: "ssh", ContainerPort: workspacePort, Protocol: corev1.ProtocolTCP}},
 		ReadinessProbe: &corev1.Probe{ProbeHandler: corev1.ProbeHandler{
 			TCPSocket: &corev1.TCPSocketAction{Port: intstr.FromInt32(workspacePort)}}},
