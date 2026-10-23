@@ -27,12 +27,14 @@ import (
 const (
 	codeModeHost = "codex-code-mode-host"
 	bubblewrap   = "bwrap"
+	codexX86     = "x86_64"
+	codexARM     = "aarch64"
 )
 
 // codex installs the CLI and its helpers from the same release. Each binary must pass the
 // signature, exact workflow identity, Rekor entry and sha256 checks before any file is published.
 func (in *Installer) codex(ctx context.Context, version, dir string) (string, error) {
-	arch := map[string]string{amd64: "x86_64", arm64: "aarch64"}[in.Arch]
+	arch := map[string]string{amd64: codexX86, arm64: codexARM}[in.Arch]
 	if arch == "" {
 		return "", fmt.Errorf("codex has no build for %s", in.Arch)
 	}

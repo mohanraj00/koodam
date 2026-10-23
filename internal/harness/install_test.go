@@ -38,6 +38,8 @@ import (
 
 const pinned = "2.1.3"
 
+const codexTestVersion = "0.9.1"
+
 func sum(b []byte) string { s := sha256.Sum256(b); return hex.EncodeToString(s[:]) }
 
 func tgz(t *testing.T, name string, body []byte) []byte {
@@ -97,7 +99,7 @@ type vendor struct {
 }
 
 func newVendor(t *testing.T) *vendor {
-	v := &vendor{arch: "x86_64", latest: "2.1.3\n", claude: []byte("claude binary"), codexBin: []byte("codex binary"),
+	v := &vendor{arch: codexX86, latest: "2.1.3\n", claude: []byte("claude binary"), codexBin: []byte("codex binary"),
 		location: "https://github.com/openai/codex/releases/tag/rust-v0.9.1", kind: "hashedrekord"}
 	v.claudeSum = sum(v.claude)
 	v.codex = tgz(t, "codex-x86_64-unknown-linux-musl", v.codexBin)
@@ -255,10 +257,10 @@ func TestClaudeBadInput(t *testing.T) {
 }
 
 func TestCodex(t *testing.T) {
-	for _, version := range []string{"", "0.9.1"} {
+	for _, version := range []string{"", codexTestVersion} {
 		v := newVendor(t)
 		got, err := v.install(amd64, Codex, version, "")
-		if err != nil || got != "0.9.1" {
+		if err != nil || got != codexTestVersion {
 			t.Fatalf("install(%q) = %q, %v", version, got, err)
 		}
 		expectBinary(t, filepath.Join(v.installDir, ".codex-real"), v.codexBin)
@@ -315,7 +317,7 @@ func TestCodexBadRelease(t *testing.T) {
 		})
 	}
 	v := newVendor(t)
-	if _, err := v.install(arm64, Codex, "", ""); err == nil || !strings.Contains(err.Error(), "aarch64") {
+	if _, err := v.install(arm64, Codex, "", ""); err == nil || !strings.Contains(err.Error(), codexARM) {
 		t.Fatalf("install error = %v, want no aarch64 bundle", err)
 	}
 	if _, err := v.install(amd64, "aider", "", ""); err == nil {

@@ -222,7 +222,7 @@ func TestVerifyBundle(t *testing.T) {
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			b, _ := f.bundle(t, s, c.edit)
-			got, _, err := verifyBundle([]byte(b), "0.9.1")
+			got, _, err := verifyBundle([]byte(b), codexTestVersion)
 			if c.want == "" {
 				if err != nil || got != s {
 					t.Fatalf("verifyBundle = %q, %v", got, err)
@@ -238,7 +238,7 @@ func TestVerifyBundle(t *testing.T) {
 		{strings.Replace(b, `"base64Signature":"`, `"base64Signature":"!`, 1), "read the bundle signature"},
 		{strings.Replace(b, `"cert":"`, `"cert":"!`, 1), "read the bundle certificate"},
 	} {
-		if _, _, err := verifyBundle([]byte(c.bundle), "0.9.1"); err == nil || !strings.Contains(err.Error(), c.want) {
+		if _, _, err := verifyBundle([]byte(c.bundle), codexTestVersion); err == nil || !strings.Contains(err.Error(), c.want) {
 			t.Fatalf("verifyBundle error = %v, want %q", err, c.want)
 		}
 	}

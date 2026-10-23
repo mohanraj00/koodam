@@ -73,8 +73,8 @@ func (v *vendor) serveHelper(t *testing.T, w http.ResponseWriter, r *http.Reques
 
 func TestCodexHelpers(t *testing.T) {
 	for _, arch := range []struct{ goarch, target, version string }{
-		{amd64, "x86_64", ""}, {amd64, "x86_64", "0.9.1"},
-		{arm64, "aarch64", ""}, {arm64, "aarch64", "0.9.1"},
+		{amd64, codexX86, ""}, {amd64, codexX86, codexTestVersion},
+		{arm64, codexARM, ""}, {arm64, codexARM, codexTestVersion},
 	} {
 		t.Run(arch.goarch+"/"+arch.version, func(t *testing.T) {
 			v := newVendor(t)
@@ -126,7 +126,7 @@ func TestCodexHelperChecks(t *testing.T) {
 			t.Run(name+"/"+c.name, func(t *testing.T) {
 				v := newVendor(t)
 				c.edit(t, v.helpers[name])
-				_, err := v.install(amd64, Codex, "0.9.1", "")
+				_, err := v.install(amd64, Codex, codexTestVersion, "")
 				if err == nil || !strings.Contains(err.Error(), name) || !strings.Contains(err.Error(), c.want) {
 					t.Fatalf("install error = %v, want %s: %s", err, name, c.want)
 				}
@@ -147,7 +147,7 @@ func TestCodexHelperFailureKeepsInstalledFiles(t *testing.T) {
 		}
 	}
 	v.helpers[bubblewrap].noBundle = true
-	if _, err := v.install(amd64, Codex, "0.9.1", ""); err == nil || !strings.Contains(err.Error(), bubblewrap) {
+	if _, err := v.install(amd64, Codex, codexTestVersion, ""); err == nil || !strings.Contains(err.Error(), bubblewrap) {
 		t.Fatal("the missing bwrap bundle did not stop the install")
 	}
 	if len(v.files(t)) != len(names) {
@@ -166,7 +166,7 @@ func TestCodexHelperRejectsRepeatedDigest(t *testing.T) {
 			a := v.helpers[name]
 			a.body = v.codexBin
 			a.archive = tgz(t, name+"-"+v.arch+"-unknown-linux-musl", a.body)
-			_, err := v.install(amd64, Codex, "0.9.1", "")
+			_, err := v.install(amd64, Codex, codexTestVersion, "")
 			if err == nil || !strings.Contains(err.Error(), name) || !strings.Contains(err.Error(), "also used by") {
 				t.Fatalf("install error = %v, want a repeated digest error for %s", err, name)
 			}
