@@ -109,6 +109,17 @@ spec:
 - In a login shell, a harness that you install in `~/.local/bin` has priority, because `~/.profile` puts `~/.local/bin` first.
 - If the controller has no installer image, the condition `Harnesses` is `False` with the reason `NoInstallerImage`, and the pod has no harness.
 
+## Secrets in the pod template
+
+`spec.podTemplate` can refer to a Secret in the namespace of the Workspace or the Agent. The controller makes the pod, so the pod can read the Secret, also if your own account cannot read it. The controller refuses these references:
+
+- a Secret with a name that starts with `kd-`. These Secrets hold the gateway keys of the Agent runs.
+- a Secret that a Koodam object owns, for example `<workspace>-gateway` and `<workspace>-ssh-host` of a different Workspace.
+
+The Workspace gets `Ready=False` and the Agent gets `Provisioned=False`, with the reason `InvalidPodTemplate`.
+
+**Limit.** The controller checks the owner of a Secret only when the Secret exists. A reference to a Secret that does not exist is permitted, because you can make your Secret later. Thus a template can refer to the name of a Secret that Koodam makes later for a new Workspace in the same namespace. The pod then gets the data of that Secret. If more than one person uses a namespace, do not give a Workspace a name that a different template refers to. Use one namespace for each person.
+
 ## Connect with SSH
 
 1. Configure the connection. You can run the command again:
