@@ -62,6 +62,8 @@ const (
 	reasonSNI      = "the SNI is not the CONNECT host"
 	reasonNoSNI    = "no SNI"
 	reasonLimit    = "connection limit"
+	reasonIdle     = "idle"
+	reasonUpstream = "upstream"
 )
 
 // SpanVersion is the version of the span contract in docs/egress-spans.md. An added field keeps
@@ -205,6 +207,11 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			p.deny(w, &sp, reasonIdentity)
 		}
 	}
+	// A deferred write, so that a call that ReverseProxy stops with a panic also has a span.
+	defer func() {
+		sp.DurationMS = float64(time.Since(start).Microseconds()) / 1000
+		p.Sink.Write(sp)
+	}()
 	if sp.Result == "" {
 		switch {
 		case sp.Kind == KindConnect:
@@ -217,8 +224,6 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			p.deny(w, &sp, reasonNoProxy)
 		}
 	}
-	sp.DurationMS = float64(time.Since(start).Microseconds()) / 1000
-	p.Sink.Write(sp)
 }
 
 func (p *Proxy) deny(w http.ResponseWriter, sp *Span, reason string) {
@@ -316,23 +321,33 @@ func (p *Proxy) llm(w http.ResponseWriter, r *http.Request, sp *Span) {
 
 func (p *Proxy) reverse(w http.ResponseWriter, r *http.Request, sp *Span, rt http.RoundTripper,
 	rewrite func(*httputil.ProxyRequest)) {
-	// Each read of the body and each write of the response moves the deadline. A client that
-	// stops for p.idle() loses the call.
+	// The request body, the response body and the response writes each record the activity. If
+	// no byte moves for p.idle(), the call ends: the context stops the upstream, and the past
+	// deadlines stop a blocked read or write on the pod connection.
+	var (
+		a     activity
+		fired atomic.Bool
+	)
+	ctx, cancel := context.WithCancel(r.Context())
+	defer cancel()
 	rc := http.NewResponseController(w)
-	idle := p.idle()
-	cw := &countWriter{ResponseWriter: w, extend: func() { _ = rc.SetWriteDeadline(time.Now().Add(idle)) }}
-	body := &countReader{ReadCloser: r.Body, extend: func(done bool) {
-		// After the body, the server reads the connection to find a close. A deadline there
-		// cancels the call, thus the deadline is removed.
-		d := time.Now().Add(idle)
-		if done {
-			d = time.Time{}
-		}
-		_ = rc.SetReadDeadline(d)
-	}}
+	defer a.watch(p.idle(), func() {
+		fired.Store(true)
+		cancel()
+		now := time.Now()
+		_ = rc.SetReadDeadline(now)
+		_ = rc.SetWriteDeadline(now)
+	})()
+	r = r.WithContext(ctx)
+	cw := &countWriter{ResponseWriter: w, a: &a}
+	body := &countReader{ReadCloser: r.Body, a: &a}
 	r.Body = body
 	rp := &httputil.ReverseProxy{
 		Rewrite: rewrite, Transport: rt,
+		ModifyResponse: func(resp *http.Response) error {
+			resp.Body = activeBody(resp.Body, &a)
+			return nil
+		},
 		// The gateway streams the tokens. Each write goes to the pod at once.
 		FlushInterval: -1,
 		// The error text can hold the URL with its query string. Thus the proxy does not log it.
@@ -341,11 +356,24 @@ func (p *Proxy) reverse(w http.ResponseWriter, r *http.Request, sp *Span, rt htt
 			p.dialFailed(w, sp, err)
 		},
 	}
+	defer func() {
+		sp.BytesIn, sp.BytesOut = cw.n, body.n.Load()
+		v := recover()
+		switch {
+		case fired.Load() && sp.Result != ResultDenied:
+			sp.Result, sp.Reason, sp.Status = ResultError, reasonIdle, cw.status
+		case v != nil:
+			// ReverseProxy stops the response with a panic if the body copy fails after the
+			// headers.
+			sp.Result, sp.Reason, sp.Status = ResultError, reasonUpstream, cw.status
+		case sp.Result == "":
+			sp.Result, sp.Status = ResultOK, cw.status
+		}
+		if v != nil {
+			panic(v)
+		}
+	}()
 	rp.ServeHTTP(cw, r)
-	sp.BytesIn, sp.BytesOut = cw.n, body.n.Load()
-	if sp.Result == "" {
-		sp.Result, sp.Status = ResultOK, cw.status
-	}
 }
 
 func (p *Proxy) dialFailed(w http.ResponseWriter, sp *Span, err error) {
@@ -354,7 +382,7 @@ func (p *Proxy) dialFailed(w http.ResponseWriter, sp *Span, err error) {
 		return
 	}
 	// The reason is fixed text. The error text can hold a URL.
-	sp.Result, sp.Reason, sp.Status = ResultError, "upstream", http.StatusBadGateway
+	sp.Result, sp.Reason, sp.Status = ResultError, reasonUpstream, http.StatusBadGateway
 	http.Error(w, "egress error", http.StatusBadGateway)
 }
 
@@ -468,53 +496,23 @@ func (c *recordConn) Write([]byte) (int, error) { return 0, net.ErrClosed }
 // pipe copies in the 2 directions. When one direction ends, it closes the 2 connections, so
 // that an idle peer cannot keep the other copy and its goroutine.
 func pipe(client net.Conn, fromClient io.Reader, upstream net.Conn, idle time.Duration) (in, out int64) {
-	var last atomic.Int64
-	last.Store(time.Now().UnixNano())
-	stop := make(chan struct{})
-	defer close(stop)
-	// If no byte moves in the 2 directions for idle, close the 2 connections. A blocked write
-	// also stops the reads, thus it ends the same way.
-	go func() {
-		t := time.NewTicker(idle / 4)
-		defer t.Stop()
-		for {
-			select {
-			case <-stop:
-				return
-			case now := <-t.C:
-				if now.Sub(time.Unix(0, last.Load())) >= idle {
-					_ = upstream.Close()
-					_ = client.Close()
-					return
-				}
-			}
-		}
-	}()
+	// If no byte moves in the 2 directions for idle, close the 2 connections.
+	var a activity
+	defer a.watch(idle, func() {
+		_ = upstream.Close()
+		_ = client.Close()
+	})()
 	done := make(chan int64, 1)
 	go func() {
-		n, _ := io.Copy(upstream, &activeReader{Reader: fromClient, last: &last})
+		n, _ := io.Copy(upstream, &activeReader{Reader: fromClient, a: &a})
 		_ = upstream.Close()
 		_ = client.Close()
 		done <- n
 	}()
-	in, _ = io.Copy(client, &activeReader{Reader: upstream, last: &last})
+	in, _ = io.Copy(client, &activeReader{Reader: upstream, a: &a})
 	_ = upstream.Close()
 	_ = client.Close()
 	return in, <-done
-}
-
-// activeReader records the time of the last read that moved bytes.
-type activeReader struct {
-	io.Reader
-	last *atomic.Int64
-}
-
-func (r *activeReader) Read(b []byte) (int, error) {
-	n, err := r.Reader.Read(b)
-	if n > 0 {
-		r.last.Store(time.Now().UnixNano())
-	}
-	return n, err
 }
 
 func (p *Proxy) idle() time.Duration {
@@ -542,7 +540,7 @@ type countWriter struct {
 	http.ResponseWriter
 	status int
 	n      int64
-	extend func()
+	a      *activity
 }
 
 func (w *countWriter) WriteHeader(code int) {
@@ -557,9 +555,11 @@ func (w *countWriter) Write(b []byte) (int, error) {
 	if w.status == 0 {
 		w.status = http.StatusOK
 	}
-	w.extend()
 	n, err := w.ResponseWriter.Write(b)
 	w.n += int64(n)
+	if n > 0 {
+		w.a.touch()
+	}
 	return n, err
 }
 
@@ -576,18 +576,15 @@ func (w *countWriter) Flush() {
 // thus n is atomic.
 type countReader struct {
 	io.ReadCloser
-	n      atomic.Int64
-	extend func(done bool)
+	n atomic.Int64
+	a *activity
 }
 
 func (r *countReader) Read(b []byte) (int, error) {
-	r.extend(false)
 	n, err := r.ReadCloser.Read(b)
 	r.n.Add(int64(n))
-	// After a timeout, the deadline stays. The transport closes the body, and the close reads the
-	// rest of the body. With no deadline, that read waits for the stalled client.
-	if errors.Is(err, io.EOF) {
-		r.extend(true)
+	if n > 0 {
+		r.a.touch()
 	}
 	return n, err
 }

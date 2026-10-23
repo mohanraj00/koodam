@@ -150,3 +150,65 @@ func TestStalledBody(t *testing.T) {
 		t.Fatalf("span %+v", sp)
 	}
 }
+
+// idleCall sends raw to a proxy with an idle limit of 200ms, and returns the time until the
+// proxy ends the call.
+func idleCall(t *testing.T, strict bool, upPort, raw string) (time.Duration, Span) {
+	t.Helper()
+	pu, sink := start(t, strict, upPort, nil, func(p *Proxy) { p.Idle = 200 * time.Millisecond })
+	c, err := net.Dial("tcp", pu.Host)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = c.Close() }()
+	begin := time.Now()
+	_, _ = io.WriteString(c, raw)
+	sp := sink.next(t)
+	return time.Since(begin), sp
+}
+
+func TestIdleCalls(t *testing.T) {
+	// The upstream sends the headers, then stops.
+	stalled := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		w.(http.Flusher).Flush()
+		<-r.Context().Done()
+	}))
+	defer stalled.Close()
+	// The upstream accepts an upgrade, then stops.
+	upgrade := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Connection", "Upgrade")
+		w.Header().Set("Upgrade", "test")
+		w.WriteHeader(http.StatusSwitchingProtocols)
+		c, _, err := http.NewResponseController(w).Hijack()
+		if err != nil {
+			return
+		}
+		defer func() { _ = c.Close() }()
+		_, _ = io.Copy(io.Discard, c)
+	}))
+	defer upgrade.Close()
+	get := func(up *httptest.Server, extra string) string {
+		return "GET http://" + net.JoinHostPort(testHost, port(t, up.URL)) + "/ HTTP/1.1\r\nHost: " + testHost +
+			"\r\n" + extra + "\r\n"
+	}
+	tests := []struct {
+		name, upPort, raw, reason string
+		strict                    bool
+	}{
+		{"a response that stops after the headers", port(t, stalled.URL), get(stalled, ""), reasonIdle, false},
+		{"an upgrade with no bytes", port(t, upgrade.URL), get(upgrade, "Connection: Upgrade\r\nUpgrade: test\r\n"),
+			reasonIdle, false},
+		{"a denied address with a body that does not come", port(t, stalled.URL),
+			"POST http://" + net.JoinHostPort(testHost, port(t, stalled.URL)) + "/ HTTP/1.1\r\nHost: " + testHost +
+				"\r\nContent-Length: 1\r\n\r\n", reasonAddress, true},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			took, sp := idleCall(t, tc.strict, tc.upPort, tc.raw)
+			if took > 2*time.Second || sp.Reason != tc.reason {
+				t.Fatalf("the call ended after %v, span %+v", took, sp)
+			}
+		})
+	}
+}
