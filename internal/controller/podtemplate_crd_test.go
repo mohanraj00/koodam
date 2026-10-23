@@ -78,12 +78,20 @@ var _ = Describe("Pod template CRD", func() {
 		},
 		Entry(nil, "pt-host-network", "host network", func(s *corev1.PodSpec) { s.HostNetwork = true }),
 		Entry(nil, "pt-host-pid", "host network", func(s *corev1.PodSpec) { s.HostPID = true }),
+		Entry(nil, "pt-host-ipc", "host network", func(s *corev1.PodSpec) { s.HostIPC = true }),
 		Entry(nil, "pt-host-users", "host network", func(s *corev1.PodSpec) { s.HostUsers = new(true) }),
 		Entry(nil, "pt-share", "host network", func(s *corev1.PodSpec) { s.ShareProcessNamespace = new(true) }),
 		Entry(nil, "pt-sa", "Koodam owns", func(s *corev1.PodSpec) { s.ServiceAccountName = "admin" }),
+		Entry(nil, "pt-sa-old", "Koodam owns", func(s *corev1.PodSpec) { s.DeprecatedServiceAccount = "admin" }),
 		Entry(nil, "pt-token", "Koodam owns", func(s *corev1.PodSpec) { s.AutomountServiceAccountToken = new(true) }),
 		Entry(nil, "pt-sec", "Koodam owns", func(s *corev1.PodSpec) { s.SecurityContext = &corev1.PodSecurityContext{} }),
 		Entry(nil, "pt-restart", "Koodam owns", func(s *corev1.PodSpec) { s.RestartPolicy = corev1.RestartPolicyAlways }),
+		Entry(nil, "pt-links", "Koodam owns", func(s *corev1.PodSpec) { s.EnableServiceLinks = new(false) }),
+		Entry(nil, "pt-deadline", "Koodam owns", func(s *corev1.PodSpec) { s.ActiveDeadlineSeconds = new(int64(1)) }),
+		Entry(nil, "pt-ephemeral", "Koodam owns", func(s *corev1.PodSpec) {
+			s.EphemeralContainers = []corev1.EphemeralContainer{{
+				EphemeralContainerCommon: corev1.EphemeralContainerCommon{Name: "debug", Image: "busybox"}}}
+		}),
 	)
 
 	It("accepts hostUsers false", func() {
@@ -98,6 +106,12 @@ var _ = Describe("Pod template CRD", func() {
 		t = &corev1alpha1.PodTemplate{Metadata: corev1alpha1.PodTemplateMetadata{
 			Annotations: map[string]string{"koodam.dev/x": "y"}}}
 		expectInvalid(create(workspace("pt-annotation", t)), "reserved")
+		t = &corev1alpha1.PodTemplate{Metadata: corev1alpha1.PodTemplateMetadata{
+			Labels: map[string]string{"core.koodam.dev/x": "y"}}}
+		expectInvalid(create(workspace("pt-label-subdomain", t)), "reserved")
+		t = &corev1alpha1.PodTemplate{Metadata: corev1alpha1.PodTemplateMetadata{
+			Labels: map[string]string{"notkoodam.dev/x": "y"}}}
+		Expect(create(workspace("pt-label-other", t))).To(Succeed())
 	})
 
 	It("refuses an image in the template and in spec.image of a Workspace", func() {

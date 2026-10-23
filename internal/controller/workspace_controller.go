@@ -216,6 +216,12 @@ func (r *WorkspaceReconciler) apply(ctx context.Context, ws *corev1alpha1.Worksp
 			"Add the label %s=<profile> to the namespace, and add the namespace to spec.namespaces of that Profile.",
 			ws.Namespace, corev1alpha1.ProfileLabel), nil
 	}
+	// The template check comes before the key. A template that is not valid makes no key and no
+	// pod. The controller does not change a StatefulSet that exists.
+	want, err := r.mergedStatefulSet(ws, user)
+	if err != nil {
+		return failed, reasonInvalidPodTemplate, err.Error(), nil
+	}
 	pub, err := r.hostKey(ctx, ws)
 	if err == nil {
 		ws.Status.HostKey = pub
@@ -228,13 +234,9 @@ func (r *WorkspaceReconciler) apply(ctx context.Context, ws *corev1alpha1.Worksp
 		err = r.applyKey(ctx, ws)
 	}
 	if err == nil {
-		sts, err = r.applyStatefulSet(ctx, ws, user)
+		sts, err = r.applyStatefulSet(ctx, ws, want)
 	}
-	var invalidTemplate *invalidTemplateError
 	switch {
-	case errors.As(err, &invalidTemplate):
-		// The controller does not change the StatefulSet. A pod from a previous spec stays.
-		return failed, reasonInvalidPodTemplate, invalidTemplate.Error(), nil
 	case errors.Is(err, errNotOwned):
 		return failed, "NameConflict", "An object with a Workspace object name is not from this Workspace.", nil
 	case permanent(err):
@@ -338,23 +340,22 @@ func (r *WorkspaceReconciler) unbind(ctx context.Context, ws *corev1alpha1.Works
 	if err != nil {
 		return err
 	}
-	_, err = r.applyStatefulSet(ctx, ws, "")
+	want, err := r.mergedStatefulSet(ws, "")
+	if err != nil {
+		// The StatefulSet has 0 replicas, so the template makes no pod.
+		want = r.statefulSet(ws, "")
+	}
+	_, err = r.applyStatefulSet(ctx, ws, want)
 	return err
 }
 
 // applyStatefulSet makes the StatefulSet. It updates the pod template only if it is not the
 // template of the controller, and the replicas if spec.suspend or the binding changed. The
 // volumeClaimTemplates cannot change.
-func (r *WorkspaceReconciler) applyStatefulSet(ctx context.Context, ws *corev1alpha1.Workspace, user string) (
-	*appsv1.StatefulSet, error) {
-	want := r.statefulSet(ws, user)
-	tmpl, err := withPodTemplate(want.Spec.Template, ws.Spec.PodTemplate, workspaceContainer)
-	if err != nil {
-		return nil, err
-	}
-	want.Spec.Template = tmpl
+func (r *WorkspaceReconciler) applyStatefulSet(ctx context.Context, ws *corev1alpha1.Workspace,
+	want *appsv1.StatefulSet) (*appsv1.StatefulSet, error) {
 	have := &appsv1.StatefulSet{}
-	err = r.Get(ctx, types.NamespacedName{Namespace: ws.Namespace, Name: ws.Name}, have)
+	err := r.Get(ctx, types.NamespacedName{Namespace: ws.Namespace, Name: ws.Name}, have)
 	if apierrors.IsNotFound(err) {
 		return want, r.createOwned(ctx, ws, want)
 	}

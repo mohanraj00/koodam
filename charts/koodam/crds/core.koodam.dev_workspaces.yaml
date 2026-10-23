@@ -134,16 +134,18 @@ spec:
                         description: Annotations are added to the pod annotations.
                         type: object
                         x-kubernetes-validations:
-                        - message: The prefix koodam.dev/ is reserved.
-                          rule: self.all(k, !k.startsWith('koodam.dev/'))
+                        - message: The prefixes koodam.dev/ and *.koodam.dev/ are
+                            reserved.
+                          rule: self.all(k, !k.matches('^([^/]*\\.)?koodam\\.dev/'))
                       labels:
                         additionalProperties:
                           type: string
                         description: Labels are added to the pod labels.
                         type: object
                         x-kubernetes-validations:
-                        - message: The prefix koodam.dev/ is reserved.
-                          rule: self.all(k, !k.startsWith('koodam.dev/'))
+                        - message: The prefixes koodam.dev/ and *.koodam.dev/ are
+                            reserved.
+                          rule: self.all(k, !k.matches('^([^/]*\\.)?koodam\\.dev/'))
                     type: object
                   spec:
                     description: Spec is the pod spec that Koodam merges with its
@@ -8946,13 +8948,14 @@ spec:
                     && (!has(self.spec.hostPID) || !self.spec.hostPID) && (!has(self.spec.hostIPC)
                     || !self.spec.hostIPC) && (!has(self.spec.hostUsers) || !self.spec.hostUsers)
                     && (!has(self.spec.shareProcessNamespace) || !self.spec.shareProcessNamespace))'
-                - message: Koodam owns serviceAccountName, automountServiceAccountToken,
+                - message: Koodam owns serviceAccountName, serviceAccount, automountServiceAccountToken,
                     enableServiceLinks, securityContext, restartPolicy, activeDeadlineSeconds
                     and ephemeralContainers.
                   rule: '!has(self.spec) || !(has(self.spec.serviceAccountName) ||
-                    has(self.spec.automountServiceAccountToken) || has(self.spec.enableServiceLinks)
-                    || has(self.spec.securityContext) || has(self.spec.restartPolicy)
-                    || has(self.spec.activeDeadlineSeconds) || has(self.spec.ephemeralContainers))'
+                    has(self.spec.serviceAccount) || has(self.spec.automountServiceAccountToken)
+                    || has(self.spec.enableServiceLinks) || has(self.spec.securityContext)
+                    || has(self.spec.restartPolicy) || has(self.spec.activeDeadlineSeconds)
+                    || has(self.spec.ephemeralContainers))'
               sshPublicKeys:
                 description: |-
                   SSHPublicKeys are the public keys that can log in to the pod with SSH. Each item is one

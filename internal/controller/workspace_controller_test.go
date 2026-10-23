@@ -101,7 +101,9 @@ var _ = Describe("Workspace Controller", func() {
 
 	It("merges spec.podTemplate into the StatefulSet", func() {
 		ws := workspace()
-		ws.Spec.PodTemplate = &corev1alpha1.PodTemplate{Spec: corev1.PodSpec{
+		ws.Spec.PodTemplate = &corev1alpha1.PodTemplate{Metadata: corev1alpha1.PodTemplateMetadata{
+			Labels: map[string]string{"group": "a"}, Annotations: map[string]string{"note": "b"},
+		}, Spec: corev1.PodSpec{
 			NodeSelector: map[string]string{"pool": "agents"},
 			Containers:   []corev1.Container{{Name: "sidecar", Image: "busybox"}},
 		}}
@@ -110,10 +112,31 @@ var _ = Describe("Workspace Controller", func() {
 		sts := &appsv1.StatefulSet{}
 		get(sts, name)
 		Expect(sts.Spec.Template.Spec.NodeSelector).To(HaveKeyWithValue("pool", "agents"))
+		Expect(sts.Spec.Template.Labels).To(HaveKeyWithValue("group", "a"))
+		Expect(sts.Spec.Template.Labels).To(HaveKeyWithValue(UserLabel, testProfile))
+		Expect(sts.Spec.Template.Annotations).To(HaveKeyWithValue("note", "b"))
 		cs := sts.Spec.Template.Spec.Containers
 		Expect(cs).To(HaveLen(2))
 		Expect(cs[0].Name).To(Equal(workspaceContainer))
 		Expect(cs[1].Name).To(Equal("sidecar"))
+	})
+
+	It("keeps the StatefulSet if a change makes spec.podTemplate not valid", func() {
+		reconcileOnce()
+		before := &appsv1.StatefulSet{}
+		get(before, name)
+		ws := workspace()
+		ws.Spec.PodTemplate = &corev1alpha1.PodTemplate{Spec: corev1.PodSpec{
+			Volumes: []corev1.Volume{{Name: "ssh", VolumeSource: corev1.VolumeSource{
+				EmptyDir: &corev1.EmptyDirVolumeSource{}}}},
+		}}
+		Expect(k8sClient.Update(ctx, ws)).To(Succeed())
+		reconcileOnce()
+		Expect(meta.FindStatusCondition(workspace().Status.Conditions, condReady).Reason).
+			To(Equal(reasonInvalidPodTemplate))
+		after := &appsv1.StatefulSet{}
+		get(after, name)
+		Expect(after.Generation).To(Equal(before.Generation))
 	})
 
 	It("fails a Workspace with a spec.podTemplate that the merge refuses, and makes no pod", func() {
@@ -131,8 +154,14 @@ var _ = Describe("Workspace Controller", func() {
 		Expect(c).NotTo(BeNil())
 		Expect(c.Reason).To(Equal(reasonInvalidPodTemplate))
 		Expect(c.Message).To(ContainSubstring("spec.podTemplate.spec.volumes[0].name"))
-		err := k8sClient.Get(ctx, types.NamespacedName{Namespace: ns, Name: name}, &appsv1.StatefulSet{})
-		Expect(apierrors.IsNotFound(err)).To(BeTrue())
+		for _, o := range []client.Object{&appsv1.StatefulSet{}, &corev1.Secret{}} {
+			n := name
+			if _, ok := o.(*corev1.Secret); ok {
+				n = hostKeySecretName(ws)
+			}
+			err := k8sClient.Get(ctx, types.NamespacedName{Namespace: ns, Name: n}, o)
+			Expect(apierrors.IsNotFound(err)).To(BeTrue(), "the check comes before the objects")
+		}
 	})
 
 	It("makes the 3 objects of the pod contract", func() {

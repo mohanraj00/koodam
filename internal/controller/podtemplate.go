@@ -17,6 +17,9 @@ limitations under the License.
 package controller
 
 import (
+	"strings"
+
+	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/util/validation/field"
 
@@ -37,7 +40,31 @@ const reasonInvalidPodTemplate = "InvalidPodTemplate"
 // message has the field paths and the names only, never a value of env.
 type invalidTemplateError struct{ errs field.ErrorList }
 
-func (e *invalidTemplateError) Error() string { return e.errs.ToAggregate().Error() }
+// Error writes the field path, the type and the detail of each error. It does not write the
+// value, so that a later check that returns a value cannot put a credential in the status.
+func (e *invalidTemplateError) Error() string {
+	msgs := make([]string, 0, len(e.errs))
+	for _, fe := range e.errs {
+		msg := fe.Field + ": " + fe.Type.String()
+		if fe.Detail != "" {
+			msg += ": " + fe.Detail
+		}
+		msgs = append(msgs, msg)
+	}
+	return strings.Join(msgs, "; ")
+}
+
+// mergedStatefulSet returns the StatefulSet of the Workspace with spec.podTemplate.
+func (r *WorkspaceReconciler) mergedStatefulSet(ws *corev1alpha1.Workspace, user string) (
+	*appsv1.StatefulSet, error) {
+	sts := r.statefulSet(ws, user)
+	tmpl, err := withPodTemplate(sts.Spec.Template, ws.Spec.PodTemplate, workspaceContainer)
+	if err != nil {
+		return nil, err
+	}
+	sts.Spec.Template = tmpl
+	return sts, nil
+}
 
 // withPodTemplate merges spec.podTemplate t into the Koodam template base. main is the name of
 // the main container. If t is nil, it returns base.

@@ -226,6 +226,20 @@ func TestMergeRefuses(t *testing.T) {
 		{"main mount over path", User{Spec: corev1.PodSpec{Containers: []corev1.Container{{
 			Name: main, VolumeMounts: []corev1.VolumeMount{{Name: data, MountPath: "/home/"}}}}}},
 			mainPath},
+		{"label subdomain", User{Labels: map[string]string{"core.koodam.dev/x": "y"}},
+			"spec.podTemplate.metadata.labels[core.koodam.dev/x]"},
+		{"sidecar securityContext", User{Spec: corev1.PodSpec{Containers: []corev1.Container{{
+			Name: "a", SecurityContext: &corev1.SecurityContext{Privileged: new(true)}}}}},
+			"spec.podTemplate.spec.containers[0].securityContext"},
+		{"init securityContext", User{Spec: corev1.PodSpec{InitContainers: []corev1.Container{{
+			Name: "a", SecurityContext: &corev1.SecurityContext{RunAsUser: new(int64(0))}}}}},
+			"spec.podTemplate.spec.initContainers[0].securityContext"},
+		{"host port", User{Spec: corev1.PodSpec{Containers: []corev1.Container{{
+			Name: "a", Ports: []corev1.ContainerPort{{ContainerPort: 80, HostPort: 80}}}}}},
+			"spec.podTemplate.spec.containers[0].ports[0].hostPort"},
+		{"host path", User{Spec: corev1.PodSpec{Volumes: []corev1.Volume{{Name: "root", VolumeSource: corev1.VolumeSource{
+			HostPath: &corev1.HostPathVolumeSource{Path: "/"}}}}}},
+			"spec.podTemplate.spec.volumes[0].hostPath"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -308,4 +322,12 @@ func containerNames(cs []corev1.Container) string {
 		n = append(n, c.Name)
 	}
 	return strings.Join(n, ",")
+}
+
+func TestValidateAcceptsOtherDomains(t *testing.T) {
+	u := &User{Labels: map[string]string{"notkoodam.dev/x": "y", "koodam.dev": "z", "example.com/koodam.dev": "w"},
+		Spec: corev1.PodSpec{Containers: []corev1.Container{{Name: "a", Ports: []corev1.ContainerPort{{ContainerPort: 80}}}}}}
+	if errs := Validate(base(), u, main, root); len(errs) > 0 {
+		t.Errorf("Validate refused %v", errs)
+	}
 }

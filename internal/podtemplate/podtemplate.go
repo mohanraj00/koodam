@@ -161,6 +161,7 @@ func Validate(base corev1.PodTemplateSpec, user *User, main string, path *field.
 		}
 		seen[c.Name] = true
 		errs = append(errs, koodamVolumes(c, vols, p)...)
+		errs = append(errs, hostAccess(c, p)...)
 	}
 	for i, c := range u.Containers {
 		p := spec.Child("containers").Index(i)
@@ -174,10 +175,15 @@ func Validate(base corev1.PodTemplateSpec, user *User, main string, path *field.
 		}
 		seen[c.Name] = true
 		errs = append(errs, koodamVolumes(c, vols, p)...)
+		errs = append(errs, hostAccess(c, p)...)
 	}
 	for i, v := range u.Volumes {
+		p := spec.Child("volumes").Index(i)
 		if vols[v.Name] {
-			errs = append(errs, field.Duplicate(spec.Child("volumes").Index(i).Child("name"), v.Name))
+			errs = append(errs, field.Duplicate(p.Child("name"), v.Name))
+		}
+		if v.HostPath != nil {
+			errs = append(errs, field.Forbidden(p.Child("hostPath"), "The pod template cannot mount a host path."))
 		}
 	}
 	return errs
@@ -191,6 +197,22 @@ func koodamVolumes(c corev1.Container, vols map[string]bool, path *field.Path) f
 		if vols[m.Name] {
 			errs = append(errs, field.Forbidden(path.Child("volumeMounts").Index(i).Child("name"),
 				"Koodam owns the volume "+m.Name+"."))
+		}
+	}
+	return errs
+}
+
+// hostAccess refuses the container fields that can give access to the node: securityContext and
+// hostPort. The pod securityContext of Koodam then applies to each container.
+func hostAccess(c corev1.Container, path *field.Path) field.ErrorList {
+	var errs field.ErrorList
+	if c.SecurityContext != nil {
+		errs = append(errs, field.Forbidden(path.Child("securityContext"), "Koodam owns this field."))
+	}
+	for i, port := range c.Ports {
+		if port.HostPort != 0 {
+			errs = append(errs, field.Forbidden(path.Child("ports").Index(i).Child("hostPort"),
+				"The pod template cannot use a host port."))
 		}
 	}
 	return errs
@@ -241,12 +263,15 @@ func inside(p, dir string) bool {
 	return p == dir || dir == "/" || strings.HasPrefix(p, dir+"/")
 }
 
-// reservedKeys refuses each key with ReservedPrefix.
+// reservedKeys refuses each key with ReservedPrefix or with a subdomain of it, for example
+// core.koodam.dev/.
 func reservedKeys(m map[string]string, path *field.Path) field.ErrorList {
 	var errs field.ErrorList
 	for k := range m {
-		if strings.HasPrefix(k, ReservedPrefix) {
-			errs = append(errs, field.Forbidden(path.Key(k), "Koodam owns the keys with the prefix "+ReservedPrefix+"."))
+		prefix, _, named := strings.Cut(k, "/")
+		if named && (prefix+"/" == ReservedPrefix || strings.HasSuffix(prefix, "."+strings.TrimSuffix(ReservedPrefix, "/"))) {
+			errs = append(errs, field.Forbidden(path.Key(k),
+				"Koodam owns the keys with the prefix "+ReservedPrefix+" or a subdomain of it."))
 		}
 	}
 	return errs
