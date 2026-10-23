@@ -80,6 +80,34 @@ The public internet rule blocks the private ranges (`10.0.0.0/8`, `172.16.0.0/12
 
 This policy is a basic limit. It does not trace the calls. Traced egress with a proxy comes in v0.3 (#8).
 
+## The resource limits
+
+Koodam sets no CPU or memory request or limit on its containers. A user sets them for each Workspace in `spec.podTemplate` (see [Workspaces](workspaces.md)). To cap the users of a namespace, add a Kubernetes LimitRange to it. Koodam does not read the LimitRange. The API server applies it to each container of each new pod.
+
+```yaml
+apiVersion: v1
+kind: LimitRange
+metadata:
+  name: limits
+  namespace: dev-sample
+spec:
+  limits:
+    - type: Container
+      defaultRequest: {cpu: 250m, memory: 256Mi}
+      default: {cpu: "1", memory: 1Gi}
+      max: {cpu: "4", memory: 4Gi}
+```
+
+- If a container has no value for a resource, it gets `default` as the limit and `defaultRequest` as the request. This includes the harness init containers of a Workspace and the containers of the Agent runs.
+- If a container has only a limit, Kubernetes sets the request to the same value, not to `defaultRequest`.
+- The API server refuses a pod if one of its containers has a value above `max`. The Workspace stays in the phase `Pending`. To see the reason, run `kubectl describe statefulset <workspace>` and read the `FailedCreate` event.
+- The limits apply to each container of the namespace, not only to the Koodam containers. A `max` of the type `Container` does not cap the total of a pod. For this cap, add a limit of the type `Pod`. To give different limits to different users, put the users in different namespaces.
+- To cap the total of a namespace, also add a ResourceQuota.
+
+> **Caution:** Do not set `default` too low. The harness init containers and the agent containers get this value. If the memory limit is too low, the kernel stops the container.
+>
+> **Caution:** Do not set `max` below the value that a Workspace needs. If the value of a container is above `max`, the API server refuses the pod.
+
 ## The shared login
 
 ### Claude Code
