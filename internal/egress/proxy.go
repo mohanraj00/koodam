@@ -68,6 +68,9 @@ const (
 // the version. A removed field, a renamed field or a new meaning of a field changes it.
 const SpanVersion = 1
 
+// DefaultIdle is the default of Proxy.Idle. A model stream sends bytes more frequently.
+const DefaultIdle = 10 * time.Minute
+
 // schemeHTTP is the URL scheme of plain HTTP.
 const schemeHTTP = "http"
 
@@ -140,6 +143,9 @@ type Proxy struct {
 	HelloTimeout time.Duration
 	// TLSPort is the upstream port of the transparent TLS listener. The default is 443.
 	TLSPort string
+	// Idle is the time limit with no bytes on a tunnel, a request body or a response. When it
+	// ends, the proxy closes the connection. The default is DefaultIdle.
+	Idle time.Duration
 	// Permit returns true for an address that the proxy can dial. The default is IsPublic.
 	Permit func(netip.Addr) bool
 	// Resolve finds the addresses of a host name. The default is the system resolver.
@@ -272,7 +278,7 @@ func (p *Proxy) connect(w http.ResponseWriter, r *http.Request, sp *Span) {
 		sp.Result, sp.Reason = ResultError, "upstream write"
 		return
 	}
-	sp.BytesIn, sp.BytesOut = pipe(client, buf.Reader, upstream)
+	sp.BytesIn, sp.BytesOut = pipe(client, buf.Reader, upstream, p.idle())
 	sp.BytesOut += int64(len(hello))
 	sp.Result = ResultOK
 }
@@ -310,8 +316,20 @@ func (p *Proxy) llm(w http.ResponseWriter, r *http.Request, sp *Span) {
 
 func (p *Proxy) reverse(w http.ResponseWriter, r *http.Request, sp *Span, rt http.RoundTripper,
 	rewrite func(*httputil.ProxyRequest)) {
-	cw := &countWriter{ResponseWriter: w}
-	body := &countReader{ReadCloser: r.Body}
+	// Each read of the body and each write of the response moves the deadline. A client that
+	// stops for p.idle() loses the call.
+	rc := http.NewResponseController(w)
+	idle := p.idle()
+	cw := &countWriter{ResponseWriter: w, extend: func() { _ = rc.SetWriteDeadline(time.Now().Add(idle)) }}
+	body := &countReader{ReadCloser: r.Body, extend: func(done bool) {
+		// After the body, the server reads the connection to find a close. A deadline there
+		// cancels the call, thus the deadline is removed.
+		d := time.Now().Add(idle)
+		if done {
+			d = time.Time{}
+		}
+		_ = rc.SetReadDeadline(d)
+	}}
 	r.Body = body
 	rp := &httputil.ReverseProxy{
 		Rewrite: rewrite, Transport: rt,
@@ -449,18 +467,61 @@ func (c *recordConn) Write([]byte) (int, error) { return 0, net.ErrClosed }
 
 // pipe copies in the 2 directions. When one direction ends, it closes the 2 connections, so
 // that an idle peer cannot keep the other copy and its goroutine.
-func pipe(client net.Conn, fromClient io.Reader, upstream net.Conn) (in, out int64) {
+func pipe(client net.Conn, fromClient io.Reader, upstream net.Conn, idle time.Duration) (in, out int64) {
+	var last atomic.Int64
+	last.Store(time.Now().UnixNano())
+	stop := make(chan struct{})
+	defer close(stop)
+	// If no byte moves in the 2 directions for idle, close the 2 connections. A blocked write
+	// also stops the reads, thus it ends the same way.
+	go func() {
+		t := time.NewTicker(idle / 4)
+		defer t.Stop()
+		for {
+			select {
+			case <-stop:
+				return
+			case now := <-t.C:
+				if now.Sub(time.Unix(0, last.Load())) >= idle {
+					_ = upstream.Close()
+					_ = client.Close()
+					return
+				}
+			}
+		}
+	}()
 	done := make(chan int64, 1)
 	go func() {
-		n, _ := io.Copy(upstream, fromClient)
+		n, _ := io.Copy(upstream, &activeReader{Reader: fromClient, last: &last})
 		_ = upstream.Close()
 		_ = client.Close()
 		done <- n
 	}()
-	in, _ = io.Copy(client, upstream)
+	in, _ = io.Copy(client, &activeReader{Reader: upstream, last: &last})
 	_ = upstream.Close()
 	_ = client.Close()
 	return in, <-done
+}
+
+// activeReader records the time of the last read that moved bytes.
+type activeReader struct {
+	io.Reader
+	last *atomic.Int64
+}
+
+func (r *activeReader) Read(b []byte) (int, error) {
+	n, err := r.Reader.Read(b)
+	if n > 0 {
+		r.last.Store(time.Now().UnixNano())
+	}
+	return n, err
+}
+
+func (p *Proxy) idle() time.Duration {
+	if p.Idle > 0 {
+		return p.Idle
+	}
+	return DefaultIdle
 }
 
 func sourceIP(remote string) string {
@@ -481,6 +542,7 @@ type countWriter struct {
 	http.ResponseWriter
 	status int
 	n      int64
+	extend func()
 }
 
 func (w *countWriter) WriteHeader(code int) {
@@ -495,6 +557,7 @@ func (w *countWriter) Write(b []byte) (int, error) {
 	if w.status == 0 {
 		w.status = http.StatusOK
 	}
+	w.extend()
 	n, err := w.ResponseWriter.Write(b)
 	w.n += int64(n)
 	return n, err
@@ -513,11 +576,18 @@ func (w *countWriter) Flush() {
 // thus n is atomic.
 type countReader struct {
 	io.ReadCloser
-	n atomic.Int64
+	n      atomic.Int64
+	extend func(done bool)
 }
 
 func (r *countReader) Read(b []byte) (int, error) {
+	r.extend(false)
 	n, err := r.ReadCloser.Read(b)
 	r.n.Add(int64(n))
+	// After a timeout, the deadline stays. The transport closes the body, and the close reads the
+	// rest of the body. With no deadline, that read waits for the stalled client.
+	if errors.Is(err, io.EOF) {
+		r.extend(true)
+	}
 	return n, err
 }
