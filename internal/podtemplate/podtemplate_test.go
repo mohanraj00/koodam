@@ -144,6 +144,9 @@ func TestMergeDoesNotChangeBase(t *testing.T) {
 	}
 }
 
+// runKey is the name of the gateway key Secret of a different Agent run.
+const runKey = "kd-other-run"
+
 func TestMergeRefuses(t *testing.T) {
 	tests := []struct {
 		name string
@@ -240,6 +243,20 @@ func TestMergeRefuses(t *testing.T) {
 		{"host path", User{Spec: corev1.PodSpec{Volumes: []corev1.Volume{{Name: "root", VolumeSource: corev1.VolumeSource{
 			HostPath: &corev1.HostPathVolumeSource{Path: "/"}}}}}},
 			"spec.podTemplate.spec.volumes[0].hostPath"},
+		{"key volume", User{Spec: corev1.PodSpec{Volumes: []corev1.Volume{{Name: "k", VolumeSource: corev1.VolumeSource{
+			Secret: &corev1.SecretVolumeSource{SecretName: runKey}}}}}},
+			"spec.podTemplate.spec.volumes[0].secret.secretName"},
+		{"key projected", User{Spec: corev1.PodSpec{Volumes: []corev1.Volume{{Name: "k", VolumeSource: corev1.VolumeSource{
+			Projected: &corev1.ProjectedVolumeSource{Sources: []corev1.VolumeProjection{{ConfigMap: &corev1.ConfigMapProjection{}},
+				{Secret: &corev1.SecretProjection{LocalObjectReference: corev1.LocalObjectReference{Name: runKey}}}}}}}}}},
+			"spec.podTemplate.spec.volumes[0].projected.sources[1].secret.name"},
+		{"key env", User{Spec: corev1.PodSpec{Containers: []corev1.Container{{Name: "helper", Env: []corev1.EnvVar{{
+			Name: "K", ValueFrom: &corev1.EnvVarSource{SecretKeyRef: &corev1.SecretKeySelector{
+				LocalObjectReference: corev1.LocalObjectReference{Name: runKey}, Key: "key"}}}}}}}},
+			"spec.podTemplate.spec.containers[0].env[0].valueFrom.secretKeyRef.name"},
+		{"key envFrom", User{Spec: corev1.PodSpec{InitContainers: []corev1.Container{{Name: "setup", EnvFrom: []corev1.EnvFromSource{{
+			SecretRef: &corev1.SecretEnvSource{LocalObjectReference: corev1.LocalObjectReference{Name: runKey}}}}}}}},
+			"spec.podTemplate.spec.initContainers[0].envFrom[0].secretRef.name"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -329,5 +346,17 @@ func TestValidateAcceptsOtherDomains(t *testing.T) {
 		Spec: corev1.PodSpec{Containers: []corev1.Container{{Name: "a", Ports: []corev1.ContainerPort{{ContainerPort: 80}}}}}}
 	if errs := Validate(base(), u, main, root); len(errs) > 0 {
 		t.Errorf("Validate refused %v", errs)
+	}
+}
+
+func TestValidateAcceptsOtherSecrets(t *testing.T) {
+	u := &User{Spec: corev1.PodSpec{
+		Volumes: []corev1.Volume{{Name: "t", VolumeSource: corev1.VolumeSource{
+			Secret: &corev1.SecretVolumeSource{SecretName: "github-token"}}}},
+		Containers: []corev1.Container{{Name: "helper", EnvFrom: []corev1.EnvFromSource{{
+			SecretRef: &corev1.SecretEnvSource{LocalObjectReference: corev1.LocalObjectReference{Name: "my-kd-token"}}}}}},
+	}}
+	if errs := Validate(base(), u, main, root); len(errs) != 0 {
+		t.Fatalf("Validate refused other Secrets: %v", errs)
 	}
 }

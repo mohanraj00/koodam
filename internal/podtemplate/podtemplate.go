@@ -186,6 +186,7 @@ func Validate(base corev1.PodTemplateSpec, user *User, main string, path *field.
 			errs = append(errs, field.Forbidden(p.Child("hostPath"), "The pod template cannot mount a host path."))
 		}
 	}
+	errs = append(errs, reservedSecrets(u, spec)...)
 	return errs
 }
 

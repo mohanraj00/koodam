@@ -28,7 +28,8 @@ import (
 // the pod fields below. The controller refuses the other conflicts with the reason
 // InvalidPodTemplate: the Workspace gets Ready=False and the Agent gets Provisioned=False. The
 // controller does not change a Workspace pod that exists. The user containers cannot set a
-// securityContext or a hostPort, and the volumes cannot use a hostPath.
+// securityContext or a hostPort, and the volumes cannot use a hostPath. The template cannot refer
+// to a Secret with the name prefix "kd-", because these Secrets hold the gateway keys of the runs.
 // +kubebuilder:validation:XValidation:rule="!has(self.spec) || ((!has(self.spec.hostNetwork) || !self.spec.hostNetwork) && (!has(self.spec.hostPID) || !self.spec.hostPID) && (!has(self.spec.hostIPC) || !self.spec.hostIPC) && (!has(self.spec.hostUsers) || !self.spec.hostUsers) && (!has(self.spec.shareProcessNamespace) || !self.spec.shareProcessNamespace))",message="The pod template cannot use the host network, PID, IPC or users, or share the process namespace."
 // +kubebuilder:validation:XValidation:rule="!has(self.spec) || !(has(self.spec.serviceAccountName) || has(self.spec.serviceAccount) || has(self.spec.automountServiceAccountToken) || has(self.spec.enableServiceLinks) || has(self.spec.securityContext) || has(self.spec.restartPolicy) || has(self.spec.activeDeadlineSeconds) || has(self.spec.ephemeralContainers))",message="Koodam owns serviceAccountName, serviceAccount, automountServiceAccountToken, enableServiceLinks, securityContext, restartPolicy, activeDeadlineSeconds and ephemeralContainers."
 type PodTemplate struct {
