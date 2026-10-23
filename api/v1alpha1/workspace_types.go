@@ -24,6 +24,7 @@ import (
 
 // WorkspaceSpec is the long-lived developer pod. The developer writes it. The controller makes
 // 1 pod, 1 PVC for the home and 1 Secret with the SSH host key.
+// +kubebuilder:validation:XValidation:rule="!has(self.image) || !has(self.podTemplate) || !has(self.podTemplate.spec) || !has(self.podTemplate.spec.containers) || !self.podTemplate.spec.containers.exists(c, c.name == 'workspace' && has(c.image))",message="Set the image in spec.image or in the pod template, not in the two."
 type WorkspaceSpec struct {
 	// SSHPublicKeys are the public keys that can log in to the pod with SSH. Each item is one
 	// line in the authorized_keys format: the key type, the key data and an optional comment.
@@ -60,6 +61,11 @@ type WorkspaceSpec struct {
 	// harnesses use the subscription login only.
 	// +optional
 	Gateway *WorkspaceGateway `json:"gateway,omitempty"`
+
+	// PodTemplate changes the Workspace pod, for example its resources, runtime class or node
+	// selector. The main container has the name "workspace".
+	// +optional
+	PodTemplate *PodTemplate `json:"podTemplate,omitempty"`
 }
 
 // WorkspaceGateway is the gateway key of a Workspace.

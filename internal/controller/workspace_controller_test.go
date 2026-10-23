@@ -33,6 +33,7 @@ import (
 	. "github.com/onsi/gomega"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -96,6 +97,105 @@ var _ = Describe("Workspace Controller", func() {
 		cleanup(&corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: name + "-ssh-host", Namespace: ns}})
 		cleanup(&corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Name: name + "-ssh", Namespace: ns}})
 		cleanup(&appsv1.StatefulSet{ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: ns}})
+	})
+
+	It("merges spec.podTemplate into the StatefulSet", func() {
+		ws := workspace()
+		ws.Spec.PodTemplate = &corev1alpha1.PodTemplate{Metadata: corev1alpha1.PodTemplateMetadata{
+			Labels: map[string]string{"group": "a"}, Annotations: map[string]string{"note": "b"},
+		}, Spec: corev1.PodSpec{
+			NodeSelector: map[string]string{"pool": "agents"},
+			Containers:   []corev1.Container{{Name: "sidecar", Image: "busybox"}},
+		}}
+		Expect(k8sClient.Update(ctx, ws)).To(Succeed())
+		reconcileOnce()
+		sts := &appsv1.StatefulSet{}
+		get(sts, name)
+		Expect(sts.Spec.Template.Spec.NodeSelector).To(HaveKeyWithValue("pool", "agents"))
+		Expect(sts.Spec.Template.Labels).To(HaveKeyWithValue("group", "a"))
+		Expect(sts.Spec.Template.Labels).To(HaveKeyWithValue(UserLabel, testProfile))
+		Expect(sts.Spec.Template.Annotations).To(HaveKeyWithValue("note", "b"))
+		cs := sts.Spec.Template.Spec.Containers
+		Expect(cs).To(HaveLen(2))
+		Expect(cs[0].Name).To(Equal(workspaceContainer))
+		Expect(cs[1].Name).To(Equal("sidecar"))
+	})
+
+	It("keeps the StatefulSet if a change makes spec.podTemplate not valid", func() {
+		reconcileOnce()
+		before := &appsv1.StatefulSet{}
+		get(before, name)
+		ws := workspace()
+		ws.Spec.PodTemplate = &corev1alpha1.PodTemplate{Spec: corev1.PodSpec{
+			Volumes: []corev1.Volume{{Name: "ssh", VolumeSource: corev1.VolumeSource{
+				EmptyDir: &corev1.EmptyDirVolumeSource{}}}},
+		}}
+		Expect(k8sClient.Update(ctx, ws)).To(Succeed())
+		reconcileOnce()
+		Expect(meta.FindStatusCondition(workspace().Status.Conditions, condReady).Reason).
+			To(Equal(reasonInvalidPodTemplate))
+		after := &appsv1.StatefulSet{}
+		get(after, name)
+		Expect(after.Generation).To(Equal(before.Generation))
+	})
+
+	It("fails a Workspace with a spec.podTemplate that the merge refuses, and makes no pod", func() {
+		ws := workspace()
+		ws.Spec.PodTemplate = &corev1alpha1.PodTemplate{Spec: corev1.PodSpec{
+			Volumes: []corev1.Volume{{Name: "ssh", VolumeSource: corev1.VolumeSource{
+				EmptyDir: &corev1.EmptyDirVolumeSource{}}}},
+		}}
+		Expect(k8sClient.Update(ctx, ws)).To(Succeed())
+		reconcileOnce()
+		ws = workspace()
+		Expect(ws.Status.Phase).To(Equal(corev1alpha1.WorkspaceFailed))
+		Expect(ws.Status.Pod).To(BeEmpty())
+		c := meta.FindStatusCondition(ws.Status.Conditions, condReady)
+		Expect(c).NotTo(BeNil())
+		Expect(c.Reason).To(Equal(reasonInvalidPodTemplate))
+		Expect(c.Message).To(ContainSubstring("spec.podTemplate.spec.volumes[0].name"))
+		for _, o := range []client.Object{&appsv1.StatefulSet{}, &corev1.Secret{}} {
+			n := name
+			if _, ok := o.(*corev1.Secret); ok {
+				n = hostKeySecretName(ws)
+			}
+			err := k8sClient.Get(ctx, types.NamespacedName{Namespace: ns, Name: n}, o)
+			Expect(apierrors.IsNotFound(err)).To(BeTrue(), "the check comes before the objects")
+		}
+	})
+
+	It("refuses a reference to a Secret that Koodam owns, and accepts a user Secret", func() {
+		owned := &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: "ws-b-gateway", Namespace: ns,
+			OwnerReferences: []metav1.OwnerReference{{APIVersion: corev1alpha1.GroupVersion.String(),
+				Kind: "Workspace", Name: "ws-b", UID: "ws-b-uid"}}}}
+		mine := &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: "github-token", Namespace: ns}}
+		for _, s := range []*corev1.Secret{owned, mine} {
+			Expect(k8sClient.Create(ctx, s)).To(Succeed())
+			DeferCleanup(k8sClient.Delete, ctx, s)
+		}
+		ref := func(secret string) *corev1alpha1.PodTemplate {
+			return &corev1alpha1.PodTemplate{Spec: corev1.PodSpec{Containers: []corev1.Container{{
+				Name: "helper", Image: image, EnvFrom: []corev1.EnvFromSource{{SecretRef: &corev1.SecretEnvSource{
+					LocalObjectReference: corev1.LocalObjectReference{Name: secret}}}}}}}}
+		}
+
+		ws := workspace()
+		ws.Spec.PodTemplate = ref(owned.Name)
+		Expect(k8sClient.Update(ctx, ws)).To(Succeed())
+		reconcileOnce()
+		ws = workspace()
+		Expect(ws.Status.Phase).To(Equal(corev1alpha1.WorkspaceFailed))
+		c := meta.FindStatusCondition(ws.Status.Conditions, condReady)
+		Expect(c).NotTo(BeNil())
+		Expect(c.Reason).To(Equal(reasonInvalidPodTemplate))
+		Expect(c.Message).To(ContainSubstring("spec.podTemplate.spec.containers[0].envFrom[0].secretRef.name"))
+		err := k8sClient.Get(ctx, types.NamespacedName{Namespace: ns, Name: name}, &appsv1.StatefulSet{})
+		Expect(apierrors.IsNotFound(err)).To(BeTrue())
+
+		ws.Spec.PodTemplate = ref(mine.Name)
+		Expect(k8sClient.Update(ctx, ws)).To(Succeed())
+		reconcileOnce()
+		Expect(workspace().Status.Phase).NotTo(Equal(corev1alpha1.WorkspaceFailed))
 	})
 
 	It("makes the 3 objects of the pod contract", func() {

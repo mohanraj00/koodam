@@ -293,17 +293,29 @@ func (r *AgentReconciler) sameRun(ctx context.Context, a *corev1alpha1.Agent, wa
 
 func (r *AgentReconciler) provision(ctx context.Context, a *corev1alpha1.Agent) error {
 	log := logf.FromContext(ctx)
-	msg := invalid(a)
+	msg, reason := invalid(a), "Invalid"
 	if msg == "" && a.Spec.Harness != nil && r.InstallerImage == "" {
 		msg = "The controller has no installer image, so it cannot install a harness."
+	}
+	// The merge comes before the key, so that a template that is not valid makes no key.
+	job := runJob(a, r.InstallerImage, r.GatewayURL)
+	if msg == "" {
+		var err error
+		if job.Spec.Template, err = withPodTemplate(ctx, r.APIReader, a.Namespace, job.Spec.Template,
+			a.Spec.PodTemplate, agentContainer); err != nil {
+			if !isInvalidTemplate(err) {
+				return err
+			}
+			msg, reason = err.Error(), reasonInvalidPodTemplate
+		}
 	}
 	if msg != "" {
 		log.Info("The Agent is not valid", "reason", msg)
 		meta.SetStatusCondition(&a.Status.Conditions, metav1.Condition{
-			Type: condProvisioned, Status: metav1.ConditionFalse, Reason: "Invalid", Message: msg,
+			Type: condProvisioned, Status: metav1.ConditionFalse, Reason: reason, Message: msg,
 			ObservedGeneration: a.Generation,
 		})
-		return r.fail(ctx, a, corev1alpha1.AgentFailed, "Invalid")
+		return r.fail(ctx, a, corev1alpha1.AgentFailed, reason)
 	}
 	if controllerutil.AddFinalizer(a, finalizer) {
 		if err := r.Update(ctx, a); err != nil {
@@ -355,7 +367,6 @@ func (r *AgentReconciler) provision(ctx context.Context, a *corev1alpha1.Agent) 
 		return err
 	}
 	name := runName(a)
-	job := runJob(a, r.InstallerImage, r.GatewayURL)
 	addIdentity(&job.Spec.Template.ObjectMeta, name, user)
 	objs := []client.Object{
 		&corev1.ServiceAccount{ObjectMeta: runMeta(a)},
@@ -424,7 +435,7 @@ func runJob(a *corev1alpha1.Agent, installerImage, gatewayURL string) *batchv1.J
 		RestartPolicy:      corev1.RestartPolicyNever,
 		ServiceAccountName: name,
 		Containers: []corev1.Container{{
-			Name: "agent", Image: a.Spec.Image, Command: a.Spec.Command, Env: env,
+			Name: agentContainer, Image: a.Spec.Image, Command: a.Spec.Command, Env: env,
 			EnvFrom: []corev1.EnvFromSource{{SecretRef: &corev1.SecretEnvSource{
 				LocalObjectReference: corev1.LocalObjectReference{Name: name}}}},
 		}},

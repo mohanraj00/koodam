@@ -216,6 +216,15 @@ func (r *WorkspaceReconciler) apply(ctx context.Context, ws *corev1alpha1.Worksp
 			"Add the label %s=<profile> to the namespace, and add the namespace to spec.namespaces of that Profile.",
 			ws.Namespace, corev1alpha1.ProfileLabel), nil
 	}
+	// The template check comes before the key. A template that is not valid makes no key and no
+	// pod. The controller does not change a StatefulSet that exists.
+	want, err := r.mergedStatefulSet(ctx, ws, user)
+	if err != nil && !isInvalidTemplate(err) {
+		return "", "", "", err
+	}
+	if err != nil {
+		return failed, reasonInvalidPodTemplate, err.Error(), nil
+	}
 	pub, err := r.hostKey(ctx, ws)
 	if err == nil {
 		ws.Status.HostKey = pub
@@ -228,7 +237,7 @@ func (r *WorkspaceReconciler) apply(ctx context.Context, ws *corev1alpha1.Worksp
 		err = r.applyKey(ctx, ws)
 	}
 	if err == nil {
-		sts, err = r.applyStatefulSet(ctx, ws, user)
+		sts, err = r.applyStatefulSet(ctx, ws, want)
 	}
 	switch {
 	case errors.Is(err, errNotOwned):
@@ -334,16 +343,20 @@ func (r *WorkspaceReconciler) unbind(ctx context.Context, ws *corev1alpha1.Works
 	if err != nil {
 		return err
 	}
-	_, err = r.applyStatefulSet(ctx, ws, "")
+	want, err := r.mergedStatefulSet(ctx, ws, "")
+	if err != nil {
+		// The StatefulSet has 0 replicas, so the template makes no pod.
+		want = r.statefulSet(ws, "")
+	}
+	_, err = r.applyStatefulSet(ctx, ws, want)
 	return err
 }
 
 // applyStatefulSet makes the StatefulSet. It updates the pod template only if it is not the
 // template of the controller, and the replicas if spec.suspend or the binding changed. The
 // volumeClaimTemplates cannot change.
-func (r *WorkspaceReconciler) applyStatefulSet(ctx context.Context, ws *corev1alpha1.Workspace, user string) (
-	*appsv1.StatefulSet, error) {
-	want := r.statefulSet(ws, user)
+func (r *WorkspaceReconciler) applyStatefulSet(ctx context.Context, ws *corev1alpha1.Workspace,
+	want *appsv1.StatefulSet) (*appsv1.StatefulSet, error) {
 	have := &appsv1.StatefulSet{}
 	err := r.Get(ctx, types.NamespacedName{Namespace: ws.Namespace, Name: ws.Name}, have)
 	if apierrors.IsNotFound(err) {
@@ -421,7 +434,7 @@ func (r *WorkspaceReconciler) statefulSet(ws *corev1alpha1.Workspace, user strin
 			SecretName: loginSecret, Optional: new(true), DefaultMode: new(int32(0o440))}}},
 	}
 	container := corev1.Container{
-		Name: "workspace", Image: image,
+		Name: workspaceContainer, Image: image,
 		Ports: []corev1.ContainerPort{{Name: "ssh", ContainerPort: workspacePort, Protocol: corev1.ProtocolTCP}},
 		ReadinessProbe: &corev1.Probe{ProbeHandler: corev1.ProbeHandler{
 			TCPSocket: &corev1.TCPSocketAction{Port: intstr.FromInt32(workspacePort)}}},
