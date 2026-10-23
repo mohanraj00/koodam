@@ -198,7 +198,7 @@ func TestIsPublic(t *testing.T) {
 	for s, want := range map[string]bool{
 		"93.184.215.14": true, "2606:2800:21f:cb07:6820:80da:af6b:8b2c": true,
 		"10.0.0.1": false, "172.16.0.1": false, "192.168.1.1": false, "127.0.0.1": false,
-		"169.254.169.254": false, "100.64.0.1": false, "0.0.0.0": false, "224.0.0.1": false,
+		"169.254.169.254": false, "100.64.0.1": false, "0.0.0.0": false, "0.0.0.1": false, "224.0.0.1": false,
 		"::1": false, "fd00::1": false, "fe80::1": false, "::ffff:10.0.0.1": false,
 	} {
 		if got := IsPublic(netip.MustParseAddr(s)); got != want {
@@ -238,4 +238,35 @@ func TestDialTriesEachAddress(t *testing.T) {
 		t.Fatal(err)
 	}
 	_ = c.Close()
+}
+
+func TestLLMRouteStreams(t *testing.T) {
+	release := make(chan struct{})
+	gw := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = io.WriteString(w, "data: 1\n\n")
+		w.(http.Flusher).Flush()
+		<-release
+		_, _ = io.WriteString(w, "data: 2\n\n")
+	}))
+	defer gw.Close()
+	gu, _ := url.Parse(gw.URL)
+	pu, sink := start(t, true, "443", gu)
+	resp, err := http.Get(pu.String() + "/llm/v1/messages")
+	if err != nil {
+		close(release)
+		t.Fatal(err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	// The first event arrives before the gateway ends the answer.
+	first := make([]byte, len("data: 1\n\n"))
+	_, err = io.ReadFull(resp.Body, first)
+	close(release)
+	if err != nil || string(first) != "data: 1\n\n" {
+		t.Fatalf("first event %q: %v", first, err)
+	}
+	_, _ = io.Copy(io.Discard, resp.Body)
+	if sp := sink.next(t); sp.BytesIn != 2*int64(len(first)) {
+		t.Fatalf("span %+v", sp)
+	}
 }

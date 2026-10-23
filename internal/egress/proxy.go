@@ -128,8 +128,8 @@ type Proxy struct {
 
 func (p *Proxy) init() {
 	p.once.Do(func() {
-		d := http.DefaultTransport.(*http.Transport).Clone()
-		d.Proxy = nil
+		// An upstream that does not answer cannot hold a call without a limit.
+		d := newTransport(time.Minute)
 		d.DialContext = func(ctx context.Context, _, addr string) (net.Conn, error) {
 			host, port, err := net.SplitHostPort(addr)
 			if err != nil {
@@ -138,10 +138,22 @@ func (p *Proxy) init() {
 			return p.dial(ctx, host, port)
 		}
 		p.direct = d
-		g := http.DefaultTransport.(*http.Transport).Clone()
-		g.Proxy = nil
-		p.toGateway = g
+		// A model can take minutes before the first byte of a long answer.
+		p.toGateway = newTransport(10 * time.Minute)
 	})
+}
+
+// newTransport returns a transport with the values of http.DefaultTransport and no proxy.
+func newTransport(header time.Duration) *http.Transport {
+	return &http.Transport{
+		DialContext:           (&net.Dialer{Timeout: 10 * time.Second, KeepAlive: 30 * time.Second}).DialContext,
+		ForceAttemptHTTP2:     true,
+		MaxIdleConns:          100,
+		IdleConnTimeout:       90 * time.Second,
+		TLSHandshakeTimeout:   10 * time.Second,
+		ExpectContinueTimeout: time.Second,
+		ResponseHeaderTimeout: header,
+	}
 }
 
 func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -263,6 +275,9 @@ func (p *Proxy) dial(ctx context.Context, host, port string) (net.Conn, error) {
 			return nil, errDenied
 		}
 	}
+	// One limit for all the addresses of the name.
+	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
 	d := net.Dialer{Timeout: 10 * time.Second}
 	var err error
 	for _, a := range addrs {
@@ -274,13 +289,18 @@ func (p *Proxy) dial(ctx context.Context, host, port string) (net.Conn, error) {
 	return nil, err
 }
 
-var sharedAddress = netip.MustParsePrefix("100.64.0.0/10")
+var (
+	sharedAddress = netip.MustParsePrefix("100.64.0.0/10")
+	// A dial to 0.0.0.0/8 can go to the local host.
+	thisNetwork = netip.MustParsePrefix("0.0.0.0/8")
+)
 
-// IsPublic is false for a loopback, private, link-local, multicast, unspecified or shared
-// (100.64.0.0/10) address.
+// IsPublic is false for a loopback, private, link-local, multicast, unspecified, shared
+// (100.64.0.0/10) or 0.0.0.0/8 address.
 func IsPublic(a netip.Addr) bool {
 	a = a.Unmap()
-	return a.IsGlobalUnicast() && !a.IsPrivate() && !sharedAddress.Contains(a)
+	return a.IsGlobalUnicast() && !a.IsPrivate() && !a.IsLinkLocalUnicast() &&
+		!sharedAddress.Contains(a) && !thisNetwork.Contains(a)
 }
 
 func sourceIP(remote string) string {
