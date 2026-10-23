@@ -165,12 +165,15 @@ The cluster admin does these steps one time:
    handler: runsc
    ```
 
+   If only some nodes have the runtime, add `scheduling.nodeSelector` to the RuntimeClass. Kubernetes then puts the pods of this class only on these nodes.
+
 Then set `runtimeClassName: gvisor` in the pod template of the Workspace. The example in [The pod template](#the-pod-template) shows it.
 
 - If the RuntimeClass does not exist, the API server refuses the pod. The Workspace stays in the phase `Pending`. To see the reason, run `kubectl describe statefulset <workspace>` and read the `FailedCreate` event.
+- If the RuntimeClass exists but the node has no handler for it, the pod stays in the phase `Pending`. To see the reason, run `kubectl describe pod <workspace>-0`.
 - If you change the runtime class of a running Workspace, Kubernetes stops the pod first. Thus, if the new class does not exist, the Workspace has no pod until you correct the template.
 
-The runtime class is a choice of the user, not a limit. To require a runtime class in a namespace, the cluster admin adds a ValidatingAdmissionPolicy. This policy refuses each Workspace pod without `gvisor` in the namespaces that have a Profile:
+The runtime class is a choice of the user, not a limit. To require a runtime class, the cluster admin adds a ValidatingAdmissionPolicy. This policy refuses each new Workspace pod without the class `gvisor`:
 
 ```yaml
 apiVersion: admissionregistration.k8s.io/v1
@@ -183,14 +186,14 @@ spec:
     resourceRules:
       - apiGroups: [""]
         apiVersions: [v1]
-        operations: [CREATE, UPDATE]
+        operations: [CREATE]
         resources: [pods]
   matchConditions:
     - name: workspace-pod
       expression: "has(object.metadata.labels) && 'koodam.dev/workspace' in object.metadata.labels"
   validations:
     - expression: "has(object.spec.runtimeClassName) && object.spec.runtimeClassName == 'gvisor'"
-      message: A Workspace pod must use the runtime class gvisor.
+      message: A Koodam pod must use the runtime class gvisor.
 ---
 apiVersion: admissionregistration.k8s.io/v1
 kind: ValidatingAdmissionPolicyBinding
@@ -199,13 +202,12 @@ metadata:
 spec:
   policyName: koodam-runtime-class
   validationActions: [Deny]
-  matchResources:
-    namespaceSelector:
-      matchExpressions:
-        - {key: koodam.dev/profile, operator: Exists}
 ```
 
-A user cannot set a label in the domain `koodam.dev` in the pod template. Thus a user cannot remove a Workspace pod from this policy. The policy does not apply to the Agent run pods, because they do not have the label `koodam.dev/workspace`. To include them, use this match condition:
+- The policy applies only to `CREATE`. Kubernetes does not permit a change of `runtimeClassName` on a pod. Thus an update cannot remove the class, and the policy does not block an update of a pod that existed before the policy.
+- The policy applies in all namespaces. To apply it only in some namespaces, add a `matchResources.namespaceSelector` to the binding.
+- The controller puts the label `koodam.dev/workspace` on each Workspace pod, on top of the user labels. The pod template cannot set a label in the domain `koodam.dev`. Thus a user cannot remove a Workspace pod from this policy.
+- The policy does not apply to the Agent run pods, because they do not have the label `koodam.dev/workspace`. To include them, use this match condition:
 
 ```yaml
     - name: koodam-pod

@@ -80,14 +80,14 @@ var _ = Describe("Runtime class", Ordered, Label("workspace"), func() {
 				FailurePolicy: new(admissionv1.Fail),
 				MatchConstraints: &admissionv1.MatchResources{ResourceRules: []admissionv1.NamedRuleWithOperations{{
 					RuleWithOperations: admissionv1.RuleWithOperations{
-						Operations: []admissionv1.OperationType{admissionv1.Create, admissionv1.Update},
+						Operations: []admissionv1.OperationType{admissionv1.Create},
 						Rule: admissionv1.Rule{APIGroups: []string{""}, APIVersions: []string{"v1"},
 							Resources: []string{"pods"}}}}}},
 				MatchConditions: []admissionv1.MatchCondition{{Name: "workspace-pod",
 					Expression: "has(object.metadata.labels) && '" + wsLabel + "' in object.metadata.labels"}},
 				Validations: []admissionv1.Validation{{
 					Expression: "has(object.spec.runtimeClassName) && object.spec.runtimeClassName == '" + rcClass + "'",
-					Message:    "A Workspace pod must use the runtime class " + rcClass + "."}},
+					Message:    "A Koodam pod must use the runtime class " + rcClass + "."}},
 			}}
 		binding := &admissionv1.ValidatingAdmissionPolicyBinding{ObjectMeta: metav1.ObjectMeta{Name: rcPolicy},
 			Spec: admissionv1.ValidatingAdmissionPolicyBindingSpec{PolicyName: rcPolicy,
@@ -121,6 +121,13 @@ var _ = Describe("Runtime class", Ordered, Label("workspace"), func() {
 		for _, o := range objects {
 			Expect(client.IgnoreAlreadyExists(k8s.Create(ctx, o))).To(Succeed())
 		}
+		// The API server loads a new policy after some seconds. A dry run of a pod without the
+		// class shows when the policy refuses pods.
+		probe := &corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: "probe", Namespace: rcNS,
+			Labels: map[string]string{wsLabel: "probe"}},
+			Spec: corev1.PodSpec{Containers: []corev1.Container{{Name: "probe", Image: workspaceImage}}}}
+		Eventually(func() error { return k8s.Create(ctx, probe.DeepCopy(), client.DryRunAll) },
+			time.Minute, time.Second).Should(MatchError(ContainSubstring("must use the runtime class")))
 	})
 
 	AfterEach(func() { dumpWorkspaces() })
@@ -134,12 +141,16 @@ var _ = Describe("Runtime class", Ordered, Label("workspace"), func() {
 		Expect(pod.Spec.RuntimeClassName).To(HaveValue(Equal(rcClass)))
 		// The next specs do not need this pod. Delete it to release the node memory.
 		Expect(k8s.Delete(ctx, ws)).To(Succeed())
+		Eventually(func() bool {
+			return apierrors.IsNotFound(k8s.Get(ctx, client.ObjectKey{Namespace: rcNS, Name: ws.Name + "-0"}, &corev1.Pod{}))
+		}, 2*time.Minute, time.Second).Should(BeTrue(), "The pod was not deleted.")
 	})
 
 	It("makes no pod for a runtime class that does not exist", func() {
 		ws := workspace("missing", "e2e-missing")
 		Expect(k8s.Create(ctx, ws)).To(Succeed())
-		expectRefused(ws, `"e2e-missing"`)
+		// The RuntimeClass plugin of the API server refuses the pod before the policy does.
+		expectRefused(ws, `RuntimeClass "e2e-missing" not found`)
 	})
 
 	It("makes no pod without the runtime class that the admission policy requires", func() {
