@@ -14,9 +14,9 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-// Command egress-proxy is the egress proxy of the Agent and Workspace pods. It writes one JSON
-// line for each span to stdout. It finds the pod of a call from the source IP, so it needs get,
-// list and watch on pods. It reads no credential.
+// Command egress-proxy is the egress proxy and the DNS server of the Agent and Workspace pods.
+// It writes one JSON line for each span to stdout. It finds the pod of a call from the source IP,
+// so it needs get, list and watch on pods. It reads no credential.
 package main
 
 import (
@@ -27,6 +27,7 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"net/netip"
 	"net/url"
 	"os"
 	"os/signal"
@@ -56,7 +57,22 @@ func run() error {
 	connectPorts := flag.String("connect-ports", "443", "the permitted CONNECT ports, separated by commas")
 	namespaces := flag.String("namespaces", "", "the pod namespaces, separated by commas. Empty is all")
 	syncTimeout := flag.Duration("sync-timeout", 2*time.Minute, "the time limit of the first pod cache sync")
+	dnsListen := flag.String("dns-listen", ":5353", "the UDP and TCP address of the DNS responder")
+	answerIP := flag.String("answer-ip", "",
+		"the IPv4 address in the DNS answers. If it is empty, the DNS responder is off")
+	clusterDNS := flag.String("cluster-dns", "kube-dns.kube-system.svc.cluster.local:53",
+		"the host:port of the cluster DNS")
+	clusterDomain := flag.String("cluster-domain", "cluster.local", "the cluster domain")
 	flag.Parse()
+
+	var dns *egress.Resolver
+	if *answerIP != "" {
+		ip, err := netip.ParseAddr(*answerIP)
+		if err != nil || !ip.Is4() {
+			return errors.New("--answer-ip must be an IPv4 address")
+		}
+		dns = &egress.Resolver{Answer: ip, ClusterDNS: *clusterDNS, ClusterDomain: *clusterDomain}
+	}
 
 	p := &egress.Proxy{
 		Sink:         egress.NewJSONSink(os.Stdout),
@@ -75,11 +91,11 @@ func run() error {
 	defer stop()
 
 	var ready atomic.Bool
-	probeErr := make(chan error, 1)
+	serveErr := make(chan error, 3)
 	probes := &http.Server{Addr: *probe, Handler: probeMux(&ready), ReadHeaderTimeout: 10 * time.Second}
 	go func() {
 		if err := probes.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
-			probeErr <- fmt.Errorf("the probe server: %w", err)
+			serveErr <- fmt.Errorf("the probe server: %w", err)
 			stop()
 		}
 	}()
@@ -98,7 +114,7 @@ func run() error {
 	select {
 	case err := <-synced:
 		if err != nil {
-			return errors.Join(err, firstError(probeErr))
+			return errors.Join(err, firstError(serveErr))
 		}
 	case <-time.After(*syncTimeout):
 		// For example, the RBAC refuses the pod watch. A restart shows the problem.
@@ -109,6 +125,11 @@ func run() error {
 	ln, err := net.Listen("tcp", *listen)
 	if err != nil {
 		return err
+	}
+	if dns != nil {
+		if err := serveDNS(ctx, dns, *dnsListen, serveErr, stop); err != nil {
+			return err
+		}
 	}
 	srv := &http.Server{Handler: p, ReadHeaderTimeout: 30 * time.Second}
 	ready.Store(true)
@@ -126,7 +147,33 @@ func run() error {
 	}
 	// Serve returns when the shutdown starts. Wait until the open calls end.
 	<-stopped
-	return firstError(probeErr)
+	return firstError(serveErr)
+}
+
+// serveDNS starts the DNS responder on UDP and TCP. If it stops before ctx ends, it sends the
+// error to errs and calls stop.
+func serveDNS(ctx context.Context, r *egress.Resolver, addr string, errs chan<- error, stop func()) error {
+	pc, err := net.ListenPacket("udp", addr)
+	if err != nil {
+		return err
+	}
+	ln, err := net.Listen("tcp", addr)
+	if err != nil {
+		_ = pc.Close()
+		return err
+	}
+	for _, serve := range []func() error{
+		func() error { return r.ServeUDP(ctx, pc) },
+		func() error { return r.ServeTCP(ctx, ln) },
+	} {
+		go func() {
+			if err := serve(); err != nil {
+				errs <- fmt.Errorf("the DNS responder: %w", err)
+				stop()
+			}
+		}()
+	}
+	return nil
 }
 
 // shutdown stops a server. It waits at most 5 seconds for the open calls.

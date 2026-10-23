@@ -161,13 +161,18 @@ jobTTLSeconds: 86400
 # a pod that it cannot find, for example a pod in a namespace that is not in the list.
 egressProxy:
   enabled: false
-  # A fixed ClusterIP in the Service range of the cluster. The pods use this address, so they
-  # need no DNS. It is necessary if enabled is true.
+  # A fixed IPv4 ClusterIP in the Service range of the cluster. The pods use this address as
+  # their DNS server and their proxy. It is necessary if enabled is true.
   clusterIP: ""
   port: 3128
   # The permitted ports for plain HTTP and for CONNECT. Each list must have items.
   httpPorts: ["80"]
   connectPorts: ["443"]
+  # The DNS responder of the Koodam pods. It sends a name in clusterDomain to clusterDNS, and
+  # answers each other name with clusterIP.
+  dns:
+    clusterDNS: kube-dns.kube-system.svc.cluster.local:53
+    clusterDomain: cluster.local
   replicas: 2
   resources:
     limits:

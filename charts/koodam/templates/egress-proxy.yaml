@@ -84,7 +84,7 @@ metadata:
     {{- include "koodam.labels" . | nindent 4 }}
 spec:
   type: ClusterIP
-  # The pods use this fixed address, so they need no DNS.
+  # The pods use this fixed address as their DNS server and their proxy.
   clusterIP: {{ required "egressProxy.clusterIP is necessary if egressProxy.enabled is true." $ep.clusterIP | quote }}
   selector:
     {{- include "koodam.gatewaySelector" (list . "egress-proxy") | nindent 4 }}
@@ -93,6 +93,14 @@ spec:
     protocol: TCP
     port: {{ $ep.port }}
     targetPort: proxy
+  - name: dns
+    protocol: UDP
+    port: 53
+    targetPort: dns
+  - name: dns-tcp
+    protocol: TCP
+    port: 53
+    targetPort: dns-tcp
 ---
 apiVersion: apps/v1
 kind: Deployment
@@ -133,12 +141,21 @@ spec:
         - "--gateway-url={{ include "koodam.gatewayUrl" . }}"
         - "--http-ports={{ join "," $ep.httpPorts }}"
         - "--connect-ports={{ join "," $ep.connectPorts }}"
+        - "--answer-ip={{ $ep.clusterIP }}"
+        - "--cluster-dns={{ $ep.dns.clusterDNS }}"
+        - "--cluster-domain={{ $ep.dns.clusterDomain }}"
         {{- with $namespaces }}
         - "--namespaces={{ join "," . }}"
         {{- end }}
         ports:
         - containerPort: {{ $ep.port }}
           name: proxy
+          protocol: TCP
+        - containerPort: 5353
+          name: dns
+          protocol: UDP
+        - containerPort: 5353
+          name: dns-tcp
           protocol: TCP
         - containerPort: 8081
           name: health
@@ -201,6 +218,10 @@ spec:
     ports:
     - protocol: TCP
       port: {{ $ep.port }}
+    - protocol: UDP
+      port: 5353
+    - protocol: TCP
+      port: 5353
   # The kubelet probes. Some network plugins apply the policy to the traffic from the node.
   - ports:
     - protocol: TCP
