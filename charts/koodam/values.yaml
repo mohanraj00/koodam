@@ -177,9 +177,10 @@ egressProxy:
       cpu: 50m
       memory: 64Mi
   networkPolicy:
-    # If true, the proxy pods can send only to DNS, the bundled gateway, the API server and the
-    # public internet (the ranges and blockedCIDRs of workspace.networkPolicy). They get ingress
-    # only on the proxy port.
+    # If true, the proxy pods can send only to the DNS pods of workspace.networkPolicy.dns, the
+    # bundled gateway, the API server, and the public internet (the ranges of the Workspace policy
+    # and workspace.networkPolicy.blockedCIDRs) on httpPorts and connectPorts. They get ingress
+    # on the proxy port from the Agent and Workspace pods only, and on the probe port.
     enabled: true
     # The egress rules (NetworkPolicyEgressRule) to the API server, for the pod watch. They are
     # necessary if enabled is true. The rules apply after the Service address changes to the

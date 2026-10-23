@@ -188,9 +188,23 @@ spec:
   - Ingress
   - Egress
   ingress:
-  - ports:
+  # Only the Agent and Workspace pods can use the proxy. The proxy also refuses a call from a pod
+  # that it cannot find in its pod watch.
+  - from:
+    {{- range $label := list "koodam.dev/agent" "koodam.dev/workspace" }}
+    - namespaceSelector: {}
+      podSelector:
+        matchExpressions:
+        - key: {{ $label }}
+          operator: Exists
+    {{- end }}
+    ports:
     - protocol: TCP
       port: {{ $ep.port }}
+  # The kubelet probes. Some network plugins apply the policy to the traffic from the node.
+  - ports:
+    - protocol: TCP
+      port: 8081
   egress:
   - to:
     - namespaceSelector:
