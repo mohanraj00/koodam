@@ -148,6 +148,85 @@ The template cannot use `hostNetwork`, `hostPID`, `hostIPC`, `hostUsers: true`, 
 
 The API server refuses the host fields and the pod fields that Koodam owns. The controller refuses the other conflicts with the reason `InvalidPodTemplate`. If you change the template of a Workspace, the controller updates the StatefulSet, and Kubernetes makes the pod again. The home PVC stays. If the new template is not valid, the pod of the previous spec stays.
 
+## The runtime class
+
+A Workspace pod shares the kernel of the node. For more isolation, run the pod with a sandbox runtime, for example gVisor or Kata Containers. You select the runtime for each Workspace with `runtimeClassName` in the pod template. Koodam does not select a runtime class.
+
+The cluster admin does these steps one time:
+
+1. Install the runtime on the nodes. The documentation of the runtime gives the procedure.
+2. Make a RuntimeClass for it:
+
+   ```yaml
+   apiVersion: node.k8s.io/v1
+   kind: RuntimeClass
+   metadata:
+     name: gvisor
+   handler: runsc
+   ```
+
+   If only some nodes have the runtime, add `scheduling.nodeSelector` to the RuntimeClass. Kubernetes then puts the pods of this class only on these nodes.
+
+Then set `runtimeClassName: gvisor` in the pod template of the Workspace. The example in [The pod template](#the-pod-template) shows it.
+
+- If the RuntimeClass does not exist, the API server refuses the pod. The Workspace stays in the phase `Pending`. To see the reason, run `kubectl describe statefulset <workspace>` and read the `FailedCreate` event.
+- If the RuntimeClass exists but the node has no handler for it, the pod stays in the phase `Pending`. To see the reason, run `kubectl describe pod <workspace>-0`.
+- If you change the runtime class of a running Workspace, Kubernetes stops the pod first. Thus, if the new class does not exist, the Workspace has no pod until you correct the template.
+
+The runtime class is a choice of the user, not a limit. To require a runtime class, the cluster admin adds a ValidatingAdmissionPolicy. This policy refuses each new Workspace pod without the class `gvisor`:
+
+```yaml
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicy
+metadata:
+  name: koodam-runtime-class
+spec:
+  failurePolicy: Fail
+  matchConstraints:
+    resourceRules:
+      - apiGroups: [""]
+        apiVersions: [v1]
+        operations: [CREATE]
+        resources: [pods]
+  matchConditions:
+    - name: workspace-pod
+      expression: "has(object.metadata.labels) && 'koodam.dev/workspace' in object.metadata.labels"
+  validations:
+    - expression: "has(object.spec.runtimeClassName) && object.spec.runtimeClassName == 'gvisor'"
+      message: A Koodam pod must use the runtime class gvisor.
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicyBinding
+metadata:
+  name: koodam-runtime-class
+spec:
+  policyName: koodam-runtime-class
+  validationActions: [Deny]
+```
+
+- The policy applies only to `CREATE`. Kubernetes does not permit a change of `runtimeClassName` on a pod. Thus an update cannot remove the class, and the policy does not block an update of a pod that existed before the policy.
+- The policy applies in all namespaces. To apply it only in some namespaces, add a `matchResources.namespaceSelector` to the binding.
+- The controller puts the label `koodam.dev/workspace` on each Workspace pod, on top of the user labels. The pod template cannot set a label in the domain `koodam.dev`. Thus a user cannot remove a Workspace pod from this policy.
+- The policy does not apply to the Agent run pods, because they do not have the label `koodam.dev/workspace`. To include them, use this match condition:
+
+```yaml
+    - name: koodam-pod
+      expression: "has(object.metadata.labels) && ('koodam.dev/workspace' in object.metadata.labels || 'koodam.dev/agent' in object.metadata.labels)"
+```
+
+### What works under gVisor
+
+The maintainer has not run a Workspace under gVisor yet. This table gets the results of the first run.
+
+| Feature | Under gVisor |
+| --- | --- |
+| sshd and `koodam ssh` | Not checked |
+| tmux | Not checked |
+| The harness installers | Not checked |
+| Claude Code | Not checked |
+| Codex | Not checked |
+| The Codex bubblewrap sandbox (#72) | Not checked |
+
 ## Secrets in the pod template
 
 `spec.podTemplate` can refer to a Secret in the namespace of the Workspace or the Agent. The controller makes the pod, so the pod can read the Secret, also if your own account cannot read it. The controller refuses these references:
