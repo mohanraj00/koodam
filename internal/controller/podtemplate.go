@@ -113,6 +113,10 @@ func ownedSecrets(ctx context.Context, rd client.Reader, ns string, refs []podte
 	var errs field.ErrorList
 	owned := map[string]bool{}
 	for _, ref := range refs {
+		// The API server refuses the pod with an empty name. A Get with an empty name fails each time.
+		if ref.Name == "" {
+			continue
+		}
 		isOwned, seen := owned[ref.Name]
 		if !seen {
 			m := &metav1.PartialObjectMetadata{}
