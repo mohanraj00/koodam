@@ -176,6 +176,24 @@ egressProxy:
     requests:
       cpu: 50m
       memory: 64Mi
+  networkPolicy:
+    # If true, the proxy pods can send only to DNS, the bundled gateway, the API server and the
+    # public internet (the ranges and blockedCIDRs of workspace.networkPolicy). They get ingress
+    # only on the proxy port.
+    enabled: true
+    # The egress rules (NetworkPolicyEgressRule) to the API server, for the pod watch. They are
+    # necessary if enabled is true. The rules apply after the Service address changes to the
+    # endpoint address, so use the endpoint addresses: kubectl get endpointslices -l
+    # kubernetes.io/service-name=kubernetes. For example:
+    #   - to:
+    #     - ipBlock:
+    #         cidr: 172.18.0.2/32
+    #     ports:
+    #     - protocol: TCP
+    #       port: 6443
+    apiServer: []
+    # More egress rules (NetworkPolicyEgressRule), for example for a gateway at a private address.
+    extraEgress: []
 
 # The metrics endpoint (HTTPS). If true, the chart adds the metrics Service and the
 # metrics-auth ClusterRole (tokenreviews and subjectaccessreviews, verb create).

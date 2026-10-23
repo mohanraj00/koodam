@@ -33,11 +33,19 @@ const (
 	releaseNS = "koodam-system"
 )
 
-// proxyValues turn on the proxy with a fixed ClusterIP.
+// proxyValues turn on the proxy with a fixed ClusterIP and an API server rule.
 const proxyValues = `
 egressProxy:
   enabled: true
   clusterIP: 10.96.0.50
+  networkPolicy:
+    apiServer:
+    - to:
+      - ipBlock:
+          cidr: 172.18.0.2/32
+      ports:
+      - protocol: TCP
+        port: 6443
 `
 
 // decode returns the rendered objects of one kind with the given name.
@@ -183,12 +191,17 @@ func TestEgressProxyNamespaces(t *testing.T) {
 
 func TestEgressProxyRefusesBadValues(t *testing.T) {
 	for want, values := range map[string]string{
-		"clusterIP":    "egressProxy: {enabled: true}",
+		"clusterIP":    "egressProxy: {enabled: true, networkPolicy: {enabled: false}}",
+		"apiServer":    "egressProxy: {enabled: true, clusterIP: 10.96.0.50}",
 		"httpPorts":    "egressProxy: {enabled: true, clusterIP: 10.96.0.50, httpPorts: null}",
 		"connectPorts": "egressProxy: {enabled: true, clusterIP: 10.96.0.50, connectPorts: []}",
 	} {
 		if out, err := helmTemplate(t, values); err == nil || !strings.Contains(out, want) {
 			t.Errorf("got no error about %s:\n%s", want, out)
 		}
+	}
+	out := render(t, "egressProxy: {enabled: true, clusterIP: 10.96.0.50, networkPolicy: {enabled: false}}")
+	if nps := policies(t, out); len(nps) != 0 {
+		t.Fatal("the proxy NetworkPolicy is on, but networkPolicy.enabled is false")
 	}
 }
