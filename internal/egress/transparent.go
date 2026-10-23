@@ -21,36 +21,86 @@ import (
 	"errors"
 	"net"
 	"net/http"
+	"slices"
 	"strings"
+	"sync"
 	"time"
 )
 
 // The DNS responder answers an external name with the proxy address. Thus the pod sends the call
 // to the proxy without a proxy setting. The transparent listeners receive these calls.
 
+// The limits of the transparent TLS listener. A connection over a limit is closed at once.
+const (
+	maxTLSConns     = 1024
+	maxTLSPerSource = 64
+)
+
 // ServeTLS accepts the TLS connections on ln until ctx ends. The target is the SNI on TLSPort.
-// The proxy does not decrypt. It sends the ClientHello to the target and copies the bytes.
+// The proxy does not decrypt. It sends the ClientHello to the target and copies the bytes. When
+// ctx ends, ServeTLS closes the open connections and waits until their spans are written.
 func (p *Proxy) ServeTLS(ctx context.Context, ln net.Listener) error {
 	p.init()
 	defer context.AfterFunc(ctx, func() { _ = ln.Close() })()
+	var (
+		wg       sync.WaitGroup
+		mu       sync.Mutex
+		total    int
+		bySource = map[string]int{}
+		delay    time.Duration
+	)
+	defer wg.Wait()
 	for {
 		c, err := ln.Accept()
 		if err != nil {
 			if ctx.Err() != nil {
 				return nil
 			}
-			var ne net.Error
-			if errors.As(err, &ne) && ne.Timeout() {
-				continue
+			if _, ok := errors.AsType[net.Error](err); !ok {
+				return err
 			}
-			return err
+			// For example, the process has no free file descriptor. Wait, then try again.
+			delay = min(max(2*delay, 5*time.Millisecond), time.Second)
+			select {
+			case <-ctx.Done():
+				return nil
+			case <-time.After(delay):
+			}
+			continue
 		}
-		go p.transparentTLS(ctx, c)
+		delay = 0
+		src := sourceIP(c.RemoteAddr().String())
+		mu.Lock()
+		admit := total < maxTLSConns && bySource[src] < maxTLSPerSource
+		if admit {
+			total++
+			bySource[src]++
+		}
+		mu.Unlock()
+		if !admit {
+			_ = c.Close()
+			p.Sink.Write(Span{V: SpanVersion, Time: time.Now().UTC(), Source: src, Kind: KindTLS,
+				Result: ResultDenied, Reason: reasonLimit})
+			continue
+		}
+		wg.Go(func() {
+			defer func() {
+				mu.Lock()
+				total--
+				if bySource[src]--; bySource[src] == 0 {
+					delete(bySource, src)
+				}
+				mu.Unlock()
+			}()
+			p.transparentTLS(ctx, c)
+		})
 	}
 }
 
 func (p *Proxy) transparentTLS(ctx context.Context, client net.Conn) {
 	defer func() { _ = client.Close() }()
+	// When ctx ends, the closed connection stops the ClientHello read and the copies.
+	defer context.AfterFunc(ctx, func() { _ = client.Close() })()
 	start := time.Now()
 	port := p.TLSPort
 	if port == "" {
@@ -69,6 +119,10 @@ func (p *Proxy) transparentTLS(ctx context.Context, client net.Conn) {
 			sp.Result, sp.Reason = ResultDenied, reasonIdentity
 			return
 		}
+	}
+	if !slices.Contains(orDefault(p.ConnectPorts, "443"), port) {
+		sp.Result, sp.Reason = ResultDenied, reasonPort
+		return
 	}
 	hello, ok := p.clientHello(client, client, &sp)
 	if !ok {
@@ -105,6 +159,10 @@ func (p *Proxy) Transparent() http.Handler {
 		if r.Method == http.MethodConnect {
 			sp := Span{V: SpanVersion, Time: time.Now().UTC(), Source: sourceIP(r.RemoteAddr), Kind: KindConnect,
 				Host: r.Host}
+			// The span gets the identity, but the call is refused for each source.
+			if p.Identify != nil {
+				_ = p.Identify(r, &sp)
+			}
 			p.deny(w, &sp, reasonNoProxy)
 			p.Sink.Write(sp)
 			return

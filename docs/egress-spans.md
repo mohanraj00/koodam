@@ -70,6 +70,7 @@ The proxy does not decrypt TLS. For `connect` and `tls`, the span has the host a
 | `no TLS ClientHello` | `denied` | The first bytes in a tunnel are not a TLS ClientHello. |
 | `the SNI is not the CONNECT host` | `denied` | The SNI is not the name of the CONNECT request. |
 | `no SNI` | `denied` | A `tls` call has no SNI, so the proxy has no target. |
+| `connection limit` | `denied` | The TLS listener has too many open connections, in total or from the source. |
 | `upstream` | `error` | The proxy could not connect to the target, or the target failed. |
 | `hello timeout` | `error` | The pod sent no ClientHello in the time limit. |
 

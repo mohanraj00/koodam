@@ -61,6 +61,7 @@ const (
 	reasonNoTLS    = "no TLS ClientHello"
 	reasonSNI      = "the SNI is not the CONNECT host"
 	reasonNoSNI    = "no SNI"
+	reasonLimit    = "connection limit"
 )
 
 // SpanVersion is the version of the span contract in docs/egress-spans.md. An added field keeps

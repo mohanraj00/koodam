@@ -36,11 +36,15 @@ import (
 	"syscall"
 	"time"
 
+	"golang.org/x/net/netutil"
 	"k8s.io/client-go/kubernetes"
 	ctrl "sigs.k8s.io/controller-runtime"
 
 	"github.com/mohanraj00/koodam/internal/egress"
 )
+
+// maxHTTPConns is the limit of the open connections on the transparent HTTP listener.
+const maxHTTPConns = 1024
 
 func main() {
 	if err := run(); err != nil {
@@ -137,7 +141,9 @@ func run() error {
 	if err != nil {
 		return err
 	}
+	tlsDone := make(chan struct{})
 	go func() {
+		defer close(tlsDone)
 		if err := p.ServeTLS(ctx, tlsLn); err != nil {
 			serveErr <- fmt.Errorf("the TLS listener: %w", err)
 			stop()
@@ -148,9 +154,10 @@ func run() error {
 		return err
 	}
 	srv := &http.Server{Handler: p, ReadHeaderTimeout: 30 * time.Second}
-	transparent := &http.Server{Handler: p.Transparent(), ReadHeaderTimeout: 30 * time.Second}
+	transparent := &http.Server{Handler: p.Transparent(), ReadHeaderTimeout: 30 * time.Second,
+		IdleTimeout: 90 * time.Second}
 	go func() {
-		if err := transparent.Serve(httpLn); !errors.Is(err, http.ErrServerClosed) {
+		if err := transparent.Serve(netutil.LimitListener(httpLn, maxHTTPConns)); !errors.Is(err, http.ErrServerClosed) {
 			serveErr <- fmt.Errorf("the HTTP listener: %w", err)
 			stop()
 		}
@@ -169,8 +176,10 @@ func run() error {
 	if err := srv.Serve(ln); !errors.Is(err, http.ErrServerClosed) {
 		return err
 	}
-	// Serve returns when the shutdown starts. Wait until the open calls end.
+	// Serve returns when the shutdown starts. Wait until the open calls end and the TLS
+	// listener writes its last spans.
 	<-stopped
+	<-tlsDone
 	return firstError(serveErr)
 }
 

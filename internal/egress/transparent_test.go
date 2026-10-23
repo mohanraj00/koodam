@@ -27,6 +27,7 @@ import (
 	"net/netip"
 	"net/url"
 	"testing"
+	"time"
 )
 
 // loopback is the address of each test name.
@@ -34,15 +35,18 @@ const loopback = "127.0.0.1"
 
 // startTLS runs the transparent TLS listener of a proxy that resolves each name to 127.0.0.1
 // and dials port. If strict is false, it permits all addresses. It returns the listener address.
-func startTLS(t *testing.T, strict bool, port string) (string, chanSink) {
+func startTLS(t *testing.T, strict bool, port string, opts ...func(*Proxy)) (string, chanSink) {
 	t.Helper()
-	sink := make(chanSink, 4)
-	p := &Proxy{Sink: sink, TLSPort: port,
+	sink := make(chanSink, 2*maxTLSPerSource)
+	p := &Proxy{Sink: sink, TLSPort: port, ConnectPorts: []string{port},
 		Resolve: func(context.Context, string) ([]netip.Addr, error) {
 			return []netip.Addr{netip.MustParseAddr(loopback)}, nil
 		}}
 	if !strict {
 		p.Permit = func(netip.Addr) bool { return true }
+	}
+	for _, o := range opts {
+		o(p)
 	}
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
@@ -93,14 +97,20 @@ func TestTransparentTLSRefused(t *testing.T) {
 	tests := []struct {
 		name, sni, result, reason string
 		strict, plain             bool
+		ports                     []string
 	}{
-		{"no SNI", "", ResultDenied, reasonNoSNI, false, false},
-		{"a private address", testHost, ResultDenied, reasonAddress, true, false},
-		{"no TLS", "", ResultDenied, reasonNoTLS, false, true},
+		{"no SNI", "", ResultDenied, reasonNoSNI, false, false, nil},
+		{"a private address", testHost, ResultDenied, reasonAddress, true, false, nil},
+		{"no TLS", "", ResultDenied, reasonNoTLS, false, true, nil},
+		{"a port that is not in ConnectPorts", testHost, ResultDenied, reasonPort, false, false, []string{"8443"}},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			addr, sink := startTLS(t, tc.strict, port(t, up.URL))
+			addr, sink := startTLS(t, tc.strict, port(t, up.URL), func(p *Proxy) {
+				if tc.ports != nil {
+					p.ConnectPorts = tc.ports
+				}
+			})
 			c, err := net.Dial("tcp", addr)
 			if err != nil {
 				t.Fatal(err)
@@ -116,6 +126,64 @@ func TestTransparentTLSRefused(t *testing.T) {
 				t.Fatalf("span %+v", sp)
 			}
 		})
+	}
+}
+
+func TestTransparentTLSLimit(t *testing.T) {
+	addr, sink := startTLS(t, false, "443")
+	conns := make([]net.Conn, 0, maxTLSPerSource+1)
+	for range maxTLSPerSource + 1 {
+		c, err := net.Dial("tcp", addr)
+		if err != nil {
+			t.Fatal(err)
+		}
+		conns = append(conns, c)
+	}
+	defer func() {
+		for _, c := range conns {
+			_ = c.Close()
+		}
+	}()
+	// The connections wait in the ClientHello read. Only the last one is over the limit.
+	if sp := sink.next(t); sp.Result != ResultDenied || sp.Reason != reasonLimit {
+		t.Fatalf("span %+v", sp)
+	}
+}
+
+func TestTransparentTLSShutdown(t *testing.T) {
+	sink := make(chanSink, 4)
+	p := &Proxy{Sink: sink}
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() { done <- p.ServeTLS(ctx, ln) }()
+	c, err := net.Dial("tcp", ln.Addr().String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = c.Close() }()
+	// A connection with no ClientHello. ServeTLS must close it and write its span.
+	_, _ = io.WriteString(c, "\x16")
+	time.Sleep(50 * time.Millisecond)
+	cancel()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("ServeTLS did not return")
+	}
+	select {
+	case sp := <-sink:
+		if sp.Kind != KindTLS || sp.Result == "" {
+			t.Fatalf("span %+v", sp)
+		}
+	default:
+		t.Fatal("ServeTLS returned before the span")
 	}
 }
 
@@ -142,6 +210,10 @@ func TestTransparentHTTP(t *testing.T) {
 			sink := make(chanSink, 4)
 			p := &Proxy{Sink: sink, Gateway: gw, HTTPPorts: []string{port(t, up.URL)},
 				Permit: func(netip.Addr) bool { return true },
+				Identify: func(_ *http.Request, sp *Span) error {
+					sp.Pod = "pod-a"
+					return nil
+				},
 				Resolve: func(context.Context, string) ([]netip.Addr, error) {
 					return []netip.Addr{netip.MustParseAddr(loopback)}, nil
 				}}
@@ -160,7 +232,7 @@ func TestTransparentHTTP(t *testing.T) {
 			body, _ := io.ReadAll(resp.Body)
 			_ = resp.Body.Close()
 			sp := sink.next(t)
-			if resp.StatusCode != tc.code || sp.Result != tc.result || sp.Reason != tc.reason {
+			if resp.StatusCode != tc.code || sp.Result != tc.result || sp.Reason != tc.reason || sp.Pod != "pod-a" {
 				t.Fatalf("status %d, span %+v", resp.StatusCode, sp)
 			}
 			if tc.code == http.StatusOK && (sp.Kind != KindHTTP || string(body) != upHost+tc.target) {
