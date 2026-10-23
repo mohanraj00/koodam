@@ -176,9 +176,13 @@ func TestConnectEndsWithTheClient(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer func() { _ = ln.Close() }()
+	got := make(chan struct{})
 	go func() {
 		// The upstream reads all bytes and never writes or closes.
 		if c, err := ln.Accept(); err == nil {
+			if _, err := c.Read(make([]byte, 1)); err == nil {
+				close(got)
+			}
 			_, _ = io.Copy(io.Discard, c)
 		}
 	}()
@@ -187,7 +191,11 @@ func TestConnectEndsWithTheClient(t *testing.T) {
 	c, _ := connect(t, pu, net.JoinHostPort(testHost, lnPort))
 	tc := tls.Client(c, &tls.Config{ServerName: testHost})
 	go func() { _ = tc.Handshake() }()
-	time.Sleep(100 * time.Millisecond)
+	select {
+	case <-got:
+	case <-time.After(5 * time.Second):
+		t.Fatal("the upstream got no ClientHello")
+	}
 	_ = c.Close()
 	if sp := sink.next(t); sp.Result != ResultOK || sp.SNI != testHost || sp.BytesOut == 0 {
 		t.Fatalf("span %+v", sp)
