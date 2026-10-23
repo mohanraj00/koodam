@@ -65,6 +65,9 @@ var _ = Describe("Pod template", Ordered, Label("workspace"), func() {
 			}, 2*time.Minute, time.Second).Should(BeZero(), "The finalizer kept a Workspace.")
 			_ = k8s.Delete(ctx, &corev1alpha1.Profile{ObjectMeta: metav1.ObjectMeta{Name: ptProfile}})
 			_ = k8s.Delete(ctx, &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: ptNS}})
+			Eventually(func() bool {
+				return apierrors.IsNotFound(k8s.Get(ctx, client.ObjectKey{Name: ptNS}, &corev1.Namespace{}))
+			}, 5*time.Minute, 2*time.Second).Should(BeTrue(), "The namespace "+ptNS+" was not deleted.")
 		})
 		for _, o := range []client.Object{
 			&corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: ptNS,
@@ -101,10 +104,11 @@ var _ = Describe("Pod template", Ordered, Label("workspace"), func() {
 		Expect(main.Name).To(Equal("workspace"))
 		Expect(main.Resources.Limits.Memory().String()).To(Equal("1Gi"))
 		Expect(main.Env).To(ContainElement(HaveField("Name", "E2E_CONFIG")))
+		Expect(main.SecurityContext).NotTo(BeNil())
 		Expect(main.SecurityContext.RunAsNonRoot).To(HaveValue(BeTrue()), "Koodam keeps the container security.")
 	})
 
-	It("refuses a pod field that Koodam owns in the API server", func() {
+	It("refuses hostNetwork in the API server", func() {
 		ws := workspace("host", &corev1alpha1.PodTemplate{Spec: corev1.PodSpec{HostNetwork: true}})
 		err := k8s.Create(ctx, ws)
 		Expect(apierrors.IsInvalid(err)).To(BeTrue(), "The API server accepted hostNetwork.")
@@ -113,6 +117,9 @@ var _ = Describe("Pod template", Ordered, Label("workspace"), func() {
 	It("refuses a reference to a Secret that Koodam owns, and makes no pod", func() {
 		// merged-ssh-host is the host key Secret of the Workspace of the first spec. The unit tests
 		// cover the kd- prefix. This spec checks the metadata read against a real API server.
+		owned := client.ObjectKey{Namespace: ptNS, Name: "merged-ssh-host"}
+		Eventually(func() error { return k8s.Get(ctx, owned, &corev1.Secret{}) }, time.Minute, time.Second).
+			Should(Succeed(), "The first spec makes the Workspace that owns the Secret.")
 		ws := workspace("refused", &corev1alpha1.PodTemplate{Spec: corev1.PodSpec{
 			Containers: []corev1.Container{{Name: "workspace", Env: envFrom("merged-ssh-host")}},
 		}})

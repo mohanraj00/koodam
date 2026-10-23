@@ -146,7 +146,7 @@ Koodam owns these fields:
 
 The template cannot use `hostNetwork`, `hostPID`, `hostIPC`, `hostUsers: true`, `shareProcessNamespace` or a `hostPath` volume.
 
-The API server refuses the pod fields that Koodam owns. The controller refuses the other conflicts with the reason `InvalidPodTemplate`. If you change the template of a Workspace, the controller updates the StatefulSet, and Kubernetes makes the pod again. The home PVC stays. If the new template is not valid, the pod of the previous spec stays.
+The API server refuses the host fields and the pod fields that Koodam owns. The controller refuses the other conflicts with the reason `InvalidPodTemplate`. If you change the template of a Workspace, the controller updates the StatefulSet, and Kubernetes makes the pod again. The home PVC stays. If the new template is not valid, the pod of the previous spec stays.
 
 ## Secrets in the pod template
 
