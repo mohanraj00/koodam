@@ -101,24 +101,6 @@ func namespaceBound(p *corev1alpha1.Profile, ns *corev1.Namespace) bool {
 		slices.Contains(p.Spec.Namespaces, ns.Name)
 }
 
-// profileBinds reads the namespace and the Profile in its label, and applies namespaceBound.
-// It returns false and no error if the namespace, the label or the Profile does not exist.
-func profileBinds(ctx context.Context, c client.Reader, namespace string) (bool, error) {
-	ns := &corev1.Namespace{}
-	if err := c.Get(ctx, types.NamespacedName{Name: namespace}, ns); err != nil {
-		return false, client.IgnoreNotFound(err)
-	}
-	name := ns.Labels[corev1alpha1.ProfileLabel]
-	if name == "" {
-		return false, nil
-	}
-	p := &corev1alpha1.Profile{}
-	if err := c.Get(ctx, types.NamespacedName{Name: name}, p); err != nil {
-		return false, client.IgnoreNotFound(err)
-	}
-	return namespaceBound(p, ns), nil
-}
-
 // conditionsEqual compares the conditions without the transition time.
 func conditionsEqual(a, b []metav1.Condition) bool {
 	return slices.EqualFunc(a, b, func(x, y metav1.Condition) bool {

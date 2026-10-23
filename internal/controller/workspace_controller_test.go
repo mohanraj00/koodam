@@ -120,6 +120,8 @@ var _ = Describe("Workspace Controller", func() {
 			Expect(o.GetLabels()).To(HaveKeyWithValue(WorkspaceLabel, name))
 		}
 		Expect(sts.Spec.Replicas).To(HaveValue(Equal(int32(1))))
+		// The user label is the Profile name, not the namespace name.
+		Expect(sts.Spec.Template.Labels).To(HaveKeyWithValue(UserLabel, testProfile))
 		Expect(sts.Spec.PersistentVolumeClaimRetentionPolicy.WhenDeleted).To(Equal(appsv1.RetainPersistentVolumeClaimRetentionPolicyType))
 		Expect(sts.Spec.PersistentVolumeClaimRetentionPolicy.WhenScaled).To(Equal(appsv1.RetainPersistentVolumeClaimRetentionPolicyType))
 		Expect(sts.Spec.VolumeClaimTemplates).To(HaveLen(1))
@@ -415,6 +417,8 @@ var _ = Describe("Workspace Profile binding", func() {
 		n   int
 	)
 	nn := func(s string) types.NamespacedName { return types.NamespacedName{Namespace: ns, Name: s} }
+	// profile is the name of the Profile of the test. It is not the namespace name.
+	profile := func() string { return "team-" + ns }
 	reconcileOnce := func() {
 		_, err := rec.Reconcile(ctx, reconcile.Request{NamespacedName: nn(name)})
 		Expect(err).NotTo(HaveOccurred())
@@ -440,7 +444,7 @@ var _ = Describe("Workspace Profile binding", func() {
 		Expect(k8sClient.Get(ctx, types.NamespacedName{Name: ns}, o)).To(Succeed())
 		o.Labels = map[string]string{}
 		if on {
-			o.Labels[corev1alpha1.ProfileLabel] = ns
+			o.Labels[corev1alpha1.ProfileLabel] = profile()
 		}
 		Expect(k8sClient.Update(ctx, o)).To(Succeed())
 	}
@@ -461,7 +465,7 @@ var _ = Describe("Workspace Profile binding", func() {
 		Expect(ws.Status.Pod).To(BeEmpty())
 	}
 
-	// setup makes a namespace and a Profile with the name of the namespace. If label is true, the
+	// setup makes a namespace and the Profile of the test. If label is true, the
 	// namespace has the Profile label. If list is true, the Profile lists the namespace. Then setup
 	// makes a Workspace with a gateway key.
 	setup := func(label, list bool) {
@@ -473,10 +477,10 @@ var _ = Describe("Workspace Profile binding", func() {
 			Image: "img:test", Gateway: gw, GatewayURL: "http://gw.bind.test:4000", KeyTTL: time.Hour}
 		o := &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: ns}}
 		if label {
-			o.Labels = map[string]string{corev1alpha1.ProfileLabel: ns}
+			o.Labels = map[string]string{corev1alpha1.ProfileLabel: profile()}
 		}
 		Expect(k8sClient.Create(ctx, o)).To(Succeed())
-		p := &corev1alpha1.Profile{ObjectMeta: metav1.ObjectMeta{Name: ns}}
+		p := &corev1alpha1.Profile{ObjectMeta: metav1.ObjectMeta{Name: profile()}}
 		if list {
 			p.Spec.Namespaces = []string{ns}
 		}
@@ -526,6 +530,9 @@ var _ = Describe("Workspace Profile binding", func() {
 		Expect(gw.order).To(Equal([]string{opCreate}))
 		sts := &appsv1.StatefulSet{}
 		Expect(k8sClient.Get(ctx, nn(name), sts)).To(Succeed())
+		Expect(sts.Spec.Template.Labels).To(HaveKeyWithValue(UserLabel, profile()))
+		Expect(sts.Spec.Template.Labels).NotTo(HaveKey(RunLabel))
+		Expect(sts.Spec.Selector.MatchLabels).NotTo(HaveKey(UserLabel), "the selector cannot change")
 		sts.Status.Replicas, sts.Status.ReadyReplicas, sts.Status.ObservedGeneration = 1, 1, sts.Generation
 		Expect(k8sClient.Status().Update(ctx, sts)).To(Succeed())
 		reconcileOnce()
@@ -565,7 +572,7 @@ var _ = Describe("Workspace Profile binding", func() {
 		var replicasAtBlock int32
 		gw.atBlock = func() { replicasAtBlock = replicas() }
 		p := &corev1alpha1.Profile{}
-		Expect(k8sClient.Get(ctx, types.NamespacedName{Name: ns}, p)).To(Succeed())
+		Expect(k8sClient.Get(ctx, types.NamespacedName{Name: profile()}, p)).To(Succeed())
 		p.Spec.Namespaces = nil
 		Expect(k8sClient.Update(ctx, p)).To(Succeed())
 		reconcileOnce()
