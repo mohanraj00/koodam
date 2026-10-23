@@ -14,7 +14,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-// Package harness downloads a coding harness binary from its vendor and checks its sha256.
+// Package harness downloads coding harness binaries from their vendors and checks them.
 // Koodam does not keep or redistribute a harness binary. Each pod downloads its own copy.
 package harness
 
@@ -87,7 +87,8 @@ type Installer struct {
 	Arch          string
 }
 
-// Install puts the binary of the harness in dir and returns the version. An empty version is
+// Install puts the harness files in dir and returns the version.
+// Codex also installs codex-code-mode-host and bwrap next to the CLI. An empty version is
 // the latest version. libc is "glibc" or "musl" and applies to Claude Code only. The binary has a
 // dot name (see realName). The wrapper with the usual name runs koodam-project first (see wrap).
 func (in *Installer) Install(ctx context.Context, name, version, libc, dir string) (string, error) {
@@ -163,27 +164,6 @@ func (in *Installer) claude(ctx context.Context, version, libc, dir string) (str
 	return version, nil
 }
 
-func (in *Installer) codex(ctx context.Context, version, dir string) (string, error) {
-	arch := map[string]string{amd64: "x86_64", arm64: "aarch64"}[in.Arch]
-	if arch == "" {
-		return "", fmt.Errorf("codex has no build for %s", in.Arch)
-	}
-	if version == "" {
-		v, err := in.codexLatest(ctx)
-		if err != nil {
-			return "", err
-		}
-		version = v
-	}
-	bin := "codex-" + arch + "-unknown-linux-musl"
-	rel := in.CodexDownload + "rust-v" + version + "/" + bin
-	sum, err := in.codexSum(ctx, rel+".sigstore", version)
-	if err != nil {
-		return "", fmt.Errorf("codex %s %s: %w", version, bin, err)
-	}
-	return version, in.codexArchive(ctx, rel+".tar.gz", sum, bin, dir)
-}
-
 // codexLatest reads the latest version from the redirect of the releases/latest page. The page is
 // not the GitHub API, so the API rate limit of 60 requests each hour does not apply.
 func (in *Installer) codexLatest(ctx context.Context) (string, error) {
@@ -206,13 +186,15 @@ func (in *Installer) codexLatest(ctx context.Context) (string, error) {
 	return version, nil
 }
 
-// codexSum reads the sha256 of the codex binary from the cosign bundle at url and verifies the
+// codexSum reads the sha256 of a signed CLI or helper binary from the cosign bundle at url and verifies the
 // bundle (see verifyBundle). The bundle has the Rekor log entry of the signature. codexSum also
 // reads the entry from the Rekor log at in.Rekor and requires the same entry. This shows that the
 // entry is in the log now, not only that Rekor signed a promise to add it.
 // Trust boundary: codexSum trusts the embedded Sigstore Fulcio and Rekor keys, the GitHub Actions
 // OIDC issuer, and the openai/codex rust-release.yml workflow on the release tag. A party that
-// controls the bundle and the archive, but not one of these, cannot pass the check.
+// controls the bundle and the archive, but not one of these, cannot pass with an unsigned binary.
+// The signature binds the digest to the workflow and tag, not to the asset name or architecture.
+// The requested URL selects the asset name and architecture.
 func (in *Installer) codexSum(ctx context.Context, url, version string) (string, error) {
 	b, err := in.get(ctx, url, 1<<20)
 	if err != nil {
@@ -247,8 +229,8 @@ var sha256RE = regexp.MustCompile(`^[0-9a-f]{64}$`)
 
 // codexArchive downloads the archive and extracts the binary. The sum applies to the binary, not
 // to the archive. It removes the archive.
-func (in *Installer) codexArchive(ctx context.Context, url, sum, bin, dir string) error {
-	tmp, err := os.CreateTemp(dir, ".codex-*.tar.gz")
+func (in *Installer) codexArchive(ctx context.Context, url, sum, bin, dst string) error {
+	tmp, err := os.CreateTemp(filepath.Dir(dst), ".codex-*.tar.gz")
 	if err != nil {
 		return err
 	}
@@ -258,7 +240,7 @@ func (in *Installer) codexArchive(ctx context.Context, url, sum, bin, dir string
 	if err := in.download(ctx, url, "", archive); err != nil {
 		return err
 	}
-	return extract(archive, bin, sum, filepath.Join(dir, realName("codex")))
+	return extract(archive, bin, sum, dst)
 }
 
 // get reads a small response body. A body larger than the limit is an error.

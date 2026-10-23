@@ -68,6 +68,8 @@ func tgz(t *testing.T, name string, body []byte) []byte {
 
 // vendor serves a Claude Code release 2.1.3, a Codex release rust-v0.9.1 and a Rekor log.
 type vendor struct {
+	arch      string
+	helpers   map[string]*helperAsset
 	latest    string
 	claude    []byte
 	claudeSum string
@@ -94,14 +96,13 @@ type vendor struct {
 	installDir string
 }
 
-const codexRel = "/dl/rust-v0.9.1/codex-x86_64-unknown-linux-musl"
-
 func newVendor(t *testing.T) *vendor {
-	v := &vendor{latest: "2.1.3\n", claude: []byte("claude binary"), codexBin: []byte("codex binary"),
+	v := &vendor{arch: "x86_64", latest: "2.1.3\n", claude: []byte("claude binary"), codexBin: []byte("codex binary"),
 		location: "https://github.com/openai/codex/releases/tag/rust-v0.9.1", kind: "hashedrekord"}
 	v.claudeSum = sum(v.claude)
 	v.codex = tgz(t, "codex-x86_64-unknown-linux-musl", v.codexBin)
 	v.bundleSum, v.sigstore = sum(v.codexBin), newFakeSigstore(t)
+	v.helpers = newHelperAssets(t, v.arch)
 	var body string
 	v.srv = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		v.requests = append(v.requests, r.URL.Path)
@@ -130,7 +131,7 @@ func newVendor(t *testing.T) *vendor {
 				w.Header().Set("Location", v.location)
 			}
 			w.WriteHeader(cmp.Or(v.latestStatus, http.StatusFound))
-		case codexRel + ".sigstore":
+		case "/dl/rust-v0.9.1/codex-" + v.arch + "-unknown-linux-musl.sigstore":
 			if v.noBundle {
 				http.NotFound(w, r)
 				return
@@ -139,7 +140,7 @@ func newVendor(t *testing.T) *vendor {
 				v.bundle, body = v.sigstore.bundle(t, v.bundleSum, func(o *fakeOpts) { o.kind = v.kind })
 			}
 			_, _ = fmt.Fprint(w, v.bundle)
-		case codexRel + ".tar.gz":
+		case "/dl/rust-v0.9.1/codex-" + v.arch + "-unknown-linux-musl.tar.gz":
 			if v.archiveStatus != 0 {
 				w.WriteHeader(v.archiveStatus)
 				return
@@ -152,7 +153,9 @@ func newVendor(t *testing.T) *vendor {
 			}
 			_, _ = fmt.Fprintf(w, cmp.Or(v.rekor, `{"108e9186":{"body":%[1]q,"logIndex":42}}`), body)
 		default:
-			http.NotFound(w, r)
+			if !v.serveHelper(t, w, r, &body) {
+				http.NotFound(w, r)
+			}
 		}
 	}))
 	t.Cleanup(v.srv.Close)
