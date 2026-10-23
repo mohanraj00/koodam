@@ -203,9 +203,17 @@ func (p *Proxy) deny(w http.ResponseWriter, sp *Span, reason string) {
 // connect checks the port and the address, then reads the TLS ClientHello and refuses a
 // ClientHello with a different SNI. Then it copies the bytes in the 2 directions.
 func (p *Proxy) connect(w http.ResponseWriter, r *http.Request, sp *Span) {
-	host, port, err := net.SplitHostPort(r.Host)
+	// The request target is the authority of a CONNECT, not the Host header.
+	sp.Host = r.URL.Host
+	host, port, err := net.SplitHostPort(r.URL.Host)
 	if err != nil || !slices.Contains(orDefault(p.ConnectPorts, "443"), port) {
 		p.deny(w, sp, reasonPort)
+		return
+	}
+	hj, ok := w.(http.Hijacker)
+	if !ok {
+		sp.Result, sp.Reason, sp.Status = ResultError, "no hijack", http.StatusInternalServerError
+		http.Error(w, "egress error", http.StatusInternalServerError)
 		return
 	}
 	upstream, err := p.dial(r.Context(), host, port)
@@ -214,12 +222,6 @@ func (p *Proxy) connect(w http.ResponseWriter, r *http.Request, sp *Span) {
 		return
 	}
 	defer func() { _ = upstream.Close() }()
-	hj, ok := w.(http.Hijacker)
-	if !ok {
-		sp.Result, sp.Reason, sp.Status = ResultError, "no hijack", http.StatusInternalServerError
-		http.Error(w, "egress error", http.StatusInternalServerError)
-		return
-	}
 	client, buf, err := hj.Hijack()
 	if err != nil {
 		sp.Result, sp.Reason = ResultError, "hijack"
@@ -236,15 +238,24 @@ func (p *Proxy) connect(w http.ResponseWriter, r *http.Request, sp *Span) {
 		timeout = 10 * time.Second
 	}
 	_ = client.SetReadDeadline(time.Now().Add(timeout))
-	hello, sni, isTLS := readHello(client, buf.Reader)
+	hello, sni, isTLS, readErr := readHello(client, buf.Reader)
 	_ = client.SetReadDeadline(time.Time{})
 	sp.SNI = sni
+	// A client sends no SNI for an IP address. For a name, the SNI must be that name, so that the
+	// TLS name is the name that the proxy checked.
+	want := strings.TrimSuffix(host, ".")
+	if _, err := netip.ParseAddr(host); err == nil {
+		want = ""
+	}
+	var ne net.Error
 	switch {
+	case !isTLS && errors.As(readErr, &ne) && ne.Timeout():
+		sp.Result, sp.Reason = ResultError, "hello timeout"
+		return
 	case !isTLS:
 		sp.Result, sp.Reason = ResultDenied, reasonNoTLS
 		return
-	case sni != "" && !strings.EqualFold(strings.TrimSuffix(sni, "."), strings.TrimSuffix(host, ".")):
-		// Domain fronting: the TLS name is not the name that the proxy checked.
+	case !strings.EqualFold(strings.TrimSuffix(sni, "."), want):
 		sp.Result, sp.Reason = ResultDenied, reasonSNI
 		return
 	}
@@ -370,14 +381,14 @@ func IsPublic(a netip.Addr) bool {
 }
 
 // readHello reads the TLS ClientHello from r and returns its bytes and its SNI. It does not
-// decrypt. isTLS is false if the bytes are not a ClientHello.
-func readHello(c net.Conn, r io.Reader) (hello []byte, sni string, isTLS bool) {
+// decrypt. isTLS is false if the bytes are not a ClientHello. err is the last read error.
+func readHello(c net.Conn, r io.Reader) (hello []byte, sni string, isTLS bool, err error) {
 	rc := &recordConn{Conn: c, r: r}
 	_ = tls.Server(rc, &tls.Config{GetConfigForClient: func(h *tls.ClientHelloInfo) (*tls.Config, error) {
 		sni, isTLS = h.ServerName, true
 		return nil, errDenied
 	}}).Handshake()
-	return rc.buf, sni, isTLS
+	return rc.buf, sni, isTLS, rc.err
 }
 
 // recordConn keeps a copy of the bytes that it reads, and it cannot write.
@@ -385,27 +396,32 @@ type recordConn struct {
 	net.Conn
 	r   io.Reader
 	buf []byte
+	err error
 }
 
 func (c *recordConn) Read(b []byte) (int, error) {
 	n, err := c.r.Read(b)
 	c.buf = append(c.buf, b[:n]...)
+	if err != nil {
+		c.err = err
+	}
 	return n, err
 }
 
 func (c *recordConn) Write([]byte) (int, error) { return 0, net.ErrClosed }
 
-// pipe copies in the 2 directions until one side closes.
+// pipe copies in the 2 directions. When one direction ends, it closes the 2 connections, so
+// that an idle peer cannot keep the other copy and its goroutine.
 func pipe(client net.Conn, fromClient io.Reader, upstream net.Conn) (in, out int64) {
 	done := make(chan int64, 1)
 	go func() {
 		n, _ := io.Copy(upstream, fromClient)
-		if tc, ok := upstream.(*net.TCPConn); ok {
-			_ = tc.CloseWrite()
-		}
+		_ = upstream.Close()
+		_ = client.Close()
 		done <- n
 	}()
 	in, _ = io.Copy(client, upstream)
+	_ = upstream.Close()
 	_ = client.Close()
 	return in, <-done
 }

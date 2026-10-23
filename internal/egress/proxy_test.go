@@ -56,8 +56,8 @@ func (c chanSink) next(t *testing.T) Span {
 }
 
 // start runs a proxy that resolves testHost to 127.0.0.1 and permits all addresses, unless
-// strict is true. It returns the proxy URL and the sink.
-func start(t *testing.T, strict bool, port string, gateway *url.URL) (*url.URL, chanSink) {
+// strict is true. opts change the proxy. It returns the proxy URL and the sink.
+func start(t *testing.T, strict bool, port string, gateway *url.URL, opts ...func(*Proxy)) (*url.URL, chanSink) {
 	t.Helper()
 	sink := make(chanSink, 4)
 	p := &Proxy{Sink: sink, Gateway: gateway, ConnectPorts: []string{port}, HTTPPorts: []string{port},
@@ -66,6 +66,9 @@ func start(t *testing.T, strict bool, port string, gateway *url.URL) (*url.URL, 
 		}}
 	if !strict {
 		p.Permit = func(netip.Addr) bool { return true }
+	}
+	for _, o := range opts {
+		o(p)
 	}
 	srv := httptest.NewServer(p)
 	t.Cleanup(srv.Close)
@@ -133,6 +136,60 @@ func TestConnectRefusesFront(t *testing.T) {
 	}
 	sp := sink.next(t)
 	if sp.Result != ResultDenied || sp.SNI != "front.example" || sp.Host != net.JoinHostPort(testHost, port(t, up.URL)) {
+		t.Fatalf("span %+v", sp)
+	}
+}
+
+func TestConnectRefusesNoSNI(t *testing.T) {
+	up := httptest.NewTLSServer(http.NotFoundHandler())
+	defer up.Close()
+	pu, sink := start(t, false, port(t, up.URL), nil)
+	c, _ := connect(t, pu, net.JoinHostPort(testHost, port(t, up.URL)))
+	// With no ServerName, the client sends no SNI.
+	//nolint:gosec // The test server has a self-signed certificate.
+	if err := tls.Client(c, &tls.Config{InsecureSkipVerify: true}).Handshake(); err == nil {
+		t.Fatal("the handshake with no SNI passed")
+	}
+	if sp := sink.next(t); sp.Result != ResultDenied || sp.Reason != reasonSNI {
+		t.Fatalf("span %+v", sp)
+	}
+}
+
+func TestConnectHelloTimeout(t *testing.T) {
+	up := httptest.NewTLSServer(http.NotFoundHandler())
+	defer up.Close()
+	pu, sink := start(t, false, port(t, up.URL), nil, func(p *Proxy) { p.HelloTimeout = 50 * time.Millisecond })
+	_, code := connect(t, pu, net.JoinHostPort(testHost, port(t, up.URL)))
+	if code != http.StatusOK {
+		t.Fatalf("status %d", code)
+	}
+	if sp := sink.next(t); sp.Result != ResultError || sp.Reason != "hello timeout" {
+		t.Fatalf("span %+v", sp)
+	}
+}
+
+// TestConnectEndsWithTheClient checks that the proxy ends the call when the client closes,
+// also if the upstream stays open and sends nothing.
+func TestConnectEndsWithTheClient(t *testing.T) {
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = ln.Close() }()
+	go func() {
+		// The upstream reads all bytes and never writes or closes.
+		if c, err := ln.Accept(); err == nil {
+			_, _ = io.Copy(io.Discard, c)
+		}
+	}()
+	lnPort := port(t, "http://"+ln.Addr().String())
+	pu, sink := start(t, false, lnPort, nil)
+	c, _ := connect(t, pu, net.JoinHostPort(testHost, lnPort))
+	tc := tls.Client(c, &tls.Config{ServerName: testHost})
+	go func() { _ = tc.Handshake() }()
+	time.Sleep(100 * time.Millisecond)
+	_ = c.Close()
+	if sp := sink.next(t); sp.Result != ResultOK || sp.SNI != testHost || sp.BytesOut == 0 {
 		t.Fatalf("span %+v", sp)
 	}
 }
