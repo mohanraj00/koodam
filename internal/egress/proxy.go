@@ -1,0 +1,325 @@
+/*
+Copyright 2026 Mohan Raj.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
+
+// Package egress is the egress proxy core. It forwards the calls of the Agent and Workspace pods
+// and writes one span for each call.
+package egress
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"io"
+	"log"
+	"net"
+	"net/http"
+	"net/http/httputil"
+	"net/netip"
+	"net/url"
+	"slices"
+	"strings"
+	"sync"
+	"time"
+)
+
+// The kinds of a span.
+const (
+	KindConnect = "connect"
+	KindHTTP    = "http"
+	KindLLM     = "llm"
+)
+
+// The results of a span.
+const (
+	ResultOK     = "ok"
+	ResultDenied = "denied"
+	ResultError  = "error"
+)
+
+// The reasons of a denied span.
+const (
+	reasonPort     = "port"
+	reasonAddress  = "address"
+	reasonIdentity = "identity"
+	reasonNoProxy  = "not a proxy request"
+)
+
+// LLMPrefix is the path prefix of the reverse route to the gateway.
+const LLMPrefix = "/llm/"
+
+// Span is the record of one call. It has no header, no query string and no body, thus it cannot
+// hold a gateway key. BytesIn go to the pod, and BytesOut come from the pod.
+type Span struct {
+	Time       time.Time `json:"time"`
+	DurationMS float64   `json:"durationMs"`
+	Source     string    `json:"source"`
+	Kind       string    `json:"kind"`
+	Method     string    `json:"method,omitempty"`
+	Host       string    `json:"host,omitempty"`
+	SNI        string    `json:"sni,omitempty"`
+	Path       string    `json:"path,omitempty"`
+	Status     int       `json:"status,omitempty"`
+	BytesIn    int64     `json:"bytesIn"`
+	BytesOut   int64     `json:"bytesOut"`
+	Result     string    `json:"result"`
+	Reason     string    `json:"reason,omitempty"`
+
+	// The identity of the source pod. Identify fills these fields.
+	Namespace string `json:"namespace,omitempty"`
+	Pod       string `json:"pod,omitempty"`
+	Run       string `json:"run,omitempty"`
+	User      string `json:"user,omitempty"`
+}
+
+// Sink receives each span. Write must be safe for concurrent use.
+type Sink interface{ Write(Span) }
+
+// JSONSink writes one JSON line for each span.
+type JSONSink struct {
+	mu  sync.Mutex
+	enc *json.Encoder
+}
+
+// NewJSONSink returns a sink that writes to w, for example os.Stdout.
+func NewJSONSink(w io.Writer) *JSONSink { return &JSONSink{enc: json.NewEncoder(w)} }
+
+func (s *JSONSink) Write(sp Span) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	_ = s.enc.Encode(sp)
+}
+
+var errDenied = errors.New("the address is not permitted")
+
+// Proxy is an http.Handler for plain HTTP with an absolute URI and for /llm/. A later change adds CONNECT.
+type Proxy struct {
+	Sink Sink
+	// Gateway is the target of /llm/. If it is nil, the proxy refuses /llm/.
+	Gateway *url.URL
+	// HTTPPorts are the permitted plain HTTP ports. The default is 80.
+	HTTPPorts []string
+	// Permit returns true for an address that the proxy can dial. The default is IsPublic.
+	Permit func(netip.Addr) bool
+	// Resolve finds the addresses of a host name. The default is the system resolver.
+	Resolve func(ctx context.Context, host string) ([]netip.Addr, error)
+	// Identify fills the identity fields of the span before the call. If it returns an error,
+	// the proxy refuses the call.
+	Identify func(r *http.Request, sp *Span) error
+
+	once      sync.Once
+	direct    http.RoundTripper
+	toGateway http.RoundTripper
+}
+
+func (p *Proxy) init() {
+	p.once.Do(func() {
+		d := http.DefaultTransport.(*http.Transport).Clone()
+		d.Proxy = nil
+		d.DialContext = func(ctx context.Context, _, addr string) (net.Conn, error) {
+			host, port, err := net.SplitHostPort(addr)
+			if err != nil {
+				return nil, err
+			}
+			return p.dial(ctx, host, port)
+		}
+		p.direct = d
+		g := http.DefaultTransport.(*http.Transport).Clone()
+		g.Proxy = nil
+		p.toGateway = g
+	})
+}
+
+func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	p.init()
+	start := time.Now()
+	sp := Span{Time: start.UTC(), Source: sourceIP(r.RemoteAddr), Method: r.Method, Kind: KindHTTP}
+	switch {
+	case r.Method == http.MethodConnect:
+		sp.Kind = KindConnect
+	case !r.URL.IsAbs() && strings.HasPrefix(r.URL.Path, LLMPrefix):
+		sp.Kind = KindLLM
+	}
+	if p.Identify != nil {
+		if err := p.Identify(r, &sp); err != nil {
+			p.deny(w, &sp, reasonIdentity)
+		}
+	}
+	if sp.Result == "" {
+		switch {
+		case sp.Kind == KindLLM && p.Gateway != nil:
+			p.llm(w, r, &sp)
+		case sp.Kind == KindHTTP && r.URL.IsAbs():
+			p.forward(w, r, &sp)
+		default:
+			p.deny(w, &sp, reasonNoProxy)
+		}
+	}
+	sp.DurationMS = float64(time.Since(start).Microseconds()) / 1000
+	p.Sink.Write(sp)
+}
+
+func (p *Proxy) deny(w http.ResponseWriter, sp *Span, reason string) {
+	sp.Result, sp.Reason, sp.Status = ResultDenied, reason, http.StatusForbidden
+	http.Error(w, "egress denied: "+reason, http.StatusForbidden)
+}
+
+func (p *Proxy) forward(w http.ResponseWriter, r *http.Request, sp *Span) {
+	sp.Host, sp.Path = r.URL.Host, r.URL.Path
+	port := r.URL.Port()
+	if port == "" {
+		port = "80"
+	}
+	if r.URL.Scheme != "http" || !slices.Contains(orDefault(p.HTTPPorts, "80"), port) {
+		p.deny(w, sp, reasonPort)
+		return
+	}
+	// The Rewrite keeps the absolute URL. ReverseProxy removes the hop-by-hop headers, for example
+	// Proxy-Authorization, and adds no X-Forwarded-For.
+	p.reverse(w, r, sp, p.direct, func(*httputil.ProxyRequest) {})
+}
+
+func (p *Proxy) llm(w http.ResponseWriter, r *http.Request, sp *Span) {
+	sp.Host, sp.Path = p.Gateway.Host, r.URL.Path
+	// The gateway key header passes through. The span has no header.
+	p.reverse(w, r, sp, p.toGateway, func(pr *httputil.ProxyRequest) {
+		pr.Out.URL.Path = strings.TrimPrefix(pr.In.URL.Path, strings.TrimSuffix(LLMPrefix, "/"))
+		pr.Out.URL.RawPath = ""
+		pr.SetURL(p.Gateway)
+	})
+}
+
+func (p *Proxy) reverse(w http.ResponseWriter, r *http.Request, sp *Span, rt http.RoundTripper,
+	rewrite func(*httputil.ProxyRequest)) {
+	cw := &countWriter{ResponseWriter: w}
+	body := &countReader{ReadCloser: r.Body}
+	r.Body = body
+	rp := &httputil.ReverseProxy{
+		Rewrite: rewrite, Transport: rt,
+		// The error text can hold the URL with its query string. Thus the proxy does not log it.
+		ErrorLog: log.New(io.Discard, "", 0),
+		ErrorHandler: func(w http.ResponseWriter, _ *http.Request, err error) {
+			p.dialFailed(w, sp, err)
+		},
+	}
+	rp.ServeHTTP(cw, r)
+	sp.BytesIn, sp.BytesOut = cw.n, body.n
+	if sp.Result == "" {
+		sp.Result, sp.Status = ResultOK, cw.status
+	}
+}
+
+func (p *Proxy) dialFailed(w http.ResponseWriter, sp *Span, err error) {
+	if errors.Is(err, errDenied) {
+		p.deny(w, sp, reasonAddress)
+		return
+	}
+	// The reason is fixed text. The error text can hold a URL.
+	sp.Result, sp.Reason, sp.Status = ResultError, "upstream", http.StatusBadGateway
+	http.Error(w, "egress error", http.StatusBadGateway)
+}
+
+// dial resolves host and dials the first address. It refuses the call if one address is not
+// permitted. It dials the checked address, thus a second name lookup cannot change it.
+func (p *Proxy) dial(ctx context.Context, host, port string) (net.Conn, error) {
+	var addrs []netip.Addr
+	if a, err := netip.ParseAddr(host); err == nil {
+		addrs = []netip.Addr{a}
+	} else if p.Resolve != nil {
+		addrs, err = p.Resolve(ctx, host)
+		if err != nil {
+			return nil, err
+		}
+	} else if addrs, err = net.DefaultResolver.LookupNetIP(ctx, "ip", host); err != nil {
+		return nil, err
+	}
+	permit := p.Permit
+	if permit == nil {
+		permit = IsPublic
+	}
+	if len(addrs) == 0 {
+		return nil, errors.New("no address")
+	}
+	for _, a := range addrs {
+		if !permit(a.Unmap()) {
+			return nil, errDenied
+		}
+	}
+	d := net.Dialer{Timeout: 10 * time.Second}
+	return d.DialContext(ctx, "tcp", net.JoinHostPort(addrs[0].Unmap().String(), port))
+}
+
+var sharedAddress = netip.MustParsePrefix("100.64.0.0/10")
+
+// IsPublic is false for a loopback, private, link-local, multicast, unspecified or shared
+// (100.64.0.0/10) address.
+func IsPublic(a netip.Addr) bool {
+	a = a.Unmap()
+	return a.IsGlobalUnicast() && !a.IsPrivate() && !sharedAddress.Contains(a)
+}
+
+func sourceIP(remote string) string {
+	if ap, err := netip.ParseAddrPort(remote); err == nil {
+		return ap.Addr().Unmap().String()
+	}
+	return remote
+}
+
+func orDefault(s []string, def string) []string {
+	if len(s) == 0 {
+		return []string{def}
+	}
+	return s
+}
+
+type countWriter struct {
+	http.ResponseWriter
+	status int
+	n      int64
+}
+
+func (w *countWriter) WriteHeader(code int) {
+	if w.status == 0 {
+		w.status = code
+	}
+	w.ResponseWriter.WriteHeader(code)
+}
+
+func (w *countWriter) Write(b []byte) (int, error) {
+	if w.status == 0 {
+		w.status = http.StatusOK
+	}
+	n, err := w.ResponseWriter.Write(b)
+	w.n += int64(n)
+	return n, err
+}
+
+// Flush keeps a streamed answer of the gateway streamed.
+func (w *countWriter) Flush() {
+	if f, ok := w.ResponseWriter.(http.Flusher); ok {
+		f.Flush()
+	}
+}
+
+type countReader struct {
+	io.ReadCloser
+	n int64
+}
+
+func (r *countReader) Read(b []byte) (int, error) {
+	n, err := r.ReadCloser.Read(b)
+	r.n += int64(n)
+	return n, err
+}
