@@ -27,6 +27,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes/fake"
+	"k8s.io/client-go/tools/cache"
 
 	"github.com/mohanraj00/koodam/internal/controller"
 )
@@ -38,6 +39,7 @@ const (
 	alice = "alice"
 	bob   = "bob"
 	run1  = "a1-run"
+	pod1  = "a1-run-x"
 )
 
 func pod(name, ip string, labels map[string]string) *corev1.Pod {
@@ -72,11 +74,11 @@ func TestLabelsAgreeWithTheController(t *testing.T) {
 
 func TestIdentifyKnownPod(t *testing.T) {
 	x := NewPodIndex()
-	x.Set(agentPod("a1-run-x", podA))
+	x.Set(agentPod(pod1, podA))
 	x.Set(pod("ws-0", podB, map[string]string{WorkspaceLabel: "ws", UserLabel: bob}))
 
 	sp, err := identify(t, x, podA, nil)
-	if err != nil || sp.Namespace != ns || sp.Pod != "a1-run-x" || sp.Agent != "a1" || sp.Run != run1 ||
+	if err != nil || sp.Namespace != ns || sp.Pod != pod1 || sp.Agent != "a1" || sp.Run != run1 ||
 		sp.User != alice || sp.Workspace != "" {
 		t.Fatalf("%v %+v", err, sp)
 	}
@@ -88,13 +90,13 @@ func TestIdentifyKnownPod(t *testing.T) {
 
 func TestIdentifyRecordsClaimsOnly(t *testing.T) {
 	x := NewPodIndex()
-	x.Set(agentPod("a1-run-x", podA))
+	x.Set(agentPod(pod1, podA))
 	h := http.Header{}
 	h.Set(ClaimedRunHeader, "other-run")
-	h.Set(ClaimedUserHeader, strings.Repeat("m", 100))
+	h.Set(ClaimedUserHeader, strings.Repeat("m", maxClaim-1)+"é")
 	sp, err := identify(t, x, podA, h)
 	if err != nil || sp.Run != run1 || sp.User != alice || sp.ClaimedRun != "other-run" ||
-		len(sp.ClaimedUser) != maxClaim {
+		sp.ClaimedUser != strings.Repeat("m", maxClaim-1) {
 		t.Fatalf("%v %+v", err, sp)
 	}
 	// A claim does not give an identity to an unknown IP.
@@ -131,19 +133,19 @@ func TestIndexRefuses(t *testing.T) {
 
 func TestIndexFollowsTheIP(t *testing.T) {
 	x := NewPodIndex()
-	p := agentPod("a1-run-x", podA)
+	p := agentPod(pod1, podA)
 	x.Set(p)
 	// The pod gets a new IP. The old IP has no pod.
-	p = agentPod("a1-run-x", podB)
+	p = agentPod(pod1, podB)
 	x.Set(p)
 	if _, err := identify(t, x, podA, nil); err == nil {
 		t.Fatal("the old IP has an identity")
 	}
-	if sp, err := identify(t, x, podB, nil); err != nil || sp.Pod != "a1-run-x" {
+	if sp, err := identify(t, x, podB, nil); err != nil || sp.Pod != pod1 {
 		t.Fatalf("%v %+v", err, sp)
 	}
 	// A deleted pod gives its IP to a new pod of a different run.
-	x.Delete(ns, "a1-run-x")
+	x.Delete(ns, pod1)
 	x.Set(pod("b1-run-y", podB, map[string]string{AgentLabel: "b1", RunLabel: "b1-run", UserLabel: bob}))
 	if sp, err := identify(t, x, podB, nil); err != nil || sp.Run != "b1-run" || sp.User != bob {
 		t.Fatalf("%v %+v", err, sp)
@@ -163,8 +165,44 @@ func TestProxyRefusesUnknownSource(t *testing.T) {
 	}
 }
 
+func TestProxyIdentifiesKnownSource(t *testing.T) {
+	x := NewPodIndex()
+	x.Set(agentPod(pod1, podA))
+	sink := make(chanSink, 1)
+	p := &Proxy{Sink: sink, Identify: x.Identify}
+	r := httptest.NewRequest(http.MethodGet, "/", nil)
+	r.RemoteAddr = podA + ":4000"
+	p.ServeHTTP(httptest.NewRecorder(), r)
+	// The request is not a proxy request, but the span has the identity of the pod.
+	if sp := sink.next(t); sp.Reason != reasonNoProxy || sp.Pod != pod1 || sp.Run != run1 {
+		t.Fatalf("span %+v", sp)
+	}
+}
+
+func TestIndexIPForms(t *testing.T) {
+	x := NewPodIndex()
+	p := agentPod("v6", "")
+	p.Status.PodIPs = []corev1.PodIP{{IP: ""}, {IP: "FD00:0:0::5"}}
+	x.Set(p)
+	if sp, err := identify(t, x, "fd00::5", nil); err != nil || sp.Pod != "v6" {
+		t.Fatalf("%v %+v", err, sp)
+	}
+	if _, err := identify(t, x, "", nil); err == nil {
+		t.Fatal("an empty source has an identity")
+	}
+}
+
+func TestIndexTombstone(t *testing.T) {
+	x := NewPodIndex()
+	x.Set(agentPod(pod1, podA))
+	x.handler().OnDelete(cache.DeletedFinalStateUnknown{Key: ns + "/" + pod1})
+	if _, err := identify(t, x, podA, nil); err == nil {
+		t.Fatal("the pod stays after a tombstone")
+	}
+}
+
 func TestWatch(t *testing.T) {
-	cs := fake.NewClientset(agentPod("a1-run-x", podA),
+	cs := fake.NewClientset(agentPod(pod1, podA),
 		pod("ws-0", podB, map[string]string{WorkspaceLabel: "ws", UserLabel: bob}))
 	ctx := t.Context()
 	x := NewPodIndex()
@@ -177,7 +215,7 @@ func TestWatch(t *testing.T) {
 	if sp, err := identify(t, x, podB, nil); err != nil || sp.Workspace != "ws" {
 		t.Fatalf("%v %+v", err, sp)
 	}
-	if err := cs.CoreV1().Pods(ns).Delete(ctx, "a1-run-x", metav1.DeleteOptions{}); err != nil {
+	if err := cs.CoreV1().Pods(ns).Delete(ctx, pod1, metav1.DeleteOptions{}); err != nil {
 		t.Fatal(err)
 	}
 	deadline := time.Now().Add(5 * time.Second)

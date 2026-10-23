@@ -20,6 +20,8 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"net/netip"
+	"strings"
 	"sync"
 	"time"
 
@@ -89,10 +91,12 @@ func (x *PodIndex) Set(p *corev1.Pod) {
 		workspace: p.Labels[WorkspaceLabel], run: p.Labels[RunLabel], user: p.Labels[UserLabel]}
 	var ips []string
 	for _, ip := range p.Status.PodIPs {
-		ips = append(ips, ip.IP)
+		if a, err := netip.ParseAddr(ip.IP); err == nil {
+			ips = append(ips, a.Unmap().String())
+		}
 	}
-	if len(ips) == 0 && p.Status.PodIP != "" {
-		ips = []string{p.Status.PodIP}
+	if a, err := netip.ParseAddr(p.Status.PodIP); err == nil && len(ips) == 0 {
+		ips = []string{a.Unmap().String()}
 	}
 	for _, ip := range ips {
 		if x.byIP[ip] == nil {
@@ -160,11 +164,12 @@ func (x *PodIndex) Identify(r *http.Request, sp *Span) error {
 	}
 }
 
+// claim limits a claimed value to maxClaim bytes, and does not cut a UTF-8 character.
 func claim(v string) string {
 	if len(v) > maxClaim {
-		return v[:maxClaim]
+		v = v[:maxClaim]
 	}
-	return v
+	return strings.ToValidUTF8(v, "")
 }
 
 // Watch fills the index from 2 pod informers in all namespaces: one for the Agent pods and one
@@ -194,7 +199,10 @@ func (x *PodIndex) handler() cache.ResourceEventHandlerFuncs {
 		UpdateFunc: func(_, o any) { x.set(o) },
 		DeleteFunc: func(o any) {
 			if d, ok := o.(cache.DeletedFinalStateUnknown); ok {
-				o = d.Obj
+				if ns, name, err := cache.SplitMetaNamespaceKey(d.Key); err == nil {
+					x.Delete(ns, name)
+				}
+				return
 			}
 			if p, ok := o.(*corev1.Pod); ok {
 				x.Delete(p.Namespace, p.Name)
