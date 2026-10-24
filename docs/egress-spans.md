@@ -19,7 +19,7 @@ The egress proxy writes 1 JSON line to its stdout for each call from an Agent po
 | `durationMs` | number | yes | The time of the call in milliseconds. |
 | `source` | string | yes | The IP address of the pod that made the call. |
 | `kind` | string | yes | The path of the call. See "Kinds". |
-| `method` | string | no | The HTTP method. `CONNECT` for the kind `connect`. |
+| `method` | string | no | The HTTP method. `CONNECT` for the kind `connect`. A method that is not standard is `OTHER`. |
 | `host` | string | no | The target. For `connect`, it is the `host:port` of the CONNECT request. For `http`, it is the URL host. For `llm`, it is the gateway host. |
 | `sni` | string | no | The TLS server name from the ClientHello. Only for `connect` and `tls`. |
 | `port` | string | no | The target port, for example `"443"`. |
@@ -82,7 +82,7 @@ A span has no request header, no query string and no body. Thus the `Authorizati
 
 An `http` span has no path, because some APIs put a token in the path. An `llm` span keeps the path, because the gateway routes hold no secret. The span records only that a claim header came, not its value (#170).
 
-Only `host` and `sni` hold text that the pod chose. A pod can put data in a host name, thus give the spans the same protection as the logs of the pods: only the people who can read the logs of a Workspace can read its spans.
+Only `host`, `sni` and the `llm` path hold text that the pod chose. A pod can put data in a host name, thus give the spans the same protection as the logs of the pods: only the people who can read the logs of a Workspace can read its spans.
 
 ## Identity
 

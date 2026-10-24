@@ -164,7 +164,7 @@ This traffic goes direct, so it has no span. The Nookku HTTP tap records it.
 - An Agent run gets 1 gateway key. The alias is `kd-<agent uid>`, in `status.keyAlias`.
 - A Workspace with a gateway key gets the alias `ws-<namespace>-<name>-<hash>`, in `status.keyAlias`.
 - A Workspace with a subscription login has no gateway key.
-- LiteLLM keeps the spend logs for each key alias. Koodam never writes the key value to a status, an event or a log. A span holds no header, no query string and no `http` path. The pod chooses only the host and the SNI ([egress-spans.md](egress-spans.md), #170).
+- LiteLLM keeps the spend logs for each key alias. Koodam never writes the key value to a status, an event or a log. A span holds no header, no query string and no `http` path. The pod chooses only the host, the SNI and the `llm` path ([egress-spans.md](egress-spans.md), #170).
 - Koodam gives no key for each Nookku test in v0.3. That needs a new API. Match the spend logs to a test by the time window and the key alias.
 
 ## Limits

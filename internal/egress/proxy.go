@@ -193,7 +193,7 @@ func newTransport(header time.Duration) *http.Transport {
 func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	p.init()
 	start := time.Now()
-	sp := Span{V: SpanVersion, Time: start.UTC(), Source: sourceIP(r.RemoteAddr), Method: r.Method, Kind: KindHTTP,
+	sp := Span{V: SpanVersion, Time: start.UTC(), Source: sourceIP(r.RemoteAddr), Method: spanMethod(r.Method), Kind: KindHTTP,
 		Host: r.Host}
 	switch {
 	case r.Method == http.MethodConnect:
@@ -533,6 +533,20 @@ func (p *Proxy) idle() time.Duration {
 		return p.Idle
 	}
 	return DefaultIdle
+}
+
+// MethodOther is the span method for a method that is not standard.
+const MethodOther = "OTHER"
+
+// spanMethod returns the method for a span. The pod chooses the method, thus a method that is not
+// a standard method becomes MethodOther, because it can be a key (#170).
+func spanMethod(m string) string {
+	switch m {
+	case http.MethodGet, http.MethodHead, http.MethodPost, http.MethodPut, http.MethodPatch,
+		http.MethodDelete, http.MethodConnect, http.MethodOptions, http.MethodTrace:
+		return m
+	}
+	return MethodOther
 }
 
 func sourceIP(remote string) string {

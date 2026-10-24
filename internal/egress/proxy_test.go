@@ -417,3 +417,12 @@ func TestLLMRouteStreams(t *testing.T) {
 		t.Fatalf("span %+v", sp)
 	}
 }
+
+func TestSpanMethod(t *testing.T) {
+	for in, want := range map[string]string{http.MethodGet: http.MethodGet, http.MethodConnect: http.MethodConnect,
+		"get": MethodOther, "SK-PLACEHOLDER": MethodOther, "": MethodOther} {
+		if got := spanMethod(in); got != want {
+			t.Errorf("spanMethod(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
