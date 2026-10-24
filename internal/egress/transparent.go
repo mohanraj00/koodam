@@ -33,7 +33,7 @@ import (
 // The limits of the transparent TLS listener. A connection over a limit is closed at once.
 const (
 	maxTLSConns     = 1024
-	maxTLSPerSource = 64
+	maxTLSPerSource = MaxPerSource
 )
 
 // ServeTLS accepts the TLS connections on ln until ctx ends. The target is the SNI on TLSPort.
@@ -136,7 +136,7 @@ func (p *Proxy) transparentTLS(ctx context.Context, client net.Conn) {
 	sp.Host = host
 	upstream, err := p.dial(ctx, host, port)
 	if err != nil {
-		sp.Result, sp.Reason = ResultError, "upstream"
+		sp.Result, sp.Reason = ResultError, reasonUpstream
 		if errors.Is(err, errDenied) {
 			sp.Result, sp.Reason = ResultDenied, reasonAddress
 		}
@@ -149,7 +149,7 @@ func (p *Proxy) transparentTLS(ctx context.Context, client net.Conn) {
 		sp.Result, sp.Reason = ResultError, "upstream write"
 		return
 	}
-	sp.BytesIn, sp.BytesOut = pipe(client, client, upstream)
+	sp.BytesIn, sp.BytesOut = pipe(client, client, upstream, p.idle())
 	sp.BytesOut += int64(len(hello))
 	sp.Result = ResultOK
 }

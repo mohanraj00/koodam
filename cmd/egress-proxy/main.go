@@ -43,8 +43,14 @@ import (
 	"github.com/mohanraj00/koodam/internal/egress"
 )
 
-// maxHTTPConns is the limit of the open connections on the transparent HTTP listener.
-const maxHTTPConns = 1024
+// maxConns is the limit of the open connections on each HTTP listener of the proxy.
+const maxConns = 1024
+
+// limit applies maxConns, and egress.MaxPerSource for each source IP, to ln. A connection over
+// the limit for its source does not hold a place in maxConns.
+func limit(ln net.Listener) net.Listener {
+	return netutil.LimitListener(egress.SourceLimit(ln, egress.MaxPerSource), maxConns)
+}
 
 func main() {
 	if err := run(); err != nil {
@@ -69,6 +75,8 @@ func run() error {
 	clusterDomain := flag.String("cluster-domain", "cluster.local", "the cluster domain")
 	tlsListen := flag.String("tls-listen", ":8443", "the address of the transparent TLS listener")
 	httpListen := flag.String("http-listen", ":8080", "the address of the transparent HTTP listener")
+	idle := flag.Duration("idle-timeout", egress.DefaultIdle,
+		"the time limit with no bytes on a tunnel, a request body or a response")
 	flag.Parse()
 
 	var dns *egress.Resolver
@@ -84,6 +92,7 @@ func run() error {
 		Sink:         egress.NewJSONSink(os.Stdout),
 		HTTPPorts:    list(*httpPorts),
 		ConnectPorts: list(*connectPorts),
+		Idle:         *idle,
 	}
 	if *gateway != "" {
 		u, err := parseGateway(*gateway)
@@ -153,11 +162,11 @@ func run() error {
 	if err != nil {
 		return err
 	}
-	srv := &http.Server{Handler: p, ReadHeaderTimeout: 30 * time.Second}
+	srv := &http.Server{Handler: p, ReadHeaderTimeout: 30 * time.Second, IdleTimeout: 90 * time.Second}
 	transparent := &http.Server{Handler: p.Transparent(), ReadHeaderTimeout: 30 * time.Second,
 		IdleTimeout: 90 * time.Second}
 	go func() {
-		if err := transparent.Serve(netutil.LimitListener(httpLn, maxHTTPConns)); !errors.Is(err, http.ErrServerClosed) {
+		if err := transparent.Serve(limit(httpLn)); !errors.Is(err, http.ErrServerClosed) {
 			serveErr <- fmt.Errorf("the HTTP listener: %w", err)
 			stop()
 		}
@@ -173,7 +182,7 @@ func run() error {
 		shutdown(transparent)
 		shutdown(probes)
 	}()
-	if err := srv.Serve(ln); !errors.Is(err, http.ErrServerClosed) {
+	if err := srv.Serve(limit(ln)); !errors.Is(err, http.ErrServerClosed) {
 		return err
 	}
 	// Serve returns when the shutdown starts. Wait until the open calls end and the TLS
