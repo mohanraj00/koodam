@@ -77,6 +77,7 @@ func (r *WorkspaceReconciler) mergedStatefulSet(ctx context.Context, ws *corev1a
 	if err != nil {
 		return nil, err
 	}
+	r.Egress.apply(&tmpl.Spec, ws.Namespace)
 	sts.Spec.Template = tmpl
 	return sts, nil
 }

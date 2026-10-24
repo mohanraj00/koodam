@@ -16,7 +16,11 @@ limitations under the License.
 
 package main
 
-import "testing"
+import (
+	"testing"
+
+	"github.com/mohanraj00/koodam/internal/controller"
+)
 
 // TestWorkspaceImageFor checks the tag rule of the default workspace image.
 func TestWorkspaceImageFor(t *testing.T) {
@@ -33,6 +37,31 @@ func TestWorkspaceImageFor(t *testing.T) {
 	} {
 		if got := workspaceImageFor(v); got != repo+tag {
 			t.Errorf("workspaceImageFor(%q) = %q, want %q", v, got, repo+tag)
+		}
+	}
+}
+
+// TestCheckEgress checks the egress proxy flags.
+func TestCheckEgress(t *testing.T) {
+	ok := controller.EgressProxy{IP: "10.96.0.53", Port: 3128, ClusterDomain: "cluster.local"}
+	bad := map[string]func(*controller.EgressProxy){
+		"an IPv6 IP":   func(e *controller.EgressProxy) { e.IP = "fd00::53" },
+		"a name":       func(e *controller.EgressProxy) { e.IP = "proxy.koodam" },
+		"port 0":       func(e *controller.EgressProxy) { e.Port = 0 },
+		"a bad domain": func(e *controller.EgressProxy) { e.ClusterDomain = "Cluster Local" },
+		"no domain":    func(e *controller.EgressProxy) { e.ClusterDomain = "" },
+	}
+	if err := checkEgress(ok); err != nil {
+		t.Fatal(err)
+	}
+	if err := checkEgress(controller.EgressProxy{}); err != nil {
+		t.Fatalf("no proxy: %v", err)
+	}
+	for name, change := range bad {
+		e := ok
+		change(&e)
+		if checkEgress(e) == nil {
+			t.Errorf("%s: no error", name)
 		}
 	}
 }

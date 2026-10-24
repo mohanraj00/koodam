@@ -9039,7 +9039,7 @@ spec:
                 format: date-time
                 type: string
               conditions:
-                description: 'Conditions: Provisioned, Revoked.'
+                description: 'Conditions: Provisioned, Revoked, TracedEgress.'
                 items:
                   description: Condition contains details for one aspect of the current
                     state of this API Resource.

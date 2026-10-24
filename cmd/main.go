@@ -21,6 +21,7 @@ import (
 	"flag"
 	"fmt"
 	"math"
+	"net/netip"
 	"os"
 	"regexp"
 	"runtime/debug"
@@ -37,6 +38,7 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/selection"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
+	"k8s.io/apimachinery/pkg/util/validation"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/cache"
@@ -107,6 +109,24 @@ func workspaceCache() cache.Options {
 }
 
 // nolint:gocyclo
+// checkEgress refuses an egress proxy IP that is not an IPv4 address, and a port or a cluster
+// domain that is not valid. The pods use the IP as their DNS server.
+func checkEgress(e controller.EgressProxy) error {
+	if e.IP == "" {
+		return nil
+	}
+	if a, err := netip.ParseAddr(e.IP); err != nil || !a.Is4() {
+		return fmt.Errorf("--egress-proxy-ip=%q is not an IPv4 address", e.IP)
+	}
+	if e.Port < 1 || e.Port > 65535 {
+		return fmt.Errorf("--egress-proxy-port=%d is out of range", e.Port)
+	}
+	if errs := validation.IsDNS1123Subdomain(e.ClusterDomain); len(errs) > 0 {
+		return fmt.Errorf("--cluster-domain=%q is not valid: %s", e.ClusterDomain, strings.Join(errs, "; "))
+	}
+	return nil
+}
+
 func main() {
 	var metricsAddr string
 	var metricsCertPath, metricsCertName, metricsCertKey string
@@ -118,6 +138,7 @@ func main() {
 	var enableHTTP2 bool
 	var gatewayURL, gatewayKeyFile, agentGatewayURL, installerImage, workspaceImage string
 	var keyGrace time.Duration
+	var egress controller.EgressProxy
 	var jobTTLSeconds int
 	var tlsOpts []func(*tls.Config)
 	flag.StringVar(&metricsAddr, "metrics-bind-address", "0", "The address the metrics endpoint binds to. "+
@@ -147,6 +168,10 @@ func main() {
 		"The file with the LiteLLM master key. The key is never a flag value.")
 	flag.StringVar(&agentGatewayURL, "agent-gateway-url", "",
 		"The gateway address for the agent pods. The default is the value of --gateway-url.")
+	flag.StringVar(&egress.IP, "egress-proxy-ip", "",
+		"The ClusterIP of the egress proxy. If set, the pods use it as their DNS server and their gateway.")
+	flag.IntVar(&egress.Port, "egress-proxy-port", 3128, "The HTTP port of the egress proxy.")
+	flag.StringVar(&egress.ClusterDomain, "cluster-domain", "cluster.local", "The DNS domain of the cluster.")
 	flag.DurationVar(&keyGrace, "key-grace", time.Minute, "The time that is added to deadlineSeconds for the key TTL.")
 	flag.IntVar(&jobTTLSeconds, "job-ttl-seconds", controller.DefaultJobTTLSeconds,
 		"The time in seconds that the controller keeps a run Job and its pods after the Job ends. "+
@@ -270,6 +295,11 @@ func main() {
 	if agentGatewayURL == "" {
 		agentGatewayURL = gatewayURL
 	}
+	if err := checkEgress(egress); err != nil {
+		setupLog.Error(err, "The egress proxy flags are not valid")
+		os.Exit(1)
+	}
+	agentGatewayURL = egress.GatewayURL(agentGatewayURL)
 	gw := gateway.NewLiteLLM(gatewayURL, strings.TrimSpace(string(masterKey)))
 	if err := (&controller.AgentReconciler{
 		Client:         mgr.GetClient(),
@@ -277,6 +307,7 @@ func main() {
 		APIReader:      mgr.GetAPIReader(),
 		Gateway:        gw,
 		GatewayURL:     strings.TrimRight(agentGatewayURL, "/"),
+		Egress:         egress,
 		Grace:          keyGrace,
 		InstallerImage: installerImage,
 		JobTTL:         int32(jobTTLSeconds),
@@ -299,6 +330,7 @@ func main() {
 		InstallerImage: installerImage,
 		Gateway:        gw,
 		GatewayURL:     strings.TrimRight(agentGatewayURL, "/"),
+		Egress:         egress,
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "Failed to create controller", "controller", "workspace")
 		os.Exit(1)

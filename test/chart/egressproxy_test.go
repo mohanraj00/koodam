@@ -265,3 +265,22 @@ func TestEgressProxyRefusesBadValues(t *testing.T) {
 		t.Fatal("the proxy NetworkPolicy is on, but networkPolicy.enabled is false")
 	}
 }
+
+// TestEgressProxyControllerFlags checks that the controller sends the pods to the proxy only if
+// the proxy is on.
+func TestEgressProxyControllerFlags(t *testing.T) {
+	const manager = "koodam-controller-manager"
+	flags := []string{"--egress-proxy-ip=10.96.0.50", "--egress-proxy-port=3128", "--cluster-domain=cluster.local"}
+	for values, want := range map[string]bool{"": false, proxyValues: true} {
+		deps := decode[appsv1.Deployment](t, render(t, values), "Deployment", manager)
+		if len(deps) != 1 {
+			t.Fatalf("got %d controller Deployments, want 1", len(deps))
+		}
+		args := deps[0].Spec.Template.Spec.Containers[0].Args
+		for _, f := range flags {
+			if slices.Contains(args, f) != want {
+				t.Errorf("with the proxy %v, the controller args %q: %s is wrong", want, args, f)
+			}
+		}
+	}
+}

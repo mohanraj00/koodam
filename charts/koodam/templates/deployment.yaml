@@ -59,6 +59,12 @@ spec:
         - --job-ttl-seconds={{ int64 .Values.jobTTLSeconds }}
         - "--installer-image={{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
         - "--workspace-image={{ include "koodam.workspaceImage" . }}"
+        {{- if .Values.egressProxy.enabled }}
+        # The Agent and Workspace pods use the proxy as their DNS server and their gateway (#142).
+        - --egress-proxy-ip={{ .Values.egressProxy.clusterIP }}
+        - --egress-proxy-port={{ int64 .Values.egressProxy.port }}
+        - --cluster-domain={{ .Values.egressProxy.dns.clusterDomain }}
+        {{- end }}
         ports:
         - containerPort: 8081
           name: health

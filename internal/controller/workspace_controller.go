@@ -115,6 +115,8 @@ type WorkspaceReconciler struct {
 	Gateway gateway.Gateway
 	// GatewayURL is the gateway address for the workspace pods.
 	GatewayURL string
+	// Egress sends the egress of the workspace pods through the egress proxy.
+	Egress EgressProxy
 	// KeyTTL is the TTL of a gateway key. If it is 0, the controller uses DefaultWorkspaceKeyTTL.
 	// The controller renews a key when the last renew is older than KeyTTL/4.
 	KeyTTL time.Duration
@@ -181,6 +183,7 @@ func (r *WorkspaceReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 	}
 	meta.SetStatusCondition(&ws.Status.Conditions, keysCond)
 	meta.SetStatusCondition(&ws.Status.Conditions, harnessCondition(ws, r.InstallerImage))
+	meta.SetStatusCondition(&ws.Status.Conditions, r.Egress.condition(ws.Generation))
 	res := ctrl.Result{}
 	var keyErr error
 	if c := meta.FindStatusCondition(ws.Status.Conditions, condGatewayKey); bound && wantKey(ws) && c != nil &&

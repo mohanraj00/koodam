@@ -20,6 +20,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -182,7 +183,7 @@ var _ = Describe("Agent Controller", func() {
 
 	BeforeEach(func() {
 		n++
-		name = "run-" + string(rune('a'+n))
+		name = "run-" + strconv.Itoa(n)
 		logs = &bytes.Buffer{}
 		ctx = logr.NewContext(context.Background(), funcr.New(func(p, a string) {
 			logs.WriteString(p + " " + a + "\n")
@@ -411,6 +412,22 @@ wire_api = "responses"
 		Expect(t.Spec.Containers).To(HaveLen(1))
 		Expect(t.Spec.Containers[0].Resources.Limits.Memory().String()).To(Equal("1Gi"))
 		Expect(t.Spec.Containers[0].EnvFrom[0].SecretRef.Name).To(Equal("kd-" + name))
+	})
+
+	It("sends the run pod DNS to the egress proxy over spec.podTemplate", func() {
+		a := agent()
+		a.Spec.PodTemplate = &corev1alpha1.PodTemplate{Spec: corev1.PodSpec{DNSPolicy: corev1.DNSDefault}}
+		Expect(k8sClient.Update(ctx, a)).To(Succeed())
+		r := newReconciler()
+		r.Egress = testEgress
+		reconcileOnce(r)
+		job := &batchv1.Job{}
+		Expect(exists(job)).To(BeTrue())
+		Expect(job.Spec.Template.Spec.DNSPolicy).To(Equal(corev1.DNSNone))
+		Expect(job.Spec.Template.Spec.DNSConfig.Nameservers).To(Equal([]string{testEgress.IP}))
+		c := meta.FindStatusCondition(agent().Status.Conditions, condTracedEgress)
+		Expect(c).NotTo(BeNil())
+		Expect(c.Status).To(Equal(metav1.ConditionTrue))
 	})
 
 	It("fails an Agent with a spec.podTemplate that the merge refuses, and makes no key", func() {
