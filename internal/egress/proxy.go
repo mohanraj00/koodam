@@ -199,8 +199,7 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	case r.Method == http.MethodConnect:
 		sp.Kind = KindConnect
 	case !r.URL.IsAbs() && strings.HasPrefix(r.URL.Path, LLMPrefix):
-		// The gateway routes hold no secret. The key is in a header.
-		sp.Kind, sp.Path = KindLLM, r.URL.Path
+		sp.Kind, sp.Path = KindLLM, llmPath(r.URL.Path)
 	}
 	if p.Identify != nil {
 		if err := p.Identify(r, &sp); err != nil {
@@ -533,6 +532,26 @@ func (p *Proxy) idle() time.Duration {
 		return p.Idle
 	}
 	return DefaultIdle
+}
+
+// llmRoutes are the gateway routes that the model clients call. A span holds one of these routes,
+// or LLMPrefix for a different path, because the pod chooses the path and it can hold a key (#170).
+var llmRoutes = map[string]bool{
+	"/llm/v1/messages":              true,
+	"/llm/v1/messages/count_tokens": true,
+	"/llm/v1/chat/completions":      true,
+	"/llm/v1/completions":           true,
+	"/llm/v1/responses":             true,
+	"/llm/v1/embeddings":            true,
+	"/llm/v1/models":                true,
+}
+
+// llmPath returns the path for an llm span.
+func llmPath(path string) string {
+	if llmRoutes[path] {
+		return path
+	}
+	return LLMPrefix
 }
 
 // MethodOther is the span method for a method that is not standard.

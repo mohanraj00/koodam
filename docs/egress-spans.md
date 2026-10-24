@@ -23,7 +23,7 @@ The egress proxy writes 1 JSON line to its stdout for each call from an Agent po
 | `host` | string | no | The target. For `connect`, it is the `host:port` of the CONNECT request. For `http`, it is the URL host. For `llm`, it is the gateway host. |
 | `sni` | string | no | The TLS server name from the ClientHello. Only for `connect` and `tls`. |
 | `port` | string | no | The target port, for example `"443"`. |
-| `path` | string | no | The URL path. Only for `llm`. It has no query string. |
+| `path` | string | no | Only for `llm`. A known gateway route, for example `/llm/v1/messages`, or `/llm/` for a different path. It has no query string. |
 | `status` | number | no | The HTTP status that the pod got. `200` for a CONNECT tunnel that opened. |
 | `bytesIn` | number | yes | The bytes from the target to the pod. |
 | `bytesOut` | number | yes | The bytes from the pod to the target. |
@@ -80,9 +80,9 @@ A reader must accept other reason text. The reason is for people, and new reason
 
 A span has no request header, no query string and no body. Thus the `Authorization` header, a key in the query string and the request data are never in a span.
 
-An `http` span has no path, because some APIs put a token in the path. An `llm` span keeps the path, because the gateway routes hold no secret. The span records only that a claim header came, not its value (#170).
+An `http` span has no path, because some APIs put a token in the path. An `llm` span holds only a known gateway route, or `/llm/`, because the pod chooses the path. The span records only that a claim header came, not its value (#170).
 
-Only `host`, `sni` and the `llm` path hold text that the pod chose. A pod can put data in a host name, thus give the spans the same protection as the logs of the pods: only the people who can read the logs of a Workspace can read its spans.
+Only `host` and `sni` hold text that the pod chose. A pod can put data in a host name, thus give the spans the same protection as the logs of the pods: only the people who can read the logs of a Workspace can read its spans.
 
 ## Identity
 
