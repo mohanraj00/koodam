@@ -150,7 +150,9 @@ func (r *WorkspaceReconciler) writeKeySecret(ctx context.Context, ws *corev1alph
 		return key, nil
 	}
 	if moved {
-		if err := r.Delete(ctx, secret); client.IgnoreNotFound(err) != nil {
+		// The UID precondition stops the delete if the Secret changed after the read.
+		uid := secret.UID
+		if err := r.Delete(ctx, secret, client.Preconditions{UID: &uid}); client.IgnoreNotFound(err) != nil {
 			return "", err
 		}
 	} else {

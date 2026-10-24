@@ -70,6 +70,23 @@ func (e EgressProxy) apply(pod *corev1.PodSpec, namespace string) {
 	}
 }
 
+// gatewayURLAnnotation is the gateway URL on the Workspace pod template. The kubelet does not
+// update the files of an immutable Secret. Thus a new URL changes the template, and the pod
+// starts again with the new Secret.
+const gatewayURLAnnotation = "koodam.dev/gateway-url"
+
+// annotate puts the gateway URL on the pod template if the proxy is on and the pod has a gateway
+// key. With no proxy, the template does not change, thus an upgrade does not restart the pods.
+func (e EgressProxy) annotate(m *metav1.ObjectMeta, gateway bool, url string) {
+	if e.IP == "" || !gateway {
+		return
+	}
+	if m.Annotations == nil {
+		m.Annotations = map[string]string{}
+	}
+	m.Annotations[gatewayURLAnnotation] = url
+}
+
 // condition is True if the pods use the proxy, else False with the reason NoProxy.
 func (e EgressProxy) condition(generation int64) metav1.Condition {
 	c := metav1.Condition{Type: condTracedEgress, Status: metav1.ConditionTrue, Reason: "Proxy",
