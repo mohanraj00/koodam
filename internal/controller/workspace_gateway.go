@@ -124,15 +124,8 @@ func (r *WorkspaceReconciler) applyKey(ctx context.Context, ws *corev1alpha1.Wor
 			return err
 		}
 	}
-	if key == "" {
-		if key, err = gateway.NewKeyValue(); err != nil {
-			return err
-		}
-		s := &corev1.Secret{ObjectMeta: workspaceMeta(ws, gatewaySecretName(ws)), Immutable: new(true),
-			StringData: gatewayEnv(r.GatewayURL, g.Model, key)}
-		if err := r.Create(ctx, s); err != nil {
-			return err
-		}
+	if key, err = r.writeKeySecret(ctx, ws, secret, key); err != nil {
+		return err
 	}
 	if ws.Status.KeyHash == "" {
 		// Write the hash before the key exists, so that a revoke can always find the key.
@@ -145,6 +138,30 @@ func (r *WorkspaceReconciler) applyKey(ctx context.Context, ws *corev1alpha1.Wor
 	}
 	r.renewKey(ctx, ws, key)
 	return nil
+}
+
+// writeKeySecret makes the gateway Secret if key is empty, with a new key. The gateway URL
+// changes if the egress proxy goes on or off. Then the key stays, and the controller makes the
+// immutable Secret again with the same key and the new URL (#142). It returns the key.
+func (r *WorkspaceReconciler) writeKeySecret(ctx context.Context, ws *corev1alpha1.Workspace,
+	secret *corev1.Secret, key string) (string, error) {
+	moved := key != "" && string(secret.Data[baseURLField]) != r.GatewayURL
+	if key != "" && !moved {
+		return key, nil
+	}
+	if moved {
+		if err := r.Delete(ctx, secret); client.IgnoreNotFound(err) != nil {
+			return "", err
+		}
+	} else {
+		var err error
+		if key, err = gateway.NewKeyValue(); err != nil {
+			return "", err
+		}
+	}
+	s := &corev1.Secret{ObjectMeta: workspaceMeta(ws, gatewaySecretName(ws)), Immutable: new(true),
+		StringData: gatewayEnv(r.GatewayURL, ws.Spec.Gateway.Model, key)}
+	return key, r.Create(ctx, s)
 }
 
 // renewKey renews the key if the last renew is older than TTL/4. If the gateway has no key, it

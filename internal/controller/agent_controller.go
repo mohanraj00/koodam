@@ -418,9 +418,12 @@ func (r *AgentReconciler) secret(a *corev1alpha1.Agent, key string) *corev1.Secr
 
 // gatewayEnv is the env of the harnesses for a gateway key. Stage 2 found that a missing model
 // alias gives a 403.
+// baseURLField is the gateway URL in a gateway Secret.
+const baseURLField = "ANTHROPIC_BASE_URL"
+
 func gatewayEnv(url, m, key string) map[string]string {
 	return map[string]string{
-		"ANTHROPIC_BASE_URL": url, keyField: key, modelField: m,
+		baseURLField: url, keyField: key, modelField: m,
 		"ANTHROPIC_DEFAULT_HAIKU_MODEL": m, "ANTHROPIC_DEFAULT_SONNET_MODEL": m,
 		"ANTHROPIC_DEFAULT_OPUS_MODEL": m, "ANTHROPIC_SMALL_FAST_MODEL": m, "CLAUDE_CODE_SUBAGENT_MODEL": m,
 		"OPENAI_BASE_URL": url + "/v1", openAIKeyField: key,

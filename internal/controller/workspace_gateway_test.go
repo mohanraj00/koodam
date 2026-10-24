@@ -330,6 +330,20 @@ var _ = Describe("Workspace gateway key", func() {
 		Expect(sts.Spec.Template.Spec.Volumes).NotTo(ContainElement(HaveField("Name", "gateway")))
 	})
 
+	It("keeps the key and changes the Secret URL when the egress proxy goes on", func() {
+		mustReconcile()
+		old := secretKey()
+		rec.GatewayURL = testEgress.GatewayURL(rec.GatewayURL)
+		mustReconcile()
+		Expect(gw.order).To(Equal([]string{opCreate}))
+		Expect(secretKey()).To(Equal(old))
+		s := &corev1.Secret{}
+		Expect(k8sClient.Get(ctx, nn(name+"-gateway"), s)).To(Succeed())
+		Expect(string(s.Data[baseURLField])).To(Equal("http://10.96.0.53:3128/llm"))
+		Expect(string(s.Data["OPENAI_BASE_URL"])).To(Equal("http://10.96.0.53:3128/llm/v1"))
+		Expect(s.Immutable).To(HaveValue(BeTrue()))
+	})
+
 	It("makes a new key when the model changes", func() {
 		mustReconcile()
 		old := secretKey()

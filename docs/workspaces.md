@@ -153,11 +153,11 @@ The API server refuses the host fields and the pod fields that Koodam owns. The 
 
 If the chart has `egressProxy.enabled: true`, the controller sends the egress of each Agent pod and each Workspace pod through the egress proxy (#142):
 
-- The pod gets `dnsPolicy: None`. Its only DNS server is the proxy. The proxy answers a name outside the cluster domain with its own IP, thus each call to the internet goes to the proxy.
+- The pod gets `dnsPolicy: None`. Its only DNS server is the proxy. The proxy answers a name outside the cluster domain with its own IP, thus a call to a name on the internet goes to the proxy. The controller removes `hostAliases` from the pod.
 - `ANTHROPIC_BASE_URL` and `OPENAI_BASE_URL` point to the `/llm` route of the proxy. The proxy sends the model calls to the gateway.
 - The condition `TracedEgress` is `True`. Without the proxy, it is `False` with the reason `NoProxy`.
 
-The proxy writes a span for each call. [egress-spans.md](egress-spans.md) has the span contract.
+DNS does not stop a call to an IP address. The NetworkPolicy of #143 blocks the egress that does not go to the proxy. The proxy writes a span for each call. [egress-spans.md](egress-spans.md) has the span contract.
 
 ## The runtime class
 

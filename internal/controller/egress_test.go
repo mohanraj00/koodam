@@ -35,18 +35,22 @@ var _ = Describe("Egress proxy", func() {
 		Expect(EgressProxy{}.GatewayURL("http://gw.test:4000")).To(Equal("http://gw.test:4000"))
 	})
 
-	It("does not change the pod with no proxy", func() {
+	It("keeps the DNS of the pod with no proxy, and sets the default dnsPolicy", func() {
 		pod := corev1.PodSpec{DNSPolicy: corev1.DNSDefault}
 		EgressProxy{}.apply(&pod, egressSpace)
 		Expect(pod.DNSPolicy).To(Equal(corev1.DNSDefault))
 		Expect(pod.DNSConfig).To(BeNil())
+		pod = corev1.PodSpec{}
+		EgressProxy{}.apply(&pod, egressSpace)
+		Expect(pod.DNSPolicy).To(Equal(corev1.DNSClusterFirst))
 	})
 
 	It("replaces the DNS of a Workspace spec.podTemplate", func() {
 		ws := &corev1alpha1.Workspace{ObjectMeta: metav1.ObjectMeta{Name: "w", Namespace: egressSpace},
 			Spec: corev1alpha1.WorkspaceSpec{PodTemplate: &corev1alpha1.PodTemplate{Spec: corev1.PodSpec{
-				DNSPolicy: corev1.DNSDefault,
-				DNSConfig: &corev1.PodDNSConfig{Nameservers: []string{"8.8.8.8"}}}}}}
+				DNSPolicy:   corev1.DNSDefault,
+				DNSConfig:   &corev1.PodDNSConfig{Nameservers: []string{"8.8.8.8"}},
+				HostAliases: []corev1.HostAlias{{IP: "203.0.113.1", Hostnames: []string{"api.example.com"}}}}}}}
 		r := &WorkspaceReconciler{Image: "example.com/ws:1", APIReader: k8sClient, Egress: testEgress}
 		sts, err := r.mergedStatefulSet(ctx, ws, testProfile)
 		Expect(err).NotTo(HaveOccurred())
@@ -57,6 +61,7 @@ var _ = Describe("Egress proxy", func() {
 			Searches:    []string{egressSpace + ".svc.cluster.local", "svc.cluster.local", "cluster.local"},
 			Options:     []corev1.PodDNSConfigOption{{Name: "ndots", Value: new("5")}},
 		}))
+		Expect(pod.HostAliases).To(BeEmpty())
 	})
 
 	It("sets the TracedEgress condition", func() {

@@ -48,12 +48,19 @@ func (e EgressProxy) GatewayURL(gatewayURL string) string {
 	return "http://" + net.JoinHostPort(e.IP, strconv.Itoa(e.Port)) + "/llm"
 }
 
-// apply sets the DNS of the pod to the proxy. It replaces a dnsPolicy and a dnsConfig from
-// spec.podTemplate, because a different DNS server lets the pod go around the proxy.
+// apply sets the DNS of the pod to the proxy. It replaces a dnsPolicy, a dnsConfig and the
+// hostAliases from spec.podTemplate, because they let the pod go around the proxy DNS. The
+// NetworkPolicy of #143 blocks a call to an IP address that does not go to the proxy.
+// With no proxy, an empty dnsPolicy becomes ClusterFirst, the API default. Thus the StatefulSet
+// compare finds a change after the proxy goes off, and the pod gets the cluster DNS again.
 func (e EgressProxy) apply(pod *corev1.PodSpec, namespace string) {
 	if e.IP == "" {
+		if pod.DNSPolicy == "" {
+			pod.DNSPolicy = corev1.DNSClusterFirst
+		}
 		return
 	}
+	pod.HostAliases = nil
 	d := e.ClusterDomain
 	pod.DNSPolicy = corev1.DNSNone
 	pod.DNSConfig = &corev1.PodDNSConfig{
@@ -66,7 +73,7 @@ func (e EgressProxy) apply(pod *corev1.PodSpec, namespace string) {
 // condition is True if the pods use the proxy, else False with the reason NoProxy.
 func (e EgressProxy) condition(generation int64) metav1.Condition {
 	c := metav1.Condition{Type: condTracedEgress, Status: metav1.ConditionTrue, Reason: "Proxy",
-		Message: "The pod egress goes through the egress proxy.", ObservedGeneration: generation}
+		Message: "The pod DNS and the gateway calls go through the egress proxy.", ObservedGeneration: generation}
 	if e.IP == "" {
 		c.Status, c.Reason = metav1.ConditionFalse, "NoProxy"
 		c.Message = "The controller has no --egress-proxy-ip, so the pod egress has no trace."
