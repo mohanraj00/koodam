@@ -283,7 +283,7 @@ func TestForwardHTTP(t *testing.T) {
 	}
 	_ = resp.Body.Close()
 	sp := sink.next(t)
-	if resp.StatusCode != http.StatusOK || sp.Kind != KindHTTP || sp.Status != http.StatusOK || sp.Path != "/a" ||
+	if resp.StatusCode != http.StatusOK || sp.Kind != KindHTTP || sp.Status != http.StatusOK || sp.Path != "" ||
 		sp.BytesIn != 2 || sp.BytesOut != 4 || sp.Host != net.JoinHostPort(testHost, port(t, up.URL)) ||
 		sp.V != SpanVersion || sp.Port != port(t, up.URL) {
 		t.Fatalf("status %d, span %+v", resp.StatusCode, sp)
@@ -322,7 +322,7 @@ func TestLLMRouteKeepsTheKeyOutOfTheSpan(t *testing.T) {
 	}
 	var back Span
 	if err := json.Unmarshal(out.Bytes(), &back); err != nil || back.Result != ResultOK ||
-		!strings.HasPrefix(out.String(), `{"v":1,`) {
+		!strings.HasPrefix(out.String(), `{"v":2,`) {
 		t.Fatalf("one JSON line: %v %s", err, out.String())
 	}
 }

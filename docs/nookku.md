@@ -40,7 +40,7 @@ flowchart LR
 | Item | Koodam issue | What Koodam gives |
 |---|---|---|
 | K1 | #146, #168 | This page, with the Workspace setup for Nookku. No CRD field. |
-| K2 | #168, #144 | The span contract v1 (`"v": 1`, `port`) and `koodam trace --until`. |
+| K2 | #168, #144 | The span contract v2 (`"v": 2`, `port`, `claimed`, #170) and `koodam trace --until`. |
 | K3 | #143 | `workspace.networkPolicy.extraEgress` stays when the egress proxy is on. |
 | K4 | #145 | 3 e2e cases: loopback, an `extraEgress` Service, a blocked port. |
 
@@ -52,7 +52,7 @@ The Nookku plugin preset of #83 is not in v0.3.
 
 [egress-spans.md](egress-spans.md) is the contract. The parts that Nookku uses:
 
-- Each line has `"v": 1`. A line with no `v` is version 1. Ignore the fields that you do not know.
+- Each line has `"v": 2`. A line with no `v` is version 1. Version 2 has no claim values and no `http` path (#170). Ignore the fields that you do not know.
 - Match a span to a test by `time` and by `workspace` or `agent`. Match the target by `host`, `sni` and `port`.
 - `result` is `ok`, `denied` or `error`.
 - A TLS call gives 1 span for each connection, not for each request. Thus match by host, not by call.
@@ -164,7 +164,7 @@ This traffic goes direct, so it has no span. The Nookku HTTP tap records it.
 - An Agent run gets 1 gateway key. The alias is `kd-<agent uid>`, in `status.keyAlias`.
 - A Workspace with a gateway key gets the alias `ws-<namespace>-<name>-<hash>`, in `status.keyAlias`.
 - A Workspace with a subscription login has no gateway key.
-- LiteLLM keeps the spend logs for each key alias. Koodam never writes the key value to a status, an event or a log. A span holds the key only if the pod puts it in a URL path or a claimed header ([egress-spans.md](egress-spans.md), #170).
+- LiteLLM keeps the spend logs for each key alias. Koodam never writes the key value to a status, an event or a log. A span holds no header, no query string and no `http` path. The pod chooses only the host and the SNI ([egress-spans.md](egress-spans.md), #170).
 - Koodam gives no key for each Nookku test in v0.3. That needs a new API. Match the spend logs to a test by the time window and the key alias.
 
 ## Limits
