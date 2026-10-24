@@ -115,6 +115,8 @@ type WorkspaceReconciler struct {
 	Gateway gateway.Gateway
 	// GatewayURL is the gateway address for the workspace pods.
 	GatewayURL string
+	// Egress sends the egress of the workspace pods through the egress proxy.
+	Egress EgressProxy
 	// KeyTTL is the TTL of a gateway key. If it is 0, the controller uses DefaultWorkspaceKeyTTL.
 	// The controller renews a key when the last renew is older than KeyTTL/4.
 	KeyTTL time.Duration
@@ -181,6 +183,7 @@ func (r *WorkspaceReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 	}
 	meta.SetStatusCondition(&ws.Status.Conditions, keysCond)
 	meta.SetStatusCondition(&ws.Status.Conditions, harnessCondition(ws, r.InstallerImage))
+	meta.SetStatusCondition(&ws.Status.Conditions, r.Egress.condition(ws.Generation))
 	res := ctrl.Result{}
 	var keyErr error
 	if c := meta.FindStatusCondition(ws.Status.Conditions, condGatewayKey); bound && wantKey(ws) && c != nil &&
@@ -370,7 +373,10 @@ func (r *WorkspaceReconciler) applyStatefulSet(ctx context.Context, ws *corev1al
 	}
 	// DeepDerivative ignores the fields that the API server sets as defaults. Thus the
 	// controller updates the template only if it changed, for example after a manual edit.
-	sameTemplate := equality.Semantic.DeepDerivative(want.Spec.Template, have.Spec.Template)
+	// It also ignores an empty field in want. The egress proxy removes hostAliases, thus the
+	// controller compares them exactly (#142).
+	sameTemplate := equality.Semantic.DeepDerivative(want.Spec.Template, have.Spec.Template) &&
+		equality.Semantic.DeepEqual(want.Spec.Template.Spec.HostAliases, have.Spec.Template.Spec.HostAliases)
 	if sameTemplate && have.Spec.Replicas != nil && *have.Spec.Replicas == *want.Spec.Replicas {
 		return have, nil
 	}
@@ -474,6 +480,7 @@ func (r *WorkspaceReconciler) statefulSet(ws *corev1alpha1.Workspace, user strin
 	}}
 	addWorkspaceHarnesses(&tmpl.Spec, ws.Spec.Harnesses, r.InstallerImage)
 	addIdentity(&tmpl.ObjectMeta, "", user)
+	r.Egress.annotate(&tmpl.ObjectMeta, ws.Spec.Gateway != nil, r.GatewayURL)
 	sts := &appsv1.StatefulSet{ObjectMeta: workspaceMeta(ws, ws.Name), Spec: appsv1.StatefulSetSpec{
 		Replicas: &replicas,
 		Selector: &metav1.LabelSelector{MatchLabels: labels},

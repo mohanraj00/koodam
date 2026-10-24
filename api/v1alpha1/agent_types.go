@@ -160,7 +160,7 @@ type AgentStatus struct {
 	// +optional
 	Usage *AgentUsage `json:"usage,omitempty"`
 
-	// Conditions: Provisioned, Revoked.
+	// Conditions: Provisioned, Revoked, TracedEgress.
 	// +listType=map
 	// +listMapKey=type
 	// +optional

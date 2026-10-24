@@ -330,6 +330,32 @@ var _ = Describe("Workspace gateway key", func() {
 		Expect(sts.Spec.Template.Spec.Volumes).NotTo(ContainElement(HaveField("Name", "gateway")))
 	})
 
+	It("keeps the key and changes the Secret URL when the egress proxy goes on", func() {
+		mustReconcile()
+		old := secretKey()
+		sts := &appsv1.StatefulSet{}
+		Expect(k8sClient.Get(ctx, nn(name), sts)).To(Succeed())
+		Expect(sts.Spec.Template.Annotations).NotTo(HaveKey(gatewayURLAnnotation))
+		rec.GatewayURL, rec.Egress = testEgress.GatewayURL(rec.GatewayURL), testEgress
+		mustReconcile()
+		Expect(k8sClient.Get(ctx, nn(name), sts)).To(Succeed())
+		Expect(sts.Spec.Template.Annotations).To(HaveKeyWithValue(gatewayURLAnnotation, rec.GatewayURL))
+		// An edit by hand adds hostAliases, and the rest of the template stays. The controller
+		// removes them.
+		sts.Spec.Template.Spec.HostAliases = []corev1.HostAlias{{IP: "203.0.113.1", Hostnames: []string{"api.example.com"}}}
+		Expect(k8sClient.Update(ctx, sts)).To(Succeed())
+		mustReconcile()
+		Expect(k8sClient.Get(ctx, nn(name), sts)).To(Succeed())
+		Expect(sts.Spec.Template.Spec.HostAliases).To(BeEmpty())
+		Expect(gw.order).To(Equal([]string{opCreate}))
+		Expect(secretKey()).To(Equal(old))
+		s := &corev1.Secret{}
+		Expect(k8sClient.Get(ctx, nn(name+"-gateway"), s)).To(Succeed())
+		Expect(string(s.Data[baseURLField])).To(Equal("http://10.96.0.53:3128/llm"))
+		Expect(string(s.Data["OPENAI_BASE_URL"])).To(Equal("http://10.96.0.53:3128/llm/v1"))
+		Expect(s.Immutable).To(HaveValue(BeTrue()))
+	})
+
 	It("makes a new key when the model changes", func() {
 		mustReconcile()
 		old := secretKey()
