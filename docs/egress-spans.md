@@ -1,4 +1,4 @@
-# The egress span contract (v1)
+# The egress span contract (v2)
 
 The egress proxy writes 1 JSON line to its stdout for each call from an Agent pod or a Workspace pod. This line is a span. This page is the contract for the programs that read the spans, for example `koodam trace` and Nookku.
 
@@ -7,23 +7,23 @@ The egress proxy writes 1 JSON line to its stdout for each call from an Agent po
 ## Example
 
 ```json
-{"v":1,"time":"2026-10-23T09:14:02.118Z","durationMs":412.7,"source":"10.244.1.17","kind":"connect","host":"api.github.com:443","sni":"api.github.com","port":"443","status":200,"bytesIn":5120,"bytesOut":918,"result":"ok","namespace":"dev","pod":"dev-0","workspace":"dev","user":"mohan"}
+{"v":2,"time":"2026-10-23T09:14:02.118Z","durationMs":412.7,"source":"10.244.1.17","kind":"connect","host":"api.github.com:443","sni":"api.github.com","port":"443","status":200,"bytesIn":5120,"bytesOut":918,"result":"ok","namespace":"dev","pod":"dev-0","workspace":"dev","user":"mohan"}
 ```
 
 ## Fields
 
 | Field | Type | Always | Value |
 |---|---|---|---|
-| `v` | number | yes | The contract version. It is `1` for this page. |
+| `v` | number | yes | The contract version. It is `2` for this page. |
 | `time` | string | yes | The start of the call, RFC 3339 in UTC. |
 | `durationMs` | number | yes | The time of the call in milliseconds. |
 | `source` | string | yes | The IP address of the pod that made the call. |
 | `kind` | string | yes | The path of the call. See "Kinds". |
-| `method` | string | no | The HTTP method. `CONNECT` for the kind `connect`. |
+| `method` | string | no | The HTTP method. `CONNECT` for the kind `connect`. A method that is not standard is `OTHER`. |
 | `host` | string | no | The target. For `connect`, it is the `host:port` of the CONNECT request. For `http`, it is the URL host. For `llm`, it is the gateway host. |
 | `sni` | string | no | The TLS server name from the ClientHello. Only for `connect` and `tls`. |
 | `port` | string | no | The target port, for example `"443"`. |
-| `path` | string | no | The URL path. Only for `http` and `llm`. It has no query string. |
+| `path` | string | no | Only for `llm`. A known gateway route, for example `/llm/v1/messages`, or `/llm/` for a different path. It has no query string. |
 | `status` | number | no | The HTTP status that the pod got. `200` for a CONNECT tunnel that opened. |
 | `bytesIn` | number | yes | The bytes from the target to the pod. |
 | `bytesOut` | number | yes | The bytes from the pod to the target. |
@@ -35,8 +35,7 @@ The egress proxy writes 1 JSON line to its stdout for each call from an Agent po
 | `workspace` | string | no | The value of the pod label `koodam.dev/workspace`. |
 | `run` | string | no | The value of the pod label `koodam.dev/run`. |
 | `user` | string | no | The value of the pod label `koodam.dev/user`, or `unknown`. |
-| `claimedRun` | string | no | The `X-Koodam-Run` header that the pod sent. Do not trust it. |
-| `claimedUser` | string | no | The `X-Koodam-User` header that the pod sent. Do not trust it. |
+| `claimed` | boolean | no | `true` if the pod sent an `X-Koodam-Run` or `X-Koodam-User` header. The span does not hold the value. |
 
 "Always" means that the field is in each span. A field that is not always there is not in the line when it is empty.
 
@@ -75,19 +74,15 @@ The proxy does not decrypt TLS. For `connect` and `tls`, the span has the host a
 | `upstream` | `error` | The proxy could not connect to the target, or the target failed. |
 | `hello timeout` | `error` | The pod sent no ClientHello in the time limit. |
 
-A reader must accept other reason text. The reason is for people, and new reasons can come in v1.
+A reader must accept other reason text. The reason is for people, and new reasons can come in the same version.
 
 ## What a span holds from the pod
 
 A span has no request header, no query string and no body. Thus the `Authorization` header, a key in the query string and the request data are never in a span.
 
-Some fields hold text that the pod chose:
+An `http` span has no path, because some APIs put a token in the path. An `llm` span holds only a known gateway route, or `/llm/`, because the pod chooses the path. The span records only that a claim header came, not its value (#170).
 
-- `path` of an `http` or `llm` span. Some APIs put a token in the path.
-- `host` and `sni`.
-- `claimedRun` and `claimedUser`, at most 63 bytes each.
-
-The proxy does not redact these fields (#170). Thus give the spans the same protection as the logs of the pods: only the people who can read the logs of a Workspace can read its spans.
+Only `host` and `sni` hold text that the pod chose. A pod can put data in a host name, thus give the spans the same protection as the logs of the pods: only the people who can read the logs of a Workspace can read its spans.
 
 ## Identity
 
@@ -95,9 +90,10 @@ The proxy finds the pod from the source IP of the connection, with a watch on th
 
 ## Version rules
 
-- An added field keeps `v` at `1`. A reader must ignore a field that it does not know.
-- A removed field, a renamed field or a new meaning of a field changes `v` to `2`.
+- An added field keeps `v` the same. A reader must ignore a field that it does not know.
+- A removed field, a renamed field or a new meaning of a field adds 1 to `v`.
 - A span with no `v` field is version 1. The proxy of v0.3 before #168 wrote no `v`.
+- Version 2 (#170) replaced `claimedRun` and `claimedUser` with `claimed`, and removed `path` from `http` spans.
 
 ## Traffic with no span
 

@@ -17,6 +17,7 @@ limitations under the License.
 package egress
 
 import (
+	"encoding/json"
 	"maps"
 	"net/http"
 	"net/http/httptest"
@@ -93,11 +94,17 @@ func TestIdentifyRecordsClaimsOnly(t *testing.T) {
 	x.Set(agentPod(pod1, podA))
 	h := http.Header{}
 	h.Set(ClaimedRunHeader, "other-run")
-	h.Set(ClaimedUserHeader, strings.Repeat("m", maxClaim-1)+"é")
+	h.Set(ClaimedUserHeader, "mallory")
 	sp, err := identify(t, x, podA, h)
-	if err != nil || sp.Run != run1 || sp.User != alice || sp.ClaimedRun != "other-run" ||
-		sp.ClaimedUser != strings.Repeat("m", maxClaim-1) {
+	if err != nil || sp.Run != run1 || sp.User != alice || !sp.Claimed {
 		t.Fatalf("%v %+v", err, sp)
+	}
+	// The span holds no claim value, because the value can be a key (#170).
+	if b, _ := json.Marshal(sp); strings.Contains(string(b), "other-run") || strings.Contains(string(b), "mallory") {
+		t.Fatalf("the span holds a claim: %s", b)
+	}
+	if sp, _ = identify(t, x, podA, nil); sp.Claimed {
+		t.Fatalf("no claim: %+v", sp)
 	}
 	// A claim does not give an identity to an unknown IP.
 	sp, err = identify(t, x, podB, h)

@@ -68,7 +68,7 @@ const (
 
 // SpanVersion is the version of the span contract in docs/egress-spans.md. An added field keeps
 // the version. A removed field, a renamed field or a new meaning of a field changes it.
-const SpanVersion = 1
+const SpanVersion = 2
 
 // DefaultIdle is the default of Proxy.Idle. A model stream sends bytes more frequently.
 const DefaultIdle = 10 * time.Minute
@@ -79,9 +79,9 @@ const schemeHTTP = "http"
 // LLMPrefix is the path prefix of the reverse route to the gateway.
 const LLMPrefix = "/llm/"
 
-// Span is the record of one call. It has no header, no query string and no body. The path, the
-// host and the claimed fields are text from the pod (#170). BytesIn go to the pod, and BytesOut
-// come from the pod.
+// Span is the record of one call. It has no header, no query string and no body. Only an llm span
+// has a path, because a plain HTTP path can hold a token (#170). The host and the SNI are text
+// from the pod. BytesIn go to the pod, and BytesOut come from the pod.
 type Span struct {
 	V          int       `json:"v"`
 	Time       time.Time `json:"time"`
@@ -106,9 +106,8 @@ type Span struct {
 	Workspace string `json:"workspace,omitempty"`
 	Run       string `json:"run,omitempty"`
 	User      string `json:"user,omitempty"`
-	// The identity that the pod claims in a header. The proxy does not trust these fields.
-	ClaimedRun  string `json:"claimedRun,omitempty"`
-	ClaimedUser string `json:"claimedUser,omitempty"`
+	// Claimed is true if the pod sent a claim header. The span does not hold the value.
+	Claimed bool `json:"claimed,omitempty"`
 }
 
 // Sink receives each span. Write must be safe for concurrent use.
@@ -194,13 +193,13 @@ func newTransport(header time.Duration) *http.Transport {
 func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	p.init()
 	start := time.Now()
-	sp := Span{V: SpanVersion, Time: start.UTC(), Source: sourceIP(r.RemoteAddr), Method: r.Method, Kind: KindHTTP,
-		Host: r.Host, Path: r.URL.Path}
+	sp := Span{V: SpanVersion, Time: start.UTC(), Source: sourceIP(r.RemoteAddr), Method: spanMethod(r.Method), Kind: KindHTTP,
+		Host: r.Host}
 	switch {
 	case r.Method == http.MethodConnect:
 		sp.Kind = KindConnect
 	case !r.URL.IsAbs() && strings.HasPrefix(r.URL.Path, LLMPrefix):
-		sp.Kind = KindLLM
+		sp.Kind, sp.Path = KindLLM, llmPath(r.URL.Path)
 	}
 	if p.Identify != nil {
 		if err := p.Identify(r, &sp); err != nil {
@@ -533,6 +532,40 @@ func (p *Proxy) idle() time.Duration {
 		return p.Idle
 	}
 	return DefaultIdle
+}
+
+// llmRoutes are the gateway routes that the model clients call. A span holds one of these routes,
+// or LLMPrefix for a different path, because the pod chooses the path and it can hold a key (#170).
+var llmRoutes = map[string]bool{
+	"/llm/v1/messages":              true,
+	"/llm/v1/messages/count_tokens": true,
+	"/llm/v1/chat/completions":      true,
+	"/llm/v1/completions":           true,
+	"/llm/v1/responses":             true,
+	"/llm/v1/embeddings":            true,
+	"/llm/v1/models":                true,
+}
+
+// llmPath returns the path for an llm span.
+func llmPath(path string) string {
+	if llmRoutes[path] {
+		return path
+	}
+	return LLMPrefix
+}
+
+// MethodOther is the span method for a method that is not standard.
+const MethodOther = "OTHER"
+
+// spanMethod returns the method for a span. The pod chooses the method, thus a method that is not
+// a standard method becomes MethodOther, because it can be a key (#170).
+func spanMethod(m string) string {
+	switch m {
+	case http.MethodGet, http.MethodHead, http.MethodPost, http.MethodPut, http.MethodPatch,
+		http.MethodDelete, http.MethodConnect, http.MethodOptions, http.MethodTrace:
+		return m
+	}
+	return MethodOther
 }
 
 func sourceIP(remote string) string {

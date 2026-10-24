@@ -235,7 +235,7 @@ func TestRefused(t *testing.T) {
 		{"CONNECT to a private address", http.MethodConnect, net.JoinHostPort(testHost, upPort), reasonAddress, true},
 		{"plain HTTP to a private address", http.MethodGet, "http://" + net.JoinHostPort(testHost, upPort) + "/", reasonAddress, true},
 		{"https without CONNECT", http.MethodGet, "https://" + net.JoinHostPort(testHost, upPort) + "/", reasonPort, false},
-		{"no gateway", http.MethodGet, "/llm/v1/messages", reasonNoProxy, false},
+		{"no gateway", http.MethodGet, llmMessages, reasonNoProxy, false},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -283,7 +283,7 @@ func TestForwardHTTP(t *testing.T) {
 	}
 	_ = resp.Body.Close()
 	sp := sink.next(t)
-	if resp.StatusCode != http.StatusOK || sp.Kind != KindHTTP || sp.Status != http.StatusOK || sp.Path != "/a" ||
+	if resp.StatusCode != http.StatusOK || sp.Kind != KindHTTP || sp.Status != http.StatusOK || sp.Path != "" ||
 		sp.BytesIn != 2 || sp.BytesOut != 4 || sp.Host != net.JoinHostPort(testHost, port(t, up.URL)) ||
 		sp.V != SpanVersion || sp.Port != port(t, up.URL) {
 		t.Fatalf("status %d, span %+v", resp.StatusCode, sp)
@@ -303,7 +303,7 @@ func TestLLMRouteKeepsTheKeyOutOfTheSpan(t *testing.T) {
 	gu, _ := url.Parse(gw.URL + "/api")
 	// The gateway is a private address. The proxy does not check the address of the gateway.
 	pu, sink := start(t, true, "443", gu)
-	req, _ := http.NewRequest(http.MethodPost, pu.String()+"/llm/v1/messages?key="+testKey, strings.NewReader("{}"))
+	req, _ := http.NewRequest(http.MethodPost, pu.String()+llmMessages+"?key="+testKey, strings.NewReader("{}"))
 	req.Header.Set("Authorization", "Bearer "+testKey)
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
@@ -311,7 +311,7 @@ func TestLLMRouteKeepsTheKeyOutOfTheSpan(t *testing.T) {
 	}
 	_ = resp.Body.Close()
 	sp := sink.next(t)
-	if resp.StatusCode != http.StatusOK || sp.Kind != KindLLM || sp.Path != "/llm/v1/messages" || sp.BytesOut != 2 ||
+	if resp.StatusCode != http.StatusOK || sp.Kind != KindLLM || sp.Path != llmMessages || sp.BytesOut != 2 ||
 		sp.V != SpanVersion || sp.Port != gu.Port() {
 		t.Fatalf("status %d, span %+v", resp.StatusCode, sp)
 	}
@@ -322,7 +322,7 @@ func TestLLMRouteKeepsTheKeyOutOfTheSpan(t *testing.T) {
 	}
 	var back Span
 	if err := json.Unmarshal(out.Bytes(), &back); err != nil || back.Result != ResultOK ||
-		!strings.HasPrefix(out.String(), `{"v":1,`) {
+		!strings.HasPrefix(out.String(), `{"v":2,`) {
 		t.Fatalf("one JSON line: %v %s", err, out.String())
 	}
 }
@@ -399,7 +399,7 @@ func TestLLMRouteStreams(t *testing.T) {
 	defer gw.Close()
 	gu, _ := url.Parse(gw.URL)
 	pu, sink := start(t, true, "443", gu)
-	resp, err := http.Get(pu.String() + "/llm/v1/messages")
+	resp, err := http.Get(pu.String() + llmMessages)
 	if err != nil {
 		close(release)
 		t.Fatal(err)
@@ -417,3 +417,25 @@ func TestLLMRouteStreams(t *testing.T) {
 		t.Fatalf("span %+v", sp)
 	}
 }
+
+func TestSpanMethod(t *testing.T) {
+	for in, want := range map[string]string{http.MethodGet: http.MethodGet, http.MethodConnect: http.MethodConnect,
+		"get": MethodOther, "SK-PLACEHOLDER": MethodOther, "": MethodOther} {
+		if got := spanMethod(in); got != want {
+			t.Errorf("spanMethod(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
+
+func TestLLMPath(t *testing.T) {
+	for in, want := range map[string]string{llmMessages: llmMessages,
+		"/llm/v1/responses": "/llm/v1/responses", "/llm/sk-placeholder": LLMPrefix,
+		"/llm/v1/messages/sk-placeholder": LLMPrefix, "/llm/": LLMPrefix} {
+		if got := llmPath(in); got != want {
+			t.Errorf("llmPath(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
+
+// llmMessages is a gateway route in llmRoutes.
+const llmMessages = "/llm/v1/messages"

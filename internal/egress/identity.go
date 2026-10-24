@@ -22,7 +22,6 @@ import (
 	"net/http"
 	"net/netip"
 	"slices"
-	"strings"
 	"sync"
 	"time"
 
@@ -41,7 +40,7 @@ const (
 	UserLabel      = "koodam.dev/user"
 )
 
-// The headers that a pod can send to claim an identity. The span records them as claims only,
+// The headers that a pod can send to claim an identity. The span records only that a claim came,
 // and the proxy removes them before the call goes upstream.
 const (
 	ClaimedRunHeader  = "X-Koodam-Run"
@@ -50,9 +49,6 @@ const (
 
 // Unknown is the identity in a span if the proxy cannot find one pod for the source IP.
 const Unknown = "unknown"
-
-// maxClaim is the maximum length of a claimed value in a span. It is the label value limit.
-const maxClaim = 63
 
 var (
 	errUnknownIP = errors.New("no pod has the source IP")
@@ -138,8 +134,8 @@ func live(p *corev1.Pod) bool {
 // function of a Proxy. If no pod or more than one pod has the IP, the identity is Unknown and it
 // returns an error, thus the proxy refuses the call.
 func (x *PodIndex) Identify(r *http.Request, sp *Span) error {
-	sp.ClaimedRun = claim(r.Header.Get(ClaimedRunHeader))
-	sp.ClaimedUser = claim(r.Header.Get(ClaimedUserHeader))
+	// The span records only that the pod sent a claim. The value can be a key (#170).
+	sp.Claimed = r.Header.Get(ClaimedRunHeader) != "" || r.Header.Get(ClaimedUserHeader) != ""
 	r.Header.Del(ClaimedRunHeader)
 	r.Header.Del(ClaimedUserHeader)
 
@@ -163,14 +159,6 @@ func (x *PodIndex) Identify(r *http.Request, sp *Span) error {
 		sp.Pod, sp.User = Unknown, Unknown
 		return errSharedIP
 	}
-}
-
-// claim limits a claimed value to maxClaim bytes, and does not cut a UTF-8 character.
-func claim(v string) string {
-	if len(v) > maxClaim {
-		v = v[:maxClaim]
-	}
-	return strings.ToValidUTF8(v, "")
 }
 
 // Watch fills the index from 2 pod informers for each namespace: one for the Agent pods and one
