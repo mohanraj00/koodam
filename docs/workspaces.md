@@ -157,7 +157,7 @@ If the chart has `egressProxy.enabled: true`, the controller sends the egress of
 - `ANTHROPIC_BASE_URL` and `OPENAI_BASE_URL` point to the `/llm` route of the proxy. The proxy sends the model calls to the gateway.
 - The condition `TracedEgress` is `True`. Without the proxy, it is `False` with the reason `NoProxy`.
 
-DNS does not stop a call to an IP address. The NetworkPolicy of #143 blocks the egress that does not go to the proxy. The proxy writes a span for each call. [egress-spans.md](egress-spans.md) has the span contract.
+DNS does not stop a call to an IP address. Thus add the namespace to `workspace.networkPolicy.namespaces`: with the proxy, that policy blocks the egress that does not go to the proxy (see [The Workspace network](profiles.md#with-the-egress-proxy)). The proxy writes a span for each call. [egress-spans.md](egress-spans.md) has the span contract.
 
 ## The runtime class
 

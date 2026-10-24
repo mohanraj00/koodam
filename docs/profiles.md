@@ -78,7 +78,24 @@ The public internet rule blocks the private ranges (`10.0.0.0/8`, `172.16.0.0/12
 
 > **Caution:** Use a CNI that enforces NetworkPolicy, for example Calico, Cilium or the kindnet of kind. If the CNI does not enforce it, the policy has no effect and the pods can reach each address.
 
-This policy is a basic limit. It does not trace the calls. Traced egress with a proxy comes in v0.3 (#8).
+This policy is a basic limit. It does not trace the calls.
+
+### With the egress proxy
+
+If `egressProxy.enabled` is `true`, the policy changes to default-deny egress (#143). The chart also makes a second policy, with the same egress, for the Agent run pods (the label `koodam.dev/agent`). The Agent policy permits no ingress.
+
+| Direction | Permitted |
+| --- | --- |
+| Ingress | TCP 2222 to the Workspace pods. |
+| Egress | The proxy pods on their target ports: TCP `egressProxy.port` (the proxy and `/llm`), UDP and TCP 5353 (DNS), TCP 8443 (TLS) and TCP 8080 (HTTP). |
+| Egress | The API server, from `egressProxy.networkPolicy.apiServer`, for `kubectl` and for an Agent with `rules`. These calls have no span. |
+| Egress | The rules of `workspace.networkPolicy.extraEgress`, for example an in-cluster Service. These calls go direct and have no span. |
+
+There is no rule for the cluster DNS, the gateway or the public internet. Thus a pod cannot send to a public IP address, use a different DNS server or use DNS over HTTPS. The `dns`, `publicInternet`, `publicInternetPorts` and `blockedCIDRs` values have no effect.
+
+The policy has no IPv6 rule. Thus a dual-stack pod has no direct IPv6 path.
+
+> **Caution:** Add the gateway to `extraEgress` only if the pods must go around the proxy. A model call through `extraEgress` has no span.
 
 ## The resource limits
 

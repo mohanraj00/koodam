@@ -20,6 +20,9 @@ workspace:
   # must exist before the install. The policy has an effect only if the CNI enforces it.
   # Ingress: only TCP 2222 (sshd). Egress: DNS, the bundled gateway, the public internet if
   # publicInternet is true, and the rules of extraEgress. Other traffic is blocked.
+  # If egressProxy.enabled is true, the egress is only the proxy pods, the API server rules of
+  # egressProxy.networkPolicy.apiServer and extraEgress. The Agent pods get the same egress.
+  # Then dns, publicInternet, publicInternetPorts and blockedCIDRs have no effect.
   networkPolicy:
     namespaces: []
     # The cluster DNS pods. The pods can send UDP and TCP port 53 to these pods.

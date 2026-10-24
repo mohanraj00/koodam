@@ -1,4 +1,5 @@
 {{- $np := dig "networkPolicy" dict (.Values.workspace | default dict) | default dict -}}
+{{- $ep := .Values.egressProxy -}}
 {{- range $ns := $np.namespaces }}
 ---
 apiVersion: networking.k8s.io/v1
@@ -22,6 +23,9 @@ spec:
     - protocol: TCP
       port: 2222
   egress:
+  {{- if $ep.enabled }}
+  {{- include "koodam.proxyEgress" $ | nindent 2 }}
+  {{- else }}
   - to:
     - namespaceSelector:
         matchLabels:
@@ -54,7 +58,34 @@ spec:
       {{- toYaml . | nindent 4 }}
     {{- end }}
   {{- end }}
+  {{- end }}
   {{- with $np.extraEgress }}
   {{- toYaml . | nindent 2 }}
   {{- end }}
+{{- if $ep.enabled }}
+---
+# With the egress proxy, the Agent run pods get the same egress as the Workspace pods, and no
+# ingress.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "koodam.fullname" $ | trunc 51 | trimSuffix "-" }}-agent
+  namespace: {{ $ns }}
+  labels:
+    {{- include "koodam.labels" $ | nindent 4 }}
+spec:
+  # Each pod of an Agent run has this label.
+  podSelector:
+    matchExpressions:
+    - key: koodam.dev/agent
+      operator: Exists
+  policyTypes:
+  - Ingress
+  - Egress
+  egress:
+  {{- include "koodam.proxyEgress" $ | nindent 2 }}
+  {{- with $np.extraEgress }}
+  {{- toYaml . | nindent 2 }}
+  {{- end }}
+{{- end }}
 {{- end }}

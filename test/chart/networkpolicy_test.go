@@ -59,7 +59,7 @@ func TestWorkspaceNetworkPolicy(t *testing.T) {
 		t.Fatalf("got %d NetworkPolicies, want 1 in dev-a and 1 in dev-b", len(nps))
 	}
 	np := nps[0]
-	if sel := np.Spec.PodSelector.MatchExpressions; len(sel) != 1 || sel[0].Key != "koodam.dev/workspace" {
+	if sel := np.Spec.PodSelector.MatchExpressions; len(sel) != 1 || sel[0].Key != workspaceLabel {
 		t.Errorf("the pod selector is %v, want the Workspace label", np.Spec.PodSelector)
 	}
 	if !slices.Equal(np.Spec.PolicyTypes, []networkingv1.PolicyType{"Ingress", "Egress"}) {
@@ -174,3 +174,60 @@ workspace:
 		t.Fatalf("the egress is %v, want DNS and the extra rule only", eg)
 	}
 }
+
+// TestWorkspaceNetworkPolicyWithProxy checks the default-deny egress of #143: with the proxy, the
+// Workspace and Agent pods can send only to the proxy pods, the API server and extraEgress.
+func TestWorkspaceNetworkPolicyWithProxy(t *testing.T) {
+	out := render(t, proxyValues, "workspace.networkPolicy.namespaces={dev}",
+		"workspace.networkPolicy.extraEgress[0].to[0].podSelector.matchLabels.app=shop")
+	var dev []networkingv1.NetworkPolicy
+	for _, np := range policies(t, out) {
+		if np.Namespace == "dev" {
+			dev = append(dev, np)
+		}
+	}
+	if len(dev) != 2 || dev[0].Name != "koodam-workspace" || dev[1].Name != "koodam-agent" {
+		t.Fatalf("got the policies %v in dev, want koodam-workspace and koodam-agent", dev)
+	}
+	for _, np := range dev {
+		key := workspaceLabel
+		if np.Name == "koodam-agent" {
+			key = agentLabel
+			if len(np.Spec.Ingress) != 0 {
+				t.Errorf("the Agent ingress is %v, want none", np.Spec.Ingress)
+			}
+		}
+		if sel := np.Spec.PodSelector.MatchExpressions; len(sel) != 1 || sel[0].Key != key {
+			t.Errorf("%s: the pod selector is %v, want %s", np.Name, np.Spec.PodSelector, key)
+		}
+		if !slices.Equal(np.Spec.PolicyTypes, []networkingv1.PolicyType{"Ingress", "Egress"}) {
+			t.Errorf("%s: the policy types are %v", np.Name, np.Spec.PolicyTypes)
+		}
+		eg := np.Spec.Egress
+		if len(eg) != 3 {
+			t.Fatalf("%s: got %d egress rules, want the proxy, the API server and extraEgress", np.Name, len(eg))
+		}
+		proxy := eg[0]
+		ports := make([]string, 0, len(proxy.Ports))
+		for _, p := range proxy.Ports {
+			ports = append(ports, string(*p.Protocol)+"/"+p.Port.String())
+		}
+		if proxy.To[0].NamespaceSelector.MatchLabels["kubernetes.io/metadata.name"] != releaseNS ||
+			proxy.To[0].PodSelector.MatchLabels["app.kubernetes.io/component"] != "egress-proxy" ||
+			!slices.Equal(ports, []string{"TCP/3128", "UDP/5353", "TCP/5353", "TCP/8443", "TCP/8080"}) {
+			t.Errorf("%s: the first egress rule is %v, want the proxy pods on their target ports", np.Name, proxy)
+		}
+		if eg[1].To[0].IPBlock == nil || eg[1].To[0].IPBlock.CIDR != "172.18.0.2/32" {
+			t.Errorf("%s: the second egress rule is %v, want the API server", np.Name, eg[1])
+		}
+		if eg[2].To[0].PodSelector.MatchLabels["app"] != "shop" {
+			t.Errorf("%s: the third egress rule is %v, want extraEgress", np.Name, eg[2])
+		}
+	}
+}
+
+// The pod labels of the Agent and Workspace pods.
+const (
+	agentLabel     = "koodam.dev/agent"
+	workspaceLabel = "koodam.dev/workspace"
+)

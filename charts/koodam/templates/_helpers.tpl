@@ -116,3 +116,31 @@ link-local, loopback and NAT64 ranges. The argument is the list of more blocked 
     {{- end }}
     {{- end }}
 {{- end -}}
+
+{{/* The egress rules of the Workspace and Agent pods with the egress proxy (#143): the proxy pods
+on the target ports, and the API server. There is no rule for the cluster DNS, the gateway or the
+public internet. A NetworkPolicy applies after the Service address changes to the pod address,
+thus the rules use the target ports of the proxy pods. The API server traffic has no span. */}}
+{{- define "koodam.proxyEgress" -}}
+- to:
+  - namespaceSelector:
+      matchLabels:
+        kubernetes.io/metadata.name: {{ .Release.Namespace }}
+    podSelector:
+      matchLabels:
+        {{- include "koodam.gatewaySelector" (list . "egress-proxy") | nindent 8 }}
+  ports:
+  - protocol: TCP
+    port: {{ .Values.egressProxy.port }}
+  - protocol: UDP
+    port: 5353
+  - protocol: TCP
+    port: 5353
+  - protocol: TCP
+    port: 8443
+  - protocol: TCP
+    port: 8080
+{{- with .Values.egressProxy.networkPolicy.apiServer }}
+{{ toYaml . }}
+{{- end }}
+{{- end -}}

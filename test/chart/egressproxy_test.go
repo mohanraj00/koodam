@@ -206,7 +206,7 @@ func TestEgressProxyNetworkPolicy(t *testing.T) {
 		}
 		keys = append(keys, from.PodSelector.MatchExpressions[0].Key)
 	}
-	if !slices.Equal(keys, []string{"koodam.dev/agent", "koodam.dev/workspace"}) {
+	if !slices.Equal(keys, []string{agentLabel, workspaceLabel}) {
 		t.Fatalf("the proxy port is open to %q, want the Agent and Workspace pods only", keys)
 	}
 	egress := nps[0].Spec.Egress
