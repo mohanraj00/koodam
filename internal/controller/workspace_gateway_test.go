@@ -347,6 +347,12 @@ var _ = Describe("Workspace gateway key", func() {
 		mustReconcile()
 		Expect(k8sClient.Get(ctx, nn(name), sts)).To(Succeed())
 		Expect(sts.Spec.Template.Spec.HostAliases).To(BeEmpty())
+		// An added nameserver goes away too.
+		sts.Spec.Template.Spec.DNSConfig.Nameservers = append(sts.Spec.Template.Spec.DNSConfig.Nameservers, "8.8.8.8")
+		Expect(k8sClient.Update(ctx, sts)).To(Succeed())
+		mustReconcile()
+		Expect(k8sClient.Get(ctx, nn(name), sts)).To(Succeed())
+		Expect(sts.Spec.Template.Spec.DNSConfig.Nameservers).To(Equal([]string{testEgress.IP}))
 		Expect(gw.order).To(Equal([]string{opCreate}))
 		Expect(secretKey()).To(Equal(old))
 		s := &corev1.Secret{}

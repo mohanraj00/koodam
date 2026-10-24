@@ -373,10 +373,13 @@ func (r *WorkspaceReconciler) applyStatefulSet(ctx context.Context, ws *corev1al
 	}
 	// DeepDerivative ignores the fields that the API server sets as defaults. Thus the
 	// controller updates the template only if it changed, for example after a manual edit.
-	// It also ignores an empty field in want. The egress proxy removes hostAliases, thus the
-	// controller compares them exactly (#142).
+	// It also ignores an empty field in want, and accepts a list in want that is the start of the
+	// list in have. The egress proxy owns hostAliases and dnsConfig, thus the controller compares
+	// them exactly (#142).
+	w, h := want.Spec.Template.Spec, have.Spec.Template.Spec
 	sameTemplate := equality.Semantic.DeepDerivative(want.Spec.Template, have.Spec.Template) &&
-		equality.Semantic.DeepEqual(want.Spec.Template.Spec.HostAliases, have.Spec.Template.Spec.HostAliases)
+		equality.Semantic.DeepEqual(w.HostAliases, h.HostAliases) &&
+		equality.Semantic.DeepEqual(w.DNSConfig, h.DNSConfig)
 	if sameTemplate && have.Spec.Replicas != nil && *have.Spec.Replicas == *want.Spec.Replicas {
 		return have, nil
 	}
