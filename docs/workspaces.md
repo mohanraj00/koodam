@@ -143,10 +143,21 @@ Koodam owns these fields:
 - On the main container: `ports`, `readinessProbe`, `securityContext`, and the env names and mount paths of Koodam.
 - On each container: `securityContext` and `hostPort`.
 - The names of the Koodam containers and volumes, and the label and annotation keys in the domain `koodam.dev`.
+- On the pod, if the egress proxy is on: `dnsPolicy` and `dnsConfig`. The controller replaces your values without an error.
 
 The template cannot use `hostNetwork`, `hostPID`, `hostIPC`, `hostUsers: true`, `shareProcessNamespace` or a `hostPath` volume.
 
 The API server refuses the host fields and the pod fields that Koodam owns. The controller refuses the other conflicts with the reason `InvalidPodTemplate`. If you change the template of a Workspace, the controller updates the StatefulSet, and Kubernetes makes the pod again. The home PVC stays. If the new template is not valid, the pod of the previous spec stays.
+
+## Traced egress
+
+If the chart has `egressProxy.enabled: true`, the controller sends the egress of each Agent pod and each Workspace pod through the egress proxy (#142):
+
+- The pod gets `dnsPolicy: None`. Its only DNS server is the proxy. The proxy answers a name outside the cluster domain with its own IP, thus a call to a name on the internet goes to the proxy. The controller removes `hostAliases` from the pod.
+- `ANTHROPIC_BASE_URL` and `OPENAI_BASE_URL` point to the `/llm` route of the proxy. The proxy sends the model calls to the gateway.
+- The condition `TracedEgress` is `True`. Without the proxy, it is `False` with the reason `NoProxy`.
+
+DNS does not stop a call to an IP address. The NetworkPolicy of #143 blocks the egress that does not go to the proxy. The proxy writes a span for each call. [egress-spans.md](egress-spans.md) has the span contract.
 
 ## The runtime class
 

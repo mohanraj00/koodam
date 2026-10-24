@@ -91,6 +91,8 @@ type AgentReconciler struct {
 	Gateway   gateway.Gateway
 	// GatewayURL is the gateway address for the agent pods.
 	GatewayURL string
+	// Egress sends the egress of the run pods through the egress proxy.
+	Egress EgressProxy
 	// Grace is added to deadlineSeconds to give the key TTL.
 	Grace time.Duration
 	// InstallerImage has /harness-install. The run pod uses it as an init container if the Agent
@@ -308,6 +310,7 @@ func (r *AgentReconciler) provision(ctx context.Context, a *corev1alpha1.Agent) 
 			}
 			msg, reason = err.Error(), reasonInvalidPodTemplate
 		}
+		r.Egress.apply(&job.Spec.Template.Spec, a.Namespace)
 	}
 	if msg != "" {
 		log.Info("The Agent is not valid", "reason", msg)
@@ -402,6 +405,7 @@ func (r *AgentReconciler) provision(ctx context.Context, a *corev1alpha1.Agent) 
 		Type: condProvisioned, Status: metav1.ConditionTrue, Reason: "Provisioned",
 		Message: "The key, the credentials and the Job are ready.", ObservedGeneration: a.Generation,
 	})
+	meta.SetStatusCondition(&a.Status.Conditions, r.Egress.condition(a.Generation))
 	log.Info("Provisioned the run", "keyAlias", alias)
 	return r.Status().Update(ctx, a)
 }
@@ -414,9 +418,12 @@ func (r *AgentReconciler) secret(a *corev1alpha1.Agent, key string) *corev1.Secr
 
 // gatewayEnv is the env of the harnesses for a gateway key. Stage 2 found that a missing model
 // alias gives a 403.
+// baseURLField is the gateway URL in a gateway Secret.
+const baseURLField = "ANTHROPIC_BASE_URL"
+
 func gatewayEnv(url, m, key string) map[string]string {
 	return map[string]string{
-		"ANTHROPIC_BASE_URL": url, keyField: key, modelField: m,
+		baseURLField: url, keyField: key, modelField: m,
 		"ANTHROPIC_DEFAULT_HAIKU_MODEL": m, "ANTHROPIC_DEFAULT_SONNET_MODEL": m,
 		"ANTHROPIC_DEFAULT_OPUS_MODEL": m, "ANTHROPIC_SMALL_FAST_MODEL": m, "CLAUDE_CODE_SUBAGENT_MODEL": m,
 		"OPENAI_BASE_URL": url + "/v1", openAIKeyField: key,
