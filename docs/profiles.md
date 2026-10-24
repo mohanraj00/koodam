@@ -91,7 +91,7 @@ If `egressProxy.enabled` is `true`, the policy changes to default-deny egress (#
 | Egress | The API server, from `egressProxy.networkPolicy.apiServer`, for `kubectl` and for an Agent with `rules`. These calls have no span. |
 | Egress | The rules of `workspace.networkPolicy.extraEgress`, for example an in-cluster Service. These calls go direct and have no span. |
 
-There is no rule for the cluster DNS, the gateway or the public internet. Thus a pod cannot send to a public IP address, use a different DNS server or use DNS over HTTPS. The `dns`, `publicInternet`, `publicInternetPorts` and `blockedCIDRs` values have no effect.
+There is no rule for the cluster DNS, the gateway or the public internet. Thus a pod cannot send direct to a public IP address, a different DNS server or a DNS over HTTPS server. A DNS over HTTPS call through the proxy is a usual TLS call, and it has a span. The `publicInternet` and `publicInternetPorts` values have no effect. The `dns` and `blockedCIDRs` values do not change the policy of the pods, but the policy of the proxy uses them.
 
 The policy has no IPv6 rule. Thus a dual-stack pod has no direct IPv6 path.
 

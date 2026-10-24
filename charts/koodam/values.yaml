@@ -22,7 +22,8 @@ workspace:
   # publicInternet is true, and the rules of extraEgress. Other traffic is blocked.
   # If egressProxy.enabled is true, the egress is only the proxy pods, the API server rules of
   # egressProxy.networkPolicy.apiServer and extraEgress. The Agent pods get the same egress.
-  # Then dns, publicInternet, publicInternetPorts and blockedCIDRs have no effect.
+  # Then publicInternet and publicInternetPorts have no effect. dns and blockedCIDRs do not change
+  # the policy of the pods, but the policy of the proxy uses them.
   networkPolicy:
     namespaces: []
     # The cluster DNS pods. The pods can send UDP and TCP port 53 to these pods.
