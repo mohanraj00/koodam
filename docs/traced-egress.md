@@ -35,7 +35,9 @@ The proxy identifies the source pod from the source IP address, with a watch on 
    kubectl get endpointslices -n default -l kubernetes.io/service-name=kubernetes
    ```
 
-4. Add the values below, with your Profile namespaces, and run `helm upgrade`.
+4. Add the values below, and run `helm upgrade`. Put each namespace with Agents or Workspaces in `workspace.networkPolicy.namespaces`, also a namespace with no Profile.
+
+> **Caution:** Do not omit a namespace that has Agents. The proxy watches the pods only in these namespaces, and only these namespaces get the NetworkPolicy. An Agent in a different namespace gets the proxy DNS, but the proxy cannot identify the pod.
 
 ```yaml
 egressProxy:
