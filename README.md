@@ -167,8 +167,10 @@ If `shasum -c` does not show `OK`, do not install the file.
 | v0.1 | `Agent` runs as a Job, key and Role for each run, spend in the status, `koodam` CLI, Helm chart |
 | v0.2 | profiles and workspaces: log in once, and every harness in your namespaces shares the login, skills, config and memory. A workspace is a pod that you connect to over SSH from the Claude or Codex app or a terminal |
 | v0.3 | traced egress: every call out of an agent goes through a proxy and gets a span. In the spike, 360 of 360 planted calls got a span with the correct run, and 0 of 23 bypass attempts got through |
-| v0.4 | MCP tools with credentials for each run, and a portal |
-| later | long-running agents, managed clusters |
+| v0.4 | apps and Nookku: an `App` resource with versions and a traffic split, traced ingress with an authenticated caller, and a rollout that waits for the Nookku tests to pass |
+| v0.5 | controls for an app in production: a budget for each period, metrics, one trace, key rotation, a kill switch and a quarantine |
+| v0.6 | agentic apps at scale: workload identity, MCP tools, approvals, durable runs, autoscaling, and a test on a public cloud |
+| later | shared memory across the pods of a namespace |
 
 Each version starts with a spike that decides go or no-go before the build. The spike records are the evidence for every claim here.
 
