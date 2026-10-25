@@ -62,9 +62,27 @@ var _ = Describe("Traced egress", Ordered, Label("egress"), func() {
 	kexec := func(pod, shell, command string) (string, error) {
 		return utils.Run(exec.Command("kubectl", "exec", "-n", egNS, pod, "--", shell, "-c", command))
 	}
-	// reach is true if the Workspace pod opens a TCP connection to host/port in 5 seconds.
-	reach := func(addr string) bool {
-		_, err := kexec(wsPod, "bash", `timeout 5 bash -c 'exec 3<>"/dev/tcp/`+addr+`"'`)
+	// reach is true if pod opens a TCP connection to host/port in 5 seconds. The Workspace image
+	// has bash and no nc. The curl image of the other pods has the busybox nc.
+	reach := func(pod, addr string) bool {
+		if pod == wsPod {
+			_, err := kexec(pod, "bash", `timeout 5 bash -c 'exec 3<>"/dev/tcp/`+addr+`"'`)
+			return err == nil
+		}
+		host, port, _ := strings.Cut(addr, "/")
+		_, err := kexec(pod, "sh", "timeout 8 nc -z -w 5 "+host+" "+port)
+		return err == nil
+	}
+	// dnsUDP is true if pod gets an answer to a UDP DNS query for example.com from server in 5 seconds.
+	dnsUDP := func(pod, server string) bool {
+		if pod == wsPod {
+			// A DNS query for the A record of example.com, with the ID 0x1234.
+			const query = `\x12\x34\x01\x00\x00\x01\x00\x00\x00\x00\x00\x00\x07example\x03com\x00\x00\x01\x00\x01`
+			out, err := kexec(pod, "bash", `exec 3<>/dev/udp/`+server+`/53 && printf '`+query+`' >&3 && `+
+				`timeout 5 head -c 12 <&3 | wc -c`)
+			return err == nil && strings.TrimSpace(out) == "12"
+		}
+		_, err := kexec(pod, "sh", "timeout 8 nslookup example.com "+server)
 		return err == nil
 	}
 	// spans returns the spans of target from koodam trace --json.
@@ -160,7 +178,7 @@ workspace:
 		installChart("-f", file)
 
 		By("making an Agent and a Workspace that use the proxy")
-		a := sampleAgent(agentName, "sleep 600")
+		a := sampleAgent(agentName, "sleep 900")
 		a.Namespace = egNS
 		Expect(k8s.Create(ctx, a)).To(Succeed())
 		ws := &corev1alpha1.Workspace{ObjectMeta: metav1.ObjectMeta{Name: wsTraceName, Namespace: egNS},
@@ -206,8 +224,8 @@ workspace:
 		Expect(err).NotTo(HaveOccurred(), out)
 
 		By("checking the K4 calls of the Workspace pod that have no span")
-		Expect(reach("127.0.0.1/2222")).To(BeTrue(), "The Workspace pod cannot reach its own sshd.")
-		Expect(reach(upstream+"/8080")).To(BeTrue(), "The Workspace pod cannot reach the extraEgress Service.")
+		Expect(reach(wsPod, "127.0.0.1/2222")).To(BeTrue(), "The Workspace pod cannot reach its own sshd.")
+		Expect(reach(wsPod, upstream+"/8080")).To(BeTrue(), "The Workspace pod cannot reach the extraEgress Service.")
 
 		By("reading the spans with koodam trace")
 		Eventually(func(g Gomega) {
@@ -255,19 +273,58 @@ workspace:
 		svc := &corev1.Service{}
 		Expect(k8s.Get(ctx, client.ObjectKey{Namespace: systemNS, Name: release + "-litellm"}, svc)).To(Succeed())
 
-		By("starting a listener in the Agent pod, for the same-namespace attempt")
-		_, err := kexec(agentPod, "sh", "nohup nc -lk -p 9000 >/dev/null 2>&1 &")
-		Expect(err).NotTo(HaveOccurred())
+		// The control pod has no Koodam label, so no NetworkPolicy selects it and it uses the cluster
+		// DNS. Each attempt must work from it, so that a blocked attempt shows the policy of the source.
+		By("starting a control pod with a listener, for the same-namespace attempt")
+		const control = "egress-control"
+		Expect(k8s.Create(ctx, &corev1.Pod{
+			ObjectMeta: metav1.ObjectMeta{Name: control, Namespace: egNS, Labels: map[string]string{"app": control}},
+			Spec: corev1.PodSpec{
+				SecurityContext: &corev1.PodSecurityContext{RunAsNonRoot: new(true), RunAsUser: new(int64(100)),
+					SeccompProfile: &corev1.SeccompProfile{Type: corev1.SeccompProfileTypeRuntimeDefault}},
+				Containers: []corev1.Container{{Name: "control", Image: curlImage,
+					Command: []string{"sh", "-c", "nc -lk -p 9000 -e /bin/cat"},
+					SecurityContext: &corev1.SecurityContext{AllowPrivilegeEscalation: new(false),
+						Capabilities: &corev1.Capabilities{Drop: []corev1.Capability{"ALL"}}}}},
+			},
+		})).To(Succeed())
+		var controlIP string
+		Eventually(func(g Gomega) {
+			controlIP = podIP(egNS, "app", control)
+			g.Expect(controlIP).NotTo(BeEmpty())
+			g.Expect(reach(control, controlIP+"/9000")).To(BeTrue())
+		}, 3*time.Minute, 2*time.Second).Should(Succeed(), "The listener of the control pod does not answer.")
 
-		for _, a := range []struct{ what, addr string }{
+		// The proxy DNS gives the proxy IP for each external name, so the port 22 attempt uses an IP.
+		ghIP, err := kexec(control, "sh", `curl -sS -o /dev/null -w '%{remote_ip}' --max-time 10 https://github.com/`)
+		Expect(err).NotTo(HaveOccurred(), ghIP)
+
+		attempts := []struct{ what, addr string }{
 			{"a direct HTTPS call to an IP address", "1.1.1.1/443"},
-			{"a direct DNS query", "1.1.1.1/53"},
+			{"a direct TCP DNS query", "1.1.1.1/53"},
+			{"a direct call to an external IP on port 22", ghIP + "/22"},
 			{"a direct gateway pod call", podIP(systemNS, "app.kubernetes.io/component", "litellm") + "/4000"},
 			{"a direct gateway Service call", svc.Spec.ClusterIP + "/4000"},
-			{"a pod in the same namespace", podIP(egNS, agentLabel, agentName) + "/9000"},
-			{"an external name on a port that is not 443 or 80", "example.com/22"},
-		} {
-			Expect(reach(a.addr)).To(BeFalse(), "The Workspace pod can make "+a.what+": "+a.addr)
+			{"a pod in the same namespace", controlIP + "/9000"},
 		}
+		By("checking that each attempt works from the control pod")
+		for _, a := range attempts {
+			Expect(reach(control, a.addr)).To(BeTrue(), "The control pod cannot make "+a.what+": "+a.addr)
+		}
+		Expect(dnsUDP(control, "1.1.1.1")).To(BeTrue(), "The control pod cannot make a UDP DNS query.")
+
+		for _, pod := range []string{wsPod, agentPod} {
+			By("checking that each attempt fails from " + pod)
+			for _, a := range attempts {
+				Expect(reach(pod, a.addr)).To(BeFalse(), pod+" can make "+a.what+": "+a.addr)
+			}
+			Expect(dnsUDP(pod, "1.1.1.1")).To(BeFalse(), pod+" can make a direct UDP DNS query.")
+		}
+
+		By("checking that the proxy refuses a CONNECT to port 22")
+		// curl fails after the refused CONNECT, so "|| true" keeps the kubectl exit message out of the output.
+		out, _ := kexec(agentPod, "sh", `curl -sS -o /dev/null -w '%{http_connect}' --max-time 10 `+
+			`-x http://`+proxyAddr+` https://example.com:22/ 2>/dev/null || true`)
+		Expect(strings.TrimSpace(out)).To(Equal("403"), "The proxy does not refuse a CONNECT to port 22.")
 	})
 })
