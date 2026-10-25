@@ -134,14 +134,7 @@ var _ = BeforeSuite(func() {
 	makeFakeUpstream()
 
 	By("installing the chart with the bundled gateway")
-	i := strings.LastIndex(managerImage, ":")
-	_, err = utils.Run(exec.Command("helm", "upgrade", "--install", release, "charts/koodam",
-		"-n", systemNS, "-f", "charts/koodam/values-bundled.yaml",
-		"-f", "test/e2e/testdata/values-e2e.yaml",
-		"--set", "image.repository="+managerImage[:i], "--set", "image.tag="+managerImage[i+1:],
-		"--set", "metrics.enabled=true", "--set", "jobTTLSeconds="+strconv.Itoa(jobTTL),
-		"--wait", "--timeout", "10m"))
-	Expect(err).NotTo(HaveOccurred(), "Failed to install the chart")
+	installChart()
 
 	By("forwarding a local port to the bundled gateway")
 	portForward = forward(release+"-litellm", gatewayPort+":4000")
@@ -154,6 +147,20 @@ var _ = BeforeSuite(func() {
 		return resp.StatusCode
 	}, 2*time.Minute, time.Second).Should(Equal(http.StatusOK))
 })
+
+// installChart installs or upgrades the chart with the values of the suite and the extra helm
+// arguments. With no extra argument, it gives the chart of the suite again.
+func installChart(extra ...string) {
+	i := strings.LastIndex(managerImage, ":")
+	args := append([]string{"upgrade", "--install", release, "charts/koodam",
+		"-n", systemNS, "-f", "charts/koodam/values-bundled.yaml",
+		"-f", "test/e2e/testdata/values-e2e.yaml",
+		"--set", "image.repository=" + managerImage[:i], "--set", "image.tag=" + managerImage[i+1:],
+		"--set", "metrics.enabled=true", "--set", "jobTTLSeconds=" + strconv.Itoa(jobTTL),
+		"--wait", "--timeout", "10m"}, extra...)
+	out, err := utils.Run(exec.Command("helm", args...))
+	Expect(err).NotTo(HaveOccurred(), "Failed to install the chart: "+out)
+}
 
 // makeFakeUpstream runs testdata/fake_responses.py in systemNS behind the Service fakeUpstream.
 func makeFakeUpstream() {
