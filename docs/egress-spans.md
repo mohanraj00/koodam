@@ -105,7 +105,7 @@ These calls do not go through the proxy, so they have no span:
 
 ## Read the spans
 
-`koodam trace` (#144) reads the logs of the proxy pods with your kubeconfig. Your account needs `get` on `pods/log` in the namespace of the proxy. `--json` prints each span without change.
+`koodam trace` (#144) reads the logs of the proxy pods with your kubeconfig. Your account needs `list` on `pods` and `get` on `pods/log` in the namespace of the proxy. `--json` prints each span without change.
 
 ```sh
 koodam trace dev --json --since 2026-10-23T09:00:00Z --until 2026-10-23T10:00:00Z > spans.jsonl

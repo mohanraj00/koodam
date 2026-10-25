@@ -67,6 +67,17 @@ For `koodam logs` and `run --wait`, you need `get` on jobs, `list` on pods and `
 
 [profiles.md](profiles.md) has the steps for these commands.
 
+## Traced egress
+
+| Command | Description |
+|---|---|
+| `koodam trace NAME` | Show the egress spans of the Agent or the Workspace `NAME` from the egress proxy logs, sorted by time. Use `agent/NAME` or `workspace/NAME` to select one kind. |
+| `koodam trace NAME --since T --until T` | Show only the spans with `since <= time < until`. `T` is an RFC 3339 time. |
+| `koodam trace NAME --json` | Print each span as its JSON line from the proxy log, without change. |
+| `koodam trace NAME -f` | Stream the new spans until Ctrl-C. |
+
+`--proxy-namespace` is the namespace of the proxy pods (default `koodam-system`). Your account needs `list` on `pods` and `get` on `pods/log` in that namespace. The command replaces each control character from the log with `?`. [Traced egress](traced-egress.md) tells how to turn on the proxy.
+
 ## Other
 
 | Command | Description |
