@@ -141,6 +141,9 @@ func TestTraceWindow(t *testing.T) {
 		if o.Follow {
 			t.Errorf("pod %s: Follow is true without --follow", pod)
 		}
+		if o.Container != proxyContainer {
+			t.Errorf("pod %s: the log container is %q, want %q", pod, o.Container, proxyContainer)
+		}
 	}
 	if len(opts) != 2 {
 		t.Errorf("%d proxy logs are read, want 2", len(opts))

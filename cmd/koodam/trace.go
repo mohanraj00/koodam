@@ -42,6 +42,10 @@ import (
 // proxySelector selects the egress proxy pods of the chart.
 const proxySelector = "app.kubernetes.io/name=koodam,app.kubernetes.io/component=egress-proxy"
 
+// proxyContainer is the container of the egress proxy pod in the chart. The log request names
+// it, so a sidecar from an admission webhook does not make the request fail.
+const proxyContainer = "proxy"
+
 // maxSpanLine is the maximum length of a log line. A longer line stops the read with an error.
 const maxSpanLine = 1 << 20
 
@@ -172,7 +176,7 @@ func (e *env) trace(ctx context.Context, out io.Writer, t traceTarget, proxyNS s
 	if len(pods.Items) == 0 {
 		return fmt.Errorf("no egress proxy pod in the namespace %s; set --proxy-namespace", proxyNS)
 	}
-	opts := &corev1.PodLogOptions{Follow: follow}
+	opts := &corev1.PodLogOptions{Container: proxyContainer, Follow: follow}
 	if !t.since.IsZero() {
 		// The log API uses seconds. The span filter applies the exact time.
 		st := metav1.NewTime(t.since.Truncate(time.Second))
