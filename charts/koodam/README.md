@@ -186,6 +186,16 @@ helm install koodam charts/koodam -n koodam-system -f charts/koodam/values-bundl
 | `gateway.bundled.postgres.image` | `docker.io/library/postgres:16-alpine@sha256:721873c34ceb9f8d8fc265984940dc982404c105f19ad51be9fdc5970a6080ea` | The PostgreSQL image. |
 | `gateway.bundled.postgres.passwordSecret.name`, `.key` | empty, `password` | The Secret with the database password. If empty, the chart makes it. |
 | `gateway.bundled.postgres.persistence.enabled` | `false` | Use a PVC, not an `emptyDir`. |
+| `egressProxy.enabled` | `false` | Send the egress of the Agent and Workspace pods through the egress proxy, with a span for each call. See [Traced egress](../../docs/traced-egress.md). |
+| `egressProxy.clusterIP` | empty | A free IPv4 ClusterIP in the Service range. The pods use it as their DNS server and their proxy. It is necessary if `enabled` is `true`. |
+| `egressProxy.port` | `3128` | The proxy port, for CONNECT, the explicit proxy and the `/llm` route to the gateway. |
+| `egressProxy.httpPorts`, `.connectPorts` | `["80"]`, `["443"]` | The permitted ports for plain HTTP and for CONNECT. Each list must have items. |
+| `egressProxy.dns.clusterDNS`, `.clusterDomain` | `kube-dns.kube-system.svc.cluster.local:53`, `cluster.local` | The proxy sends a name in `clusterDomain` to `clusterDNS`, and answers each other name with `clusterIP`. |
+| `egressProxy.replicas` | `2` | The number of proxy pods. |
+| `egressProxy.resources` | 50m and 64Mi requests, 1 CPU and 256Mi limits | The resources of a proxy pod. |
+| `egressProxy.networkPolicy.enabled` | `true` | Add a NetworkPolicy for the proxy pods. They can send only to the DNS pods, the bundled gateway, the API server and the public internet on the permitted ports. |
+| `egressProxy.networkPolicy.apiServer` | empty | The egress rules (`NetworkPolicyEgressRule`) to the API server endpoint addresses, for the pod watch of the proxy and for the Agent and Workspace pods. They are necessary if `networkPolicy.enabled` is `true`. |
+| `egressProxy.networkPolicy.extraEgress` | empty | More egress rules for the proxy pods, for example for a gateway at a private address. |
 | `keyGrace` | `1m` | The time that the controller adds to `deadlineSeconds` for the key TTL. |
 | `jobTTLSeconds` | `86400` | The time in seconds that Kubernetes keeps a run Job and its pods (and the log) after the Job ends. The value must be from `60` to `2147483647`. |
 | `leaderElection` | `true` | Use leader election. |
