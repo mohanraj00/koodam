@@ -45,6 +45,13 @@ const proxySelector = "app.kubernetes.io/name=koodam,app.kubernetes.io/component
 // maxSpanLine is the maximum length of a log line. A longer line stops the read with an error.
 const maxSpanLine = 1 << 20
 
+// maxSortBytes is the maximum size of the span lines that the command keeps for the sort
+// without --follow. A larger trace stops with an error. Tests change it.
+var maxSortBytes = 64 << 20
+
+// errTooLarge is the error when the spans without --follow are more than maxSortBytes.
+var errTooLarge = errors.New("the spans are too large to sort; use --since and --until, or --follow")
+
 // traceTarget is the Agent or the Workspace of the trace argument. If kind is empty, a span of
 // an Agent or a Workspace with the name matches.
 type traceTarget struct {
@@ -88,17 +95,21 @@ type tracedSpan struct {
 }
 
 // readSpans reads the spans of the target from one log stream and gives each one to emit.
-// It skips a line that is not a span.
-func readSpans(r io.Reader, t traceTarget, ns string, emit func(tracedSpan)) error {
+// It skips a line that is not a span of egress.SpanVersion. A span of an other version can have
+// fields that the current contract removed, for example a claim value. An emit error stops the
+// read.
+func readSpans(r io.Reader, t traceTarget, ns string, emit func(tracedSpan) error) error {
 	sc := bufio.NewScanner(r)
 	sc.Buffer(make([]byte, 0, 64*1024), maxSpanLine)
 	for sc.Scan() {
 		var sp egress.Span
-		if json.Unmarshal(sc.Bytes(), &sp) != nil || sp.V == 0 || sp.Time.IsZero() {
+		if json.Unmarshal(sc.Bytes(), &sp) != nil || sp.V != egress.SpanVersion || sp.Time.IsZero() {
 			continue
 		}
 		if t.match(&sp, ns) {
-			emit(tracedSpan{span: sp, line: append([]byte(nil), sc.Bytes()...)})
+			if err := emit(tracedSpan{span: sp, line: append([]byte(nil), sc.Bytes()...)}); err != nil {
+				return err
+			}
 		}
 	}
 	return sc.Err()
@@ -170,48 +181,75 @@ func (e *env) trace(ctx context.Context, out io.Writer, t traceTarget, proxyNS s
 	p := newSpanPrinter(out, asJSON)
 	if !follow {
 		var spans []tracedSpan
+		size := 0
 		for _, pod := range pods.Items {
-			if err := e.podSpans(ctx, proxyNS, pod.Name, opts, t, func(s tracedSpan) {
+			if err := e.podSpans(ctx, proxyNS, pod.Name, opts, t, func(s tracedSpan) error {
+				if size += len(s.line); size > maxSortBytes {
+					return errTooLarge
+				}
 				spans = append(spans, s)
+				return nil
 			}); err != nil {
 				return err
 			}
 		}
 		slices.SortStableFunc(spans, func(a, b tracedSpan) int { return a.span.Time.Compare(b.span.Time) })
 		for _, s := range spans {
-			p.print(s)
+			if err := p.print(s); err != nil {
+				return err
+			}
 		}
 		return p.flush()
 	}
+	return e.followSpans(ctx, p, pods.Items, proxyNS, opts, t)
+}
+
+// followSpans streams the log of each proxy pod and prints each span when it comes. The first
+// error of a stream or of the output stops all streams and is the result. Ctrl-C gives no error.
+func (e *env) followSpans(ctx context.Context, p *spanPrinter, pods []corev1.Pod, proxyNS string,
+	opts *corev1.PodLogOptions, t traceTarget) error {
+	streamCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
 	var mu sync.Mutex
+	var first error
 	var wg sync.WaitGroup
-	errs := make([]error, len(pods.Items))
-	for i, pod := range pods.Items {
+	for _, pod := range pods {
 		wg.Go(func() {
-			errs[i] = e.podSpans(ctx, proxyNS, pod.Name, opts, t, func(s tracedSpan) {
+			err := e.podSpans(streamCtx, proxyNS, pod.Name, opts, t, func(s tracedSpan) error {
 				mu.Lock()
 				defer mu.Unlock()
-				p.print(s)
-				_ = p.flush()
+				if err := p.print(s); err != nil {
+					return err
+				}
+				return p.flush()
 			})
+			mu.Lock()
+			defer mu.Unlock()
+			if err != nil && first == nil {
+				first = err
+				cancel()
+			}
 		})
 	}
 	wg.Wait()
-	if ctx.Err() != nil {
-		return nil
-	}
-	return errors.Join(errs...)
+	return first
 }
 
-// podSpans reads the spans of t from the log of one proxy pod.
+// podSpans reads the spans of t from the log of one proxy pod. The end of ctx gives no error.
 func (e *env) podSpans(ctx context.Context, ns, pod string, opts *corev1.PodLogOptions, t traceTarget,
-	emit func(tracedSpan)) error {
+	emit func(tracedSpan) error) error {
 	rc, err := e.openStream(ctx, ns, pod, opts)
 	if err != nil {
 		return apiError("read the log of pod/"+pod, err)
 	}
 	defer func() { _ = rc.Close() }()
-	if err := readSpans(rc, t, e.namespace, emit); err != nil && ctx.Err() == nil {
+	err = readSpans(rc, t, e.namespace, emit)
+	switch {
+	case ctx.Err() != nil:
+		return nil
+	case errors.Is(err, errTooLarge):
+		return err
+	case err != nil:
 		return fmt.Errorf("read the log of pod/%s: %w", pod, err)
 	}
 	return nil
@@ -229,13 +267,16 @@ func newSpanPrinter(out io.Writer, asJSON bool) *spanPrinter {
 	return &spanPrinter{out: out, w: tabwriter.NewWriter(out, 0, 4, 2, ' ', 0), asJSON: asJSON}
 }
 
-func (p *spanPrinter) print(s tracedSpan) {
+func (p *spanPrinter) print(s tracedSpan) error {
 	if p.asJSON {
-		_, _ = p.out.Write(append(s.line, '\n'))
-		return
+		_, err := p.out.Write(append(s.line, '\n'))
+		return err
 	}
 	if !p.header {
-		_, _ = fmt.Fprintln(p.w, "TIME\tSOURCE\tKIND\tMETHOD\tHOST\tPORT\tPATH\tSTATUS\tRESULT\tIN\tOUT\tMS")
+		const header = "TIME\tSOURCE\tKIND\tMETHOD\tHOST\tPORT\tPATH\tSTATUS\tRESULT\tIN\tOUT\tMS"
+		if _, err := fmt.Fprintln(p.w, header); err != nil {
+			return err
+		}
 		p.header = true
 	}
 	sp := s.span
@@ -251,9 +292,10 @@ func (p *spanPrinter) print(s tracedSpan) {
 	if sp.Reason != "" {
 		result += "/" + sp.Reason
 	}
-	_, _ = fmt.Fprintf(p.w, "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%d\t%d\t%.0f\n",
+	_, err := fmt.Fprintf(p.w, "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%d\t%d\t%.0f\n",
 		sp.Time.UTC().Format(time.RFC3339Nano), cell(sp.Source), cell(sp.Kind), cell(sp.Method), cell(host),
 		cell(sp.Port), cell(sp.Path), status, cell(result), sp.BytesIn, sp.BytesOut, sp.DurationMS)
+	return err
 }
 
 func (p *spanPrinter) flush() error { return p.w.Flush() }
