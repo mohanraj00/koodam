@@ -7,6 +7,16 @@
 {{- $np := dig "networkPolicy" dict (.Values.workspace | default dict) | default dict -}}
 {{- $namespaces := $np.namespaces | default list -}}
 {{- $epnp := $ep.networkPolicy | default dict -}}
+{{- $podLabels := include "koodam.gatewaySelector" (list . "egress-proxy") | fromYaml -}}
+{{- /* A spread item with no labelSelector gets the labels of the proxy pods of this release. */ -}}
+{{- $spread := list -}}
+{{- range $ep.topologySpreadConstraints -}}
+{{- $c := deepCopy . -}}
+{{- if not $c.labelSelector -}}
+{{- $_ := set $c "labelSelector" (dict "matchLabels" $podLabels) -}}
+{{- end -}}
+{{- $spread = append $spread $c -}}
+{{- end -}}
 apiVersion: v1
 kind: ServiceAccount
 metadata:
@@ -200,6 +210,14 @@ spec:
       {{- end }}
       {{- with .Values.tolerations }}
       tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with $ep.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with $spread }}
+      topologySpreadConstraints:
         {{- toYaml . | nindent 8 }}
       {{- end }}
       # The proxy waits at most 5 seconds for the open calls, and 5 seconds for the probe server.

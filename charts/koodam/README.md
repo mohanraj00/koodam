@@ -193,6 +193,9 @@ helm install koodam charts/koodam -n koodam-system -f charts/koodam/values-bundl
 | `egressProxy.dns.clusterDNS`, `.clusterDomain` | `kube-dns.kube-system.svc.cluster.local:53`, `cluster.local` | The proxy sends a name in `clusterDomain` to `clusterDNS`, and answers each other name with `clusterIP`. |
 | `egressProxy.replicas` | `2` | The number of proxy pods. |
 | `egressProxy.resources` | 50m and 64Mi requests, 1 CPU and 256Mi limits | The resources of a proxy pod. |
+| `egressProxy.affinity` | empty | The affinity of the proxy pods. The top-level `affinity` does not apply to the proxy pods. |
+| `egressProxy.topologySpreadConstraints` | 1 item: `maxSkew: 1`, `topologyKey: kubernetes.io/hostname`, `whenUnsatisfiable: ScheduleAnyway` | Spread the proxy pods across the nodes. All the pods can start on 1 node. If an item has no `labelSelector`, the chart adds the labels of the proxy pods of the release. Set `[]` for no spread. |
+| `egressProxy.podDisruptionBudget.enabled`, `.maxUnavailable` | `true`, `1` | Add a PodDisruptionBudget for the proxy pods. `maxUnavailable` is a number or a percentage. Set `enabled: false` for no PodDisruptionBudget. |
 | `egressProxy.networkPolicy.enabled` | `true` | Add a NetworkPolicy for the proxy pods. They can send only to the DNS pods, the bundled gateway, the API server and the public internet on the permitted ports. |
 | `egressProxy.networkPolicy.apiServer` | empty | The egress rules (`NetworkPolicyEgressRule`) to the API server endpoint addresses, for the pod watch of the proxy and for the Agent and Workspace pods. They are necessary if `networkPolicy.enabled` is `true`. |
 | `egressProxy.networkPolicy.extraEgress` | empty | More egress rules for the proxy pods, for example for a gateway at a private address. |
