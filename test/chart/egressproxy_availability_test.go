@@ -41,9 +41,11 @@ func renderRelease(t *testing.T, release, namespace, values string) string {
 		t.Skip("helm is not on the PATH")
 	}
 	dir := t.TempDir()
-	args := []string{"template", release, chartDir, "--namespace", namespace,
-		"-f", filepath.Join(chartDir, "values-bundled.yaml")}
-	for i, v := range []string{proxyValues, values} {
+	files := []string{proxyValues, values}
+	args := make([]string, 0, 7+2*len(files))
+	args = append(args, "template", release, chartDir, "--namespace", namespace,
+		"-f", filepath.Join(chartDir, "values-bundled.yaml"))
+	for i, v := range files {
 		file := filepath.Join(dir, fmt.Sprintf("values-%d.yaml", i))
 		if err := os.WriteFile(file, []byte(v), 0o600); err != nil {
 			t.Fatal(err)
@@ -142,11 +144,12 @@ egressProxy:
 // select only the proxy pods of their release.
 func TestEgressProxyAvailabilityReleases(t *testing.T) {
 	type release struct{ name, namespace, object string }
-	var sels []map[string]string
-	for _, r := range []release{
+	releases := []release{
 		{"koodam", releaseNS, proxyName},
 		{"team-b", "team-b", "team-b-koodam-egress-proxy"},
-	} {
+	}
+	sels := make([]map[string]string, 0, len(releases))
+	for _, r := range releases {
 		out := renderRelease(t, r.name, r.namespace, "")
 		pod, sel := podSpec(t, out, r.object)
 		if sel["app.kubernetes.io/instance"] != r.name || sel["app.kubernetes.io/component"] != "egress-proxy" {
