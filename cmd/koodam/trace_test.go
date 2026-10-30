@@ -52,6 +52,17 @@ const (
 	spanOtherNS    = `{"v":2,"time":"2026-10-24T10:00:01Z","result":"ok","namespace":"prod","agent":"run1"}`
 	spanOtherAgent = `{"v":2,"time":"2026-10-24T10:00:01Z","result":"ok","namespace":"dev","agent":"run2"}`
 	spanV1         = `{"v":1,"time":"2026-10-24T10:00:01Z","result":"ok","namespace":"dev","agent":"run1"}`
+	// The spans of an App with the same name as the Agent and the Workspace, in 2 versions.
+	spanApp1 = `{"v":2,"time":"2026-10-24T10:00:04Z","source":"10.0.0.8","kind":"tls","sni":"api\u001b.example",` +
+		`"bytesIn":1,"bytesOut":2,"result":"ok","namespace":"dev","pod":"run1-v1-0","app":"run1","appVersion":"run1-v1"}`
+	spanApp2 = `{"v":2,"time":"2026-10-24T10:00:05Z","source":"10.0.0.9","kind":"http","method":"GET",` +
+		`"host":"example.com","bytesIn":3,"bytesOut":4,"result":"ok","namespace":"dev","pod":"run1-v2-0",` +
+		`"app":"run1","appVersion":"run1-v2"}`
+	// App spans that must not match: an other namespace, an other App, and a mixed identity.
+	spanAppOtherNS = `{"v":2,"time":"2026-10-24T10:00:04Z","result":"ok","namespace":"prod","app":"run1","appVersion":"v"}`
+	spanOtherApp   = `{"v":2,"time":"2026-10-24T10:00:04Z","result":"ok","namespace":"dev","app":"run2","appVersion":"v"}`
+	spanMixed      = `{"v":2,"time":"2026-10-24T10:00:04Z","result":"ok","namespace":"dev","agent":"run1",` +
+		`"workspace":"run1","app":"run1","appVersion":"v"}`
 )
 
 // logStream is the fake log stream of a proxy pod.
@@ -62,8 +73,10 @@ type logStream func(ctx context.Context, ns, pod string, opts *corev1.PodLogOpti
 func traceRun(t *testing.T, args ...string) (string, map[string]*corev1.PodLogOptions, error) {
 	t.Helper()
 	logs := map[string]string{
-		proxyA:    "egress proxy started\n" + span1 + "\n" + spanOtherNS + "\nnot json\n" + span3 + "\n",
-		"proxy-b": spanOtherAgent + "\n" + span2 + "\n{\"msg\":\"no span\"}\n" + spanV1 + "\n",
+		proxyA: "egress proxy started\n" + span1 + "\n" + spanOtherNS + "\nnot json\n" + span3 + "\n" +
+			spanApp2 + "\n" + spanMixed + "\n",
+		"proxy-b": spanOtherAgent + "\n" + span2 + "\n{\"msg\":\"no span\"}\n" + spanV1 + "\n" + spanApp1 + "\n" +
+			spanAppOtherNS + "\n" + spanOtherApp + "\n",
 	}
 	var mu sync.Mutex
 	got := map[string]*corev1.PodLogOptions{}
@@ -108,6 +121,11 @@ func TestTraceJSON(t *testing.T) {
 		{traceName, []string{span1, span2, span3}},
 		{"agent/" + traceName, []string{span1, span2}},
 		{"workspace/" + traceName, []string{span3}},
+		{"app/" + traceName, []string{spanApp1, spanApp2}},
+		{"app/run2", []string{spanOtherApp}},
+		{"agent/run2", []string{spanOtherAgent}},
+		{"run2", []string{spanOtherAgent}},
+		{"app/run3", nil},
 		{"run3", nil},
 	} {
 		out, _, err := traceRun(t, tc.arg, "--json", "--proxy-namespace", proxyNS)
@@ -191,6 +209,11 @@ func TestTraceErrors(t *testing.T) {
 	for _, args := range [][]string{
 		{"job/run1"},
 		{"agent/"},
+		{"app/"},
+		{"App/run1"},
+		{"appversion/run1"},
+		{"app/run1-v1/x"},
+		{"app/Bad\x1bName"},
 		{"Bad\x1bName"},
 		{traceName, "--since", "yesterday"},
 		{traceName, "--until", "2026-10-24"},
@@ -259,5 +282,23 @@ func TestTraceTooLarge(t *testing.T) {
 	}
 	if _, _, err := traceRun(t, "agent/"+traceName, "--json"); err != nil {
 		t.Errorf("2 spans at the limit: %v", err)
+	}
+}
+
+// TestTraceAppWindow checks the time window and the table of an App target.
+func TestTraceAppWindow(t *testing.T) {
+	out, _, err := traceRun(t, "app/"+traceName, "--json", "--since", "2026-10-24T10:00:01Z",
+		"--until", "2026-10-24T10:00:05Z")
+	if err != nil || out != spanApp1+"\n" {
+		t.Errorf("the output is %q, %v, want only the first App span", out, err)
+	}
+	out, _, err = traceRun(t, "app/"+traceName)
+	if err != nil {
+		t.Fatal(err)
+	}
+	lines := strings.Split(strings.TrimSpace(out), "\n")
+	if len(lines) != 3 || strings.ContainsRune(out, '\x1b') || !strings.Contains(lines[1], "api?.example") ||
+		!strings.Contains(lines[2], "example.com") {
+		t.Errorf("the table is\n%s", out)
 	}
 }

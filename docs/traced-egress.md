@@ -72,6 +72,8 @@ koodam trace workspace/dev --json --since 2026-10-23T09:00:00Z > spans.jsonl
 koodam trace my-run -f
 ```
 
+`koodam trace app/NAME` reads the spans of all versions of an App. The App identity of a span comes only from the reserved pod labels `koodam.dev/app` and `koodam.dev/app-version`. This is not a complete App integration: #183 still needs the App wiring in production, default-deny ingress and egress, proxy steering and the Nookku correlation. [The App pods](egress-spans.md#app-pods-183) has the rules.
+
 Your account needs `list` on `pods` and `get` on `pods/log` in the namespace of the proxy. [The CLI](cli.md#traced-egress) has the flags.
 
 [Koodam with Nookku](nookku.md) tells how Nookku uses the spans to check the calls of a harness, and how to run Nookku in a Workspace.
