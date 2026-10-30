@@ -59,6 +59,16 @@ var _ = Describe("App admission: full PodTemplate immutability and the deletion-
 	const immutableMessage = "spec.template is immutable."
 	const fenceMessage = "no new finalizers can be added if the object is being deleted"
 	const ownerFinalizer = "admission.test.koodam.dev/owner"
+	// These are the schema field names and the fixture values that the tests use more than one time.
+	const (
+		objectType    = "object"
+		specField     = "spec"
+		templateField = "template"
+		teamLabel     = "team"
+		poolLabel     = "pool"
+		appsPool      = "apps"
+		otherAccount  = "other"
+	)
 	var c client.Client
 
 	BeforeAll(func() {
@@ -67,14 +77,14 @@ var _ = Describe("App admission: full PodTemplate immutability and the deletion-
 		workspace := &apiextensionsv1.CustomResourceDefinition{}
 		Expect(yaml.Unmarshal(raw, workspace)).To(Succeed())
 		Expect(workspace.Spec.Versions).To(HaveLen(1))
-		generated := workspace.Spec.Versions[0].Schema.OpenAPIV3Schema.Properties["spec"].Properties["podTemplate"]
+		generated := workspace.Spec.Versions[0].Schema.OpenAPIV3Schema.Properties[specField].Properties["podTemplate"]
 		template := generated.DeepCopy()
 
 		// The copy has each json field of corev1.PodSpec. The test removes no field.
-		podSpec := template.Properties["spec"].Properties
+		podSpec := template.Properties[specField].Properties
 		podSpecType := reflect.TypeFor[corev1.PodSpec]()
-		for i := range podSpecType.NumField() {
-			name := strings.Split(podSpecType.Field(i).Tag.Get("json"), ",")[0]
+		for field := range podSpecType.Fields() {
+			name, _, _ := strings.Cut(field.Tag.Get("json"), ",")
 			Expect(podSpec).To(HaveKey(name), "the copied schema has no PodSpec field %q", name)
 		}
 		// The copy keeps the generated rules, for example the host restrictions.
@@ -96,13 +106,13 @@ var _ = Describe("App admission: full PodTemplate immutability and the deletion-
 					Schema: &apiextensionsv1.CustomResourceValidation{OpenAPIV3Schema: &apiextensionsv1.JSONSchemaProps{
 						// The root requires spec, and spec requires template. Without these, an update can
 						// remove the template, and a later update can add a different one with no oldSelf.
-						Type: "object", Required: []string{"spec"},
+						Type: objectType, Required: []string{specField},
 						Properties: map[string]apiextensionsv1.JSONSchemaProps{
-							"apiVersion": {Type: "string"}, "kind": {Type: "string"}, "metadata": {Type: "object"},
-							"spec": {Type: "object", Required: []string{"template"},
+							"apiVersion": {Type: "string"}, "kind": {Type: "string"}, "metadata": {Type: objectType},
+							specField: {Type: objectType, Required: []string{templateField},
 								Properties: map[string]apiextensionsv1.JSONSchemaProps{
-									"template": *template,
-									"replicas": {Type: "integer", Format: "int32"},
+									templateField: *template,
+									"replicas":    {Type: "integer", Format: "int32"},
 								}},
 						},
 					}},
@@ -125,10 +135,10 @@ var _ = Describe("App admission: full PodTemplate immutability and the deletion-
 	}
 	baseTemplate := func() *corev1alpha1.PodTemplate {
 		return &corev1alpha1.PodTemplate{
-			Metadata: corev1alpha1.PodTemplateMetadata{Labels: map[string]string{"team": "a"}},
+			Metadata: corev1alpha1.PodTemplateMetadata{Labels: map[string]string{teamLabel: "a"}},
 			Spec: corev1.PodSpec{
 				RuntimeClassName: new("gvisor"),
-				NodeSelector:     map[string]string{"pool": "apps"},
+				NodeSelector:     map[string]string{poolLabel: appsPool},
 				Tolerations:      []corev1.Toleration{{Key: "k", Operator: corev1.TolerationOpExists}},
 				Volumes: []corev1.Volume{{Name: "data",
 					VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{}}}},
@@ -151,7 +161,7 @@ var _ = Describe("App admission: full PodTemplate immutability and the deletion-
 		u.SetName(name)
 		u.SetNamespace(metav1.NamespaceDefault)
 		u.SetFinalizers(finalizers)
-		u.Object["spec"] = map[string]any{"template": toMap(t), "replicas": int64(1)}
+		u.Object[specField] = map[string]any{templateField: toMap(t), "replicas": int64(1)}
 		return u
 	}
 	get := func(name string) *unstructured.Unstructured {
@@ -174,7 +184,7 @@ var _ = Describe("App admission: full PodTemplate immutability and the deletion-
 		})
 	}
 	storedTemplate := func(name string) any {
-		return get(name).Object["spec"].(map[string]any)["template"]
+		return get(name).Object[specField].(map[string]any)[templateField]
 	}
 	expectImmutable := func(err error) {
 		GinkgoWriter.Printf("Template change result: %v\n", err)
@@ -199,7 +209,7 @@ var _ = Describe("App admission: full PodTemplate immutability and the deletion-
 				u := get(name)
 				t := baseTemplate()
 				change(t)
-				u.Object["spec"].(map[string]any)["template"] = toMap(t)
+				u.Object[specField].(map[string]any)[templateField] = toMap(t)
 				expectImmutable(c.Update(ctx, u))
 				// The API server keeps the old template. No controller reverts it.
 				Expect(storedTemplate(name)).To(Equal(before))
@@ -217,7 +227,7 @@ var _ = Describe("App admission: full PodTemplate immutability and the deletion-
 				t.Spec.Containers[0].Resources.Limits[corev1.ResourceCPU] = resource.MustParse("4")
 			}),
 			Entry("template label", "change-label", func(t *corev1alpha1.PodTemplate) {
-				t.Metadata.Labels["team"] = "b"
+				t.Metadata.Labels[teamLabel] = "b"
 			}),
 			Entry("added container", "add-container", func(t *corev1alpha1.PodTemplate) {
 				t.Spec.Containers = append(t.Spec.Containers, corev1.Container{Name: "side", Image: "side"})
@@ -258,21 +268,21 @@ var _ = Describe("App admission: full PodTemplate immutability and the deletion-
 				u := get(name)
 				t := baseTemplate()
 				t.Spec.Containers[0].Image = "registry.example/app@sha256:" + strings.Repeat("c", 64)
-				u.Object["spec"].(map[string]any)["template"] = toMap(t)
+				u.Object[specField].(map[string]any)[templateField] = toMap(t)
 				expectImmutable(c.Update(ctx, u))
 				Expect(storedTemplate(name)).To(Equal(before))
 			},
-			Entry("merge patch spec null", "null-spec", "spec", func(u *unstructured.Unstructured) error {
+			Entry("merge patch spec null", "null-spec", specField, func(u *unstructured.Unstructured) error {
 				return c.Patch(ctx, u, client.RawPatch(types.MergePatchType, []byte(`{"spec":null}`)))
 			}),
-			Entry("JSON patch remove spec", "json-remove-spec", "spec", func(u *unstructured.Unstructured) error {
+			Entry("JSON patch remove spec", "json-remove-spec", specField, func(u *unstructured.Unstructured) error {
 				return c.Patch(ctx, u, client.RawPatch(types.JSONPatchType, []byte(`[{"op":"remove","path":"/spec"}]`)))
 			}),
-			Entry("update with no spec", "update-no-spec", "spec", func(u *unstructured.Unstructured) error {
-				delete(u.Object, "spec")
+			Entry("update with no spec", "update-no-spec", specField, func(u *unstructured.Unstructured) error {
+				delete(u.Object, specField)
 				return c.Update(ctx, u)
 			}),
-			Entry("merge patch template null", "null-template", "spec.template", func(u *unstructured.Unstructured) error {
+			Entry("merge patch template null", "null-template", specField+"."+templateField, func(u *unstructured.Unstructured) error {
 				return c.Patch(ctx, u, client.RawPatch(types.MergePatchType, []byte(`{"spec":{"template":null}}`)))
 			}),
 		)
@@ -281,12 +291,12 @@ var _ = Describe("App admission: full PodTemplate immutability and the deletion-
 			create(newHolder("change-replicas", baseTemplate()))
 			before := storedTemplate("change-replicas")
 			u := get("change-replicas")
-			u.Object["spec"].(map[string]any)["replicas"] = int64(3)
+			u.Object[specField].(map[string]any)["replicas"] = int64(3)
 			u.SetLabels(map[string]string{"x": "y"})
 			Expect(c.Update(ctx, u)).To(Succeed())
 			after := get("change-replicas")
-			Expect(after.Object["spec"].(map[string]any)["replicas"]).To(BeEquivalentTo(3))
-			Expect(after.Object["spec"].(map[string]any)["template"]).To(Equal(before))
+			Expect(after.Object[specField].(map[string]any)["replicas"]).To(BeEquivalentTo(3))
+			Expect(after.Object[specField].(map[string]any)[templateField]).To(Equal(before))
 		})
 
 		It("accepts a replicas change on a large unchanged template, and refuses one changed value in it", func() {
@@ -302,12 +312,12 @@ var _ = Describe("App admission: full PodTemplate immutability and the deletion-
 			}
 			create(newHolder("large-template", t))
 			u := get("large-template")
-			u.Object["spec"].(map[string]any)["replicas"] = int64(2)
+			u.Object[specField].(map[string]any)["replicas"] = int64(2)
 			Expect(c.Update(ctx, u)).To(Succeed(), "an unchanged large template must pass the CEL cost limit")
 
 			u = get("large-template")
 			t.Spec.Containers[40].Env[49].Value = "changed"
-			u.Object["spec"].(map[string]any)["template"] = toMap(t)
+			u.Object[specField].(map[string]any)[templateField] = toMap(t)
 			expectImmutable(c.Update(ctx, u))
 		})
 	})
@@ -329,7 +339,7 @@ var _ = Describe("App admission: full PodTemplate immutability and the deletion-
 		Entry("shared process namespace", "share-process", "cannot use the host network",
 			func(t *corev1alpha1.PodTemplate) { t.Spec.ShareProcessNamespace = new(true) }),
 		Entry("service account name", "service-account", "Koodam owns serviceAccountName",
-			func(t *corev1alpha1.PodTemplate) { t.Spec.ServiceAccountName = "other" }),
+			func(t *corev1alpha1.PodTemplate) { t.Spec.ServiceAccountName = otherAccount }),
 	)
 
 	Context("the deletion-time finalizer fence", func() {
