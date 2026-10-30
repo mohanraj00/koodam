@@ -66,6 +66,27 @@ type WorkspaceSpec struct {
 	// selector. The main container has the name "workspace".
 	// +optional
 	PodTemplate *PodTemplate `json:"podTemplate,omitempty"`
+
+	// TestKeys permits TestKeys for this Workspace and sets their limits. If it is empty, the
+	// Workspace permits no TestKey. No controller uses this field at this time.
+	// +optional
+	TestKeys *WorkspaceTestKeys `json:"testKeys,omitempty"`
+}
+
+// WorkspaceTestKeys are the limits for each TestKey of a Workspace.
+type WorkspaceTestKeys struct {
+	// MaxBudget is the maximum budget of one TestKey, in the currency of the gateway price
+	// table. It must be more than zero.
+	// +required
+	// +kubebuilder:validation:XValidation:rule="quantity(string(self)).isGreaterThan(quantity('0'))",message="maxBudget must be more than zero"
+	MaxBudget resource.Quantity `json:"maxBudget"`
+
+	// MaxTTL is the maximum TTL of one TestKey, for example "1h". It must be more than zero.
+	// +required
+	// +kubebuilder:validation:Type=string
+	// +kubebuilder:validation:MaxLength=32
+	// +kubebuilder:validation:XValidation:rule="duration(self) > duration('0s')",message="maxTTL must be more than zero"
+	MaxTTL metav1.Duration `json:"maxTTL"`
 }
 
 // WorkspaceGateway is the gateway key of a Workspace.

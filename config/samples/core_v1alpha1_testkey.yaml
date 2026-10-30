@@ -1,0 +1,15 @@
+apiVersion: core.koodam.dev/v1alpha1
+kind: TestKey
+metadata:
+  labels:
+    app.kubernetes.io/name: koodam
+    app.kubernetes.io/managed-by: kustomize
+  name: testkey-sample
+spec:
+  workspaceRef:
+    name: workspace-sample
+    # Put the UID of the Workspace here: kubectl get workspace workspace-sample -o jsonpath='{.metadata.uid}'
+    uid: 00000000-0000-0000-0000-000000000000
+  testID: login-smoke
+  budget: "0.50"
+  ttl: 30m
