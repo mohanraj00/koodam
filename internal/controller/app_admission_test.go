@@ -94,7 +94,9 @@ var _ = Describe("App admission: full PodTemplate immutability and the deletion-
 				Versions: []apiextensionsv1.CustomResourceDefinitionVersion{{
 					Name: gvk.Version, Served: true, Storage: true,
 					Schema: &apiextensionsv1.CustomResourceValidation{OpenAPIV3Schema: &apiextensionsv1.JSONSchemaProps{
-						Type: "object",
+						// The root requires spec, and spec requires template. Without these, an update can
+						// remove the template, and a later update can add a different one with no oldSelf.
+						Type: "object", Required: []string{"spec"},
 						Properties: map[string]apiextensionsv1.JSONSchemaProps{
 							"apiVersion": {Type: "string"}, "kind": {Type: "string"}, "metadata": {Type: "object"},
 							"spec": {Type: "object", Required: []string{"template"},
@@ -241,6 +243,39 @@ var _ = Describe("App admission: full PodTemplate immutability and the deletion-
 			expectImmutable(c.Patch(ctx, get("patch-node-selector"), client.RawPatch(types.MergePatchType, patch)))
 			Expect(storedTemplate("patch-node-selector")).To(Equal(before))
 		})
+
+		DescribeTable("refuses the removal of spec or the template, and then refuses a different template",
+			func(name, field string, remove func(*unstructured.Unstructured) error) {
+				create(newHolder(name, baseTemplate()))
+				before := storedTemplate(name)
+				err := remove(get(name))
+				GinkgoWriter.Printf("Removal result: %v\n", err)
+				Expect(apierrors.IsInvalid(err)).To(BeTrue(), "the error is not Invalid: %v", err)
+				Expect(err.Error()).To(ContainSubstring(field + ": Required value"))
+				Expect(storedTemplate(name)).To(Equal(before))
+
+				// The template is still there, so oldSelf is present. A different template is refused.
+				u := get(name)
+				t := baseTemplate()
+				t.Spec.Containers[0].Image = "registry.example/app@sha256:" + strings.Repeat("c", 64)
+				u.Object["spec"].(map[string]any)["template"] = toMap(t)
+				expectImmutable(c.Update(ctx, u))
+				Expect(storedTemplate(name)).To(Equal(before))
+			},
+			Entry("merge patch spec null", "null-spec", "spec", func(u *unstructured.Unstructured) error {
+				return c.Patch(ctx, u, client.RawPatch(types.MergePatchType, []byte(`{"spec":null}`)))
+			}),
+			Entry("JSON patch remove spec", "json-remove-spec", "spec", func(u *unstructured.Unstructured) error {
+				return c.Patch(ctx, u, client.RawPatch(types.JSONPatchType, []byte(`[{"op":"remove","path":"/spec"}]`)))
+			}),
+			Entry("update with no spec", "update-no-spec", "spec", func(u *unstructured.Unstructured) error {
+				delete(u.Object, "spec")
+				return c.Update(ctx, u)
+			}),
+			Entry("merge patch template null", "null-template", "spec.template", func(u *unstructured.Unstructured) error {
+				return c.Patch(ctx, u, client.RawPatch(types.MergePatchType, []byte(`{"spec":{"template":null}}`)))
+			}),
+		)
 
 		It("accepts a replicas change and a metadata change when the template does not change", func() {
 			create(newHolder("change-replicas", baseTemplate()))
