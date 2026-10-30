@@ -56,22 +56,23 @@ var maxSortBytes = 64 << 20
 // errTooLarge is the error when the spans without --follow are more than maxSortBytes.
 var errTooLarge = errors.New("the spans are too large to sort; use --since and --until, or --follow")
 
-// traceTarget is the Agent or the Workspace of the trace argument. If kind is empty, a span of
-// an Agent or a Workspace with the name matches.
+// traceTarget is the Agent, the Workspace or the App of the trace argument. If kind is empty, a
+// span of an Agent or a Workspace with the name matches. A span of an App matches only the kind
+// app, for all versions of the App.
 type traceTarget struct {
 	kind, name string
 	// since and until are the time window: since <= time < until. A zero value has no limit.
 	since, until time.Time
 }
 
-// parseTraceTarget reads NAME, agent/NAME or workspace/NAME. The error does not show the
+// parseTraceTarget reads NAME, agent/NAME, workspace/NAME or app/NAME. The error does not show the
 // argument, because it can hold control characters.
 func parseTraceTarget(arg string) (traceTarget, error) {
 	kind, name, ok := strings.Cut(arg, "/")
 	if !ok {
 		kind, name = "", arg
-	} else if kind != "agent" && kind != "workspace" {
-		return traceTarget{}, errors.New("the argument must be NAME, agent/NAME or workspace/NAME")
+	} else if kind != "agent" && kind != "workspace" && kind != "app" {
+		return traceTarget{}, errors.New("the argument must be NAME, agent/NAME, workspace/NAME or app/NAME")
 	}
 	if len(validation.IsDNS1123Subdomain(name)) > 0 {
 		return traceTarget{}, errors.New("the name is not a valid DNS-1123 subdomain")
@@ -84,9 +85,17 @@ func (t traceTarget) match(sp *egress.Span, ns string) bool {
 	if sp.Namespace != ns {
 		return false
 	}
-	agent := t.kind != "workspace" && sp.Agent == t.name
-	workspace := t.kind != "agent" && sp.Workspace == t.name
-	if !agent && !workspace {
+	// The proxy does not write an App identity with an Agent or a Workspace identity.
+	var ok bool
+	switch {
+	case t.kind == "app":
+		ok = sp.App == t.name && sp.Agent == "" && sp.Workspace == ""
+	case sp.App != "":
+		ok = false
+	default:
+		ok = (t.kind != "workspace" && sp.Agent == t.name) || (t.kind != "agent" && sp.Workspace == t.name)
+	}
+	if !ok {
 		return false
 	}
 	return !sp.Time.Before(t.since) && (t.until.IsZero() || sp.Time.Before(t.until))
@@ -123,9 +132,10 @@ func traceCmd(conn connect) *cobra.Command {
 	var since, until, proxyNS string
 	var asJSON, follow bool
 	cmd := &cobra.Command{
-		Use:   "trace NAME|agent/NAME|workspace/NAME",
-		Short: "Show the egress spans of an Agent or a Workspace from the egress proxy log",
-		Long: "Show the egress spans of an Agent or a Workspace. The command reads the log of the egress proxy\n" +
+		Use:   "trace NAME|agent/NAME|workspace/NAME|app/NAME",
+		Short: "Show the egress spans of an Agent, a Workspace or an App from the egress proxy log",
+		Long: "Show the egress spans of an Agent, a Workspace or an App. NAME matches an Agent or a Workspace.\n" +
+			"app/NAME matches all versions of the App. The command reads the log of the egress proxy\n" +
 			"pods with your kubeconfig. You need list on pods and get on pods/log in the proxy namespace.",
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
