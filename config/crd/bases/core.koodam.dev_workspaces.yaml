@@ -8981,6 +8981,35 @@ spec:
                 description: Suspend stops the pod and blocks the gateway key. The
                   PVC stays.
                 type: boolean
+              testKeys:
+                description: |-
+                  TestKeys permits TestKeys for this Workspace and sets their limits. If it is empty, the
+                  Workspace permits no TestKey. No controller uses this field at this time.
+                properties:
+                  maxBudget:
+                    anyOf:
+                    - type: integer
+                    - type: string
+                    description: |-
+                      MaxBudget is the maximum budget of one TestKey, in the currency of the gateway price
+                      table. It must be more than zero.
+                    pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                    x-kubernetes-int-or-string: true
+                    x-kubernetes-validations:
+                    - message: maxBudget must be more than zero
+                      rule: quantity(string(self)).isGreaterThan(quantity('0'))
+                  maxTTL:
+                    description: MaxTTL is the maximum TTL of one TestKey, for example
+                      "1h". It must be more than zero.
+                    maxLength: 32
+                    type: string
+                    x-kubernetes-validations:
+                    - message: maxTTL must be more than zero
+                      rule: duration(self) > duration('0s')
+                required:
+                - maxBudget
+                - maxTTL
+                type: object
             type: object
             x-kubernetes-validations:
             - message: Set the image in spec.image or in the pod template, not in
