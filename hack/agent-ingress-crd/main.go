@@ -89,13 +89,15 @@ func run(defaultPath, enabledPath string) error {
 	if err != nil {
 		return fmt.Errorf("%s: %w", defaultPath, err)
 	}
+	if sameFile(defaultPath, enabledPath) {
+		return errors.New("the default and the enabled CRD must be two different files")
+	}
 	if err := os.MkdirAll(filepath.Dir(enabledPath), 0o755); err != nil {
 		return err
 	}
-	if err := os.WriteFile(enabledPath, en, 0o644); err != nil {
-		return err
-	}
-	return os.WriteFile(defaultPath, def, 0o644)
+	// The default variant is replaced first. If the process stops after it, the default CRD refuses
+	// spec.ingressPort, and a new run on it makes both variants again.
+	return writeAll(&file{path: defaultPath, data: def}, &file{path: enabledPath, data: en})
 }
 
 // variants returns the default and the enabled CRD. The input is the controller-gen output, or the

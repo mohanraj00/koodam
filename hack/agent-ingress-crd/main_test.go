@@ -18,12 +18,16 @@ package main
 
 // These tests start from the real Agent CRD of make manifests. The API does not have
 // spec.ingressPort yet. Thus fixture adds the proposed field and its immutability rule to an
-// in-memory copy only. No test reads or writes a generated enabled file.
+// in-memory copy only. No test reads or writes a generated enabled file. The write tests use only
+// files in t.TempDir.
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
+	"io"
 	"os"
+	"path/filepath"
 	"reflect"
 	"slices"
 	"strings"
@@ -207,4 +211,135 @@ func TestRefusesUnexpectedInput(t *testing.T) {
 			t.Errorf("%s: the command accepted the input", name)
 		}
 	}
+}
+
+var (
+	errFail    = errors.New("injected failure")
+	oldEnabled = []byte("old enabled\n")
+)
+
+// failRename makes the given calls of rename fail.
+func failRename(t *testing.T, fail ...int) {
+	calls := 0
+	t.Cleanup(func() { rename = os.Rename })
+	rename = func(a, b string) error {
+		if calls++; slices.Contains(fail, calls) {
+			return errFail
+		}
+		return os.Rename(a, b)
+	}
+}
+
+// failWrite makes call n of write fail, or write one byte less with no error.
+func failWrite(t *testing.T, n int, short bool) {
+	calls := 0
+	t.Cleanup(func() { write = (*os.File).Write })
+	write = func(f *os.File, b []byte) (int, error) {
+		if calls++; calls != n {
+			return f.Write(b)
+		}
+		if short {
+			return f.Write(b[:len(b)-1])
+		}
+		return 0, errFail
+	}
+}
+
+// targets returns a directory with the default input and an old enabled CRD.
+func targets(t *testing.T) (dir, def, en string, in []byte) {
+	t.Helper()
+	_, in = fixture(t)
+	dir = t.TempDir()
+	def, en = filepath.Join(dir, "default.yaml"), filepath.Join(dir, "enabled.yaml")
+	if err := os.WriteFile(def, in, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(en, oldEnabled, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	return dir, def, en, in
+}
+
+// wantFiles checks that dir has only the files in want, with their content.
+func wantFiles(t *testing.T, dir string, want map[string][]byte) {
+	t.Helper()
+	ents, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(ents) != len(want) {
+		t.Errorf("%s has %d files, want %d", dir, len(ents), len(want))
+	}
+	for name, b := range want {
+		if !bytes.Equal(read(t, filepath.Join(dir, name)), b) {
+			t.Errorf("%s does not have the expected content", name)
+		}
+	}
+}
+
+func TestRunWritesBothVariants(t *testing.T) {
+	dir, def, en, in := targets(t)
+	if err := os.Remove(en); err != nil {
+		t.Fatal(err)
+	}
+	if err := run(def, en); err != nil {
+		t.Fatal(err)
+	}
+	wantDef, wantEn := mustVariants(t, in)
+	wantFiles(t, dir, map[string][]byte{"default.yaml": wantDef, "enabled.yaml": wantEn})
+
+	link := filepath.Join(dir, "link.yaml")
+	if err := os.Symlink(def, link); err != nil {
+		t.Fatal(err)
+	}
+	for _, alias := range []string{filepath.Join(dir, ".", "default.yaml"), link} {
+		if err := run(def, alias); err == nil {
+			t.Errorf("%s: the command accepted the same file for both variants", alias)
+		}
+	}
+	wantFiles(t, dir, map[string][]byte{"default.yaml": wantDef, "enabled.yaml": wantEn, "link.yaml": wantDef})
+}
+
+// The writes are: the default original, the default variant, the enabled original, the enabled
+// variant. The renames are: the default variant, the enabled variant, the put back of the default.
+func TestWriteFailureKeepsBothOriginals(t *testing.T) {
+	cases := map[string]struct {
+		inject func(*testing.T)
+		want   error
+	}{
+		"write error":   {func(t *testing.T) { failWrite(t, 4, false) }, errFail},
+		"short write":   {func(t *testing.T) { failWrite(t, 2, true) }, io.ErrShortWrite},
+		"first rename":  {func(t *testing.T) { failRename(t, 1) }, errFail},
+		"second rename": {func(t *testing.T) { failRename(t, 2) }, errFail},
+	}
+	for name, c := range cases {
+		t.Run(name, func(t *testing.T) {
+			dir, def, en, in := targets(t)
+			c.inject(t)
+			if err := run(def, en); !errors.Is(err, c.want) {
+				t.Fatalf("got %v, want %v", err, c.want)
+			}
+			wantFiles(t, dir, map[string][]byte{"default.yaml": in, "enabled.yaml": oldEnabled})
+		})
+	}
+}
+
+func TestFailedRollbackKeepsTheOriginals(t *testing.T) {
+	dir, def, en, in := targets(t)
+	failRename(t, 2, 3)
+	err := run(def, en)
+	if !errors.Is(err, errFail) {
+		t.Fatalf("got %v, want %v", err, errFail)
+	}
+	wantDef, _ := mustVariants(t, in)
+	origs := map[string][]byte{"default.yaml": in, "enabled.yaml": oldEnabled}
+	want := map[string][]byte{"default.yaml": wantDef, "enabled.yaml": oldEnabled}
+	for name, b := range origs {
+		m, _ := filepath.Glob(filepath.Join(dir, "."+name+".orig-*"))
+		if len(m) != 1 || !strings.Contains(err.Error(), m[0]) {
+			t.Fatalf("the error %q does not name the one original of %s: %q", err, name, m)
+		}
+		want[filepath.Base(m[0])] = b
+	}
+	wantFiles(t, dir, want)
 }
