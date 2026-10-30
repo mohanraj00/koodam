@@ -185,6 +185,20 @@ egressProxy:
     requests:
       cpu: 50m
       memory: 64Mi
+  # The affinity of the proxy pods. The top-level affinity does not apply to the proxy pods.
+  affinity: {}
+  # The default spreads the proxy pods across the nodes. ScheduleAnyway lets all the pods start
+  # on a cluster with one node. If an item has no labelSelector, the chart adds the labels of the
+  # proxy pods of this release. Set [] for no spread.
+  topologySpreadConstraints:
+  - maxSkew: 1
+    topologyKey: kubernetes.io/hostname
+    whenUnsatisfiable: ScheduleAnyway
+  # A PodDisruptionBudget for the proxy pods. maxUnavailable is a number or a percentage.
+  # With 1 replica and maxUnavailable 1, a node drain stops the proxy for a short time.
+  podDisruptionBudget:
+    enabled: true
+    maxUnavailable: 1
   networkPolicy:
     # If true, the proxy pods can send only to the DNS pods of workspace.networkPolicy.dns, the
     # bundled gateway, the API server, and the public internet (the ranges of the Workspace policy

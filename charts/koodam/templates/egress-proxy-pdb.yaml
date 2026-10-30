@@ -1,0 +1,20 @@
+{{- $ep := .Values.egressProxy | default dict -}}
+{{- $pdb := $ep.podDisruptionBudget | default dict -}}
+{{- if and $ep.enabled $pdb.enabled }}
+{{- if kindIs "invalid" $pdb.maxUnavailable }}
+{{- fail "egressProxy.podDisruptionBudget.maxUnavailable is necessary if egressProxy.podDisruptionBudget.enabled is true." }}
+{{- end }}
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: {{ printf "%s-egress-proxy" (include "koodam.fullname" .) }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "koodam.labels" . | nindent 4 }}
+    app.kubernetes.io/component: egress-proxy
+spec:
+  maxUnavailable: {{ $pdb.maxUnavailable | toJson }}
+  selector:
+    matchLabels:
+      {{- include "koodam.gatewaySelector" (list . "egress-proxy") | nindent 6 }}
+{{- end }}
