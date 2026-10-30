@@ -54,7 +54,9 @@ spec:
           metadata:
             type: object
           spec:
-            description: spec defines the desired state of TestKey
+            description: |-
+              spec defines the desired state of TestKey. It is immutable. The API server compares the
+              budget and the TTL by value, thus "0.50" and "500m" are the same budget.
             properties:
               budget:
                 anyOf:
@@ -111,7 +113,9 @@ spec:
             type: object
             x-kubernetes-validations:
             - message: spec is immutable
-              rule: self == oldSelf
+              rule: self.workspaceRef == oldSelf.workspaceRef && self.testID == oldSelf.testID
+                && quantity(string(self.budget)).compareTo(quantity(string(oldSelf.budget)))
+                == 0 && duration(self.ttl) == duration(oldSelf.ttl)
           status:
             description: status defines the observed state of TestKey
             properties:

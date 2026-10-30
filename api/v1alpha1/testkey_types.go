@@ -24,7 +24,7 @@ import (
 )
 
 // TestKeySpec asks for one gateway key for one Nookku test in a Workspace. All the fields are
-// necessary. The API server refuses a change to the spec after the create.
+// necessary. The API server refuses a change to a spec value after the create.
 // No controller uses this type at this time. The API server does not do a check on the
 // Workspace UID, the limits of the Workspace or the count of active keys.
 type TestKeySpec struct {
@@ -119,9 +119,10 @@ type TestKey struct {
 	// +optional
 	metav1.ObjectMeta `json:"metadata,omitzero"`
 
-	// spec defines the desired state of TestKey
+	// spec defines the desired state of TestKey. It is immutable. The API server compares the
+	// budget and the TTL by value, thus "0.50" and "500m" are the same budget.
 	// +required
-	// +kubebuilder:validation:XValidation:rule="self == oldSelf",message="spec is immutable"
+	// +kubebuilder:validation:XValidation:rule="self.workspaceRef == oldSelf.workspaceRef && self.testID == oldSelf.testID && quantity(string(self.budget)).compareTo(quantity(string(oldSelf.budget))) == 0 && duration(self.ttl) == duration(oldSelf.ttl)",message="spec is immutable"
 	Spec TestKeySpec `json:"spec"`
 
 	// status defines the observed state of TestKey
