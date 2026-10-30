@@ -43,6 +43,10 @@ const (
 		"the Agent has no ingress. You cannot add, remove or change it after create. The default Agent\n" +
 		"CRD has the ingress feature disabled and refuses this field."
 	immutableMessage = "spec.ingressPort is immutable. You cannot add, remove or change it after create."
+
+	// defaultName and enabledName are the names of the targets in the write tests.
+	defaultName = "default.yaml"
+	enabledName = "enabled.yaml"
 )
 
 type (
@@ -250,7 +254,7 @@ func targets(t *testing.T) (dir, def, en string, in []byte) {
 	t.Helper()
 	_, in = fixture(t)
 	dir = t.TempDir()
-	def, en = filepath.Join(dir, "default.yaml"), filepath.Join(dir, "enabled.yaml")
+	def, en = filepath.Join(dir, defaultName), filepath.Join(dir, enabledName)
 	if err := os.WriteFile(def, in, 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -286,18 +290,18 @@ func TestRunWritesBothVariants(t *testing.T) {
 		t.Fatal(err)
 	}
 	wantDef, wantEn := mustVariants(t, in)
-	wantFiles(t, dir, map[string][]byte{"default.yaml": wantDef, "enabled.yaml": wantEn})
+	wantFiles(t, dir, map[string][]byte{defaultName: wantDef, enabledName: wantEn})
 
 	link := filepath.Join(dir, "link.yaml")
 	if err := os.Symlink(def, link); err != nil {
 		t.Fatal(err)
 	}
-	for _, alias := range []string{filepath.Join(dir, ".", "default.yaml"), link} {
+	for _, alias := range []string{filepath.Join(dir, ".", defaultName), link} {
 		if err := run(def, alias); err == nil {
 			t.Errorf("%s: the command accepted the same file for both variants", alias)
 		}
 	}
-	wantFiles(t, dir, map[string][]byte{"default.yaml": wantDef, "enabled.yaml": wantEn, "link.yaml": wantDef})
+	wantFiles(t, dir, map[string][]byte{defaultName: wantDef, enabledName: wantEn, "link.yaml": wantDef})
 }
 
 // The writes are: the default original, the default variant, the enabled original, the enabled
@@ -319,7 +323,7 @@ func TestWriteFailureKeepsBothOriginals(t *testing.T) {
 			if err := run(def, en); !errors.Is(err, c.want) {
 				t.Fatalf("got %v, want %v", err, c.want)
 			}
-			wantFiles(t, dir, map[string][]byte{"default.yaml": in, "enabled.yaml": oldEnabled})
+			wantFiles(t, dir, map[string][]byte{defaultName: in, enabledName: oldEnabled})
 		})
 	}
 }
@@ -332,8 +336,8 @@ func TestFailedRollbackKeepsTheOriginals(t *testing.T) {
 		t.Fatalf("got %v, want %v", err, errFail)
 	}
 	wantDef, _ := mustVariants(t, in)
-	origs := map[string][]byte{"default.yaml": in, "enabled.yaml": oldEnabled}
-	want := map[string][]byte{"default.yaml": wantDef, "enabled.yaml": oldEnabled}
+	origs := map[string][]byte{defaultName: in, enabledName: oldEnabled}
+	want := map[string][]byte{defaultName: wantDef, enabledName: oldEnabled}
 	for name, b := range origs {
 		m, _ := filepath.Glob(filepath.Join(dir, "."+name+".orig-*"))
 		if len(m) != 1 || !strings.Contains(err.Error(), m[0]) {

@@ -23,6 +23,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"slices"
 )
 
 // rename and write are the file operations that can fail during a write. Tests replace them.
@@ -121,8 +122,7 @@ func temp(path, kind string, data []byte) (string, error) {
 // rollback puts back the originals of the replaced targets, the last first.
 func rollback(done []*file) error {
 	var errs []error
-	for i := len(done) - 1; i >= 0; i-- {
-		f := done[i]
+	for _, f := range slices.Backward(done) {
 		if f.orig == "" {
 			errs = append(errs, os.Remove(f.path))
 		} else if err := rename(f.orig, f.path); err != nil {
