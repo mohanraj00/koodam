@@ -106,6 +106,9 @@ type Span struct {
 	Workspace string `json:"workspace,omitempty"`
 	Run       string `json:"run,omitempty"`
 	User      string `json:"user,omitempty"`
+	// App and AppVersion are the pod label values of an App pod. They are not a session.
+	App        string `json:"app,omitempty"`
+	AppVersion string `json:"appVersion,omitempty"`
 	// Claimed is true if the pod sent a claim header. The span does not hold the value.
 	Claimed bool `json:"claimed,omitempty"`
 }

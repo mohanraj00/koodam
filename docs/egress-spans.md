@@ -35,6 +35,8 @@ The egress proxy writes 1 JSON line to its stdout for each call from an Agent po
 | `workspace` | string | no | The value of the pod label `koodam.dev/workspace`. |
 | `run` | string | no | The value of the pod label `koodam.dev/run`. |
 | `user` | string | no | The value of the pod label `koodam.dev/user`, or `unknown`. |
+| `app` | string | no | The value of the pod label `koodam.dev/app`. Only for an App pod. |
+| `appVersion` | string | no | The value of the pod label `koodam.dev/app-version`. Only for an App pod. |
 | `claimed` | boolean | no | `true` if the pod sent an `X-Koodam-Run` or `X-Koodam-User` header. The span does not hold the value. |
 
 "Always" means that the field is in each span. A field that is not always there is not in the line when it is empty.
@@ -87,6 +89,14 @@ Only `host` and `sni` hold text that the pod chose. A pod can put data in a host
 ## Identity
 
 The proxy finds the pod from the source IP of the connection, with a watch on the pods. The identity fields come from the pod labels. The proxy does not trust a header from the pod. If no pod or more than 1 pod has the source IP, the proxy refuses the call with the reason `identity`.
+
+### App pods (#183)
+
+The fields `app` and `appVersion` are the names in the reserved pod labels `koodam.dev/app` and `koodam.dev/app-version`. They are not a session, and they are not a proof of an evaluation. A span with `app` has no `agent`, `workspace` or `run`. `user` keeps its meaning: it is the value of the pod label `koodam.dev/user`, if the App pod has the label.
+
+The proxy accepts an App identity only if the pod has the 2 labels with values, and has no `koodam.dev/agent`, `koodam.dev/workspace` or `koodam.dev/run` label. If the pod has only 1 App label, an empty App label, or an App label and an Agent, Workspace or run label, the proxy refuses the call with the reason `identity`. A header cannot give or change an App identity or the user. The proxy watches the App pods only in the named namespaces of `--namespaces`, with 1 watch of all the pods of each namespace. If the list is empty or has only the empty name of all namespaces, the proxy refuses the calls of all App pods. The watches of all namespaces for the Agent and Workspace pods do not give an App identity.
+
+This is only the span part of #183. The full App wiring in production, default-deny ingress and egress for the App pods, the proxy steering of the App pods, and the Nookku correlation are still necessary before the App integration is complete. Koodam has no App controller and no App NetworkPolicy yet.
 
 ## Version rules
 
