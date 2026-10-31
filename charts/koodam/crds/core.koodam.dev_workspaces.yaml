@@ -101,6 +101,22 @@ spec:
                       - claude-code
                       - codex
                       type: string
+                    plugins:
+                      description: |-
+                        Plugins are the harness presets. The only value is nookku. At this stage, the API server
+                        only validates this field. No controller reads it, and Koodam installs and mounts nothing
+                        for it. For an Agent, nookku needs a pod template volume with the name nookku-tests and a
+                        persistentVolumeClaim with a claimName. The user owns that PVC. The API server does not
+                        look up the PVC. MaxItems is equal to the count of values in the enum. Make it larger
+                        when you add a value.
+                      items:
+                        description: HarnessPlugin is a harness preset.
+                        enum:
+                        - nookku
+                        type: string
+                      maxItems: 1
+                      type: array
+                      x-kubernetes-list-type: set
                     version:
                       description: Version pins the harness version. If it is empty,
                         the pod gets the latest version.
