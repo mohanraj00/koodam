@@ -16,16 +16,15 @@ limitations under the License.
 
 package main
 
-// These tests start from the real Agent CRD of make manifests. The API does not have
-// spec.ingressPort yet. Thus fixture adds the proposed field and its immutability rule to an
-// in-memory copy only. No test reads or writes a generated enabled file. The write tests use only
-// files in t.TempDir.
+// These tests start from the two real Agent CRDs of make manifests. They only read these files.
+// The write tests use only files in t.TempDir.
 
 import (
 	"bytes"
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -37,11 +36,10 @@ import (
 )
 
 const (
-	agentFile = "../../config/crd/bases/core.koodam.dev_agents.yaml"
-	// portDoc and immutableMessage are the same as the proposed AgentSpec field and marker.
-	portDoc = "IngressPort is the TCP port in the agent container for the traced ingress. If it is empty,\n" +
-		"the Agent has no ingress. You cannot add, remove or change it after create. The default Agent\n" +
-		"CRD has the ingress feature disabled and refuses this field."
+	// agentFile and enabledFile are the two outputs of the command in make manifests.
+	agentFile   = "../../config/crd/bases/core.koodam.dev_agents.yaml"
+	enabledFile = "../../config/agent-ingress/crd/bases/core.koodam.dev_agents.yaml"
+	// immutableMessage is the same as the AgentSpec marker.
 	immutableMessage = "spec.ingressPort is immutable. You cannot add, remove or change it after create."
 
 	// defaultName and enabledName are the names of the targets in the write tests.
@@ -103,45 +101,33 @@ func editRules(f func([]rule) []rule) func(*agentCRD) {
 	return editSpec(func(s *schema) { s.XValidations = f(s.XValidations) })
 }
 
-var (
-	addPort = editSpec(func(s *schema) {
-		s.Properties[portField] = schema{Description: portDoc, Type: "integer", Format: "int32",
-			Minimum: new(float64(1)), Maximum: new(float64(65535))}
-		s.XValidations = append(s.XValidations, rule{Rule: immutableRule, Message: immutableMessage})
-	})
-	dropPort = editSpec(func(s *schema) {
-		delete(s.Properties, portField)
-		s.XValidations = slices.DeleteFunc(s.XValidations, func(r rule) bool { return r.Rule == immutableRule })
-	})
-)
-
-// fixture returns the real Agent CRD, and an in-memory copy of it with the proposed ingressPort.
-// The copy is the controller-gen output that the API change will give.
-func fixture(t *testing.T) (agent, in []byte) {
+// fixture returns the real default and enabled Agent CRDs, and the controller-gen form of them.
+// The test makes that form from the default CRD with no help from the command: it removes the mode
+// and the last rule, which must be the gate.
+func fixture(t *testing.T) (def, en, fresh []byte) {
 	t.Helper()
-	agent = read(t, agentFile)
-	crd := mustParse(t, agent)
-	if _, ok := props(crd)[specField].Properties[portField]; ok {
-		t.Fatal("the Agent CRD already has spec.ingressPort. Use it in place of this fixture")
-	}
-	addPort(crd)
-	return agent, mustMarshal(t, crd)
+	def, en = read(t, agentFile), read(t, enabledFile)
+	crd := mustParse(t, def)
+	delete(crd.Metadata.Annotations, modeKey)
+	editRules(func(rs []rule) []rule { return rs[:len(rs)-1] })(crd)
+	return def, en, mustMarshal(t, crd)
 }
 
 func TestVariantsAreStable(t *testing.T) {
-	_, in := fixture(t)
-	def, en := mustVariants(t, in)
+	def, en, fresh := fixture(t)
 
-	// A second run on the default variant makes no change.
-	def2, en2 := mustVariants(t, def)
-	if !bytes.Equal(def2, def) || !bytes.Equal(en2, en) {
-		t.Error("a second run changed the variants")
+	// The two files are the output for the controller-gen form. A second run on the default
+	// variant makes no change.
+	for _, in := range [][]byte{fresh, def} {
+		def2, en2 := mustVariants(t, in)
+		if !bytes.Equal(def2, def) || !bytes.Equal(en2, en) {
+			t.Error("the generated CRDs are not the current output. Run make manifests")
+		}
 	}
 }
 
 func TestOnlyTheGateAndTheModeAreDifferent(t *testing.T) {
-	agent, in := fixture(t)
-	defB, enB := mustVariants(t, in)
+	defB, enB, in := fixture(t)
 	def, en := mustParse(t, defB), mustParse(t, enB)
 	if def.Metadata.Annotations[modeKey] != disabled || en.Metadata.Annotations[modeKey] != enabled {
 		t.Fatal("the mode annotations are not disabled and enabled")
@@ -153,6 +139,14 @@ func TestOnlyTheGateAndTheModeAreDifferent(t *testing.T) {
 	for _, r := range props(en)[specField].XValidations {
 		if r.Rule == gateRule || r.Message == gateMessage || strings.Contains(r.Message, "spec.ingressPort is disabled") {
 			t.Fatal("the enabled CRD has the disabled gate")
+		}
+	}
+
+	// Both variants have the API field and its immutability rule.
+	for _, crd := range []*agentCRD{def, en} {
+		s := props(crd)[specField]
+		if checkPort(s) != nil || !slices.Contains(s.XValidations, rule{Rule: immutableRule, Message: immutableMessage}) {
+			t.Fatal("a variant does not have spec.ingressPort and its immutability rule")
 		}
 	}
 
@@ -169,15 +163,9 @@ func TestOnlyTheGateAndTheModeAreDifferent(t *testing.T) {
 	if !bytes.Equal(mustMarshal(t, en), in) {
 		t.Fatal("the enabled CRD changed the schema of the input")
 	}
-	if n := bytes.Count(agent, []byte("default:")); n == 0 ||
+	if n := bytes.Count(in, []byte("default:")); n == 0 ||
 		bytes.Count(enB, []byte("default:")) != n || bytes.Count(defB, []byte("default:")) != n {
 		t.Fatal("the variants do not keep all schema defaults")
-	}
-
-	// With no port, the enabled variant is the real Agent CRD again.
-	dropPort(en)
-	if !bytes.Equal(mustMarshal(t, en), agent) {
-		t.Fatal("the variants changed more of the Agent CRD than spec.ingressPort")
 	}
 
 	// With no gate and the same mode, the two variants are equal.
@@ -189,12 +177,20 @@ func TestOnlyTheGateAndTheModeAreDifferent(t *testing.T) {
 }
 
 func TestRefusesUnexpectedInput(t *testing.T) {
-	_, fresh := fixture(t)
-	in, _ := mustVariants(t, fresh)
+	in, _, _ := fixture(t)
 	edits := map[string]func(*agentCRD){
 		"unknown mode":   func(c *agentCRD) { c.Metadata.Annotations[modeKey] = "on" },
 		"duplicate gate": editRules(func(rs []rule) []rule { return append(rs, gate) }),
 		"changed gate":   editRules(func(rs []rule) []rule { return append(rs[:len(rs)-1], rule{Rule: gateRule}) }),
+		"no port":        editSpec(func(s *schema) { delete(s.Properties, portField) }),
+		"port default": editSpec(func(s *schema) {
+			p := s.Properties[portField]
+			p.Default = &apiextensionsv1.JSON{Raw: []byte("8080")}
+			s.Properties[portField] = p
+		}),
+		"no immutability rule": editRules(func(rs []rule) []rule {
+			return slices.DeleteFunc(rs, func(r rule) bool { return r.Rule == immutableRule })
+		}),
 	}
 	for name, edit := range edits {
 		crd := mustParse(t, in)
@@ -213,6 +209,40 @@ func TestRefusesUnexpectedInput(t *testing.T) {
 	for name, b := range raw {
 		if _, _, err := variants(b); err == nil {
 			t.Errorf("%s: the command accepted the input", name)
+		}
+	}
+}
+
+// The default Kustomize CRDs use the default variant. helm-check makes sure that the Helm CRDs are
+// a copy of them. No other file of config or of the chart uses the enabled variant.
+func TestDefaultOutputsHaveOnlyTheDisabledVariant(t *testing.T) {
+	kust := read(t, "../../config/crd/kustomization.yaml")
+	if !bytes.Contains(kust, []byte("\n- bases/core.koodam.dev_agents.yaml\n")) {
+		t.Error("the default Kustomize CRDs do not use the default Agent CRD")
+	}
+	enabledMode := []byte(modeKey + ": " + enabled)
+	if !bytes.Contains(read(t, enabledFile), enabledMode) {
+		t.Fatal("the enabled CRD does not have the enabled mode")
+	}
+	ingressDir := filepath.Join("..", "..", "config", "agent-ingress")
+	for _, root := range []string{"../../config", "../../charts/koodam"} {
+		err := filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
+			switch {
+			case err != nil:
+				return err
+			case d.IsDir() && path == ingressDir:
+				return filepath.SkipDir
+			case d.IsDir():
+				return nil
+			}
+			b := read(t, path)
+			if bytes.Contains(b, enabledMode) || bytes.Contains(b, []byte("agent-ingress/crd")) {
+				t.Errorf("%s uses the enabled Agent CRD", path)
+			}
+			return nil
+		})
+		if err != nil {
+			t.Fatal(err)
 		}
 	}
 }
@@ -252,7 +282,7 @@ func failWrite(t *testing.T, n int, short bool) {
 // targets returns a directory with the default input and an old enabled CRD.
 func targets(t *testing.T) (dir, def, en string, in []byte) {
 	t.Helper()
-	_, in = fixture(t)
+	_, _, in = fixture(t)
 	dir = t.TempDir()
 	def, en = filepath.Join(dir, defaultName), filepath.Join(dir, enabledName)
 	if err := os.WriteFile(def, in, 0o644); err != nil {

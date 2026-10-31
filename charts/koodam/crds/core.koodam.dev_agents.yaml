@@ -4,6 +4,7 @@ kind: CustomResourceDefinition
 metadata:
   annotations:
     controller-gen.kubebuilder.io/version: v0.22.0
+    koodam.dev/agent-ingress-mode: disabled
   name: agents.core.koodam.dev
 spec:
   group: core.koodam.dev
@@ -119,6 +120,15 @@ spec:
               image:
                 description: Image is the agent container image.
                 type: string
+              ingressPort:
+                description: |-
+                  IngressPort is the TCP port in the agent container for the traced ingress. If it is empty,
+                  the Agent has no ingress. You cannot add, remove or change it after create. The default Agent
+                  CRD has the ingress feature disabled and refuses this field.
+                format: int32
+                maximum: 65535
+                minimum: 1
+                type: integer
               model:
                 description: Model is the gateway model name. The key permits only
                   this model.
@@ -9029,6 +9039,13 @@ spec:
               rule: '!has(self.podTemplate) || !has(self.podTemplate.spec) || !has(self.podTemplate.spec.containers)
                 || !self.podTemplate.spec.containers.exists(c, c.name == ''agent''
                 && (has(c.image) || has(c.command)))'
+            - message: spec.ingressPort is immutable. You cannot add, remove or change
+                it after create.
+              rule: has(self.ingressPort) == has(oldSelf.ingressPort) && (!has(self.ingressPort)
+                || self.ingressPort == oldSelf.ingressPort)
+            - message: spec.ingressPort is disabled. The traced ingress feature is
+                not installed in this cluster.
+              rule: '!has(self.ingressPort)'
           status:
             description: status defines the observed state of Agent
             properties:
