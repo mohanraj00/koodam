@@ -48,6 +48,8 @@ var _ = Describe("Harness plugins CRD", func() {
 		agentCommand = "hp-run"
 		agentModel   = "hp-model"
 	)
+	// A plugin name outside the nookku enum.
+	const unsupportedPlugin corev1alpha1.HarnessPlugin = "hp-unsupported-plugin"
 	nookku := []corev1alpha1.HarnessPlugin{corev1alpha1.HarnessPluginNookku}
 	harnessNames := []string{claudeName, codexName}
 
@@ -146,7 +148,7 @@ var _ = Describe("Harness plugins CRD", func() {
 	It("refuses an unknown or a duplicate plugin on an Agent", func() {
 		t := volumes(pvcVolume(testsVolume, testsClaim))
 		expectInvalid(create(agent("hp-unknown", codexName,
-			[]corev1alpha1.HarnessPlugin{"other"}, t)), pluginsPath)
+			[]corev1alpha1.HarnessPlugin{unsupportedPlugin}, t)), pluginsPath)
 		expectInvalid(create(agent("hp-duplicate", codexName,
 			[]corev1alpha1.HarnessPlugin{corev1alpha1.HarnessPluginNookku, corev1alpha1.HarnessPluginNookku}, t)),
 			pluginsPath)
@@ -188,7 +190,7 @@ var _ = Describe("Harness plugins CRD", func() {
 
 	It("refuses an unknown or a duplicate plugin on each Workspace harness", func() {
 		expectInvalid(create(workspace("hp-ws-unknown", corev1alpha1.HarnessSpec{Name: claudeName, Plugins: nookku},
-			corev1alpha1.HarnessSpec{Name: codexName, Plugins: []corev1alpha1.HarnessPlugin{"other"}})), pluginsPath)
+			corev1alpha1.HarnessSpec{Name: codexName, Plugins: []corev1alpha1.HarnessPlugin{unsupportedPlugin}})), pluginsPath)
 		expectInvalid(create(workspace("hp-ws-duplicate", corev1alpha1.HarnessSpec{Name: claudeName,
 			Plugins: []corev1alpha1.HarnessPlugin{corev1alpha1.HarnessPluginNookku, corev1alpha1.HarnessPluginNookku}})),
 			pluginsPath)
