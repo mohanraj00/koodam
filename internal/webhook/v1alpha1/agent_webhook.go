@@ -14,8 +14,8 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-// Package v1alpha1 has the admission decision for the Agent ingress of #147. No manager, server,
-// handler or install path uses it yet.
+// Package v1alpha1 has the admission decision and its HTTP handler for the Agent ingress of #147.
+// No manager, server or install path registers or starts the handler yet.
 package v1alpha1
 
 import (
