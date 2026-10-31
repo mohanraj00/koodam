@@ -18,6 +18,10 @@ resources:
   kind: Agent
   path: github.com/mohanraj00/koodam/api/v1alpha1
   version: v1alpha1
+  webhooks:
+    validation: true
+    validationPath: /validate-core-koodam-dev-v1alpha1-agent-ingress
+    webhookVersion: v1
 - api:
     crdVersion: v1
   controller: true
