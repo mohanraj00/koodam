@@ -55,6 +55,9 @@ var _ = Describe("Agent ingress port", func() {
 		specKey     = "spec"
 		imageKey    = "image"
 		image       = "img"
+		runCommand  = "ingress-run"
+		noteKey     = "ingress-note"
+		otherImage  = "ingress-other"
 		modeKey     = "koodam.dev/agent-ingress-mode"
 		agentKind   = "Agent"
 		proofKind   = "AgentIngressProof"
@@ -69,7 +72,7 @@ var _ = Describe("Agent ingress port", func() {
 
 	// obj returns an object with the required spec fields. A nil port leaves out the field.
 	obj := func(kind, name string, port *int64) *unstructured.Unstructured {
-		spec := map[string]any{imageKey: image, "command": []any{"run"}, "model": "m", "budget": "1"}
+		spec := map[string]any{imageKey: image, "command": []any{runCommand}, "model": "m", "budget": "1"}
 		if port != nil {
 			spec[portField] = *port
 		}
@@ -133,7 +136,7 @@ var _ = Describe("Agent ingress port", func() {
 
 			a := typedGet(offName)
 			Expect(a.Spec.IngressPort).To(BeNil())
-			a.Annotations = map[string]string{"note": "x"}
+			a.Annotations = map[string]string{noteKey: "x"}
 			Expect(k8sClient.Update(ctx, a)).To(Succeed())
 			Expect(spec(k8sClient, agentKind, offName)).NotTo(HaveKey(portField))
 		})
@@ -146,7 +149,7 @@ var _ = Describe("Agent ingress port", func() {
 				expectInvalid(create(k8sClient, obj(agentKind, fmt.Sprintf("ing-bad-%d", p), &p)), "spec.ingressPort")
 			}
 			typed := &corev1alpha1.Agent{ObjectMeta: metav1.ObjectMeta{Name: "ing-typed", Namespace: metav1.NamespaceDefault},
-				Spec: corev1alpha1.AgentSpec{Image: image, Command: []string{"run"}, Model: "m",
+				Spec: corev1alpha1.AgentSpec{Image: image, Command: []string{runCommand}, Model: "m",
 					Budget: resource.MustParse("1"), IngressPort: new(int32(8080))}}
 			expectInvalid(create(k8sClient, typed), disabledMsg)
 
@@ -202,7 +205,7 @@ var _ = Describe("Agent ingress port", func() {
 				Expect(patch(c, proofKind, name, labelPatch)).To(Succeed())
 				Expect(patch(c, proofKind, name, `{"spec":{"user":"team-a"}}`)).To(Succeed())
 				u := get(c, proofKind, name)
-				u.SetAnnotations(map[string]string{"note": "x"})
+				u.SetAnnotations(map[string]string{noteKey: "x"})
 				Expect(c.Update(ctx, u)).To(Succeed())
 			}
 			Expect(spec(c, proofKind, sameName)).To(HaveKeyWithValue(portField, BeEquivalentTo(8080)))
@@ -232,7 +235,7 @@ var _ = Describe("Agent ingress port", func() {
 			}
 			ephemeral := map[string]any{"ephemeralContainers": []any{map[string]any{"name": "debug", imageKey: image}}}
 			expectInvalid(create(c, withTemplate("ing-ephemeral", ephemeral)), "ephemeralContainers")
-			mainImage := map[string]any{"containers": []any{map[string]any{"name": agentContainer, imageKey: "other"}}}
+			mainImage := map[string]any{"containers": []any{map[string]any{"name": agentContainer, imageKey: otherImage}}}
 			expectInvalid(create(c, withTemplate("ing-main-image", mainImage)), "Set the image and the command")
 		})
 	})
