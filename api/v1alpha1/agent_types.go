@@ -28,6 +28,7 @@ import (
 // controller revokes all of it and writes the spend to the status.
 // +kubebuilder:validation:XValidation:rule="!has(self.podTemplate) || !has(self.podTemplate.spec) || !has(self.podTemplate.spec.containers) || !self.podTemplate.spec.containers.exists(c, c.name == 'agent' && (has(c.image) || has(c.command)))",message="Set the image and the command in spec.image and spec.command, not in the pod template."
 // +kubebuilder:validation:XValidation:rule="has(self.ingressPort) == has(oldSelf.ingressPort) && (!has(self.ingressPort) || self.ingressPort == oldSelf.ingressPort)",message="spec.ingressPort is immutable. You cannot add, remove or change it after create."
+// +kubebuilder:validation:XValidation:rule="!has(self.harness) || !has(self.harness.plugins) || !('nookku' in self.harness.plugins) || (has(self.podTemplate) && has(self.podTemplate.spec) && has(self.podTemplate.spec.volumes) && self.podTemplate.spec.volumes.exists(v, v.name == 'nookku-tests' && has(v.persistentVolumeClaim) && size(v.persistentVolumeClaim.claimName) > 0))",message="The nookku plugin needs the volume nookku-tests in spec.podTemplate.spec.volumes, with a persistentVolumeClaim and a claimName."
 type AgentSpec struct {
 	// Image is the agent container image.
 	// +required
@@ -106,7 +107,25 @@ type HarnessSpec struct {
 	// +kubebuilder:default=glibc
 	// +kubebuilder:validation:Enum=glibc;musl
 	Libc string `json:"libc,omitempty"`
+
+	// Plugins are the harness presets. The only value is nookku. At this stage, the API server
+	// only validates this field. No controller reads it, and Koodam installs and mounts nothing
+	// for it. For an Agent, nookku needs a pod template volume with the name nookku-tests and a
+	// persistentVolumeClaim with a claimName. The user owns that PVC. The API server does not
+	// look up the PVC. MaxItems is equal to the count of values in the enum. Make it larger
+	// when you add a value.
+	// +optional
+	// +listType=set
+	// +kubebuilder:validation:MaxItems=1
+	Plugins []HarnessPlugin `json:"plugins,omitempty"`
 }
+
+// HarnessPlugin is a harness preset.
+// +kubebuilder:validation:Enum=nookku
+type HarnessPlugin string
+
+// HarnessPluginNookku is the Nookku test preset.
+const HarnessPluginNookku HarnessPlugin = "nookku"
 
 // AgentPhase is the lifecycle phase of an Agent.
 // +kubebuilder:validation:Enum=Pending;Running;Succeeded;Failed
