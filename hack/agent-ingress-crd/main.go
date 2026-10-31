@@ -14,14 +14,14 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-// Command agent-ingress-crd makes the two variants of the Agent CRD for #147. No make target runs
-// it yet. A later #147 change adds spec.ingressPort to the API and runs this command in the make
-// target manifests, after controller-gen and crd-optional. The default variant stays in its
+// Command agent-ingress-crd makes the two variants of the Agent CRD for #147. The make target
+// manifests runs it after controller-gen and crd-optional. The default variant stays in its
 // place. It gets the annotation koodam.dev/agent-ingress-mode=disabled and one more AgentSpec
 // rule that refuses spec.ingressPort. The enabled variant gets the annotation enabled and does
 // not have that rule. All other parts of the two variants are the same.
 //
-// The enabled variant is only an input for a future protected installer. It is not an install.
+// The enabled variant is only an input for a future protected installer. It is not an install,
+// and no command installs it yet.
 //
 // The command uses the same YAML encoder as controller-gen, so the output has the same format.
 package main
@@ -47,8 +47,7 @@ const (
 	enabled     = "enabled"
 	gateRule    = "!has(self.ingressPort)"
 	gateMessage = "spec.ingressPort is disabled. The traced ingress feature is not installed in this cluster."
-	// immutableRule must be the same as the AgentSpec marker that the API change adds to
-	// api/v1alpha1/agent_types.go.
+	// immutableRule must be the same as the AgentSpec marker in api/v1alpha1/agent_types.go.
 	immutableRule = "has(self.ingressPort) == has(oldSelf.ingressPort) && " +
 		"(!has(self.ingressPort) || self.ingressPort == oldSelf.ingressPort)"
 	docStart  = "---\n"

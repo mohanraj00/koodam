@@ -47,6 +47,7 @@ help: ## Display this help.
 manifests: controller-gen ## Generate WebhookConfiguration, ClusterRole and CustomResourceDefinition objects.
 	"$(CONTROLLER_GEN)" rbac:roleName=manager-role crd webhook paths="./..." output:crd:artifacts:config=config/crd/bases
 	go run ./hack/crd-optional config/crd/bases/core.koodam.dev_agents.yaml config/crd/bases/core.koodam.dev_workspaces.yaml
+	go run ./hack/agent-ingress-crd config/crd/bases/core.koodam.dev_agents.yaml config/agent-ingress/crd/bases/core.koodam.dev_agents.yaml
 
 .PHONY: generate
 generate: controller-gen ## Generate code containing DeepCopy, DeepCopyInto, and DeepCopyObject method implementations.

@@ -27,6 +27,7 @@ import (
 // a ServiceAccount with a Role, and then a Job. When the Job ends or the Agent is deleted, the
 // controller revokes all of it and writes the spend to the status.
 // +kubebuilder:validation:XValidation:rule="!has(self.podTemplate) || !has(self.podTemplate.spec) || !has(self.podTemplate.spec.containers) || !self.podTemplate.spec.containers.exists(c, c.name == 'agent' && (has(c.image) || has(c.command)))",message="Set the image and the command in spec.image and spec.command, not in the pod template."
+// +kubebuilder:validation:XValidation:rule="has(self.ingressPort) == has(oldSelf.ingressPort) && (!has(self.ingressPort) || self.ingressPort == oldSelf.ingressPort)",message="spec.ingressPort is immutable. You cannot add, remove or change it after create."
 type AgentSpec struct {
 	// Image is the agent container image.
 	// +required
@@ -76,6 +77,14 @@ type AgentSpec struct {
 	// Agent spec sets them.
 	// +optional
 	PodTemplate *PodTemplate `json:"podTemplate,omitempty"`
+
+	// IngressPort is the TCP port in the agent container for the traced ingress. If it is empty,
+	// the Agent has no ingress. You cannot add, remove or change it after create. The default Agent
+	// CRD has the ingress feature disabled and refuses this field.
+	// +optional
+	// +kubebuilder:validation:Minimum=1
+	// +kubebuilder:validation:Maximum=65535
+	IngressPort *int32 `json:"ingressPort,omitempty"`
 }
 
 // HarnessSpec selects the harness binary. An init container downloads it from the vendor and
