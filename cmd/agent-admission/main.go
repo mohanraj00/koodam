@@ -101,7 +101,8 @@ func run(args []string, out io.Writer) int {
 
 // report writes the fixed message of code and returns code.
 func report(out io.Writer, code int) int {
-	fmt.Fprintln(out, messages[code])
+	// A write failure is ignored: the exit code is the result, and no other output can report it.
+	_, _ = fmt.Fprintln(out, messages[code])
 	return code
 }
 

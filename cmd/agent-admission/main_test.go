@@ -62,10 +62,12 @@ func TestMain(m *testing.M) {
 	os.Exit(m.Run())
 }
 
-// helper writes the marker to each output and then acts as mode selects. It never serves.
+// helper writes the marker to each output and then acts as mode selects. It never serves. The
+// marker writes ignore a failure: the supervisor sends both outputs to the null device, and the
+// tests check only the exit code and the supervisor output.
 func helper(mode, dir string) int {
-	fmt.Fprintln(os.Stdout, marker)
-	fmt.Fprintln(os.Stderr, marker)
+	_, _ = fmt.Fprintln(os.Stdout, marker)
+	_, _ = fmt.Fprintln(os.Stderr, marker)
 	switch mode {
 	case modePanic:
 		panic(marker)
@@ -82,7 +84,7 @@ func helper(mode, dir string) int {
 			return 1
 		}
 		<-sigs
-		fmt.Fprintln(os.Stderr, marker)
+		_, _ = fmt.Fprintln(os.Stderr, marker)
 		_ = os.WriteFile(filepath.Join(dir, termFile), nil, 0o600)
 		return codeOK
 	}
