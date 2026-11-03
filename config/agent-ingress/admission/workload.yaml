@@ -1,0 +1,153 @@
+# Dormant source of the Agent ingress admission workload of #147. No supported command applies it.
+# The namespace and image values are input markers that are not valid. A later protected installer
+# replaces each one as a whole value. The maintainer supplies the TLS Secret. This file has none.
+# The NetworkPolicy has no ingress rule and no egress rule: it denies all traffic. Only the later
+# installer can add one ingress rule from explicit API server CIDRs. An empty CIDR list adds no rule.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: koodam-agent-admission
+  namespace: KOODAM-INPUT-NAMESPACE
+  labels:
+    app.kubernetes.io/name: koodam
+    app.kubernetes.io/component: agent-admission
+automountServiceAccountToken: false
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: koodam-agent-admission
+  namespace: KOODAM-INPUT-NAMESPACE
+  labels:
+    app.kubernetes.io/name: koodam
+    app.kubernetes.io/component: agent-admission
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: koodam
+    app.kubernetes.io/component: agent-admission
+  ports:
+  - name: webhook
+    protocol: TCP
+    port: 443
+    targetPort: 9443
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: koodam-agent-admission
+  namespace: KOODAM-INPUT-NAMESPACE
+  labels:
+    app.kubernetes.io/name: koodam
+    app.kubernetes.io/component: agent-admission
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: koodam
+      app.kubernetes.io/component: agent-admission
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: koodam
+        app.kubernetes.io/component: agent-admission
+    spec:
+      serviceAccountName: koodam-agent-admission
+      automountServiceAccountToken: false
+      enableServiceLinks: false
+      terminationGracePeriodSeconds: 10
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        fsGroup: 65532
+        seccompProfile:
+          type: RuntimeDefault
+      # Two replicas and this spread are a configuration. On a single-node cluster, both pods
+      # run on one node.
+      topologySpreadConstraints:
+      - maxSkew: 1
+        topologyKey: kubernetes.io/hostname
+        whenUnsatisfiable: ScheduleAnyway
+        labelSelector:
+          matchLabels:
+            app.kubernetes.io/name: koodam
+            app.kubernetes.io/component: agent-admission
+      containers:
+      # With no argument, /agent-admission is the supervisor. It replaces the image entry point.
+      - name: agent-admission
+        image: KOODAM-INPUT-IMAGE
+        command: ["/agent-admission"]
+        ports:
+        - name: webhook
+          containerPort: 9443
+          protocol: TCP
+        securityContext:
+          readOnlyRootFilesystem: true
+          allowPrivilegeEscalation: false
+          capabilities:
+            drop:
+            - "ALL"
+        # A TCP probe proves only that a process listens. It does not prove TLS or the handler.
+        livenessProbe:
+          tcpSocket:
+            port: 9443
+        readinessProbe:
+          tcpSocket:
+            port: 9443
+        resources:
+          limits:
+            cpu: 500m
+            memory: 128Mi
+          requests:
+            cpu: 10m
+            memory: 64Mi
+        volumeMounts:
+        - name: tls
+          mountPath: /etc/koodam/agent-admission
+          readOnly: true
+      volumes:
+      # 288 is the octal mode 0440. Decimal avoids the different octal rules of YAML parsers.
+      - name: tls
+        secret:
+          secretName: koodam-agent-admission-tls
+          defaultMode: 288
+          items:
+          - key: tls.crt
+            path: tls.crt
+            mode: 288
+          - key: tls.key
+            path: tls.key
+            mode: 288
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: koodam-agent-admission
+  namespace: KOODAM-INPUT-NAMESPACE
+  labels:
+    app.kubernetes.io/name: koodam
+    app.kubernetes.io/component: agent-admission
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: koodam
+      app.kubernetes.io/component: agent-admission
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: koodam-agent-admission
+  namespace: KOODAM-INPUT-NAMESPACE
+  labels:
+    app.kubernetes.io/name: koodam
+    app.kubernetes.io/component: agent-admission
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: koodam
+      app.kubernetes.io/component: agent-admission
+  policyTypes: ["Ingress", "Egress"]
+  ingress: []
+  egress: []
