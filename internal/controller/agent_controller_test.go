@@ -141,7 +141,7 @@ var _ = Describe("Agent Controller", func() {
 	run := func() types.NamespacedName { return types.NamespacedName{Namespace: ns, Name: "kd-" + name} }
 	newReconciler := func() *AgentReconciler {
 		return &AgentReconciler{Client: k8sClient, Scheme: k8sClient.Scheme(), APIReader: k8sClient,
-			Gateway: gw, GatewayURL: "http://gw.test:4000", Grace: time.Minute, JobTTL: 3600}
+			Gateway: gw, GatewayURL: testGatewayURL, Grace: time.Minute, JobTTL: 3600}
 	}
 	reconcileOnce := func(r *AgentReconciler) {
 		_, err := r.Reconcile(ctx, reconcile.Request{NamespacedName: key()})
@@ -393,7 +393,7 @@ wire_api = "responses"
 	setTemplate := func(c corev1.Container) {
 		a := agent()
 		a.Spec.PodTemplate = &corev1alpha1.PodTemplate{
-			Metadata: corev1alpha1.PodTemplateMetadata{Labels: map[string]string{"team": "a"}},
+			Metadata: corev1alpha1.PodTemplateMetadata{Labels: map[string]string{testTeam: "a"}},
 			Spec:     corev1.PodSpec{RuntimeClassName: new("gvisor"), Containers: []corev1.Container{c}},
 		}
 		Expect(k8sClient.Update(ctx, a)).To(Succeed())
@@ -407,7 +407,7 @@ wire_api = "responses"
 		Expect(exists(job)).To(BeTrue())
 		t := job.Spec.Template
 		Expect(t.Spec.RuntimeClassName).To(HaveValue(Equal("gvisor")))
-		Expect(t.Labels).To(HaveKeyWithValue("team", "a"))
+		Expect(t.Labels).To(HaveKeyWithValue(testTeam, "a"))
 		Expect(t.Labels).To(HaveKeyWithValue(RunLabel, "kd-"+name))
 		Expect(t.Spec.Containers).To(HaveLen(1))
 		Expect(t.Spec.Containers[0].Resources.Limits.Memory().String()).To(Equal("1Gi"))

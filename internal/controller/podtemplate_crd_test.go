@@ -48,7 +48,7 @@ var _ = Describe("Pod template CRD", func() {
 	}
 	agent := func(name string, t *corev1alpha1.PodTemplate) *corev1alpha1.Agent {
 		return &corev1alpha1.Agent{ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: metav1.NamespaceDefault},
-			Spec: corev1alpha1.AgentSpec{Image: "img", Command: []string{"run"}, Model: "m",
+			Spec: corev1alpha1.AgentSpec{Image: testAgentImage, Command: []string{"run"}, Model: "m",
 				Budget: resource.MustParse("1"), PodTemplate: t}}
 	}
 	expectInvalid := func(err error, text string) {
@@ -64,7 +64,7 @@ var _ = Describe("Pod template CRD", func() {
 	})
 
 	It("accepts resources on the main container and a label", func() {
-		t := &corev1alpha1.PodTemplate{Metadata: corev1alpha1.PodTemplateMetadata{Labels: map[string]string{"team": "a"}},
+		t := &corev1alpha1.PodTemplate{Metadata: corev1alpha1.PodTemplateMetadata{Labels: map[string]string{testTeam: "a"}},
 			Spec: corev1.PodSpec{Containers: []corev1.Container{{Name: agentMain,
 				Resources: corev1.ResourceRequirements{Limits: corev1.ResourceList{corev1.ResourceCPU: resource.MustParse("2")}}}}}}
 		Expect(create(agent("pt-resources", t))).To(Succeed())
@@ -119,7 +119,7 @@ var _ = Describe("Pod template CRD", func() {
 			Containers: []corev1.Container{{Name: "workspace", Image: "other"}}}})
 		Expect(create(ws)).To(Succeed(), "the template alone can set the image")
 		ws = workspace("pt-ws-image-2", ws.Spec.PodTemplate)
-		ws.Spec.Image = "img"
+		ws.Spec.Image = testAgentImage
 		expectInvalid(create(ws), "spec.image or in the pod template")
 	})
 

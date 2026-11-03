@@ -121,7 +121,7 @@ var _ = Describe("Workspace gateway key", func() {
 	// restart makes a new reconciler with no renew times in memory, as after a controller restart.
 	restart := func() {
 		rec = &WorkspaceReconciler{Client: k8sClient, Scheme: k8sClient.Scheme(), APIReader: k8sClient,
-			Image: "img:test", Gateway: gw, GatewayURL: "http://gw.test:4000", KeyTTL: ttl,
+			Image: "img:test", Gateway: gw, GatewayURL: testGatewayURL, KeyTTL: ttl,
 			Now: func() time.Time { return now }}
 	}
 	reconcileOnce := func() (ctrl.Result, error) {

@@ -47,7 +47,17 @@ import (
 	"github.com/mohanraj00/koodam/internal/gateway"
 )
 
-var ingKey = types.NamespacedName{Namespace: "team", Name: "ing"}
+// The tests use these shared values. They are not credentials.
+const (
+	// testGatewayURL is the public gateway URL that the reconciler tests use.
+	testGatewayURL = "http://gw.test:4000"
+	// testTeam is the namespace and the label key that the tests use.
+	testTeam = "team"
+	// testAgentImage is the Agent image that the tests use.
+	testAgentImage = "img"
+)
+
+var ingKey = types.NamespacedName{Namespace: testTeam, Name: "ing"}
 
 // countGateway counts the gateway calls and keeps their order. It keeps no key value.
 type countGateway struct {
@@ -98,7 +108,7 @@ func ingWorld(t *testing.T, objs ...client.Object) client.WithWatch {
 
 func ingReconciler(c client.Client, rd client.Reader, g *countGateway) *AgentReconciler {
 	return &AgentReconciler{Client: c, Scheme: c.Scheme(), APIReader: rd, Gateway: g,
-		GatewayURL: "http://gw.test:4000", Grace: time.Minute, JobTTL: 3600}
+		GatewayURL: testGatewayURL, Grace: time.Minute, JobTTL: 3600}
 }
 
 func ingReconcile(t *testing.T, r *AgentReconciler) {
@@ -112,7 +122,7 @@ func ingReconcile(t *testing.T, r *AgentReconciler) {
 func ingAgent() *corev1alpha1.Agent {
 	return &corev1alpha1.Agent{
 		ObjectMeta: metav1.ObjectMeta{Name: ingKey.Name, Namespace: ingKey.Namespace, UID: "uid-live"},
-		Spec: corev1alpha1.AgentSpec{Image: "img", Command: []string{"run"}, Model: "m",
+		Spec: corev1alpha1.AgentSpec{Image: testAgentImage, Command: []string{"run"}, Model: "m",
 			Budget: resource.MustParse("1"), DeadlineSeconds: 60},
 	}
 }
