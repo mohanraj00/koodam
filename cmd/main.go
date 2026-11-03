@@ -140,6 +140,7 @@ func main() {
 	var keyGrace time.Duration
 	var egress controller.EgressProxy
 	var jobTTLSeconds int
+	var agentIngressEnabled bool
 	var tlsOpts []func(*tls.Config)
 	flag.StringVar(&metricsAddr, "metrics-bind-address", "0", "The address the metrics endpoint binds to. "+
 		"Use :8443 for HTTPS or :8080 for HTTP, or leave as 0 to disable the metrics service.")
@@ -180,6 +181,10 @@ func main() {
 		"The image with /harness-install, for an Agent or a Workspace with a harness. The chart gives the manager image.")
 	flag.StringVar(&workspaceImage, "workspace-image", defaultWorkspaceImage(),
 		"The workspace image for a Workspace with no spec.image.")
+	flag.BoolVar(&agentIngressEnabled, "agent-ingress-enabled", false,
+		"If set, the controller provisions a new Agent that sets spec.ingressPort. Do not set it before the "+
+			"protected install of the Agent ingress is complete. An Agent with a stored status.keyHash can "+
+			"recover with each value, and the revoke does not use it.")
 	opts.BindFlags(flag.CommandLine)
 	flag.Parse()
 
@@ -311,6 +316,7 @@ func main() {
 		Grace:          keyGrace,
 		InstallerImage: installerImage,
 		JobTTL:         int32(jobTTLSeconds),
+		IngressEnabled: agentIngressEnabled,
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "Failed to create controller", "controller", "agent")
 		os.Exit(1)

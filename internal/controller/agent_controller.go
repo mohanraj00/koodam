@@ -44,6 +44,7 @@ import (
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
 
 	corev1alpha1 "github.com/mohanraj00/koodam/api/v1alpha1"
+	"github.com/mohanraj00/koodam/internal/agentingress"
 	"github.com/mohanraj00/koodam/internal/gateway"
 	"github.com/mohanraj00/koodam/internal/harness"
 )
@@ -106,6 +107,10 @@ type AgentReconciler struct {
 	// JobTTL is the time in seconds that the controller keeps a run Job and its pods after the Job
 	// ends. If it is 0 or less, the controller uses DefaultJobTTLSeconds.
 	JobTTL int32
+	// IngressEnabled lets the controller provision a new Agent that sets spec.ingressPort. If it is
+	// false, such an Agent with no key hash in its status waits. An Agent with a stored key hash can
+	// recover with each value, and the revoke at the run end or at the delete does not use this field.
+	IngressEnabled bool
 }
 
 // +kubebuilder:rbac:groups=core.koodam.dev,resources=agents,verbs=get;list;watch;update
@@ -141,6 +146,13 @@ func (r *AgentReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl
 	case ended:
 		// A revoke started before and did not complete.
 		return ctrl.Result{}, r.revoke(ctx, a)
+	case r.ingressPaused(a):
+		// The pause comes before the Running case, because a Running phase with no key hash is not an
+		// enrolled run attempt. The controller makes no finalizer, Secret, key or Job, and it keeps the
+		// objects that are there. The manager reads all the Agents again when it starts with the
+		// ingress enabled.
+		logf.FromContext(ctx).Info("The Agent ingress is disabled, so the run waits")
+		return ctrl.Result{}, nil
 	case a.Status.Phase == corev1alpha1.AgentRunning:
 		// Read the Job from the API server, as the Agent. A Job that is not in the cache yet must not
 		// fail the run.
@@ -169,6 +181,14 @@ func (r *AgentReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl
 	default:
 		return ctrl.Result{}, r.provision(ctx, a)
 	}
+}
+
+// ingressPaused is true if the ingress is disabled, a sets spec.ingressPort and the status of a has
+// no key hash. The controller writes the hash before each CreateKey, so the hash enrolls a run
+// attempt. It does not show that the key or the Job exists. A finalizer, a Secret with the run name
+// or a Running phase alone does not enroll a run.
+func (r *AgentReconciler) ingressPaused(a *corev1alpha1.Agent) bool {
+	return !r.IngressEnabled && a.Spec.IngressPort != nil && a.Status.KeyHash == ""
 }
 
 func runName(a *corev1alpha1.Agent) string { return "kd-" + a.Name }
@@ -223,6 +243,10 @@ func jobEndTime(job *batchv1.Job) *metav1.Time {
 func invalid(a *corev1alpha1.Agent) string {
 	if len(runName(a)) > validation.DNS1123LabelMaxLength {
 		return "The Agent name is too long for the run Job. Use 60 characters or fewer."
+	}
+	// The admission webhook does this check first. The error has fixed text with no Agent value.
+	if err := agentingress.Check(a.Spec); err != nil {
+		return err.Error()
 	}
 	in := func(have, ceil []string) bool {
 		return len(have) > 0 && !slices.ContainsFunc(have, func(s string) bool { return !slices.Contains(ceil, s) })
