@@ -109,6 +109,22 @@ spec:
                     - claude-code
                     - codex
                     type: string
+                  plugins:
+                    description: |-
+                      Plugins are the harness presets. The only value is nookku. At this stage, the API server
+                      only validates this field. No controller reads it, and Koodam installs and mounts nothing
+                      for it. For an Agent, nookku needs a pod template volume with the name nookku-tests and a
+                      persistentVolumeClaim with a claimName. The user owns that PVC. The API server does not
+                      look up the PVC. MaxItems is equal to the count of values in the enum. Make it larger
+                      when you add a value.
+                    items:
+                      description: HarnessPlugin is a harness preset.
+                      enum:
+                      - nookku
+                      type: string
+                    maxItems: 1
+                    type: array
+                    x-kubernetes-list-type: set
                   version:
                     description: Version pins the harness version. If it is empty,
                       the pod gets the latest version.
@@ -9043,6 +9059,13 @@ spec:
                 it after create.
               rule: has(self.ingressPort) == has(oldSelf.ingressPort) && (!has(self.ingressPort)
                 || self.ingressPort == oldSelf.ingressPort)
+            - message: The nookku plugin needs the volume nookku-tests in spec.podTemplate.spec.volumes,
+                with a persistentVolumeClaim and a claimName.
+              rule: '!has(self.harness) || !has(self.harness.plugins) || !(''nookku''
+                in self.harness.plugins) || (has(self.podTemplate) && has(self.podTemplate.spec)
+                && has(self.podTemplate.spec.volumes) && self.podTemplate.spec.volumes.exists(v,
+                v.name == ''nookku-tests'' && has(v.persistentVolumeClaim) && size(v.persistentVolumeClaim.claimName)
+                > 0))'
             - message: spec.ingressPort is disabled. The traced ingress feature is
                 not installed in this cluster.
               rule: '!has(self.ingressPort)'
