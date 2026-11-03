@@ -1,0 +1,32 @@
+# Dormant source of the Agent ingress admission guard of #147. No supported command applies it.
+# The namespace and caBundle values are input markers that are not valid. A later protected
+# installer replaces each one as a whole value. Do not rename this guard or add a prefix.
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingWebhookConfiguration
+metadata:
+  name: koodam-agent-ingress-admission
+webhooks:
+- name: agent-ingress.admission.koodam.dev
+  admissionReviewVersions: ["v1"]
+  clientConfig:
+    service:
+      name: koodam-agent-admission
+      namespace: KOODAM-INPUT-NAMESPACE
+      path: /validate-core-koodam-dev-v1alpha1-agent-ingress
+      port: 443
+    caBundle: KOODAM-INPUT-CA-BUNDLE
+  rules:
+  - operations: ["CREATE", "UPDATE"]
+    apiGroups: ["core.koodam.dev"]
+    apiVersions: ["v1alpha1"]
+    resources: ["agents"]
+    scope: Namespaced
+  failurePolicy: Fail
+  matchPolicy: Equivalent
+  sideEffects: None
+  timeoutSeconds: 5
+  matchConditions:
+  - name: uses-ingress
+    expression: >-
+      (object != null && has(object.spec) && has(object.spec.ingressPort)) ||
+      (oldObject != null && has(oldObject.spec) && has(oldObject.spec.ingressPort))
