@@ -81,12 +81,17 @@ var ceiling = rbacv1.PolicyRule{
 // errNotOwned is the error when an object with the run name is not from this Agent.
 var errNotOwned = errors.New("an object with the run name is not from this Agent")
 
+// errNoAPIReader is the error when the reconciler has no API reader. The controller does not use
+// the cache for the Agent, so it does nothing without the reader.
+var errNoAPIReader = errors.New("the Agent controller has no API reader")
+
 // AgentReconciler reconciles an Agent object. It keeps no state in memory. The status has the key
 // hash, so a restart of the controller can revoke a run that it did not provision.
 type AgentReconciler struct {
 	client.Client
 	Scheme *runtime.Scheme
-	// APIReader reads the run objects directly, so the controller does not cache all of them.
+	// APIReader reads the Agent and the run objects directly. Thus the controller does not use an
+	// old cached Agent, and it does not cache all the run objects.
 	APIReader client.Reader
 	Gateway   gateway.Gateway
 	// GatewayURL is the gateway address for the agent pods.
@@ -114,8 +119,13 @@ type AgentReconciler struct {
 // Reconcile provisions a run for a new Agent. It revokes the run when the Job ends, when the
 // provision fails, or when the Agent is deleted.
 func (r *AgentReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
+	// Read the Agent from the API server, not from the cache. A cached Agent can have an old UID,
+	// phase or key hash.
+	if r.APIReader == nil {
+		return ctrl.Result{}, errNoAPIReader
+	}
 	a := &corev1alpha1.Agent{}
-	if err := r.Get(ctx, req.NamespacedName, a); err != nil {
+	if err := r.APIReader.Get(ctx, req.NamespacedName, a); err != nil {
 		return ctrl.Result{}, client.IgnoreNotFound(err)
 	}
 	ended := a.Status.Phase == corev1alpha1.AgentSucceeded || a.Status.Phase == corev1alpha1.AgentFailed
@@ -132,8 +142,10 @@ func (r *AgentReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl
 		// A revoke started before and did not complete.
 		return ctrl.Result{}, r.revoke(ctx, a)
 	case a.Status.Phase == corev1alpha1.AgentRunning:
+		// Read the Job from the API server, as the Agent. A Job that is not in the cache yet must not
+		// fail the run.
 		job := &batchv1.Job{}
-		err := r.Get(ctx, types.NamespacedName{Namespace: a.Namespace, Name: runName(a)}, job)
+		err := r.APIReader.Get(ctx, types.NamespacedName{Namespace: a.Namespace, Name: runName(a)}, job)
 		if apierrors.IsNotFound(err) {
 			return ctrl.Result{}, r.fail(ctx, a, corev1alpha1.AgentFailed, "JobMissing")
 		}
