@@ -52,14 +52,15 @@ const (
 	workloadFile = admissionDir + "/workload.yaml"
 	managerFile  = "../../config/manager/manager.yaml"
 
-	guardName   = "koodam-agent-ingress-admission"
-	webhookName = "agent-ingress.admission.koodam.dev"
-	objectName  = "koodam-agent-admission"
-	tlsSecret   = "koodam-agent-admission-tls"
-	servicePort = 443
-	nonroot     = 65532
-	tlsMode     = 0o440
-	usesIngress = "(object != null && has(object.spec) && has(object.spec.ingressPort)) || " +
+	guardName      = "koodam-agent-ingress-admission"
+	webhookName    = "agent-ingress.admission.koodam.dev"
+	objectName     = "koodam-agent-admission"
+	tlsSecret      = "koodam-agent-admission-tls"
+	servicePort    = 443
+	nonroot        = 65532
+	tlsMode        = 0o440
+	deploymentKind = "Deployment"
+	usesIngress    = "(object != null && has(object.spec) && has(object.spec.ingressPort)) || " +
 		"(oldObject != null && has(oldObject.spec) && has(oldObject.spec.ingressPort))"
 
 	// The input markers. Each one is not valid, so an unrendered object fails closed.
@@ -169,14 +170,17 @@ func objectMeta() metav1.ObjectMeta {
 
 func wantPod() corev1.PodSpec {
 	mode := new(int32(tlsMode))
-	tcp := &corev1.Probe{ProbeHandler: corev1.ProbeHandler{TCPSocket: &corev1.TCPSocketAction{Port: intstr.FromInt32(servePort)}}}
+	tcp := &corev1.Probe{ProbeHandler: corev1.ProbeHandler{
+		TCPSocket: &corev1.TCPSocketAction{Port: intstr.FromInt32(servePort)},
+	}}
 	return corev1.PodSpec{
 		ServiceAccountName:            objectName,
 		AutomountServiceAccountToken:  new(false),
 		EnableServiceLinks:            new(false),
 		TerminationGracePeriodSeconds: new(int64(10)),
 		SecurityContext: &corev1.PodSecurityContext{
-			RunAsNonRoot: new(true), RunAsUser: new(int64(nonroot)), RunAsGroup: new(int64(nonroot)), FSGroup: new(int64(nonroot)),
+			RunAsNonRoot: new(true), RunAsUser: new(int64(nonroot)), RunAsGroup: new(int64(nonroot)),
+			FSGroup:        new(int64(nonroot)),
 			SeccompProfile: &corev1.SeccompProfile{Type: corev1.SeccompProfileTypeRuntimeDefault},
 		},
 		TopologySpreadConstraints: []corev1.TopologySpreadConstraint{{
@@ -192,8 +196,12 @@ func wantPod() corev1.PodSpec {
 			},
 			LivenessProbe: tcp, ReadinessProbe: tcp,
 			Resources: corev1.ResourceRequirements{
-				Limits:   corev1.ResourceList{corev1.ResourceCPU: resource.MustParse("500m"), corev1.ResourceMemory: resource.MustParse("128Mi")},
-				Requests: corev1.ResourceList{corev1.ResourceCPU: resource.MustParse("10m"), corev1.ResourceMemory: resource.MustParse("64Mi")},
+				Limits: corev1.ResourceList{
+					corev1.ResourceCPU: resource.MustParse("500m"), corev1.ResourceMemory: resource.MustParse("128Mi"),
+				},
+				Requests: corev1.ResourceList{
+					corev1.ResourceCPU: resource.MustParse("10m"), corev1.ResourceMemory: resource.MustParse("64Mi"),
+				},
 			},
 			VolumeMounts: []corev1.VolumeMount{{Name: "tls", MountPath: path.Dir(certFile), ReadOnly: true}},
 		}},
@@ -238,8 +246,8 @@ func TestWorkloadSource(t *testing.T) {
 				Name: "webhook", Protocol: corev1.ProtocolTCP, Port: servicePort, TargetPort: intstr.FromInt32(servePort),
 			}}},
 		}},
-		{"Deployment", dep, appsv1.Deployment{
-			TypeMeta: metav1.TypeMeta{APIVersion: "apps/v1", Kind: "Deployment"}, ObjectMeta: objectMeta(),
+		{deploymentKind, dep, appsv1.Deployment{
+			TypeMeta: metav1.TypeMeta{APIVersion: "apps/v1", Kind: deploymentKind}, ObjectMeta: objectMeta(),
 			Spec: appsv1.DeploymentSpec{Replicas: new(int32(2)), Selector: selector, Template: corev1.PodTemplateSpec{
 				ObjectMeta: metav1.ObjectMeta{Labels: podLabels()}, Spec: wantPod(),
 			}},
@@ -265,7 +273,8 @@ func TestWorkloadSource(t *testing.T) {
 	// Semantic equality treats an empty list as equal to no list. Thus check the deny-all rules
 	// and the absence of args, env and extra containers again with no such rule.
 	pod := dep.Spec.Template.Spec
-	if len(np.Spec.Ingress) != 0 || len(np.Spec.Egress) != 0 || !slices.Contains(np.Spec.PolicyTypes, networkingv1.PolicyTypeIngress) {
+	if len(np.Spec.Ingress) != 0 || len(np.Spec.Egress) != 0 ||
+		!slices.Contains(np.Spec.PolicyTypes, networkingv1.PolicyTypeIngress) {
 		t.Error("the NetworkPolicy permits traffic")
 	}
 	if len(pod.Containers) != 1 || len(pod.InitContainers) != 0 || len(pod.EphemeralContainers) != 0 ||
@@ -299,7 +308,7 @@ func TestSelectorDoesNotSelectTheManager(t *testing.T) {
 		if yaml.Unmarshal(d, &dep) != nil {
 			t.Fatal("the manager source does not decode")
 		}
-		if dep.Kind == "Deployment" {
+		if dep.Kind == deploymentKind {
 			found = true
 			if sel.Matches(labels.Set(dep.Spec.Template.Labels)) {
 				t.Fatal("the admission selector selects the manager pod")
