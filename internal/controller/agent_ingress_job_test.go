@@ -46,12 +46,15 @@ const jobIngWebPort = "web"
 // constant, so a change to the production name makes the tests fail.
 const jobIngHTTPPortName = "http"
 
+// jobIngRunCommand is the command of the fixture Agent.
+const jobIngRunCommand = "run"
+
 // jobIngAgent returns an Agent with the port, the harness and the template. It has no env map, so
 // the order of the env in the Job is fixed.
 func jobIngAgent(port *int32, h string, tmpl *corev1alpha1.PodTemplate) *corev1alpha1.Agent {
 	a := &corev1alpha1.Agent{
 		ObjectMeta: metav1.ObjectMeta{Name: "job", Namespace: testTeam, UID: "uid-job"},
-		Spec: corev1alpha1.AgentSpec{Image: testAgentImage, Command: []string{"run"}, Model: "m",
+		Spec: corev1alpha1.AgentSpec{Image: testAgentImage, Command: []string{jobIngRunCommand}, Model: "m",
 			Budget: resource.MustParse("1"), DeadlineSeconds: 60, IngressPort: port, PodTemplate: tmpl},
 	}
 	if h != "" {
@@ -123,7 +126,7 @@ func TestIngressJobPorts(t *testing.T) {
 }
 
 func TestIngressJobMergeKeepsPort(t *testing.T) {
-	side := corev1.Container{Name: "side", Image: "side-img",
+	side := corev1.Container{Name: pauseTestSide, Image: "side-img",
 		Ports: []corev1.ContainerPort{{Name: jobIngWebPort, ContainerPort: 9090, Protocol: corev1.ProtocolTCP}}}
 	setup := corev1.Container{Name: "setup", Image: "setup-img",
 		Ports: []corev1.ContainerPort{{Name: "metrics", ContainerPort: 9091}}}
