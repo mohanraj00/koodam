@@ -55,8 +55,6 @@ const (
 	caInput    = "KOODAM-INPUT-CA-BUNDLE"
 )
 
-func ref[T any](v T) *T { return &v }
-
 // source returns the file and its YAML documents.
 func source(t *testing.T, name string) ([]byte, [][]byte) {
 	t.Helper()
@@ -120,7 +118,7 @@ func TestGuardSource(t *testing.T) {
 			Name: webhookName,
 			ClientConfig: admissionregistrationv1.WebhookClientConfig{
 				Service: &admissionregistrationv1.ServiceReference{
-					Namespace: nsInput, Name: objectName, Path: ref(webhookPath), Port: ref[int32](servicePort),
+					Namespace: nsInput, Name: objectName, Path: new(webhookPath), Port: new(int32(servicePort)),
 				},
 				CABundle: ca,
 			},
@@ -131,10 +129,10 @@ func TestGuardSource(t *testing.T) {
 					Resources: []string{"agents"}, Scope: &scope,
 				},
 			}},
-			FailurePolicy:           ref(admissionregistrationv1.Fail),
-			MatchPolicy:             ref(admissionregistrationv1.Equivalent),
-			SideEffects:             ref(admissionregistrationv1.SideEffectClassNone),
-			TimeoutSeconds:          ref[int32](5),
+			FailurePolicy:           new(admissionregistrationv1.Fail),
+			MatchPolicy:             new(admissionregistrationv1.Equivalent),
+			SideEffects:             new(admissionregistrationv1.SideEffectClassNone),
+			TimeoutSeconds:          new(int32(5)),
 			AdmissionReviewVersions: []string{"v1"},
 			MatchConditions:         []admissionregistrationv1.MatchCondition{{Name: "uses-ingress", Expression: usesIngress}},
 		}},
@@ -155,7 +153,7 @@ func TestAdmissionSourceIsDormant(t *testing.T) {
 	if err != nil {
 		t.Fatal("the admission directory did not read")
 	}
-	var names []string
+	names := make([]string, 0, len(ents))
 	for _, e := range ents {
 		names = append(names, e.Name())
 	}
