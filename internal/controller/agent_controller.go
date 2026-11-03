@@ -483,6 +483,12 @@ func runJob(a *corev1alpha1.Agent, installerImage, gatewayURL string) *batchv1.J
 				LocalObjectReference: corev1.LocalObjectReference{Name: name}}}},
 		}},
 	}
+	if p := a.Spec.IngressPort; p != nil {
+		// The ingress proxy finds the port by its name. Only the agent container gets it. The port has
+		// no hostPort and no hostIP. The pod template merge refuses user ports in the agent container.
+		pod.Containers[0].Ports = []corev1.ContainerPort{{Name: agentingress.ReservedPortName,
+			ContainerPort: *p, Protocol: corev1.ProtocolTCP}}
+	}
 	tmpl := metav1.ObjectMeta{Labels: map[string]string{agentLabel: a.Name}}
 	if h := a.Spec.Harness; h != nil {
 		addHarness(&pod, h, installerImage)
