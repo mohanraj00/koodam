@@ -213,8 +213,30 @@ func TestRefusesUnexpectedInput(t *testing.T) {
 	}
 }
 
+// walkFiles calls f for each file under root. It does not go into the directory skip.
+func walkFiles(t *testing.T, root, skip string, f func(path string, b []byte)) {
+	t.Helper()
+	err := filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
+		switch {
+		case err != nil:
+			return err
+		case d.IsDir() && path == skip:
+			return filepath.SkipDir
+		case d.IsDir():
+			return nil
+		}
+		f(path, read(t, path))
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+}
+
 // The default Kustomize CRDs use the default variant. helm-check makes sure that the Helm CRDs are
-// a copy of them. No other file of config or of the chart uses the enabled variant.
+// a copy of them. No other file of config or of the chart uses the enabled variant. No file of
+// config, the chart, the Makefile or the workflows refers to the dormant admission source or to
+// its fixed object names.
 func TestDefaultOutputsHaveOnlyTheDisabledVariant(t *testing.T) {
 	kust := read(t, "../../config/crd/kustomization.yaml")
 	if !bytes.Contains(kust, []byte("\n- bases/core.koodam.dev_agents.yaml\n")) {
@@ -224,26 +246,26 @@ func TestDefaultOutputsHaveOnlyTheDisabledVariant(t *testing.T) {
 	if !bytes.Contains(read(t, enabledFile), enabledMode) {
 		t.Fatal("the enabled CRD does not have the enabled mode")
 	}
+	admission := [][]byte{
+		[]byte("agent-ingress/admission"), []byte("koodam-agent-ingress-admission"), []byte("koodam-agent-admission"),
+	}
+	usesAdmission := func(path string, b []byte) {
+		if slices.ContainsFunc(admission, func(s []byte) bool { return bytes.Contains(b, s) }) {
+			t.Errorf("%s uses the admission source", path)
+		}
+	}
 	ingressDir := filepath.Join("..", "..", "config", "agent-ingress")
 	for _, root := range []string{"../../config", "../../charts/koodam"} {
-		err := filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
-			switch {
-			case err != nil:
-				return err
-			case d.IsDir() && path == ingressDir:
-				return filepath.SkipDir
-			case d.IsDir():
-				return nil
-			}
-			b := read(t, path)
+		walkFiles(t, root, ingressDir, func(path string, b []byte) {
 			if bytes.Contains(b, enabledMode) || bytes.Contains(b, []byte("agent-ingress/crd")) {
 				t.Errorf("%s uses the enabled Agent CRD", path)
 			}
-			return nil
+			usesAdmission(path, b)
 		})
-		if err != nil {
-			t.Fatal(err)
-		}
+	}
+	// The Makefile runs this command on the enabled CRD. Thus check only the admission source here.
+	for _, root := range []string{"../../Makefile", "../../.github"} {
+		walkFiles(t, root, "", usesAdmission)
 	}
 }
 
