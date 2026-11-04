@@ -200,3 +200,117 @@ func TestRouteRejectsWithoutPartialPlan(t *testing.T) {
 		})
 	}
 }
+
+// lineEndings are the YAML line breaks. The mixed entry uses each break in turn.
+var lineEndings = []struct {
+	name   string
+	breaks []string
+}{
+	{"LF", []string{"\n"}},
+	{"CRLF", []string{"\r\n"}},
+	{"CR", []string{"\r"}},
+	{"NEL", []string{"\xc2\x85"}},
+	{"LS", []string{"\xe2\x80\xa8"}},
+	{"PS", []string{"\xe2\x80\xa9"}},
+	{"mixed", []string{"\r\n", "\r", "\n", "\xc2\x85", "\xe2\x80\xa8", "\xe2\x80\xa9"}},
+}
+
+// bareApp gives the App CRD without the initial separator and comment.
+func bareApp() string { return strings.SplitN(string(appData()), "\n", 3)[2] }
+
+// withBreaks puts the breaks in turn in place of each LF.
+func withBreaks(s string, breaks []string) []byte {
+	var b strings.Builder
+	for i, line := range strings.Split(s, "\n") {
+		if i > 0 {
+			b.WriteString(breaks[(i-1)%len(breaks)])
+		}
+		b.WriteString(line)
+	}
+	return []byte(b.String())
+}
+
+// requireRejected examines that RouteCRDs gives no plan, the fixed error and no input change.
+func requireRejected(t *testing.T, data []byte, want error) {
+	t.Helper()
+	in := []ml.Artifact{crdArtifact("AppVersion", "appversions"), {Name: appsFile, Data: data}}
+	before := clone(in)
+	plan, err := ml.RouteCRDs(in)
+	if plan != nil {
+		t.Fatalf("got a partial plan %v", paths(plan))
+	}
+	if !errors.Is(err, want) {
+		t.Fatalf("err = %v, want %v", err, want)
+	}
+	if err.Error() != want.Error() {
+		t.Fatalf("error text %q is not the fixed reason", err)
+	}
+	if !sameArtifacts(in, before) {
+		t.Fatal("RouteCRDs changed the input")
+	}
+}
+
+// One CRD with empty documents, comments and separators keeps its original bytes.
+func TestRouteKeepsBytesForEachLineBreak(t *testing.T) {
+	inputs := []struct{ name, doc string }{
+		{"no separator", bareApp()},
+		{"initial separator and comment", string(appData())},
+		{"leading comments and separators", "# head\n\n---\n# empty\n---\n" + bareApp() + "---\n# tail\n"},
+	}
+	for _, e := range lineEndings {
+		for _, tc := range inputs {
+			t.Run(e.name+" "+tc.name, func(t *testing.T) {
+				data := withBreaks(tc.doc, e.breaks)
+				before := bytes.Clone(data)
+				plan, err := ml.RouteCRDs([]ml.Artifact{{Name: appsFile, Data: data}})
+				if err != nil {
+					t.Fatal(err)
+				}
+				if len(plan) != 1 || plan[0].Path != appDir+appsFile || !bytes.Equal(plan[0].Data, before) {
+					t.Fatalf("plan %v does not keep the original bytes", paths(plan))
+				}
+				// The plan must not share memory with the input.
+				plan[0].Data[0] ^= 0xff
+				if !bytes.Equal(data, before) {
+					t.Fatal("the plan shares memory with the input")
+				}
+			})
+		}
+	}
+}
+
+// Each document with content counts. An extra document is rejected with each line break.
+func TestRouteRejectsExtraDocumentForEachLineBreak(t *testing.T) {
+	extras := []struct{ name, doc string }{
+		{"ConfigMap", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: unexpected}\n"},
+		{"null", "null\n"},
+		{"tilde null", "~\n"},
+		{"empty map", "{}\n"},
+		{"empty list", "[]\n"},
+		{"empty quoted string", "''\n"},
+		{"scalar", "x\n"},
+		{"second CRD", bareApp()},
+	}
+	for _, e := range lineEndings {
+		for _, x := range extras {
+			t.Run(e.name+" "+x.name+" after", func(t *testing.T) {
+				requireRejected(t, withBreaks(bareApp()+"---\n"+x.doc, e.breaks), ml.ErrDocumentCount)
+			})
+			t.Run(e.name+" "+x.name+" before", func(t *testing.T) {
+				requireRejected(t, withBreaks(x.doc+"---\n"+bareApp(), e.breaks), ml.ErrDocumentCount)
+			})
+		}
+		t.Run(e.name+" null on separator line", func(t *testing.T) {
+			requireRejected(t, withBreaks(bareApp()+"--- null\n", e.breaks), ml.ErrDocumentCount)
+		})
+		t.Run(e.name+" document end marker", func(t *testing.T) {
+			requireRejected(t, withBreaks(bareApp()+"...\n", e.breaks), ml.ErrDocumentCount)
+		})
+	}
+}
+
+// The reproduced case: CR line breaks, no initial separator and a ConfigMap after the CRD.
+func TestRouteRejectsReproducedCRCase(t *testing.T) {
+	extra := "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: unexpected}\n"
+	requireRejected(t, []byte(strings.ReplaceAll(bareApp()+"\n---\n"+extra, "\n", "\r")), ml.ErrDocumentCount)
+}

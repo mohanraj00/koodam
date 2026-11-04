@@ -20,7 +20,6 @@ limitations under the License.
 package manifestlayout
 
 import (
-	"bufio"
 	"bytes"
 	"errors"
 	"io"
@@ -28,10 +27,10 @@ import (
 	"slices"
 	"strings"
 
+	"go.yaml.in/yaml/v3"
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	serjson "k8s.io/apimachinery/pkg/runtime/serializer/json"
-	utilyaml "k8s.io/apimachinery/pkg/util/yaml"
 )
 
 const (
@@ -150,22 +149,31 @@ func safeName(name string) bool {
 	return name != "" && name[0] != '.' && !strings.ContainsFunc(name, bad)
 }
 
-// singleDocument gives the only YAML document that has content. Blank lines, comments and
-// separators are not content. A document end marker ("...") is not permitted.
+// singleDocument gives the original bytes of the only YAML document that has content. An empty
+// document (only blank lines, comments or a separator) is not content. A literal null, an empty
+// map and all other scalars are content. A document end marker ("...") is not permitted.
 func singleDocument(data []byte) ([]byte, error) {
-	reader := utilyaml.NewYAMLReader(bufio.NewReader(bytes.NewReader(data)))
+	chunks, err := splitDocuments(data)
+	if err != nil {
+		return nil, err
+	}
+	// The YAML parser reads the full stream to the end, thus it finds each document.
+	switch _, content, err := countDocuments(data); {
+	case err != nil:
+		return nil, err
+	case content != 1:
+		return nil, ErrDocumentCount
+	}
+	// The parser must find the same document in the chunk. The strict decoder gets this chunk.
 	var doc []byte
-	for {
-		chunk, err := reader.Read()
-		if errors.Is(err, io.EOF) {
-			break
-		} else if err != nil {
-			return nil, ErrMalformed
-		}
-		switch content, err := hasContent(chunk); {
-		case err != nil, content && doc != nil:
+	for _, chunk := range chunks {
+		total, content, err := countDocuments(chunk)
+		switch {
+		case err != nil:
+			return nil, err
+		case total > 1, content > 0 && doc != nil:
 			return nil, ErrDocumentCount
-		case content:
+		case content > 0:
 			doc = chunk
 		}
 	}
@@ -175,18 +183,84 @@ func singleDocument(data []byte) ([]byte, error) {
 	return doc, nil
 }
 
-// hasContent examines all lines of the chunk, thus it finds a document end marker after content.
-func hasContent(doc []byte) (content bool, err error) {
-	for line := range bytes.Lines(doc) {
-		trimmed := bytes.TrimSpace(line)
-		switch {
-		case bytes.HasPrefix(line, []byte("...")):
-			return false, ErrDocumentCount
-		case len(trimmed) > 0 && trimmed[0] != '#' && !bytes.HasPrefix(line, []byte("---")):
-			content = true
+// lineBreaks are the YAML line breaks. CRLF is one line break, thus it comes before CR.
+var lineBreaks = [][]byte{[]byte("\r\n"), []byte("\r"), []byte("\n"), []byte("\xc2\x85"), []byte("\xe2\x80\xa8"), []byte("\xe2\x80\xa9")}
+
+// breakLen gives the length of the line break at the start of b, or 0.
+func breakLen(b []byte) int {
+	for _, lb := range lineBreaks {
+		if bytes.HasPrefix(b, lb) {
+			return len(lb)
 		}
 	}
-	return content, nil
+	return 0
+}
+
+// splitDocuments cuts the data before each line that starts with a "---" marker. The marker line
+// stays in its chunk. It does not change or copy the bytes. A line that starts with "..." is an
+// error. The parser ignores a byte order mark at the start, thus this function also ignores it.
+func splitDocuments(data []byte) ([][]byte, error) {
+	var chunks [][]byte
+	start := 0
+	for i := 0; ; {
+		line := data[i:]
+		if i == 0 {
+			line = bytes.TrimPrefix(line, []byte("\xef\xbb\xbf"))
+		}
+		if bytes.HasPrefix(line, []byte("...")) {
+			return nil, ErrDocumentCount
+		}
+		marker := bytes.HasPrefix(line, []byte("---")) &&
+			(len(line) == 3 || line[3] == ' ' || line[3] == '\t' || breakLen(line[3:]) > 0)
+		if marker && i > start {
+			chunks = append(chunks, data[start:i])
+			start = i
+		}
+		end := i
+		for end < len(data) && breakLen(data[end:]) == 0 {
+			end++
+		}
+		if end == len(data) {
+			break
+		}
+		i = end + breakLen(data[end:])
+	}
+	return append(chunks, data[start:]), nil
+}
+
+// countDocuments reads the full YAML stream to the end. It gives the number of documents and the
+// number of documents with content. It does not change the data.
+func countDocuments(data []byte) (total, content int, err error) {
+	// The parser can panic on some input. A panic is malformed input.
+	defer func() {
+		if recover() != nil {
+			total, content, err = 0, 0, ErrMalformed
+		}
+	}()
+	decoder := yaml.NewDecoder(bytes.NewReader(data))
+	for {
+		var doc yaml.Node
+		switch derr := decoder.Decode(&doc); {
+		case errors.Is(derr, io.EOF):
+			return total, content, nil
+		case derr != nil:
+			return 0, 0, ErrMalformed
+		}
+		total++
+		if !emptyDocument(&doc) {
+			content++
+		}
+	}
+}
+
+// emptyDocument is true only for the empty node that the parser makes for a document without
+// content. A literal null ("null" or "~") has a value, thus it is not empty.
+func emptyDocument(doc *yaml.Node) bool {
+	if doc.Kind != yaml.DocumentNode || len(doc.Content) != 1 {
+		return false
+	}
+	n := doc.Content[0]
+	return n.Kind == yaml.ScalarNode && n.Style == 0 && n.Tag == "!!null" && n.Value == "" && n.Anchor == ""
 }
 
 func decodeCRD(decoder runtime.Decoder, doc []byte) (*apiextensionsv1.CustomResourceDefinition, error) {
