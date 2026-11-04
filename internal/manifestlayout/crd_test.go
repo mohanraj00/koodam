@@ -314,3 +314,116 @@ func TestRouteRejectsReproducedCRCase(t *testing.T) {
 	extra := "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: unexpected}\n"
 	requireRejected(t, []byte(strings.ReplaceAll(bareApp()+"\n---\n"+extra, "\n", "\r")), ml.ErrDocumentCount)
 }
+
+// requireRouted examines that RouteCRDs gives the App path and the original bytes.
+func requireRouted(t *testing.T, data []byte) {
+	t.Helper()
+	before := bytes.Clone(data)
+	plan, err := ml.RouteCRDs([]ml.Artifact{{Name: appsFile, Data: data}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(plan) != 1 || plan[0].Path != appDir+appsFile || !bytes.Equal(plan[0].Data, before) || !bytes.Equal(data, before) {
+		t.Fatalf("plan %v does not keep the original bytes", paths(plan))
+	}
+}
+
+// The parser makes an empty node for a bare tag ("!"). The tag is content with each line break.
+func TestRouteRejectsBareTagForEachLineBreak(t *testing.T) {
+	cases := []struct{ name, doc string }{
+		{"after on separator line", bareApp() + "--- !\n"},
+		{"before on separator line", "--- !\n---\n" + bareApp()},
+		{"after on own line", bareApp() + "---\n!\n"},
+		{"before on own line", "---\n!\n---\n" + bareApp()},
+		{"before without separator", "!\n---\n" + bareApp()},
+		{"after with comment", bareApp() + "--- ! # tag\n"},
+		{"after at end of data", bareApp() + "--- !"},
+		{"between empty documents", "---\n# empty\n--- !\n---\n" + bareApp() + "---\n"},
+		{"exact reproduced after", string(appData()) + "--- !\n"},
+		{"exact reproduced before", "--- !\n" + string(appData())},
+	}
+	for _, e := range lineEndings {
+		for _, tc := range cases {
+			t.Run(e.name+" "+tc.name, func(t *testing.T) {
+				requireRejected(t, withBreaks(tc.doc, e.breaks), ml.ErrDocumentCount)
+			})
+		}
+		// A "!" in a comment is not a tag.
+		t.Run(e.name+" tag text in comments", func(t *testing.T) {
+			requireRouted(t, withBreaks("--- # !\n  # !\n---\n"+bareApp()+"--- # !\n", e.breaks))
+		})
+		// A "!" on the separator line of the CRD is a legal non-specific tag of the CRD mapping.
+		t.Run(e.name+" tag on CRD mapping", func(t *testing.T) {
+			requireRouted(t, withBreaks("--- !\n"+bareApp(), e.breaks))
+		})
+	}
+}
+
+// withSchema gives the App CRD with an entries property that has the schema s.
+func withSchema(s string) []byte {
+	return bytes.Replace(appData(), []byte("openAPIV3Schema: {type: object}"),
+		[]byte("openAPIV3Schema: {type: object, properties: {entries: "+s+"}}"), 1)
+}
+
+// The custom decoders of the schema union fields do not reject a wrong value type, an unknown
+// field or a field with the wrong case. The check must find them at each depth.
+func TestRouteRejectsInvalidSchemaUnion(t *testing.T) {
+	cases := []struct{ name, schema string }{
+		{"exact reproduced scalar items", `{type: array, items: 7}`},
+		{"string items", `{type: array, items: x}`},
+		{"bool items", `{type: array, items: true}`},
+		{"scalar in items list", `{type: array, items: [{type: string}, 7]}`},
+		{"unknown field in items", `{type: array, items: {type: string, bogus: 1}}`},
+		{"wrong case in items", `{type: array, items: {Type: string}}`},
+		{"duplicate field in items", `{type: array, items: {type: string, type: integer}}`},
+		{"unknown field in items list", `{type: array, items: [{type: string, bogus: 1}]}`},
+		{"nested scalar items", `{type: array, items: {type: array, items: 7}}`},
+		{"scalar additionalProperties", `{type: object, additionalProperties: 7}`},
+		{"unknown field in additionalProperties", `{type: object, additionalProperties: {type: string, bogus: 1}}`},
+		{"wrong case in additionalProperties", `{type: object, additionalProperties: {Type: string}}`},
+		{"scalar items in additionalProperties", `{type: object, additionalProperties: {type: array, items: 7}}`},
+		{"string additionalItems", `{type: array, additionalItems: x}`},
+		{"unknown field in additionalItems", `{type: array, additionalItems: {bogus: 1}}`},
+		{"scalar dependencies", `{type: object, dependencies: {a: 7}}`},
+		{"string dependencies", `{type: object, dependencies: {a: x}}`},
+		{"bool dependencies", `{type: object, dependencies: {a: true}}`},
+		{"number in dependencies list", `{type: object, dependencies: {a: [7]}}`},
+		{"unknown field in dependencies", `{type: object, dependencies: {a: {bogus: 1}}}`},
+		{"scalar items in dependencies", `{type: object, dependencies: {a: {type: array, items: 7}}}`},
+		{"scalar items in allOf", `{allOf: [{items: 7}]}`},
+		{"scalar items in not", `{not: {items: 7}}`},
+		{"scalar items in definitions", `{definitions: {d: {items: 7}}}`},
+		{"scalar items in patternProperties", `{type: object, patternProperties: {"^a": {items: 7}}}`},
+		{"unknown rule field in items", `{type: array, items: {type: string, x-kubernetes-validations: [{rule: has(self.a), bogus: 1}]}}`},
+		{"unknown externalDocs field in items", `{type: array, items: {externalDocs: {bogus: x}}}`},
+		{"deep recursive union", `{type: array, items: {items: {additionalProperties: {items: [{dependencies: {a: {additionalItems: {items: 7}}}}]}}}}`},
+		{"deep recursive unknown field", `{type: array, items: {items: {additionalProperties: {items: [{dependencies: {a: {additionalItems: {bogus: 1}}}}]}}}}`},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			requireRejected(t, withSchema(tc.schema), ml.ErrMalformed)
+		})
+	}
+}
+
+// Each legal union variant and each raw JSON value keeps its original bytes.
+func TestRouteAcceptsSchemaUnionVariants(t *testing.T) {
+	cases := []struct{ name, schema string }{
+		{"schema items", `{type: array, items: {type: string}}`},
+		{"items list", `{type: array, items: [{type: string}, {type: integer}]}`},
+		{"bool additionalProperties", `{type: object, additionalProperties: false}`},
+		{"schema additionalProperties", `{type: object, additionalProperties: {type: array, items: {type: string}}}`},
+		{"bool additionalItems", `{type: array, items: [{type: string}], additionalItems: true}`},
+		{"schema additionalItems", `{type: array, items: [{type: string}], additionalItems: {type: integer}}`},
+		{"property list dependencies", `{type: object, dependencies: {a: [b, c]}}`},
+		{"schema dependencies", `{type: object, dependencies: {a: {required: [b], properties: {b: {items: {type: string}}}}}}`},
+		{"raw values in items", `{type: array, items: {type: object, default: {bogus: 7, Type: [x]}, example: [1, x], enum: [{a: 1}, 7, x]}}`},
+		{"rules and docs in items", `{type: array, items: {type: string, externalDocs: {description: d}, x-kubernetes-validations: [{rule: has(self.a), message: m, reason: FieldValueInvalid}]}}`},
+		{"deep recursive union", `{type: array, items: {items: {additionalProperties: {items: [{dependencies: {a: {additionalItems: {items: {type: string}}}}}]}}}}`},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			requireRouted(t, withSchema(tc.schema))
+		})
+	}
+}

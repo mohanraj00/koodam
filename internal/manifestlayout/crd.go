@@ -21,9 +21,11 @@ package manifestlayout
 
 import (
 	"bytes"
+	"encoding/json"
 	"errors"
 	"io"
 	"path"
+	"reflect"
 	"slices"
 	"strings"
 
@@ -31,6 +33,8 @@ import (
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	serjson "k8s.io/apimachinery/pkg/runtime/serializer/json"
+	utiljson "k8s.io/apimachinery/pkg/util/json"
+	sigsyaml "sigs.k8s.io/yaml"
 )
 
 const (
@@ -151,7 +155,8 @@ func safeName(name string) bool {
 
 // singleDocument gives the original bytes of the only YAML document that has content. An empty
 // document (only blank lines, comments or a separator) is not content. A literal null, an empty
-// map and all other scalars are content. A document end marker ("...") is not permitted.
+// map, an explicit tag and all other scalars are content. A document end marker ("...") is not
+// permitted.
 func singleDocument(data []byte) ([]byte, error) {
 	chunks, err := splitDocuments(data)
 	if err != nil {
@@ -168,6 +173,11 @@ func singleDocument(data []byte) ([]byte, error) {
 	var doc []byte
 	for _, chunk := range chunks {
 		total, content, err := countDocuments(chunk)
+		// The parser makes the same empty node for a bare tag ("!") and for no content. Thus an
+		// empty document with other text than blank lines, comments and the marker is content.
+		if total == 1 && content == 0 && !blankSource(chunk) {
+			content = 1
+		}
 		switch {
 		case err != nil:
 			return nil, err
@@ -194,6 +204,24 @@ func breakLen(b []byte) int {
 		}
 	}
 	return 0
+}
+
+// blankSource is true if each line of the chunk is blank or a comment. The "---" marker at the
+// start of the chunk and a byte order mark are not content.
+func blankSource(chunk []byte) bool {
+	chunk = bytes.TrimPrefix(bytes.TrimPrefix(chunk, []byte("\xef\xbb\xbf")), []byte("---"))
+	for len(chunk) > 0 {
+		end := 0
+		for end < len(chunk) && breakLen(chunk[end:]) == 0 {
+			end++
+		}
+		if line := bytes.TrimLeft(chunk[:end], " \t"); len(line) > 0 && line[0] != '#' {
+			return false
+		}
+		chunk = chunk[end:]
+		chunk = chunk[breakLen(chunk):]
+	}
+	return true
 }
 
 // splitDocuments cuts the data before each line that starts with a "---" marker. The marker line
@@ -269,7 +297,122 @@ func decodeCRD(decoder runtime.Decoder, doc []byte) (*apiextensionsv1.CustomReso
 		return nil, ErrMalformed
 	}
 	if crd, ok := obj.(*apiextensionsv1.CustomResourceDefinition); ok && err == nil {
+		if !validSchemas(doc) {
+			return nil, ErrMalformed
+		}
 		return crd, nil
 	}
 	return nil, ErrNotCRD
+}
+
+var (
+	unmarshalerType = reflect.TypeFor[json.Unmarshaler]()
+	rawJSONType     = reflect.TypeFor[apiextensionsv1.JSON]()
+	schemaType      = reflect.TypeFor[apiextensionsv1.JSONSchemaProps]()
+)
+
+// validSchemas examines each openAPIV3Schema again against the API types. The strict decoder
+// gives each schema union field (for example items, additionalProperties and dependencies) to a
+// custom JSON decoder. That decoder ignores unknown fields and fields with the wrong case, and it
+// accepts some values of the wrong type, for example "items: 7". The strict decoder already
+// rejects duplicate fields at all levels. This function does not change the document.
+func validSchemas(doc []byte) bool {
+	data, err := sigsyaml.YAMLToJSON(doc)
+	if err != nil {
+		return false
+	}
+	var crd struct {
+		Spec struct {
+			Versions []struct {
+				Schema *struct {
+					OpenAPIV3Schema any `json:"openAPIV3Schema"`
+				} `json:"schema"`
+			} `json:"versions"`
+		} `json:"spec"`
+	}
+	// This decoder compares field names with the case.
+	if utiljson.Unmarshal(data, &crd) != nil {
+		return false
+	}
+	for _, v := range crd.Spec.Versions {
+		if v.Schema != nil && !validShape(v.Schema.OpenAPIV3Schema, schemaType) {
+			return false
+		}
+	}
+	return true
+}
+
+// validShape is true if the decoded JSON value agrees with the Go type t. Each object field must
+// have the exact JSON name of a field of t. A null value has no effect in the typed decoder, thus
+// it agrees with each type. A JSON field (default, example, enum) keeps each raw value. A type
+// with a custom JSON decoder is a union: the value must agree with one of the union fields.
+func validShape(v any, t reflect.Type) bool {
+	for t.Kind() == reflect.Pointer {
+		t = t.Elem()
+	}
+	if v == nil || t == rawJSONType {
+		return true
+	}
+	if reflect.PointerTo(t).Implements(unmarshalerType) {
+		for f := range t.Fields() {
+			if validShape(v, f.Type) {
+				return true
+			}
+		}
+		return false
+	}
+	switch t.Kind() {
+	case reflect.Struct:
+		m, ok := v.(map[string]any)
+		if !ok {
+			return false
+		}
+		for name, x := range m {
+			f, ok := jsonField(t, name)
+			if !ok || !validShape(x, f.Type) {
+				return false
+			}
+		}
+		return true
+	case reflect.Map:
+		m, ok := v.(map[string]any)
+		for _, x := range m {
+			if !validShape(x, t.Elem()) {
+				return false
+			}
+		}
+		return ok
+	case reflect.Slice:
+		l, ok := v.([]any)
+		for _, x := range l {
+			if !validShape(x, t.Elem()) {
+				return false
+			}
+		}
+		return ok
+	case reflect.Bool:
+		_, ok := v.(bool)
+		return ok
+	case reflect.String:
+		_, ok := v.(string)
+		return ok
+	default:
+		// The typed decoder already examined the number range and the integer form.
+		switch v.(type) {
+		case int64, float64:
+			return true
+		}
+		return false
+	}
+}
+
+// jsonField gives the exported field of the struct type t with the JSON name.
+func jsonField(t reflect.Type, name string) (reflect.StructField, bool) {
+	for f := range t.Fields() {
+		tag, _, _ := strings.Cut(f.Tag.Get("json"), ",")
+		if f.IsExported() && tag != "" && tag != "-" && tag == name {
+			return f, true
+		}
+	}
+	return reflect.StructField{}, false
 }
