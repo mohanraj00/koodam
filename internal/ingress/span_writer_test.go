@@ -23,6 +23,7 @@ import (
 	"log"
 	"os"
 	"runtime"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -154,6 +155,19 @@ func directWriter(out io.Writer) *spanWriter {
 
 func liveJob(line []byte) spanJob {
 	return spanJob{line: line, deadline: time.Now().Add(time.Hour), done: make(chan bool, 1)}
+}
+
+// recvWithin gives the next value from c. It stops the test if no value comes in 10 seconds.
+func recvWithin[T any](t *testing.T, c chan T, msg string) T {
+	t.Helper()
+	select {
+	case v := <-c:
+		return v
+	case <-time.After(10 * time.Second):
+		t.Fatal(msg)
+	}
+	var zero T
+	return zero
 }
 
 func TestNoStdOutputRestores(t *testing.T) {
@@ -296,6 +310,91 @@ func TestSpanWriterBlockedIsBounded(t *testing.T) {
 	}
 }
 
+// The callers fill the admission set while the sink blocks. The test is the worker, so each step
+// occurs in a known order. close does not wait for the sink, and it releases each caller. After
+// close, no write is accepted and the worker claims no job. A job that the worker claimed before
+// close can enter or complete the sink after close.
+func TestSpanWriterAdmissionAndClose(t *testing.T) {
+	p := &probeWriter{gate: make(chan struct{}), entered: make(chan struct{}, 1)}
+	var once sync.Once
+	release := func() { once.Do(func() { close(p.gate) }) }
+	t.Cleanup(release)
+	w := directWriter(p)
+	w.wait = time.Hour
+	t.Cleanup(w.close)
+	line := testLine(t)
+
+	var wg sync.WaitGroup
+	for range spanAdmitLimit {
+		wg.Go(func() {
+			if !errors.Is(w.write(line), errSpanWrite) {
+				t.Error("a waiting write did not give the fixed error at close")
+			}
+		})
+	}
+	// The first job enters the sink and blocks there. The test holds the other jobs, so each
+	// caller keeps its admission slot until close.
+	first := recvWithin(t, w.jobs, "a caller did not give its job")
+	sunk := make(chan bool, 1)
+	go func() {
+		ok := w.writeOne(first)
+		first.done <- ok
+		sunk <- ok
+	}()
+	recvWithin(t, p.entered, "the first job did not enter the sink")
+	held := make([]spanJob, 0, spanAdmitLimit-1)
+	for range spanAdmitLimit - 1 {
+		held = append(held, recvWithin(t, w.jobs, "a caller did not give its job"))
+	}
+	if len(w.admit) != spanAdmitLimit {
+		t.Fatal("the callers did not fill the admission set")
+	}
+	over := make(chan error, 1)
+	go func() { over <- w.write(line) }()
+	if !errors.Is(recvWithin(t, over, "a write over the admission limit blocked"), errSpanWrite) {
+		t.Fatal("a write over the admission limit was accepted")
+	}
+	select {
+	case <-w.jobs:
+		t.Fatal("a write over the admission limit gave a job")
+	default:
+	}
+
+	closed, waited := make(chan struct{}), make(chan struct{})
+	noStdOutput(t, func() {
+		go func() { w.close(); close(closed) }()
+		recvWithin(t, closed, "close blocked on a blocked sink")
+		go func() { wg.Wait(); close(waited) }()
+		recvWithin(t, waited, "close did not release each waiting caller")
+		if !errors.Is(w.write(line), errSpanWrite) {
+			t.Error("a write after close was accepted")
+		}
+	})
+	if w.state.Load() != spanClosed|spanWriting {
+		t.Fatal("close did not keep the claim of the blocked Write")
+	}
+
+	// The job that the worker claimed before close completes the sink after close.
+	release()
+	if !recvWithin(t, sunk, "the claimed Write did not return") {
+		t.Fatal("the claimed Write did not complete after close")
+	}
+	noStdOutput(t, func() {
+		if slices.ContainsFunc(held, w.writeOne) {
+			t.Error("the worker claimed a held job after close")
+		}
+	})
+	if calls, maxActive := p.counts(); calls != 1 || maxActive != 1 {
+		t.Fatal("more than the 1 claimed job entered the sink")
+	}
+	if p.output() != string(line) {
+		t.Fatal("the sink did not get 1 whole line")
+	}
+	if w.state.Load() != spanClosed {
+		t.Fatal("the claimed Write did not release its claim")
+	}
+}
+
 // An idle worker can take a job after quit is closed. close must still refuse every later line.
 func TestSpanWriterIdleRefusesAfterClose(t *testing.T) {
 	p := &probeWriter{}
@@ -364,8 +463,9 @@ func TestSpanWriterCloseBeforeClaim(t *testing.T) {
 	}
 }
 
-// A job that the worker claimed before close completes its Write after close. close does not
-// wait for it, the waiting caller gets the fixed error, and no later job is claimed.
+// A job that the worker claimed before close can enter or complete its Write after close. Here
+// it entered before close. close does not wait for it, the waiting caller gets the fixed error,
+// and no later job is claimed.
 func TestSpanWriterCloseDuringClaimedWrite(t *testing.T) {
 	p := &probeWriter{
 		gate: make(chan struct{}), entered: make(chan struct{}, 1), left: make(chan struct{}, 1),
@@ -402,5 +502,55 @@ func TestSpanWriterCloseDuringClaimedWrite(t *testing.T) {
 	}
 	if p.output() != string(line) {
 		t.Fatal("the claimed Write did not complete after close")
+	}
+}
+
+// Callers write while close runs. Each write that begins after close fails, and the sink gets
+// whole lines, 1 at a time. Only a job that the worker claimed before close can enter the sink
+// after close, so the sink gets at most 1 Write call after close.
+func TestSpanWriterCloseDuringAdmission(t *testing.T) {
+	p := &probeWriter{entered: make(chan struct{}, 16*50)}
+	w := newTestWriter(t, p, 5*time.Second)
+	line := testLine(t)
+	var wg sync.WaitGroup
+	for range 16 {
+		wg.Go(func() {
+			for range 50 {
+				_ = w.write(line)
+			}
+		})
+	}
+	recvWithin(t, p.entered, "no write entered the sink before close")
+	w.close()
+	atClose, _ := p.counts()
+	for range 100 {
+		if !errors.Is(w.write(line), errSpanWrite) {
+			t.Fatal("a write begun after close was accepted")
+		}
+	}
+	waited := make(chan struct{})
+	go func() { wg.Wait(); close(waited) }()
+	recvWithin(t, waited, "close did not release each caller")
+	// After close no claim can start. When the last claim ends, the sink gets no more calls.
+	for deadline := time.Now().Add(10 * time.Second); w.state.Load()&spanWriting != 0; {
+		if time.Now().After(deadline) {
+			t.Fatal("the claimed Write did not return")
+		}
+		time.Sleep(time.Millisecond)
+	}
+	calls, maxActive := p.counts()
+	if calls > atClose+1 || maxActive != 1 {
+		t.Fatal("the sink got more than 1 Write call after close or 2 Write calls at a time")
+	}
+	out := p.output()
+	if !strings.HasSuffix(out, "\n") {
+		t.Fatal("the sink holds a partial line")
+	}
+	lines := strings.Split(strings.TrimSuffix(out, "\n"), "\n")
+	if len(lines) != calls {
+		t.Fatal("the line count is not the Write call count")
+	}
+	for _, l := range lines {
+		decodeLine(t, []byte(l+"\n"))
 	}
 }
