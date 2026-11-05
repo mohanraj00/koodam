@@ -17,8 +17,11 @@ limitations under the License.
 package manifestlayout
 
 import (
+	"bytes"
+	"encoding/binary"
 	"errors"
 	"strings"
+	"unicode/utf16"
 
 	"go.yaml.in/yaml/v3"
 	rbacv1 "k8s.io/api/rbac/v1"
@@ -40,7 +43,9 @@ var (
 // exactly one YAML document. An empty document is also a document. The document must be one
 // strict rbac.authorization.k8s.io/v1 ClusterRole with the expected name, no namespace field and
 // no generateName field. The identity fields must be plain string fields with no duplicate, case
-// variant, merge key, alias or explicit tag. The YAML-to-JSON converter must keep each map entry.
+// variant, merge key, alias or explicit tag. The non-specific tag "!" is also an explicit tag. The
+// root and metadata mappings and their keys have the same rule. The YAML-to-JSON converter must
+// keep each map entry.
 // The function examines these before the conversion. It does not change the data.
 func ValidateRBACRole(data []byte, expectedName string) error {
 	if expectedName == "" {
@@ -108,30 +113,31 @@ func plainRoleIdentity(doc []byte, name string) (ok bool) {
 	if yaml.Unmarshal(doc, &root) != nil || root.Kind != yaml.DocumentNode || len(root.Content) != 1 {
 		return false
 	}
-	top, ok := identityMap(root.Content[0])
+	src := newYAMLText(doc)
+	top, ok := src.identityMap(root.Content[0])
 	if !ok {
 		return false
 	}
-	meta, ok := identityMap(top["metadata"])
+	meta, ok := src.identityMap(top["metadata"])
 	if !ok {
 		return false
 	}
-	return identityString(top["apiVersion"]) == rbacv1.SchemeGroupVersion.String() &&
-		identityString(top["kind"]) == roleKind && identityString(meta["name"]) == name &&
+	return src.identityString(top["apiVersion"]) == rbacv1.SchemeGroupVersion.String() &&
+		src.identityString(top["kind"]) == roleKind && src.identityString(meta["name"]) == name &&
 		!hasField(meta, "namespace") && !hasField(meta, "generateName")
 }
 
 // identityMap gives the entries of a mapping node by the exact key. The mapping node must not have
 // an explicit tag. Each key must be a string with no explicit tag and must not be a merge key. Two
 // keys must not be equal under Unicode case folding.
-func identityMap(n *yaml.Node) (map[string]*yaml.Node, bool) {
-	if n == nil || n.Kind != yaml.MappingNode || n.Tag != "!!map" || explicitTag(n) || len(n.Content)%2 != 0 {
+func (src yamlText) identityMap(n *yaml.Node) (map[string]*yaml.Node, bool) {
+	if n == nil || n.Kind != yaml.MappingNode || n.Tag != "!!map" || src.explicitTag(n) || len(n.Content)%2 != 0 {
 		return nil, false
 	}
 	m := make(map[string]*yaml.Node, len(n.Content)/2)
 	for i := 0; i < len(n.Content); i += 2 {
 		k := n.Content[i]
-		if k.Kind != yaml.ScalarNode || k.Tag != "!!str" || explicitTag(k) || k.Value == "<<" || hasField(m, k.Value) {
+		if k.Kind != yaml.ScalarNode || k.Tag != "!!str" || src.explicitTag(k) || k.Value == "<<" || hasField(m, k.Value) {
 			return nil, false
 		}
 		m[k.Value] = n.Content[i+1]
@@ -151,15 +157,98 @@ func hasField(m map[string]*yaml.Node, name string) bool {
 
 // identityString gives the value of a string scalar node with no explicit tag, or "" for each
 // other node. An alias node is not a scalar node. A quoted string has no explicit tag.
-func identityString(n *yaml.Node) string {
-	if n == nil || n.Kind != yaml.ScalarNode || n.Tag != "!!str" || explicitTag(n) {
+func (src yamlText) identityString(n *yaml.Node) string {
+	if n == nil || n.Kind != yaml.ScalarNode || n.Tag != "!!str" || src.explicitTag(n) {
 		return ""
 	}
 	return n.Value
 }
 
-// explicitTag is true if the source has a tag on the node, for example !!str or !!map. The parser
-// sets TaggedStyle for each tag except the non-specific tag "!".
-func explicitTag(n *yaml.Node) bool {
-	return n.Style&yaml.TaggedStyle != 0
+// yamlText is the document text as the YAML parser reads it. The parser removes a byte order mark
+// at the start and decodes UTF-16. It counts each character as one column. CRLF is one line break.
+type yamlText struct {
+	text  []rune
+	lines []int // The index in text of the start of each line.
+}
+
+func newYAMLText(doc []byte) yamlText {
+	var src yamlText
+	if len(doc) >= 2 && (doc[0] == 0xff && doc[1] == 0xfe || doc[0] == 0xfe && doc[1] == 0xff) {
+		var order binary.ByteOrder = binary.BigEndian
+		if doc[0] == 0xff {
+			order = binary.LittleEndian
+		}
+		units := make([]uint16, (len(doc)-2)/2)
+		for i := range units {
+			units[i] = order.Uint16(doc[2+2*i:])
+		}
+		src.text = utf16.Decode(units)
+	} else {
+		src.text = []rune(string(bytes.TrimPrefix(doc, []byte("\xef\xbb\xbf"))))
+	}
+	src.lines = []int{0}
+	for i := 0; i < len(src.text); i++ {
+		if src.text[i] == '\r' && i+1 < len(src.text) && src.text[i+1] == '\n' {
+			i++
+		}
+		if breakRune(src.text[i]) {
+			src.lines = append(src.lines, i+1)
+		}
+	}
+	return src
+}
+
+// at gives the character at index i, or 0 after the end of the text.
+func (src yamlText) at(i int) rune {
+	if i < 0 || i >= len(src.text) {
+		return 0
+	}
+	return src.text[i]
+}
+
+// explicitTag is true if the source has a tag on the node, for example !!str, !!map or the
+// non-specific tag "!". The parser sets TaggedStyle for each tag except "!". Thus this function
+// also examines the text at the start position of the node. If the node has properties, the parser
+// puts this position at the first property. The tag can come before or after the anchor. Spaces,
+// tabs, comments and line breaks can be between the two properties. A plain scalar cannot start
+// with "!", thus a "!" at the start of the node or after the anchor is always a tag. If the start
+// of the node is not in the text, the function refuses the node.
+func (src yamlText) explicitTag(n *yaml.Node) bool {
+	if n.Style&yaml.TaggedStyle != 0 {
+		return true
+	}
+	if n.Line < 1 || n.Line > len(src.lines) || n.Column < 1 {
+		return true
+	}
+	i := src.lines[n.Line-1] + n.Column - 1
+	if src.at(i) != '&' {
+		return src.at(i) == '!'
+	}
+	i++
+	for anchorChar(src.at(i)) {
+		i++
+	}
+	for {
+		switch r := src.at(i); {
+		case r == '#':
+			for i < len(src.text) && !breakRune(src.text[i]) {
+				i++
+			}
+		// The parser ignores a byte order mark only at the start of a line.
+		case r == ' ' || r == '\t' || breakRune(r) || r == '\ufeff' && breakRune(src.at(i-1)):
+			i++
+		default:
+			return r == '!'
+		}
+	}
+}
+
+// breakRune is true for each YAML line break character.
+func breakRune(r rune) bool {
+	return r == '\n' || r == '\r' || r == '\u0085' || r == '\u2028' || r == '\u2029'
+}
+
+// anchorChar is true for each character that the parser permits in an anchor name.
+func anchorChar(r rune) bool {
+	return r >= '0' && r <= '9' || r >= 'A' && r <= 'Z' || r >= 'a' && r <= 'z' || r == '_' || r == '-'
 }

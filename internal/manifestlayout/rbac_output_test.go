@@ -146,6 +146,61 @@ func TestValidateRBACRoleRejectsIdentity(t *testing.T) {
 	})
 }
 
+// The parser does not mark the non-specific tag "!" on the node. The check finds it in the source
+// on the identity values, the identity keys and the root and metadata mappings. A "!" in other
+// content or in a comment is permitted.
+func TestValidateRBACRoleBareTag(t *testing.T) {
+	api := "apiVersion: rbac.authorization.k8s.io/v1\n"
+	rejected := []roleDoc{
+		{"tagged kind", api + "kind: ! ClusterRole\n" + roleMeta + roleRules},
+		{"tagged quoted kind", api + "kind: ! \"ClusterRole\"\n" + roleMeta + roleRules},
+		{"verbatim tagged kind", api + "kind: !<!> ClusterRole\n" + roleMeta + roleRules},
+		{"tagged kind on next line", api + "kind:\n  ! ClusterRole\n" + roleMeta + roleRules},
+		{"anchor then tag on kind", api + "kind: &k ! ClusterRole\n" + roleMeta + roleRules},
+		{"tag then anchor on kind", api + "kind: ! &k ClusterRole\n" + roleMeta + roleRules},
+		{"tag after anchor and comments", roleHead + "metadata:\n  name: &n # !\n    # !\n    ! " + roleName + "\n" + roleRules},
+		{"tagged apiVersion", "apiVersion: ! rbac.authorization.k8s.io/v1\nkind: ClusterRole\n" + roleMeta + roleRules},
+		{"tagged apiVersion after byte order mark", "\ufeffapiVersion: ! rbac.authorization.k8s.io/v1\nkind: ClusterRole\n" + roleMeta + roleRules},
+		{"tagged name", roleHead + "metadata:\n  name: ! " + roleName + "\n" + roleRules},
+		{"tagged name after wide characters", roleHead + "metadata: {labels: {a: ää}, name: ! " + roleName + "}\n" + roleRules},
+		{"tagged kind key", api + "! kind: ClusterRole\n" + roleMeta + roleRules},
+		{"tagged first key", "! apiVersion: rbac.authorization.k8s.io/v1\nkind: ClusterRole\n" + roleMeta + roleRules},
+		{"tagged rules key", roleHead + roleMeta + "! rules: []\n"},
+		{"tagged name key", roleHead + "metadata:\n  ! name: " + roleName + "\n" + roleRules},
+		{"tagged flow name key", roleHead + "metadata: {! name: " + roleName + "}\n" + roleRules},
+		{"tagged root mapping", "--- !\n" + bareRole},
+		{"anchored and tagged root mapping", "--- &r !\n" + bareRole},
+		{"tagged metadata", roleHead + "metadata: !\n  name: " + roleName + "\n" + roleRules},
+		{"tagged flow metadata", roleHead + "metadata: ! {name: " + roleName + "}\n" + roleRules},
+	}
+	accepted := []roleDoc{
+		{"anchored kind", api + "kind: &k ClusterRole\n" + roleMeta + roleRules},
+		{"anchored metadata", roleHead + "metadata: &m\n  name: " + roleName + "\n" + roleRules},
+		{"anchored name after comments", roleHead + "metadata:\n  name: &n # !\n    # !\n    " + roleName + "\n" + roleRules},
+		{"tag text in comments", "--- # !\n" + api + "kind: ClusterRole # !\n# !\n" + roleMeta + roleRules},
+		{"tag text in values", roleHead + roleMeta + "  labels: {a: \"!\", b: c!}\n" + roleRules},
+		{"wide characters", roleHead + "metadata: {labels: {a: ää}, name: " + roleName + "}\n" + roleRules},
+		{"tag in rules", roleHead + roleMeta + "rules:\n- apiGroups: [! example.com]\n  resources: [gadgets]\n  verbs: [get]\n"},
+		{"byte order mark", "\ufeff" + bareRole},
+	}
+	for _, e := range lineEndings {
+		// This is the reproduction from the security review.
+		t.Run(e.name+" rejects reproduction", func(t *testing.T) {
+			requireRoleRejected(t, withBreaks("---\n"+api+"kind: ! ClusterRole\n"+roleMeta+roleRules, e.breaks), roleName, ml.ErrNotRole)
+		})
+		for _, tc := range rejected {
+			t.Run(e.name+" rejects "+tc.name, func(t *testing.T) {
+				requireRoleRejected(t, withBreaks(tc.doc, e.breaks), roleName, ml.ErrNotRole)
+			})
+		}
+		for _, tc := range accepted {
+			t.Run(e.name+" accepts "+tc.name, func(t *testing.T) {
+				requireValidRole(t, withBreaks(tc.doc, e.breaks), roleName)
+			})
+		}
+	}
+}
+
 // The strict decoder and the key check reject the content after the identity check.
 func TestValidateRBACRoleRejectsMalformed(t *testing.T) {
 	cases := []roleDoc{
