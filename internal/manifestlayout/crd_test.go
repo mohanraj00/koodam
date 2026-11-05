@@ -427,3 +427,88 @@ func TestRouteAcceptsSchemaUnionVariants(t *testing.T) {
 		})
 	}
 }
+
+// The converter decodes YAML keys with the YAML 1.1 rules and changes each key to a JSON string.
+// Two different keys that become one JSON key must be rejected at each depth.
+func TestRouteRejectsJSONKeyCollision(t *testing.T) {
+	cases := []struct{ name, schema string }{
+		{"exact reproduced property keys", `{type: object, properties: {1: {type: string}, "1": {type: integer}}}`},
+		{"same values", `{type: object, properties: {1: {type: string}, "1": {type: string}}}`},
+		{"bool and string", `{type: object, properties: {true: {type: string}, "true": {type: integer}}}`},
+		{"YAML 1.1 bool and string", `{type: object, properties: {yes: {type: string}, "true": {type: integer}}}`},
+		{"float and integer", `{type: object, properties: {1.0: {type: string}, 1: {type: integer}}}`},
+		{"hexadecimal and string", `{type: object, properties: {0x1: {type: string}, "1": {type: integer}}}`},
+		{"underscore integer and string", `{type: object, properties: {1_000: {type: string}, "1000": {type: integer}}}`},
+		{"infinity and string", `{type: object, properties: {.inf: {type: string}, ".inf": {type: integer}}}`},
+		{"in items", `{type: array, items: {type: object, properties: {1: {type: string}, "1": {type: integer}}}}`},
+		{"in dependencies", `{type: object, dependencies: {1: [a], "1": [b]}}`},
+		{"raw default", `{type: object, default: {1: a, "1": b}}`},
+		{"raw example", `{type: object, example: {true: a, "true": b}}`},
+		{"raw enum", `{type: object, enum: [{1: a, "1": b}]}`},
+		{"deep raw value", `{type: object, default: {a: [{b: {1: x, "1": y}}]}}`},
+		{"inline merge and key", `{type: object, default: {<<: {1: a}, "1": b}}`},
+		{"alias merge and key", `{type: object, example: &e {1: a}, default: {<<: *e, "1": b}}`},
+		{"alias list merge and key", `{type: object, example: [&e {1: a}], default: {<<: [*e], "1": b}}`},
+		{"two merged maps", `{type: object, default: {<<: [{1: a}, {"1": b}]}}`},
+		{"alias of colliding map", `{type: object, example: &e {1: a, "1": b}, default: *e}`},
+		{"merge key overlaps key", `{type: object, default: {<<: {a: 1}, a: 2}}`},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			requireRejected(t, withSchema(tc.schema), ml.ErrMalformed)
+		})
+	}
+}
+
+// Unique keys, keys that the converter changes to unique strings and merge keys keep their bytes.
+func TestRouteAcceptsUniqueAndCoercedKeys(t *testing.T) {
+	cases := []struct{ name, schema string }{
+		{"numeric bool and string", `{type: object, properties: {1: {type: string}, "2": {type: string}, true: {type: string}, "false": {type: string}}}`},
+		{"YAML 1.1 coercion", `{type: object, properties: {yes: {type: string}, no: {type: string}, 0x10: {type: string}, 1_000: {type: string}, 1.5: {type: string}}}`},
+		{"same key in two maps", `{type: object, properties: {a: {properties: {1: {type: string}}}, b: {properties: {"1": {type: string}}}}}`},
+		{"raw values", `{type: object, default: {1: a, "2": b, true: c}, example: {1.5: x}, enum: [{1: a}, {"1": a}]}`},
+		{"quoted merge text is a key", `{type: object, default: {"<<": {a: 1}, a: 2}}`},
+		{"inline merge", `{type: object, default: {<<: {a: 1}, b: 2}}`},
+		{"alias merge", `{type: object, example: &e {a: 1}, default: {<<: *e, b: 2}}`},
+		{"alias list merge", `{type: object, example: [&e {a: 1}, &f {1: c}], default: {<<: [*e, *f], b: 2}}`},
+		{"nested merges", `{type: object, example: &e {a: 1}, default: &f {<<: *e, b: 2}, enum: [{<<: *f, c: 3}]}`},
+		{"alias reuse", `{type: object, properties: {a: &s {type: string}, b: *s}}`},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			requireRouted(t, withSchema(tc.schema))
+		})
+	}
+}
+
+// withMetadata gives the App CRD with block-style metadata. The extra lines come after the name.
+func withMetadata(extra string) string {
+	return strings.Replace(string(appData()), "metadata: {name: "+appPlural+"."+group+"}\n",
+		"metadata:\n  name: "+appPlural+"."+group+"\n"+extra, 1)
+}
+
+// The key collision check works with each line break, in flow and block style.
+func TestRouteJSONKeyCollisionForEachLineBreak(t *testing.T) {
+	rejected := []struct{ name, doc string }{
+		{"exact reproduced", string(withSchema(`{type: object, properties: {1: {type: string}, "1": {type: integer}}}`))},
+		{"block labels", withMetadata("  labels:\n    1: a\n    \"1\": b\n")},
+		{"block YAML 1.1 labels", withMetadata("  labels:\n    on: a\n    'true': b\n")},
+		{"block merge", withMetadata("  annotations: &l\n    1: a\n  labels:\n    <<: *l\n    \"1\": b\n")},
+	}
+	routed := []struct{ name, doc string }{
+		{"unique block labels", withMetadata("  labels:\n    1: a\n    \"2\": b\n    yes: c\n")},
+		{"block merge", withMetadata("  annotations: &l\n    a: x\n  labels:\n    <<: *l\n    b: c\n")},
+	}
+	for _, e := range lineEndings {
+		for _, tc := range rejected {
+			t.Run(e.name+" rejects "+tc.name, func(t *testing.T) {
+				requireRejected(t, withBreaks(tc.doc, e.breaks), ml.ErrMalformed)
+			})
+		}
+		for _, tc := range routed {
+			t.Run(e.name+" routes "+tc.name, func(t *testing.T) {
+				requireRouted(t, withBreaks(tc.doc, e.breaks))
+			})
+		}
+	}
+}

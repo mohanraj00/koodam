@@ -297,12 +297,73 @@ func decodeCRD(decoder runtime.Decoder, doc []byte) (*apiextensionsv1.CustomReso
 		return nil, ErrMalformed
 	}
 	if crd, ok := obj.(*apiextensionsv1.CustomResourceDefinition); ok && err == nil {
-		if !validSchemas(doc) {
+		if !keepsAllKeys(doc) || !validSchemas(doc) {
 			return nil, ErrMalformed
 		}
 		return crd, nil
 	}
 	return nil, ErrNotCRD
+}
+
+// keepsAllKeys is true if the YAML-to-JSON converter keeps each map entry of the document. The
+// converter decodes the YAML with the YAML 1.1 rules and then changes each map key to a string.
+// Thus two different keys can become one JSON key, for example 1 and "1", or yes and "true". Then
+// the converter keeps only one of the two values. The strict decoder already rejects each key that
+// a map has two times, also a key from a merge key ("<<"). Thus the converter makes one entry for
+// each YAML key, and each lost entry makes the JSON count smaller. The YAML count reads the node
+// tree of the original document, thus it does not use the converted keys.
+func keepsAllKeys(doc []byte) bool {
+	var root yaml.Node
+	data, err := sigsyaml.YAMLToJSON(doc)
+	if err != nil || yaml.Unmarshal(doc, &root) != nil {
+		return false
+	}
+	var value any
+	if utiljson.Unmarshal(data, &value) != nil {
+		return false
+	}
+	return yamlEntries(&root) == jsonEntries(value)
+}
+
+// yamlEntries counts the map entries in the node tree as the YAML 1.1 decoder of the converter
+// makes them. An alias counts the entries of its anchor each time. A merge key adds the entries of
+// its value to the map, but it is not an entry.
+func yamlEntries(n *yaml.Node) int {
+	if n.Kind == yaml.AliasNode {
+		return yamlEntries(n.Alias)
+	}
+	count := 0
+	if n.Kind != yaml.MappingNode {
+		for _, c := range n.Content {
+			count += yamlEntries(c)
+		}
+		return count
+	}
+	for pair := range slices.Chunk(n.Content, 2) {
+		k := pair[0]
+		if k.Kind != yaml.ScalarNode || k.Value != "<<" || k.ShortTag() != "!!merge" {
+			count++
+		}
+		count += yamlEntries(pair[1])
+	}
+	return count
+}
+
+// jsonEntries counts the object entries in the decoded JSON value.
+func jsonEntries(v any) int {
+	count := 0
+	switch v := v.(type) {
+	case map[string]any:
+		count = len(v)
+		for _, x := range v {
+			count += jsonEntries(x)
+		}
+	case []any:
+		for _, x := range v {
+			count += jsonEntries(x)
+		}
+	}
+	return count
 }
 
 var (
