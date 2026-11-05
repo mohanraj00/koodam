@@ -23,6 +23,7 @@ import (
 	"log"
 	"os"
 	"runtime"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -348,7 +349,9 @@ func TestSpanWriterAdmissionAndClose(t *testing.T) {
 	if len(w.admit) != spanAdmitLimit {
 		t.Fatal("the callers did not fill the admission set")
 	}
-	if !errors.Is(w.write(line), errSpanWrite) {
+	over := make(chan error, 1)
+	go func() { over <- w.write(line) }()
+	if !errors.Is(recvWithin(t, over, "a write over the admission limit blocked"), errSpanWrite) {
 		t.Fatal("a write over the admission limit was accepted")
 	}
 	select {
@@ -377,11 +380,8 @@ func TestSpanWriterAdmissionAndClose(t *testing.T) {
 		t.Fatal("the claimed Write did not complete after close")
 	}
 	noStdOutput(t, func() {
-		for _, j := range held {
-			if w.writeOne(j) {
-				t.Error("the worker claimed a held job after close")
-				return
-			}
+		if slices.ContainsFunc(held, w.writeOne) {
+			t.Error("the worker claimed a held job after close")
 		}
 	})
 	if calls, maxActive := p.counts(); calls != 1 || maxActive != 1 {
