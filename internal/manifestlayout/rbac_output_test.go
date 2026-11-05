@@ -18,10 +18,12 @@ package manifestlayout_test
 
 import (
 	"bytes"
+	"encoding/binary"
 	"errors"
 	"os"
 	"path/filepath"
 	"testing"
+	"unicode/utf16"
 
 	ml "github.com/mohanraj00/koodam/internal/manifestlayout"
 )
@@ -198,6 +200,56 @@ func TestValidateRBACRoleBareTag(t *testing.T) {
 				requireValidRole(t, withBreaks(tc.doc, e.breaks), roleName)
 			})
 		}
+	}
+}
+
+// roleEncodings are the encodings that the YAML parsers find from a byte order mark. Each one
+// encodes the UTF-8 text, and a U+FEFF in the text becomes the mark of that encoding.
+var roleEncodings = []struct {
+	name   string
+	encode func([]byte) []byte
+}{
+	{"UTF-8", func(b []byte) []byte { return b }},
+	{"UTF-16LE", func(b []byte) []byte { return utf16Text(b, binary.LittleEndian) }},
+	{"UTF-16BE", func(b []byte) []byte { return utf16Text(b, binary.BigEndian) }},
+}
+
+// utf16Text encodes the UTF-8 text as UTF-16 in the given byte order.
+func utf16Text(b []byte, order binary.AppendByteOrder) []byte {
+	units := utf16.Encode([]rune(string(b)))
+	out := make([]byte, 0, 2*len(units))
+	for _, u := range units {
+		out = order.AppendUint16(out, u)
+	}
+	return out
+}
+
+// Two leading byte order marks make the YAML scanners skip the first character of each line. Thus
+// they ignore the explicit tags. The check refuses the data before each parser. One mark is valid.
+func TestValidateRBACRoleRepeatedByteOrderMark(t *testing.T) {
+	// This is the reproduction from the security review.
+	const reproduction = "\ufeff\ufeff apiVersion: rbac.authorization.k8s.io/v1\n" +
+		"! kind: ClusterRole\n" +
+		"! metadata:\n" +
+		"    name: koodam-app\n" +
+		"! rules: []\n"
+	for _, enc := range roleEncodings {
+		for _, e := range lineEndings {
+			t.Run(enc.name+" "+e.name+" rejects reproduction", func(t *testing.T) {
+				requireRoleRejected(t, enc.encode(withBreaks(reproduction, e.breaks)), roleName, ml.ErrRoleMalformed)
+			})
+			t.Run(enc.name+" "+e.name+" rejects two marks", func(t *testing.T) {
+				requireRoleRejected(t, enc.encode(withBreaks("\ufeff\ufeff"+bareRole, e.breaks)), roleName, ml.ErrRoleMalformed)
+			})
+			t.Run(enc.name+" "+e.name+" accepts one mark", func(t *testing.T) {
+				requireValidRole(t, enc.encode(withBreaks("\ufeff"+bareRole, e.breaks)), roleName)
+			})
+		}
+	}
+	for _, e := range lineEndings {
+		t.Run(e.name+" accepts no mark", func(t *testing.T) {
+			requireValidRole(t, withBreaks(bareRole, e.breaks), roleName)
+		})
 	}
 }
 

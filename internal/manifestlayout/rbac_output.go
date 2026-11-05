@@ -45,11 +45,16 @@ var (
 // no generateName field. The identity fields must be plain string fields with no duplicate, case
 // variant, merge key, alias or explicit tag. The non-specific tag "!" is also an explicit tag. The
 // root and metadata mappings and their keys have the same rule. The YAML-to-JSON converter must
-// keep each map entry.
+// keep each map entry. The data must not start with two byte order marks.
 // The function examines these before the conversion. It does not change the data.
 func ValidateRBACRole(data []byte, expectedName string) error {
 	if expectedName == "" {
 		return ErrNotRole
+	}
+	// This check comes before each parser. Only the first chunk can start with a byte order mark,
+	// because each other chunk starts with "---". Thus a check of the data start is sufficient.
+	if repeatedByteOrderMark(data) {
+		return ErrRoleMalformed
 	}
 	doc, err := singleDocument(data)
 	switch {
@@ -85,6 +90,23 @@ func ValidateRBACRole(data []byte, expectedName string) error {
 		return ErrNotRole
 	}
 	return nil
+}
+
+// byteOrderMarks are the encodings of U+FEFF in UTF-8, UTF-16LE and UTF-16BE. No mark is a prefix
+// of a different mark.
+var byteOrderMarks = [][]byte{[]byte("\xef\xbb\xbf"), []byte("\xff\xfe"), []byte("\xfe\xff")}
+
+// repeatedByteOrderMark is true if the data starts with a byte order mark and a second byte order
+// mark in the same encoding follows it. The YAML parsers remove only the first mark. After that,
+// the scanners find the second mark at the start of the buffer, not at the current position, and
+// skip the first character of each line. Thus they can ignore an explicit tag.
+func repeatedByteOrderMark(data []byte) bool {
+	for _, mark := range byteOrderMarks {
+		if bytes.HasPrefix(data, mark) {
+			return bytes.HasPrefix(data[len(mark):], mark)
+		}
+	}
+	return false
 }
 
 // roleDecoder gives a strict decoder that knows only the rbac.authorization.k8s.io/v1 types. It
