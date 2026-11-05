@@ -45,17 +45,17 @@ var (
 // no generateName field. The identity fields must be plain string fields with no duplicate, case
 // variant, merge key, alias or explicit tag. The non-specific tag "!" is also an explicit tag. The
 // root and metadata mappings and their keys have the same rule. The YAML-to-JSON converter must
-// keep each map entry. The data must not start with two byte order marks. A line must not start
-// with a document end marker ("...") in UTF-8 or UTF-16 text. For UTF-16 data, the function finds
-// the line boundaries in the decoded text. The function checks these rules before conversion.
-// It does not change the data.
+// keep each map entry. The data can start with one byte order mark. The source must not have a
+// different literal U+FEFF character. A YAML escape of U+FEFF is not a literal. A line must not
+// start with a document end marker ("...") in UTF-8 or UTF-16 text. For UTF-16 data, the function
+// finds the line boundaries in the decoded text. The function checks these rules before
+// conversion. It does not change the data.
 func ValidateRBACRole(data []byte, expectedName string) error {
 	if expectedName == "" {
 		return ErrNotRole
 	}
-	// This check comes before each parser. Only the first chunk can start with a byte order mark,
-	// because each other chunk starts with "---". Thus a check of the data start is sufficient.
-	if repeatedByteOrderMark(data) {
+	// This check comes before each parser.
+	if strayByteOrderMark(data) {
 		return ErrRoleMalformed
 	}
 	doc, err := roleDocument(data)
@@ -98,17 +98,29 @@ func ValidateRBACRole(data []byte, expectedName string) error {
 // of a different mark.
 var byteOrderMarks = [][]byte{[]byte("\xef\xbb\xbf"), []byte("\xff\xfe"), []byte("\xfe\xff")}
 
-// repeatedByteOrderMark is true if the data starts with a byte order mark and a second byte order
-// mark in the same encoding follows it. The YAML parsers remove only the first mark. After that,
-// the scanners find the second mark at the start of the buffer, not at the current position, and
-// skip the first character of each line. Thus they can ignore an explicit tag.
-func repeatedByteOrderMark(data []byte) bool {
-	for _, mark := range byteOrderMarks {
-		if bytes.HasPrefix(data, mark) {
-			return bytes.HasPrefix(data[len(mark):], mark)
+// strayByteOrderMark is true if the source has a literal U+FEFF character after the first
+// character. The YAML parsers remove only one mark at the start. They can find a different mark at
+// the start of a read buffer, not at the current position, and then skip the first character of
+// each line. Thus they can ignore an explicit tag.
+//
+// The first mark selects the encoding, as in the parsers. Data without a mark is UTF-8. For UTF-16,
+// the function examines only the aligned code units after the mark. Thus the bytes of two adjacent
+// code units cannot cause a false refusal. In UTF-8, the mark bytes cannot be a part of a different
+// character, because 0xef is a lead byte. A surrogate is not U+FEFF. The function does not change
+// the data.
+func strayByteOrderMark(data []byte) bool {
+	for _, mark := range byteOrderMarks[1:] {
+		if !bytes.HasPrefix(data, mark) {
+			continue
 		}
+		for i := len(mark); i+1 < len(data); i += 2 {
+			if data[i] == mark[0] && data[i+1] == mark[1] {
+				return true
+			}
+		}
+		return false
 	}
-	return false
+	return bytes.Contains(bytes.TrimPrefix(data, byteOrderMarks[0]), byteOrderMarks[0])
 }
 
 // roleDocument gives the original bytes of the only document in the data. For UTF-8 data it uses

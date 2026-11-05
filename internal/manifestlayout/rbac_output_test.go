@@ -22,6 +22,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"unicode/utf16"
 
@@ -250,6 +251,70 @@ func TestValidateRBACRoleRepeatedByteOrderMark(t *testing.T) {
 		t.Run(e.name+" accepts no mark", func(t *testing.T) {
 			requireValidRole(t, withBreaks(bareRole, e.breaks), roleName)
 		})
+	}
+}
+
+// A literal U+FEFF after the first character is refused before each parser. A mark at the start of
+// a later read buffer makes the scanners skip the first character of each line. One leading mark
+// is valid. YAML escapes are permitted. In UTF-16, the check examines only aligned code
+// units, thus the mark bytes across two code units are valid.
+func TestValidateRBACRoleStrayByteOrderMark(t *testing.T) {
+	// mark is U+FEFF in UTF-8. The encode functions change it to the UTF-16 mark.
+	const mark = "\xef\xbb\xbf"
+	// This is the confirmed UTF-8 bypass from the security review. The mark is at byte 512.
+	bypass := "#" + strings.Repeat("x", 511) + mark + "\n" +
+		"! apiVersion: rbac.authorization.k8s.io/v1\n" +
+		"! kind: ClusterRole\n" +
+		"! metadata:\n" +
+		"    name: koodam-app\n" +
+		"! rules: []\n"
+	t.Run("UTF-8 rejects exact bypass", func(t *testing.T) {
+		requireRoleRejected(t, []byte(bypass), roleName, ml.ErrRoleMalformed)
+	})
+	longComment := "#" + strings.Repeat("x", 511) + "\n"
+	rejected := []roleDoc{
+		{"bypass", bypass},
+		{"mark in short comment", "# a" + mark + "b\n" + bareRole},
+		{"mark in quoted text", roleHead + roleMeta + "  labels: {a: \"x" + mark + "y\"}\n" + roleRules},
+		{"mark at line start", roleHead + mark + "metadata:\n  name: " + roleName + "\n" + roleRules},
+		{"mark at end", bareRole + mark},
+	}
+	// wideA is U+FF21 and thorn is U+00FE in UTF-8.
+	const wideA, thorn = "\xef\xbc\xa1", "\xc3\xbe"
+	accepted := []roleDoc{
+		{"long comment", longComment + bareRole},
+		{"escaped mark in quoted text", roleHead + roleMeta + "  labels: {a: \"x\\uFEFFy\"}\n" + roleRules},
+		// In UTF-16LE, the bytes of U+FF21 U+00FE are 21 FF FE 00. FF FE is not aligned.
+		{"UTF-16LE mark bytes across units", "# " + wideA + thorn + "\n" + bareRole},
+		// In UTF-16BE, the bytes of U+00FE U+FF21 are 00 FE FF 21. FE FF is not aligned.
+		{"UTF-16BE mark bytes across units", "# " + thorn + wideA + "\n" + bareRole},
+	}
+	for _, enc := range roleEncodings {
+		for _, e := range lineEndings {
+			for _, tc := range rejected {
+				t.Run(enc.name+" "+e.name+" rejects "+tc.name, func(t *testing.T) {
+					requireRoleRejected(t, enc.encode(withBreaks(mark+tc.doc, e.breaks)), roleName, ml.ErrRoleMalformed)
+				})
+			}
+			for _, tc := range accepted {
+				t.Run(enc.name+" "+e.name+" accepts "+tc.name, func(t *testing.T) {
+					requireValidRole(t, enc.encode(withBreaks(mark+tc.doc, e.breaks)), roleName)
+				})
+			}
+		}
+	}
+	// UTF-8 data without a leading mark has the same rule.
+	for _, e := range lineEndings {
+		for _, tc := range rejected {
+			t.Run("UTF-8 no mark "+e.name+" rejects "+tc.name, func(t *testing.T) {
+				requireRoleRejected(t, withBreaks(tc.doc, e.breaks), roleName, ml.ErrRoleMalformed)
+			})
+		}
+		for _, tc := range accepted {
+			t.Run("UTF-8 no mark "+e.name+" accepts "+tc.name, func(t *testing.T) {
+				requireValidRole(t, withBreaks(tc.doc, e.breaks), roleName)
+			})
+		}
 	}
 }
 
