@@ -18,6 +18,7 @@ package ingress
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"slices"
 
@@ -29,6 +30,9 @@ import (
 // Audience is the sole audience that a TokenReview requests. The returned audiences must contain
 // it, and they may contain others.
 const Audience = "koodam-ingress"
+
+// ErrReviewUnavailable is the fixed error for a review that cannot complete.
+var ErrReviewUnavailable = errors.New("the ingress caller review is not available")
 
 // TokenReviewCreator creates a TokenReview. The typed client-go TokenReviewInterface satisfies it.
 type TokenReviewCreator interface {
@@ -52,17 +56,23 @@ type Reviewer struct {
 
 // authenticate submits the Bearer credential of r to TokenReview with the sole audience Audience.
 // The status must be authenticated, with no error, the audience Audience and a ServiceAccount
-// user with a UID. Other returned audiences are permitted.
+// user with a UID. Other returned audiences are permitted. A bad Bearer credential or a completed
+// review that fails a check gives ErrAuthentication. The credential check runs first, thus a bad
+// credential refuses before a client check. A missing client, a call error, a nil reply or an
+// ended ctx gives ErrReviewUnavailable.
 func (v *Reviewer) authenticate(ctx context.Context, r *http.Request) (authenticationv1.UserInfo, Caller, error) {
 	token, err := bearer(r)
-	if err != nil || v == nil || v.TokenReviews == nil || ctx.Err() != nil {
+	if err != nil {
 		return authenticationv1.UserInfo{}, Caller{}, ErrAuthentication
+	}
+	if v == nil || v.TokenReviews == nil || ctx.Err() != nil {
+		return authenticationv1.UserInfo{}, Caller{}, ErrReviewUnavailable
 	}
 	res, err := v.TokenReviews.Create(ctx, &authenticationv1.TokenReview{
 		Spec: authenticationv1.TokenReviewSpec{Token: token, Audiences: []string{Audience}},
 	}, metav1.CreateOptions{})
 	if err != nil || ctx.Err() != nil || res == nil {
-		return authenticationv1.UserInfo{}, Caller{}, ErrAuthentication
+		return authenticationv1.UserInfo{}, Caller{}, ErrReviewUnavailable
 	}
 	s := res.Status
 	if !s.Authenticated || s.Error != "" || !slices.Contains(s.Audiences, Audience) {

@@ -161,9 +161,9 @@ func refused(got Caller, err, want error) bool {
 
 // TestAuthenticate tests the TokenReview step alone. It makes no SubjectAccessReview.
 func TestAuthenticate(t *testing.T) {
-	// rejected is true if authenticate refused with only ErrAuthentication and an empty identity.
-	rejected := func(user authenticationv1.UserInfo, got Caller, err error) bool {
-		return refused(got, err, ErrAuthentication) && equality.Semantic.DeepEqual(user, authenticationv1.UserInfo{})
+	// rejected is true if authenticate refused with only want and an empty identity.
+	rejected := func(user authenticationv1.UserInfo, got Caller, err, want error) bool {
+		return refused(got, err, want) && equality.Semantic.DeepEqual(user, authenticationv1.UserInfo{})
 	}
 	for _, audiences := range [][]string{{Audience}, {"https://kubernetes.default.svc", Audience}} {
 		f := newFake(t.Context())
@@ -195,23 +195,27 @@ func TestAuthenticate(t *testing.T) {
 	for _, tc := range []struct {
 		name   string
 		change func(*fake)
+		want   error
 	}{
-		{"api error", func(f *fake) { f.tokenErr = errors.New(canary) }},
-		{"nil reply", func(f *fake) { f.tokenReply = nil }},
-		{"not authenticated", func(f *fake) { status(f).Authenticated = false }},
-		{"status error", func(f *fake) { status(f).Error = canary }},
-		{"wrong audience", func(f *fake) { status(f).Audiences = []string{"https://kubernetes.default.svc"} }},
-		{"node user", func(f *fake) { status(f).User.Username = "system:node:node-1" }},
+		{"api error", func(f *fake) { f.tokenErr = errors.New(canary) }, ErrReviewUnavailable},
+		{"nil reply", func(f *fake) { f.tokenReply = nil }, ErrReviewUnavailable},
+		{"not authenticated", func(f *fake) { status(f).Authenticated = false }, ErrAuthentication},
+		{"status error", func(f *fake) { status(f).Error = canary }, ErrAuthentication},
+		{"wrong audience", func(f *fake) {
+			status(f).Audiences = []string{"https://kubernetes.default.svc"}
+		}, ErrAuthentication},
+		{"node user", func(f *fake) { status(f).User.Username = "system:node:node-1" }, ErrAuthentication},
 		{"invalid namespace", func(f *fake) {
 			status(f).User.Username = serviceAccountPrefix + "Team-A:" + testName
-		}},
-		{"empty uid", func(f *fake) { status(f).User.UID = "" }},
+		}, ErrAuthentication},
+		{"empty uid", func(f *fake) { status(f).User.UID = "" }, ErrAuthentication},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			f := newFake(t.Context())
 			tc.change(f)
-			if user, got, err := f.reviewer().authenticate(f.ctx, bearerRequest(opaque())); !rejected(user, got, err) {
-				t.Fatal("authenticate did not refuse with only ErrAuthentication and an empty identity")
+			user, got, err := f.reviewer().authenticate(f.ctx, bearerRequest(opaque()))
+			if !rejected(user, got, err, tc.want) {
+				t.Fatal("authenticate did not refuse with only the fixed error and an empty identity")
 			}
 			if !slices.Equal(f.calls, []string{tokenCall}) || f.otherCtx {
 				t.Fatal("authenticate did not make only 1 TokenReview with the context")
@@ -221,11 +225,16 @@ func TestAuthenticate(t *testing.T) {
 
 	ctx, r := t.Context(), bearerRequest(opaque())
 	var none *Reviewer
-	if user, got, err := none.authenticate(ctx, r); !rejected(user, got, err) {
-		t.Fatal("a nil Reviewer did not refuse with ErrAuthentication")
+	if user, got, err := none.authenticate(ctx, r); !rejected(user, got, err, ErrReviewUnavailable) {
+		t.Fatal("a nil Reviewer did not refuse with ErrReviewUnavailable")
 	}
-	if user, got, err := (&Reviewer{}).authenticate(ctx, r); !rejected(user, got, err) {
-		t.Fatal("a Reviewer with no TokenReview client did not refuse with ErrAuthentication")
+	if user, got, err := (&Reviewer{}).authenticate(ctx, r); !rejected(user, got, err, ErrReviewUnavailable) {
+		t.Fatal("a Reviewer with no TokenReview client did not refuse with ErrReviewUnavailable")
+	}
+	bad := bearerRequest(opaque())
+	bad.TLS = nil
+	if user, got, err := none.authenticate(ctx, bad); !rejected(user, got, err, ErrAuthentication) {
+		t.Fatal("a nil Reviewer did not refuse a bad credential with ErrAuthentication")
 	}
 
 	for _, tc := range []struct {
@@ -247,8 +256,8 @@ func TestAuthenticate(t *testing.T) {
 			}
 			v, r := f.reviewer(), bearerRequest(opaque())
 			for range 2 {
-				if user, got, err := v.authenticate(ctx, r); !rejected(user, got, err) {
-					t.Fatal("authenticate did not refuse a canceled context with ErrAuthentication")
+				if user, got, err := v.authenticate(ctx, r); !rejected(user, got, err, ErrReviewUnavailable) {
+					t.Fatal("authenticate did not refuse a canceled context with ErrReviewUnavailable")
 				}
 			}
 			if !slices.Equal(f.calls, tc.calls) || f.otherCtx {
