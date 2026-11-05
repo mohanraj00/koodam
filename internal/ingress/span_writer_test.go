@@ -37,7 +37,8 @@ const (
 )
 
 // probeWriter counts Write calls and concurrent Write calls. If gate is set, each Write waits
-// for it. entered gets 1 value for each Write call.
+// for it. entered gets 1 value for each Write call. left gets 1 value when each Write call
+// has written its output.
 type probeWriter struct {
 	mu                       sync.Mutex
 	buf                      bytes.Buffer
@@ -46,9 +47,13 @@ type probeWriter struct {
 	secret                   string
 	gate                     chan struct{}
 	entered                  chan struct{}
+	left                     chan struct{}
 }
 
 func (w *probeWriter) Write(p []byte) (int, error) {
+	if w.left != nil {
+		defer func() { w.left <- struct{}{} }()
+	}
 	w.mu.Lock()
 	w.calls++
 	w.active++
@@ -79,6 +84,12 @@ func (w *probeWriter) counts() (calls, maxActive int) {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 	return w.calls, w.maxActive
+}
+
+func (w *probeWriter) output() string {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return w.buf.String()
 }
 
 func testLine(t *testing.T) []byte {
@@ -131,6 +142,18 @@ func newTestWriter(t *testing.T, out io.Writer, wait time.Duration) *spanWriter 
 	w.wait = wait
 	t.Cleanup(w.close)
 	return w
+}
+
+// directWriter has no worker goroutine. The test calls writeOne as the worker.
+func directWriter(out io.Writer) *spanWriter {
+	return &spanWriter{
+		out: out, wait: 5 * time.Second, admit: make(chan struct{}, spanAdmitLimit),
+		jobs: make(chan spanJob), quit: make(chan struct{}),
+	}
+}
+
+func liveJob(line []byte) spanJob {
+	return spanJob{line: line, deadline: time.Now().Add(time.Hour), done: make(chan bool, 1)}
 }
 
 func TestNoStdOutputRestores(t *testing.T) {
@@ -292,5 +315,92 @@ func TestSpanWriterIdleRefusesAfterClose(t *testing.T) {
 	})
 	if calls, _ := p.counts(); calls != 1 {
 		t.Fatal("the writer made a Write call after close")
+	}
+}
+
+// select can send a job when its timer and the worker are both ready. The worker must refuse the
+// expired job, and the refusal must not stop the writer.
+func TestSpanWriterWorkerRefusesExpiredJob(t *testing.T) {
+	p := &probeWriter{}
+	w := newTestWriter(t, p, 5*time.Second)
+	line := testLine(t)
+	noStdOutput(t, func() {
+		j := spanJob{line: line, deadline: time.Now(), done: make(chan bool, 1)}
+		w.jobs <- j
+		if <-j.done {
+			t.Error("the worker wrote an expired job")
+		}
+	})
+	if calls, _ := p.counts(); calls != 0 {
+		t.Fatal("an expired job reached the writer")
+	}
+	if w.write(line) != nil {
+		t.Fatal("an expired job stopped the writer")
+	}
+	if calls, _ := p.counts(); calls != 1 || p.output() != string(line) {
+		t.Fatal("the write after an expired job was not 1 whole line")
+	}
+}
+
+// The worker can take a live job after close. close occurs before the claim, so the claim fails.
+func TestSpanWriterCloseBeforeClaim(t *testing.T) {
+	p := &probeWriter{}
+	w := directWriter(p)
+	line := testLine(t)
+	w.close()
+	noStdOutput(t, func() {
+		if w.writeOne(liveJob(line)) {
+			t.Error("the worker claimed a job after close")
+		}
+		if !errors.Is(w.write(line), errSpanWrite) {
+			t.Error("a write after close was accepted")
+		}
+	})
+	if calls, _ := p.counts(); calls != 0 {
+		t.Fatal("the writer made a Write call after close")
+	}
+	if w.state.Load() != spanClosed {
+		t.Fatal("a failed claim changed the state")
+	}
+}
+
+// A job that the worker claimed before close completes its Write after close. close does not
+// wait for it, the waiting caller gets the fixed error, and no later job is claimed.
+func TestSpanWriterCloseDuringClaimedWrite(t *testing.T) {
+	p := &probeWriter{
+		gate: make(chan struct{}), entered: make(chan struct{}, 1), left: make(chan struct{}, 1),
+	}
+	var once sync.Once
+	release := func() { once.Do(func() { close(p.gate) }) }
+	t.Cleanup(release)
+	w := newTestWriter(t, p, 5*time.Second)
+	line := testLine(t)
+
+	first := make(chan error, 1)
+	go func() { first <- w.write(line) }()
+	<-p.entered
+	if w.state.Load() != spanWriting {
+		t.Fatal("the worker entered Write without a claim")
+	}
+	noStdOutput(t, func() {
+		w.close()
+		if !errors.Is(<-first, errSpanWrite) {
+			t.Error("close did not release the waiting caller")
+		}
+		if !errors.Is(w.write(line), errSpanWrite) {
+			t.Error("a write after close was accepted")
+		}
+	})
+	if w.state.Load() != spanClosed|spanWriting {
+		t.Fatal("close did not keep the claim of the current Write")
+	}
+
+	release()
+	<-p.left
+	if calls, maxActive := p.counts(); calls != 1 || maxActive != 1 {
+		t.Fatal("the writer made more than 1 Write call")
+	}
+	if p.output() != string(line) {
+		t.Fatal("the claimed Write did not complete after close")
 	}
 }
