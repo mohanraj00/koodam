@@ -35,4 +35,5 @@ const wantSpanKind = "ingress"
 const (
 	litSpanMethodKey = "method"
 	litSpanStatusKey = "status"
+	litSpanReasonKey = "reason"
 )
