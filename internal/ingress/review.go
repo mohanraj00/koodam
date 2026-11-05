@@ -24,7 +24,6 @@ import (
 
 	authenticationv1 "k8s.io/api/authentication/v1"
 	authorizationv1 "k8s.io/api/authorization/v1"
-	apivalidation "k8s.io/apimachinery/pkg/api/validation"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
@@ -55,15 +54,8 @@ var (
 // ErrReviewUnavailable. On a failure, it returns an empty Caller and one fixed error, and it makes
 // no further review. It does not change r.
 func (v *Reviewer) Review(ctx context.Context, r *http.Request, namespace, agent string) (Caller, error) {
-	if len(apivalidation.ValidateNamespaceName(namespace, false)) > 0 ||
-		len(apivalidation.NameIsDNSSubdomain(agent, false)) > 0 {
-		return Caller{}, ErrRoute
-	}
-	user, caller, err := v.authenticate(ctx, r)
+	caller, _, err := v.reviewWithEvidence(ctx, r, namespace, agent)
 	if err != nil {
-		return Caller{}, err
-	}
-	if err := v.authorize(ctx, user, namespace, agent); err != nil {
 		return Caller{}, err
 	}
 	return caller, nil
