@@ -17,13 +17,89 @@ limitations under the License.
 package ingress
 
 import (
+	"bytes"
+	"errors"
 	"io"
 	"log"
 	"os"
 	"runtime"
+	"strings"
 	"sync"
 	"testing"
+	"time"
 )
+
+const (
+	modeOK = iota
+	modeFail
+	modeShort
+	modePanic
+)
+
+// probeWriter counts Write calls and concurrent Write calls. If gate is set, each Write waits
+// for it. entered gets 1 value for each Write call. left gets 1 value when each Write call
+// has written its output.
+type probeWriter struct {
+	mu                       sync.Mutex
+	buf                      bytes.Buffer
+	calls, active, maxActive int
+	mode                     int
+	secret                   string
+	gate                     chan struct{}
+	entered                  chan struct{}
+	left                     chan struct{}
+}
+
+func (w *probeWriter) Write(p []byte) (int, error) {
+	if w.left != nil {
+		defer func() { w.left <- struct{}{} }()
+	}
+	w.mu.Lock()
+	w.calls++
+	w.active++
+	w.maxActive = max(w.maxActive, w.active)
+	w.mu.Unlock()
+	if w.entered != nil {
+		w.entered <- struct{}{}
+	}
+	if w.gate != nil {
+		<-w.gate
+	}
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	w.active--
+	switch w.mode {
+	case modeFail:
+		return 0, errors.New(w.secret)
+	case modeShort:
+		w.buf.Write(p[:len(p)-1])
+		return len(p) - 1, nil
+	case modePanic:
+		panic(w.secret)
+	}
+	return w.buf.Write(p)
+}
+
+func (w *probeWriter) counts() (calls, maxActive int) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return w.calls, w.maxActive
+}
+
+func (w *probeWriter) output() string {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return w.buf.String()
+}
+
+func testLine(t *testing.T) []byte {
+	t.Helper()
+	b, err := encodeSpan(testProxyNS, okObservation(), time.Now())
+	if err != nil {
+		t.Fatal("a valid span gave an error")
+	}
+	return b
+}
 
 // noStdOutput runs f and fails if f writes to stdout, stderr or the standard logger. It restores
 // the exact prior stdout, stderr and logger writer, also if f calls t.Fatal or panics.
@@ -57,6 +133,29 @@ func noStdOutput(t *testing.T, f func()) {
 	}
 }
 
+func newTestWriter(t *testing.T, out io.Writer, wait time.Duration) *spanWriter {
+	t.Helper()
+	w, err := newSpanWriter(out)
+	if err != nil {
+		t.Fatal("the writer did not start")
+	}
+	w.wait = wait
+	t.Cleanup(w.close)
+	return w
+}
+
+// directWriter has no worker goroutine. The test calls writeOne as the worker.
+func directWriter(out io.Writer) *spanWriter {
+	return &spanWriter{
+		out: out, wait: 5 * time.Second, admit: make(chan struct{}, spanAdmitLimit),
+		jobs: make(chan spanJob), quit: make(chan struct{}),
+	}
+}
+
+func liveJob(line []byte) spanJob {
+	return spanJob{line: line, deadline: time.Now().Add(time.Hour), done: make(chan bool, 1)}
+}
+
 func TestNoStdOutputRestores(t *testing.T) {
 	stdout, stderr, logOut := os.Stdout, os.Stderr, log.Writer()
 	restored := func() bool { return os.Stdout == stdout && os.Stderr == stderr && log.Writer() == logOut }
@@ -79,5 +178,229 @@ func TestNoStdOutputRestores(t *testing.T) {
 	}()
 	if !restored() {
 		t.Fatal("the prior output was not restored after a panic")
+	}
+}
+
+func TestSpanWriterRejectsNil(t *testing.T) {
+	if w, err := newSpanWriter(nil); w != nil || !errors.Is(err, errSpanWrite) {
+		t.Fatal("a nil writer was accepted")
+	}
+}
+
+func TestSpanWriterRejectsBadLines(t *testing.T) {
+	p := &probeWriter{}
+	w := newTestWriter(t, p, 5*time.Second)
+	for _, line := range [][]byte{nil, []byte(`{}`), []byte("{}\n{}\n")} {
+		if !errors.Is(w.write(line), errSpanWrite) {
+			t.Fatal("a line that is not 1 whole line was accepted")
+		}
+	}
+	if calls, _ := p.counts(); calls != 0 {
+		t.Fatal("a bad line reached the writer")
+	}
+}
+
+func TestSpanWriterConcurrentLines(t *testing.T) {
+	p := &probeWriter{}
+	w := newTestWriter(t, p, 5*time.Second)
+	line := testLine(t)
+	var wg sync.WaitGroup
+	for range 32 {
+		wg.Go(func() {
+			for range 10 {
+				if w.write(line) != nil {
+					t.Error("a write failed")
+				}
+			}
+		})
+	}
+	wg.Wait()
+	calls, maxActive := p.counts()
+	if calls != 320 || maxActive != 1 {
+		t.Fatal("the writes were not 1 at a time with 1 call for each line")
+	}
+	lines := strings.Split(strings.TrimSuffix(p.buf.String(), "\n"), "\n")
+	if len(lines) != 320 {
+		t.Fatal("the line count is not the write count")
+	}
+	for _, l := range lines {
+		decodeLine(t, []byte(l+"\n"))
+	}
+}
+
+func TestSpanWriterFailureIsFinal(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		mode int
+	}{{litCaseError, modeFail}, {"short", modeShort}, {"panic", modePanic}} {
+		t.Run(tc.name, func(t *testing.T) {
+			p := &probeWriter{mode: tc.mode, secret: spanCanary()}
+			w := newTestWriter(t, p, 5*time.Second)
+			line := testLine(t)
+			noStdOutput(t, func() {
+				for range 3 {
+					err := w.write(line)
+					if !errors.Is(err, errSpanWrite) || strings.Contains(err.Error(), p.secret) {
+						t.Error("a failed write did not give the fixed error")
+					}
+				}
+			})
+			if calls, _ := p.counts(); calls != 1 {
+				t.Fatal("the writer tried again after a failed write")
+			}
+		})
+	}
+}
+
+func TestSpanWriterBlockedIsBounded(t *testing.T) {
+	p := &probeWriter{gate: make(chan struct{}), entered: make(chan struct{}, 1000)}
+	var once sync.Once
+	release := func() { once.Do(func() { close(p.gate) }) }
+	t.Cleanup(release)
+	w := newTestWriter(t, p, 2*time.Second)
+	line := testLine(t)
+
+	first := make(chan error, 1)
+	go func() { first <- w.write(line) }()
+	<-p.entered
+	// The first caller read wait before the worker took its line, so this change is safe.
+	w.wait = 50 * time.Millisecond
+	start := time.Now()
+	var wg sync.WaitGroup
+	for range 20 {
+		wg.Go(func() {
+			if !errors.Is(w.write(line), errSpanWrite) {
+				t.Error("a write behind a blocked write did not give the fixed error")
+			}
+		})
+	}
+	wg.Wait()
+	if time.Since(start) > 10*time.Second {
+		t.Fatal("a caller waited without bound")
+	}
+	if !errors.Is(<-first, errSpanWrite) {
+		t.Fatal("a blocked write did not give the fixed error")
+	}
+	if calls, maxActive := p.counts(); calls != 1 || maxActive != 1 {
+		t.Fatal("a blocked writer got more than 1 Write call")
+	}
+
+	// The blocked Write completes: the writer stays usable, with 1 worker.
+	release()
+	w.wait = 5 * time.Second
+	if w.write(line) != nil {
+		t.Fatal("a write after the release failed")
+	}
+	if calls, maxActive := p.counts(); calls != 2 || maxActive != 1 {
+		t.Fatal("the writer did not use 1 worker for each write")
+	}
+}
+
+// An idle worker can take a job after quit is closed. close must still refuse every later line.
+func TestSpanWriterIdleRefusesAfterClose(t *testing.T) {
+	p := &probeWriter{}
+	w := newTestWriter(t, p, 5*time.Second)
+	line := testLine(t)
+	if w.write(line) != nil {
+		t.Fatal("a write before close failed")
+	}
+	w.close()
+	noStdOutput(t, func() {
+		for range 200 {
+			if !errors.Is(w.write(line), errSpanWrite) {
+				t.Error("a write after close was accepted")
+				return
+			}
+		}
+	})
+	if calls, _ := p.counts(); calls != 1 {
+		t.Fatal("the writer made a Write call after close")
+	}
+}
+
+// select can send a job when its timer and the worker are both ready. The worker must refuse the
+// expired job, and the refusal must not stop the writer.
+func TestSpanWriterWorkerRefusesExpiredJob(t *testing.T) {
+	p := &probeWriter{}
+	w := newTestWriter(t, p, 5*time.Second)
+	line := testLine(t)
+	noStdOutput(t, func() {
+		j := spanJob{line: line, deadline: time.Now(), done: make(chan bool, 1)}
+		w.jobs <- j
+		if <-j.done {
+			t.Error("the worker wrote an expired job")
+		}
+	})
+	if calls, _ := p.counts(); calls != 0 {
+		t.Fatal("an expired job reached the writer")
+	}
+	if w.write(line) != nil {
+		t.Fatal("an expired job stopped the writer")
+	}
+	if calls, _ := p.counts(); calls != 1 || p.output() != string(line) {
+		t.Fatal("the write after an expired job was not 1 whole line")
+	}
+}
+
+// The worker can take a live job after close. close occurs before the claim, so the claim fails.
+func TestSpanWriterCloseBeforeClaim(t *testing.T) {
+	p := &probeWriter{}
+	w := directWriter(p)
+	line := testLine(t)
+	w.close()
+	noStdOutput(t, func() {
+		if w.writeOne(liveJob(line)) {
+			t.Error("the worker claimed a job after close")
+		}
+		if !errors.Is(w.write(line), errSpanWrite) {
+			t.Error("a write after close was accepted")
+		}
+	})
+	if calls, _ := p.counts(); calls != 0 {
+		t.Fatal("the writer made a Write call after close")
+	}
+	if w.state.Load() != spanClosed {
+		t.Fatal("a failed claim changed the state")
+	}
+}
+
+// A job that the worker claimed before close completes its Write after close. close does not
+// wait for it, the waiting caller gets the fixed error, and no later job is claimed.
+func TestSpanWriterCloseDuringClaimedWrite(t *testing.T) {
+	p := &probeWriter{
+		gate: make(chan struct{}), entered: make(chan struct{}, 1), left: make(chan struct{}, 1),
+	}
+	var once sync.Once
+	release := func() { once.Do(func() { close(p.gate) }) }
+	t.Cleanup(release)
+	w := newTestWriter(t, p, 5*time.Second)
+	line := testLine(t)
+
+	first := make(chan error, 1)
+	go func() { first <- w.write(line) }()
+	<-p.entered
+	if w.state.Load() != spanWriting {
+		t.Fatal("the worker entered Write without a claim")
+	}
+	noStdOutput(t, func() {
+		w.close()
+		if !errors.Is(<-first, errSpanWrite) {
+			t.Error("close did not release the waiting caller")
+		}
+		if !errors.Is(w.write(line), errSpanWrite) {
+			t.Error("a write after close was accepted")
+		}
+	})
+	if w.state.Load() != spanClosed|spanWriting {
+		t.Fatal("close did not keep the claim of the current Write")
+	}
+
+	release()
+	<-p.left
+	if calls, maxActive := p.counts(); calls != 1 || maxActive != 1 {
+		t.Fatal("the writer made more than 1 Write call")
+	}
+	if p.output() != string(line) {
+		t.Fatal("the claimed Write did not complete after close")
 	}
 }

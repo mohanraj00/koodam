@@ -37,3 +37,9 @@ const (
 	litSpanStatusKey = "status"
 	litSpanReasonKey = "reason"
 )
+
+// The names of test cases that more than one test uses.
+const (
+	// litCaseError is the name of the test case where the span sink returns an error.
+	litCaseError = "error"
+)
