@@ -46,8 +46,9 @@ var (
 // variant, merge key, alias or explicit tag. The non-specific tag "!" is also an explicit tag. The
 // root and metadata mappings and their keys have the same rule. The YAML-to-JSON converter must
 // keep each map entry. The data must not start with two byte order marks. A line must not start
-// with a document end marker ("...") in UTF-8 or UTF-16 text.
-// The function examines these before the conversion. It does not change the data.
+// with a document end marker ("...") in UTF-8 or UTF-16 text. For UTF-16 data, the function finds
+// the line boundaries in the decoded text. The function checks these rules before conversion.
+// It does not change the data.
 func ValidateRBACRole(data []byte, expectedName string) error {
 	if expectedName == "" {
 		return ErrNotRole
@@ -57,10 +58,7 @@ func ValidateRBACRole(data []byte, expectedName string) error {
 	if repeatedByteOrderMark(data) {
 		return ErrRoleMalformed
 	}
-	if utf16DocumentEnd(data) {
-		return ErrRoleDocumentCount
-	}
-	doc, err := singleDocument(data)
+	doc, err := roleDocument(data)
 	switch {
 	case errors.Is(err, ErrDocumentCount):
 		return ErrRoleDocumentCount
@@ -113,17 +111,35 @@ func repeatedByteOrderMark(data []byte) bool {
 	return false
 }
 
-// utf16DocumentEnd is true if the data starts with a UTF-16 byte order mark and a line of the
-// decoded text starts with a "..." marker. splitDocuments examines UTF-8 bytes only, thus it does
-// not find the marker in UTF-16 data. This function decodes the text as the parser does and gives
-// the UTF-8 copy to splitDocuments. The line breaks in the copy are the same characters, thus the
-// line boundaries are the same. The function does not change the data.
-func utf16DocumentEnd(data []byte) bool {
+// roleDocument gives the original bytes of the only document in the data. For UTF-8 data it uses
+// singleDocument. splitDocuments examines UTF-8 bytes only. In UTF-16 data, the bytes of one
+// character can look like a line break and a "---" or "..." marker, for example U+2E0A U+2E2E in
+// UTF-16LE. Thus for UTF-16 data, this function decodes the text as the parser does and gives the
+// UTF-8 copy to splitDocuments. The line breaks in the copy are the same characters, thus the line
+// boundaries are the same. A line that starts with "..." in the copy is an error. The YAML parser
+// reads the original bytes and must find exactly one document with content. The role has only
+// one document, thus the function gives all of the original bytes. It does not change the data.
+func roleDocument(data []byte) ([]byte, error) {
 	if !bytes.HasPrefix(data, byteOrderMarks[1]) && !bytes.HasPrefix(data, byteOrderMarks[2]) {
-		return false
+		return singleDocument(data)
 	}
-	_, err := splitDocuments([]byte(string(newYAMLText(data).text)))
-	return errors.Is(err, ErrDocumentCount)
+	text := []byte(string(newYAMLText(data).text))
+	if _, err := splitDocuments(text); err != nil {
+		return nil, err
+	}
+	total, content, err := countDocuments(data)
+	if err != nil {
+		return nil, err
+	}
+	// The parser makes the same empty node for a bare tag ("!") and for no content. Thus an empty
+	// document with other text than blank lines, comments and the marker is content.
+	if total == 1 && content == 0 && !blankSource(text) {
+		content = 1
+	}
+	if total != 1 || content != 1 {
+		return nil, ErrDocumentCount
+	}
+	return data, nil
 }
 
 // roleDecoder gives a strict decoder that knows only the rbac.authorization.k8s.io/v1 types. It

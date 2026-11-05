@@ -269,6 +269,52 @@ func TestValidateRBACRoleDocumentEndAllEncodings(t *testing.T) {
 	}
 }
 
+// In UTF-16, the bytes of some comment characters look like a line break and a "..." or "---"
+// marker. These comments are valid YAML. The check reads the decoded text, thus it accepts them.
+// A real document start is valid once, and an extra document is refused.
+func TestValidateRBACRoleUTF16MarkerBytes(t *testing.T) {
+	comments := []roleDoc{
+		// In UTF-16LE, these bytes are a LF and a "..." marker.
+		{"UTF-16LE end bytes", "# \u2e0a\u2e2e\n"},
+		// In UTF-16LE, these bytes are a LF and a "---" marker with a space.
+		{"UTF-16LE start bytes", "# \u2d0a\u2d2d \n"},
+		// In UTF-16BE, these bytes are a LF and a "..." marker.
+		{"UTF-16BE end bytes", "# \u0a2e\u2e2e\n"},
+		// In UTF-16BE, these bytes are a LF and a "---" marker with a space.
+		{"UTF-16BE start bytes", "# \u0a2d\u2d2d\u2000\n"},
+	}
+	for _, enc := range roleEncodings {
+		for _, e := range lineEndings {
+			for _, c := range comments {
+				t.Run(enc.name+" "+e.name+" accepts "+c.name, func(t *testing.T) {
+					requireValidRole(t, enc.encode(withBreaks("\ufeff"+c.doc+bareRole, e.breaks)), roleName)
+				})
+				t.Run(enc.name+" "+e.name+" accepts "+c.name+" before document start", func(t *testing.T) {
+					requireValidRole(t, enc.encode(withBreaks("\ufeff"+c.doc+"---\n"+bareRole, e.breaks)), roleName)
+				})
+				t.Run(enc.name+" "+e.name+" rejects "+c.name+" and extra document", func(t *testing.T) {
+					requireRoleRejected(t, enc.encode(withBreaks("\ufeff"+c.doc+bareRole+"---\n"+bareRole, e.breaks)), roleName, ml.ErrRoleDocumentCount)
+				})
+				t.Run(enc.name+" "+e.name+" rejects "+c.name+" and document end marker", func(t *testing.T) {
+					requireRoleRejected(t, enc.encode(withBreaks("\ufeff"+c.doc+bareRole+"...\n", e.breaks)), roleName, ml.ErrRoleDocumentCount)
+				})
+			}
+			t.Run(enc.name+" "+e.name+" accepts one document start", func(t *testing.T) {
+				requireValidRole(t, enc.encode(withBreaks("\ufeff---\n"+bareRole, e.breaks)), roleName)
+			})
+			t.Run(enc.name+" "+e.name+" rejects extra document", func(t *testing.T) {
+				requireRoleRejected(t, enc.encode(withBreaks("\ufeff---\n"+bareRole+"---\n"+bareRole, e.breaks)), roleName, ml.ErrRoleDocumentCount)
+			})
+			t.Run(enc.name+" "+e.name+" rejects empty document after", func(t *testing.T) {
+				requireRoleRejected(t, enc.encode(withBreaks("\ufeff"+bareRole+"---\n", e.breaks)), roleName, ml.ErrRoleDocumentCount)
+			})
+			t.Run(enc.name+" "+e.name+" rejects empty document before", func(t *testing.T) {
+				requireRoleRejected(t, enc.encode(withBreaks("\ufeff---\n---\n"+bareRole, e.breaks)), roleName, ml.ErrRoleDocumentCount)
+			})
+		}
+	}
+}
+
 // The strict decoder and the key check reject the content after the identity check.
 func TestValidateRBACRoleRejectsMalformed(t *testing.T) {
 	cases := []roleDoc{
