@@ -34,6 +34,8 @@ const (
 	roleRules = "rules:\n- apiGroups:\n  - example.com\n  resources:\n  - gadgets\n  verbs:\n  - get\n"
 	// bareRole is a synthetic App role without the initial separator.
 	bareRole = roleHead + roleMeta + roleRules
+	// nullDoc is a document with only a literal null.
+	nullDoc = "null\n"
 )
 
 // roleDoc is one named test input.
@@ -128,10 +130,13 @@ func TestValidateRBACRoleRejectsIdentity(t *testing.T) {
 		{"alias name", roleHead + "rules:\n- apiGroups: [&n " + roleName + "]\n  resources: [gadgets]\n  verbs: [get]\nmetadata:\n  name: *n\n"},
 		{"alias kind", "apiVersion: rbac.authorization.k8s.io/v1\n" + "rules:\n- apiGroups: [&k ClusterRole]\n  resources: [gadgets]\n  verbs: [get]\nkind: *k\n" + roleMeta},
 		{"tagged kind", "apiVersion: rbac.authorization.k8s.io/v1\nkind: !custom ClusterRole\n" + roleMeta + rule},
+		{"explicit string name", roleHead + "metadata:\n  name: !!str " + roleName + "\n" + roleRules},
+		{"explicit string kind key", "apiVersion: rbac.authorization.k8s.io/v1\n!!str kind: ClusterRole\n" + roleMeta + rule},
+		{"explicit map metadata", roleHead + "metadata: !!map\n  name: " + roleName + "\n" + roleRules},
 		{"integer key", roleHead + roleMeta + "1: a\n" + rule},
 		{"list document", "- " + roleName + "\n"},
 		{"scalar document", "ClusterRole\n"},
-		{"null document", "null\n"},
+		{"null document", nullDoc},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) { requireRoleRejected(t, []byte(tc.doc), roleName, ml.ErrNotRole) })
@@ -162,12 +167,12 @@ func TestValidateRBACRoleRejectsMalformed(t *testing.T) {
 // The full stream must have exactly one document. An empty document also counts.
 func TestValidateRBACRoleRejectsExtraDocuments(t *testing.T) {
 	extras := []roleDoc{
-		{"ConfigMap", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: other}\n"},
+		{"other object", "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: other}\n"},
 		{"second role", bareRole},
-		{"null", "null\n"},
+		{"null", nullDoc},
 		{"empty map", "{}\n"},
 	}
-	docs := []roleDoc{
+	base := []roleDoc{
 		{"empty document before", "---\n---\n" + bareRole},
 		{"empty document after", bareRole + "---\n"},
 		{"comment document after", bareRole + "---\n# tail\n"},
@@ -177,6 +182,8 @@ func TestValidateRBACRoleRejectsExtraDocuments(t *testing.T) {
 		{"only comment", "# only\n"},
 		{"only separator", "---\n"},
 	}
+	docs := make([]roleDoc, 0, len(base)+2*len(extras))
+	docs = append(docs, base...)
 	for _, x := range extras {
 		docs = append(docs, roleDoc{x.name + " after", bareRole + "---\n" + x.doc}, roleDoc{x.name + " before", x.doc + "---\n" + bareRole})
 	}

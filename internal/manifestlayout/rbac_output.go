@@ -40,8 +40,8 @@ var (
 // exactly one YAML document. An empty document is also a document. The document must be one
 // strict rbac.authorization.k8s.io/v1 ClusterRole with the expected name, no namespace field and
 // no generateName field. The identity fields must be plain string fields with no duplicate, case
-// variant, merge key, alias or tag. The YAML-to-JSON converter must keep each map entry. The
-// function examines these before the conversion. It does not change the data.
+// variant, merge key, alias or explicit tag. The YAML-to-JSON converter must keep each map entry.
+// The function examines these before the conversion. It does not change the data.
 func ValidateRBACRole(data []byte, expectedName string) error {
 	if expectedName == "" {
 		return ErrNotRole
@@ -121,16 +121,17 @@ func plainRoleIdentity(doc []byte, name string) (ok bool) {
 		!hasField(meta, "namespace") && !hasField(meta, "generateName")
 }
 
-// identityMap gives the entries of a mapping node by the exact key. Each key must be a string and
-// not a merge key. Two keys must not be equal under Unicode case folding.
+// identityMap gives the entries of a mapping node by the exact key. The mapping node must not have
+// an explicit tag. Each key must be a string with no explicit tag and must not be a merge key. Two
+// keys must not be equal under Unicode case folding.
 func identityMap(n *yaml.Node) (map[string]*yaml.Node, bool) {
-	if n == nil || n.Kind != yaml.MappingNode || n.Tag != "!!map" || len(n.Content)%2 != 0 {
+	if n == nil || n.Kind != yaml.MappingNode || n.Tag != "!!map" || explicitTag(n) || len(n.Content)%2 != 0 {
 		return nil, false
 	}
 	m := make(map[string]*yaml.Node, len(n.Content)/2)
 	for i := 0; i < len(n.Content); i += 2 {
 		k := n.Content[i]
-		if k.Kind != yaml.ScalarNode || k.Tag != "!!str" || k.Value == "<<" || hasField(m, k.Value) {
+		if k.Kind != yaml.ScalarNode || k.Tag != "!!str" || explicitTag(k) || k.Value == "<<" || hasField(m, k.Value) {
 			return nil, false
 		}
 		m[k.Value] = n.Content[i+1]
@@ -148,11 +149,17 @@ func hasField(m map[string]*yaml.Node, name string) bool {
 	return false
 }
 
-// identityString gives the value of a string scalar node, or "" for each other node. An alias
-// node is not a scalar node.
+// identityString gives the value of a string scalar node with no explicit tag, or "" for each
+// other node. An alias node is not a scalar node. A quoted string has no explicit tag.
 func identityString(n *yaml.Node) string {
-	if n == nil || n.Kind != yaml.ScalarNode || n.Tag != "!!str" {
+	if n == nil || n.Kind != yaml.ScalarNode || n.Tag != "!!str" || explicitTag(n) {
 		return ""
 	}
 	return n.Value
+}
+
+// explicitTag is true if the source has a tag on the node, for example !!str or !!map. The parser
+// sets TaggedStyle for each tag except the non-specific tag "!".
+func explicitTag(n *yaml.Node) bool {
+	return n.Style&yaml.TaggedStyle != 0
 }
