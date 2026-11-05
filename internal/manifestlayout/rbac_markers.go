@@ -33,7 +33,7 @@ const markerPackage = "rbacmarkers"
 // The errors have fixed text. They do not contain a path, source text or marker data.
 var (
 	ErrUnsupportedMarker  = errors.New("manifestlayout: RBAC marker is not in a supported package-level placement")
-	ErrUnsupportedContext = errors.New("manifestlayout: source file with an RBAC marker has a build constraint, a generated header or cgo")
+	ErrUnsupportedContext = errors.New("manifestlayout: source file with an RBAC marker has a build constraint, a generated header, cgo or package documentation")
 )
 
 // MarkerPackage is the staged Go package source for the RBAC markers of one role group.
@@ -124,10 +124,11 @@ func packageMarkers(src []byte) (found []string, err error) {
 }
 
 // plainPackageFile is false if the file has a build constraint before the package clause, has a
-// generated-code header, or imports "C". Each of these can remove the file from the package that
-// controller-gen loads. Then a staged copy of its markers adds permissions.
+// generated-code header, imports "C", or has the package name "documentation". Each of these can
+// remove the file from the package that controller-gen loads. Then a staged copy of its markers
+// adds permissions. The Go tool ignores each file with the package name "documentation".
 func plainPackageFile(file *ast.File) bool {
-	if ast.IsGenerated(file) {
+	if file.Name.Name == "documentation" || ast.IsGenerated(file) {
 		return false
 	}
 	for _, g := range file.Comments {
