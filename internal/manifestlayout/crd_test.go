@@ -512,3 +512,44 @@ func TestRouteJSONKeyCollisionForEachLineBreak(t *testing.T) {
 		}
 	}
 }
+
+// The YAML 1.1 decoder of the converter gives the merge rule. A merge key with the non-specific
+// tag ("!") or the merge tag is a merge, also when it is quoted. A key with the string tag or
+// without a tag in quotes is a key. The check must agree with each line break, at each depth.
+func TestRouteTaggedMergeKeysForEachLineBreak(t *testing.T) {
+	routed := []struct{ name, doc string }{
+		{"exact reproduced tagged merge", string(withSchema(`{type: object, default: {! "<<": {a: 1}, b: 2}}`))},
+		{"plain tagged merge", string(withSchema(`{type: object, default: {! <<: {a: 1}, b: 2}}`))},
+		{"merge tag on quoted key", string(withSchema(`{type: object, default: {!!merge "<<": {a: 1}, b: 2}}`))},
+		{"string tag is a key", string(withSchema(`{type: object, default: {!!str <<: {a: 1}, a: 2}}`))},
+		{"single quoted merge text is a key", string(withSchema(`{type: object, default: {'<<': {a: 1}, a: 2}}`))},
+		{"tagged alias merge", string(withSchema(`{type: object, example: &e {a: 1}, default: {! "<<": *e, b: 2}}`))},
+		{"tagged alias list merge", string(withSchema(`{type: object, example: [&e {a: 1}, &f {1: c}], default: {! "<<": [*e, *f], b: 2}}`))},
+		{"tagged merges in nested raw values", string(withSchema(`{type: object, default: {x: [{! "<<": {a: 1}, b: 2}]}, example: {d: {! "<<": {c: 3}}}, enum: [{! "<<": {a: 1}, b: 2}]}`))},
+		{"tagged merge of properties", string(withSchema(`{type: object, properties: {! "<<": {a: {type: string}}, b: {type: string}}}`))},
+		{"block tagged merge", withMetadata("  annotations: &l\n    a: x\n  labels:\n    ! \"<<\": *l\n    b: c\n")},
+		{"block string tag key", withMetadata("  labels:\n    !!str <<: x\n    b: c\n")},
+	}
+	rejected := []struct{ name, doc string }{
+		{"tagged merge and key", string(withSchema(`{type: object, default: {! "<<": {1: a}, "1": b}}`))},
+		{"merge tag and key", string(withSchema(`{type: object, default: {!!merge "<<": {1: a}, "1": b}}`))},
+		{"tagged merge overlaps key", string(withSchema(`{type: object, default: {! "<<": {a: 1}, a: 2}}`))},
+		{"tagged alias merge and key", string(withSchema(`{type: object, example: &e {1: a}, default: {! "<<": *e, "1": b}}`))},
+		{"tagged merge in nested raw enum", string(withSchema(`{type: object, enum: [{x: {! "<<": {1: a}, "1": b}}]}`))},
+		{"tagged merge in nested raw example", string(withSchema(`{type: object, example: {x: [{! "<<": {true: a}, "true": b}]}}`))},
+		{"non-specific tag on key", string(withSchema(`{type: object, default: {! 1: a, "1": b}}`))},
+		{"block tagged merge", withMetadata("  annotations: &l\n    1: a\n  labels:\n    ! \"<<\": *l\n    \"1\": b\n")},
+	}
+	for _, e := range lineEndings {
+		for _, tc := range routed {
+			t.Run(e.name+" routes "+tc.name, func(t *testing.T) {
+				requireRouted(t, withBreaks(tc.doc, e.breaks))
+			})
+		}
+		for _, tc := range rejected {
+			t.Run(e.name+" rejects "+tc.name, func(t *testing.T) {
+				requireRejected(t, withBreaks(tc.doc, e.breaks), ml.ErrMalformed)
+			})
+		}
+	}
+}

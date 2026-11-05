@@ -29,6 +29,7 @@ import (
 	"slices"
 	"strings"
 
+	yamlv2 "go.yaml.in/yaml/v2"
 	"go.yaml.in/yaml/v3"
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -306,61 +307,42 @@ func decodeCRD(decoder runtime.Decoder, doc []byte) (*apiextensionsv1.CustomReso
 }
 
 // keepsAllKeys is true if the YAML-to-JSON converter keeps each map entry of the document. The
-// converter decodes the YAML with the YAML 1.1 rules and then changes each map key to a string.
+// converter decodes the YAML with its YAML 1.1 decoder and then changes each map key to a string.
 // Thus two different keys can become one JSON key, for example 1 and "1", or yes and "true". Then
-// the converter keeps only one of the two values. The strict decoder already rejects each key that
-// a map has two times, also a key from a merge key ("<<"). Thus the converter makes one entry for
-// each YAML key, and each lost entry makes the JSON count smaller. The YAML count reads the node
-// tree of the original document, thus it does not use the converted keys.
+// the converter keeps only one of the two values. This function decodes the document again with
+// the same YAML 1.1 decoder and the same function. That decoder applies the tags, the aliases and
+// the merge keys ("<<"), thus this function does not apply them. Each lost entry makes the JSON
+// count smaller than the count of the decoded YAML maps.
 func keepsAllKeys(doc []byte) bool {
-	var root yaml.Node
 	data, err := sigsyaml.YAMLToJSON(doc)
-	if err != nil || yaml.Unmarshal(doc, &root) != nil {
+	if err != nil {
 		return false
 	}
-	var value any
-	if utiljson.Unmarshal(data, &value) != nil {
+	var decoded, value any
+	if yamlv2.Unmarshal(doc, &decoded) != nil || utiljson.Unmarshal(data, &value) != nil {
 		return false
 	}
-	return yamlEntries(&root) == jsonEntries(value)
+	return mapEntries(decoded) == mapEntries(value)
 }
 
-// yamlEntries counts the map entries in the node tree as the YAML 1.1 decoder of the converter
-// makes them. An alias counts the entries of its anchor each time. A merge key adds the entries of
-// its value to the map, but it is not an entry.
-func yamlEntries(n *yaml.Node) int {
-	if n.Kind == yaml.AliasNode {
-		return yamlEntries(n.Alias)
-	}
-	count := 0
-	if n.Kind != yaml.MappingNode {
-		for _, c := range n.Content {
-			count += yamlEntries(c)
-		}
-		return count
-	}
-	for pair := range slices.Chunk(n.Content, 2) {
-		k := pair[0]
-		if k.Kind != yaml.ScalarNode || k.Value != "<<" || k.ShortTag() != "!!merge" {
-			count++
-		}
-		count += yamlEntries(pair[1])
-	}
-	return count
-}
-
-// jsonEntries counts the object entries in the decoded JSON value.
-func jsonEntries(v any) int {
+// mapEntries counts the map entries in a decoded value at all depths. The YAML 1.1 decoder makes
+// maps with keys of each type. The JSON decoder makes maps with string keys.
+func mapEntries(v any) int {
 	count := 0
 	switch v := v.(type) {
+	case map[any]any:
+		count = len(v)
+		for _, x := range v {
+			count += mapEntries(x)
+		}
 	case map[string]any:
 		count = len(v)
 		for _, x := range v {
-			count += jsonEntries(x)
+			count += mapEntries(x)
 		}
 	case []any:
 		for _, x := range v {
-			count += jsonEntries(x)
+			count += mapEntries(x)
 		}
 	}
 	return count
