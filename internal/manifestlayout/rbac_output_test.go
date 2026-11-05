@@ -253,6 +253,22 @@ func TestValidateRBACRoleRepeatedByteOrderMark(t *testing.T) {
 	}
 }
 
+// A document end marker is refused in each encoding. The check reads the decoded text, thus a
+// UTF-16 marker is also refused. One mark without the marker is valid.
+func TestValidateRBACRoleDocumentEndAllEncodings(t *testing.T) {
+	for _, enc := range roleEncodings {
+		for _, e := range lineEndings {
+			// This is the reproduction from the review.
+			t.Run(enc.name+" "+e.name+" rejects document end marker", func(t *testing.T) {
+				requireRoleRejected(t, enc.encode(withBreaks("\ufeff"+bareRole+"...\n", e.breaks)), roleName, ml.ErrRoleDocumentCount)
+			})
+			t.Run(enc.name+" "+e.name+" accepts one mark", func(t *testing.T) {
+				requireValidRole(t, enc.encode(withBreaks("\ufeff"+bareRole, e.breaks)), roleName)
+			})
+		}
+	}
+}
+
 // The strict decoder and the key check reject the content after the identity check.
 func TestValidateRBACRoleRejectsMalformed(t *testing.T) {
 	cases := []roleDoc{

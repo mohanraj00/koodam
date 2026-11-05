@@ -45,7 +45,8 @@ var (
 // no generateName field. The identity fields must be plain string fields with no duplicate, case
 // variant, merge key, alias or explicit tag. The non-specific tag "!" is also an explicit tag. The
 // root and metadata mappings and their keys have the same rule. The YAML-to-JSON converter must
-// keep each map entry. The data must not start with two byte order marks.
+// keep each map entry. The data must not start with two byte order marks. A line must not start
+// with a document end marker ("...") in UTF-8 or UTF-16 text.
 // The function examines these before the conversion. It does not change the data.
 func ValidateRBACRole(data []byte, expectedName string) error {
 	if expectedName == "" {
@@ -55,6 +56,9 @@ func ValidateRBACRole(data []byte, expectedName string) error {
 	// because each other chunk starts with "---". Thus a check of the data start is sufficient.
 	if repeatedByteOrderMark(data) {
 		return ErrRoleMalformed
+	}
+	if utf16DocumentEnd(data) {
+		return ErrRoleDocumentCount
 	}
 	doc, err := singleDocument(data)
 	switch {
@@ -107,6 +111,19 @@ func repeatedByteOrderMark(data []byte) bool {
 		}
 	}
 	return false
+}
+
+// utf16DocumentEnd is true if the data starts with a UTF-16 byte order mark and a line of the
+// decoded text starts with a "..." marker. splitDocuments examines UTF-8 bytes only, thus it does
+// not find the marker in UTF-16 data. This function decodes the text as the parser does and gives
+// the UTF-8 copy to splitDocuments. The line breaks in the copy are the same characters, thus the
+// line boundaries are the same. The function does not change the data.
+func utf16DocumentEnd(data []byte) bool {
+	if !bytes.HasPrefix(data, byteOrderMarks[1]) && !bytes.HasPrefix(data, byteOrderMarks[2]) {
+		return false
+	}
+	_, err := splitDocuments([]byte(string(newYAMLText(data).text)))
+	return errors.Is(err, ErrDocumentCount)
 }
 
 // roleDecoder gives a strict decoder that knows only the rbac.authorization.k8s.io/v1 types. It
