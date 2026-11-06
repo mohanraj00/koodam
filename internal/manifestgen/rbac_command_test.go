@@ -31,6 +31,9 @@ import (
 )
 
 const (
+	cacheEmpty      = "empty"
+	cacheConfigured = "configured"
+	cachePrivate    = "private"
 	// observedFile is the record of the fake controller-gen. The fake writes it with a relative
 	// path. Thus a record in the private directory shows that this directory is the working directory.
 	observedFile = "observed.json"
@@ -140,12 +143,12 @@ func observe(args []string, wd string) observation {
 func cacheFact(wd string) string {
 	switch v := os.Getenv("GOCACHE"); v {
 	case "":
-		return "empty"
+		return cacheEmpty
 	case configuredCache:
-		return "configured"
+		return cacheConfigured
 	case filepath.Join(wd, cacheDir):
 		if fi, err := os.Lstat(v); err == nil && fi.IsDir() {
-			return "private"
+			return cachePrivate
 		}
 	}
 	return "other"
@@ -224,7 +227,7 @@ func requireEnv(t *testing.T, o observation) {
 	if len(want) != 0 {
 		t.Fatal("the generator does not get all permitted variables")
 	}
-	if o.Cache == "empty" {
+	if o.Cache == cacheEmpty {
 		t.Fatal("the generator gets an empty GOCACHE")
 	}
 }
