@@ -17,7 +17,6 @@ limitations under the License.
 package manifestgen
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -32,19 +31,32 @@ import (
 )
 
 const (
-	// observedFile is the record that the fake controller-gen writes into its working directory.
+	// observedFile is the record of the fake controller-gen. The fake writes it with a relative
+	// path. Thus a record in the private directory shows that this directory is the working directory.
 	observedFile = "observed.json"
 	// okRole selects the valid output of the fake.
 	okRole = "ok-role"
+	// configuredCache is a synthetic GOCACHE value. The fake only compares it. No test makes this path.
+	configuredCache = "/koodam-test/configured-gocache"
 )
 
+var (
+	// fakeTool is this test binary. If the path is not known, it is "" and the tests get ErrInvalidTool.
+	fakeTool, _ = os.Executable()
+	// offlineEnv has the settings that the generator must get with these values.
+	offlineEnv = []string{"GOTOOLCHAIN=local", "GOPROXY=off", "GOSUMDB=off", "GOENV=off", "GOWORK=off", "GOFLAGS=", "GOPACKAGESDRIVER=off"}
+	// passedNames has the variables that the generator must get if this process has them.
+	passedNames = []string{"PATH", "TMPDIR", "XDG_CACHE_HOME", "GOROOT", "GOPATH", "GOMODCACHE"}
+)
+
+// observation is the record of one run. It does not hold an incoming environment value. Names has
+// the variable names. Offline has a pass or fail fact for each offlineEnv entry. Cache is a fixed
+// fact about GOCACHE: "empty", "configured", "private" or "other".
 type observation struct {
-	Args []string
-	Dir  string
-	Env  []string
-	// PrivateCache is the name of the GOCACHE directory if it is a directory in the working
-	// directory. If not, it is "".
-	PrivateCache string
+	Args    []string
+	Names   []string
+	Offline map[string]bool
+	Cache   string
 }
 
 // TestMain makes the test binary the fake controller-gen. The fake gets only fixed arguments, thus
@@ -67,11 +79,11 @@ func roleYAML(name string) string {
 // before the first "-" selects the behavior.
 func fakeControllerGen(args []string) int {
 	out, ok := strings.CutPrefix(args[len(args)-1], "output:rbac:artifacts:config=")
-	dir, err := os.Getwd()
+	wd, err := os.Getwd()
 	if len(args) != 3 || !ok || err != nil {
 		return 2
 	}
-	record, err := json.Marshal(observation{Args: args, Dir: dir, Env: os.Environ(), PrivateCache: privateCache(dir)})
+	record, err := json.Marshal(observe(args, wd))
 	if err != nil || os.WriteFile(observedFile, record, 0o600) != nil {
 		return 2
 	}
@@ -93,51 +105,50 @@ func fakeControllerGen(args []string) int {
 	case "docs":
 		data += "---\n" + roleYAML(name)
 	case "extra":
-		if os.WriteFile(filepath.Join(out, "other.yaml"), nil, 0o600) != nil {
-			return 2
-		}
+		err = os.WriteFile(filepath.Join(out, "other.yaml"), nil, 0o600)
 	case "symlink":
-		if os.WriteFile("target.yaml", []byte(data), 0o600) != nil || os.Symlink(filepath.Join(dir, "target.yaml"), role) != nil {
-			return 2
-		}
-		return 0
+		// The link goes to a valid role, which the last write makes.
+		err = os.Symlink(filepath.Join(wd, "target.yaml"), role)
+		role = "target.yaml"
 	case "dir":
-		if os.Mkdir(role, 0o700) != nil {
-			return 2
-		}
-		return 0
+		// role.yaml is a directory. The last write puts a file in this directory.
+		err = os.Mkdir(role, 0o700)
+		role = filepath.Join(role, roleFile)
 	}
-	if os.WriteFile(role, []byte(data), 0o600) != nil {
+	if err != nil || os.WriteFile(role, []byte(data), 0o600) != nil {
 		return 2
 	}
 	return 0
 }
 
-// privateCache gives the name of the GOCACHE directory if it is an absolute path to a directory in
-// dir. It compares the files, thus a symbolic link in the temporary path has no effect.
-func privateCache(dir string) string {
-	v, ok := os.LookupEnv("GOCACHE")
-	if !ok || !filepath.IsAbs(v) {
-		return ""
+// observe gives the record of this run. It keeps names and fixed facts. It does not keep a value.
+func observe(args []string, wd string) observation {
+	env := os.Environ()
+	names := make([]string, 0, len(env))
+	for _, e := range env {
+		k, _, _ := strings.Cut(e, "=")
+		names = append(names, k)
 	}
-	cache, err := os.Stat(v)
-	if err != nil || !cache.IsDir() {
-		return ""
+	offline := make(map[string]bool, len(offlineEnv))
+	for _, f := range offlineEnv {
+		offline[f] = slices.Contains(env, f)
 	}
-	child, err := os.Stat(filepath.Join(dir, filepath.Base(v)))
-	if err != nil || !os.SameFile(cache, child) {
-		return ""
-	}
-	return filepath.Base(v)
+	return observation{Args: args, Names: names, Offline: offline, Cache: cacheFact(wd)}
 }
 
-func fakeTool(t *testing.T) string {
-	t.Helper()
-	p, err := os.Executable()
-	if err != nil {
-		t.Fatal(err)
+// cacheFact gives the fixed fact about GOCACHE. A private cache is a real directory in wd.
+func cacheFact(wd string) string {
+	switch v := os.Getenv("GOCACHE"); v {
+	case "":
+		return "empty"
+	case configuredCache:
+		return "configured"
+	case filepath.Join(wd, cacheDir):
+		if fi, err := os.Lstat(v); err == nil && fi.IsDir() {
+			return "private"
+		}
 	}
-	return p
+	return "other"
 }
 
 // privateDir gives a new test directory without symbolic links.
@@ -150,11 +161,12 @@ func privateDir(t *testing.T) string {
 	return dir
 }
 
+// observed reads the record in dir. If there is no record, dir was not the working directory of a run.
 func observed(t *testing.T, dir string) observation {
 	t.Helper()
 	data, err := os.ReadFile(filepath.Join(dir, observedFile))
 	if err != nil {
-		t.Fatal("the generator did not run")
+		t.Fatal("the generator did not run in the private directory")
 	}
 	var o observation
 	if err := json.Unmarshal(data, &o); err != nil {
@@ -186,42 +198,35 @@ func requireFixed(t *testing.T, data []byte, err, want error, values ...string) 
 	}
 }
 
-// requireEnv examines that the generator gets the loader settings, one GOCACHE value and only the
-// permitted variables, each one time. HOME and XDG_CONFIG_HOME are not permitted.
-func requireEnv(t *testing.T, env []string) {
+// requireEnv examines the loader settings, a GOCACHE that is not empty, and the names. Each permitted
+// name must occur one time. Thus HOME, XDG_CONFIG_HOME and all other ambient variables are absent.
+func requireEnv(t *testing.T, o observation) {
 	t.Helper()
-	fixed := []string{"GOTOOLCHAIN=local", "GOPROXY=off", "GOSUMDB=off", "GOENV=off", "GOWORK=off", "GOFLAGS=", "GOPACKAGESDRIVER=off"}
-	permitted := []string{"PATH", "TMPDIR", "XDG_CACHE_HOME", "GOROOT", "GOPATH", "GOCACHE", "GOMODCACHE"}
-	for _, f := range fixed {
-		if !slices.Contains(env, f) {
+	want := map[string]bool{"GOCACHE": true}
+	for _, k := range passedNames {
+		if _, ok := os.LookupEnv(k); ok {
+			want[k] = true
+		}
+	}
+	for _, f := range offlineEnv {
+		if !o.Offline[f] {
 			t.Fatalf("the generator does not get %s", f)
 		}
 		k, _, _ := strings.Cut(f, "=")
-		permitted = append(permitted, k)
+		want[k] = true
 	}
-	seen := map[string]bool{}
-	for _, e := range env {
-		k, v, _ := strings.Cut(e, "=")
-		if !slices.Contains(permitted, k) || seen[k] {
+	for _, k := range o.Names {
+		if !want[k] {
 			t.Fatalf("the generator gets the variable %s not one time", k)
 		}
-		seen[k] = true
-		if k == "GOCACHE" && v == "" {
-			t.Fatal("the generator gets an empty GOCACHE")
-		}
+		delete(want, k)
 	}
-	if !seen["GOCACHE"] {
-		t.Fatal("the generator does not get GOCACHE")
+	if len(want) != 0 {
+		t.Fatal("the generator does not get all permitted variables")
 	}
-}
-
-func envValue(env []string, k string) (string, bool) {
-	for _, e := range env {
-		if ek, v, _ := strings.Cut(e, "="); ek == k {
-			return v, true
-		}
+	if o.Cache == "empty" {
+		t.Fatal("the generator gets an empty GOCACHE")
 	}
-	return "", false
 }
 
 func TestGenerateRoleRunsFixedCommand(t *testing.T) {
@@ -230,11 +235,11 @@ func TestGenerateRoleRunsFixedCommand(t *testing.T) {
 	t.Setenv("GOPROXY", "https://proxy.invalid")
 	for role, pkg := range map[ml.RoleGroup]string{ml.RoleBase: "base", ml.RoleApp: "app"} {
 		dir := privateDir(t)
-		data, err := generateRole(context.Background(), fakeTool(t), dir, role, okRole)
+		data, err := generateRole(context.Background(), fakeTool, dir, role, okRole)
 		if err != nil {
 			t.Fatal(err)
 		}
-		if !bytes.Equal(data, []byte(roleYAML(okRole))) {
+		if string(data) != roleYAML(okRole) {
 			t.Fatal("the output is not the original generator bytes")
 		}
 		o := observed(t, dir)
@@ -242,10 +247,7 @@ func TestGenerateRoleRunsFixedCommand(t *testing.T) {
 		if !slices.Equal(o.Args, want) {
 			t.Fatalf("the arguments are %q, want %q", o.Args, want)
 		}
-		if o.Dir != dir {
-			t.Fatal("the generator does not run in the private directory")
-		}
-		requireEnv(t, o.Env)
+		requireEnv(t, o)
 	}
 }
 
@@ -257,11 +259,14 @@ func TestGenerateRoleUserConfigAndCache(t *testing.T) {
 		t.Setenv("HOME", t.TempDir())
 	}
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
-	configured := t.TempDir()
 	for _, c := range []struct {
-		name, cache string
-		set         bool
-	}{{"configured", configured, true}, {"empty", "", true}, {"unset", "", false}} {
+		name, cache, want string
+		set               bool
+	}{
+		{"configured", configuredCache, "configured", true},
+		{"empty", "", "private", true},
+		{"unset", "", "private", false},
+	} {
 		t.Run(c.name, func(t *testing.T) {
 			t.Setenv("GOCACHE", c.cache)
 			if !c.set {
@@ -270,22 +275,13 @@ func TestGenerateRoleUserConfigAndCache(t *testing.T) {
 				}
 			}
 			dir := privateDir(t)
-			if _, err := generateRole(context.Background(), fakeTool(t), dir, ml.RoleApp, "ok-app"); err != nil {
+			if _, err := generateRole(context.Background(), fakeTool, dir, ml.RoleApp, "ok-app"); err != nil {
 				t.Fatal(err)
 			}
 			o := observed(t, dir)
-			requireEnv(t, o.Env)
-			for _, k := range []string{"HOME", "XDG_CONFIG_HOME"} {
-				if _, ok := envValue(o.Env, k); ok {
-					t.Fatalf("the generator gets %s", k)
-				}
-			}
-			cache, _ := envValue(o.Env, "GOCACHE")
-			if c.cache != "" && (cache != c.cache || o.PrivateCache != "") {
-				t.Fatal("the generator does not get the configured GOCACHE")
-			}
-			if c.cache == "" && (cache != filepath.Join(dir, cacheDir) || o.PrivateCache != cacheDir) {
-				t.Fatal("the generator does not get a private GOCACHE in the private directory")
+			requireEnv(t, o)
+			if o.Cache != c.want {
+				t.Fatalf("the GOCACHE fact is %s, want %s", o.Cache, c.want)
 			}
 		})
 	}
@@ -299,7 +295,7 @@ func TestGenerateRoleRejectsOutput(t *testing.T) {
 	} {
 		t.Run(name, func(t *testing.T) {
 			dir := privateDir(t)
-			data, err := generateRole(context.Background(), fakeTool(t), dir, ml.RoleBase, name)
+			data, err := generateRole(context.Background(), fakeTool, dir, ml.RoleBase, name)
 			requireFixed(t, data, err, want, name, dir)
 			observed(t, dir)
 		})
@@ -314,11 +310,12 @@ func TestGenerateRoleRejectsInput(t *testing.T) {
 		role      ml.RoleGroup
 		name      string
 	}
-	tool := fakeTool(t)
+	dir := privateDir(t)
 	other := privateDir(t)
 	plain := filepath.Join(other, "plain")
-	if os.WriteFile(plain, nil, 0o600) != nil {
-		t.Fatal("cannot write the plain file")
+	link := filepath.Join(other, "link")
+	if os.WriteFile(plain, nil, 0o600) != nil || os.Symlink(dir, link) != nil {
+		t.Fatal("cannot write the plain file and the link")
 	}
 	cases := []struct {
 		name string
@@ -327,7 +324,7 @@ func TestGenerateRoleRejectsInput(t *testing.T) {
 	}{
 		{"no tool", func(in *input) { in.tool = "" }, ErrInvalidTool},
 		{"relative tool", func(in *input) { in.tool = "controller-gen" }, ErrInvalidTool},
-		{"unclean tool", func(in *input) { in.tool = filepath.Dir(tool) + "/./" + filepath.Base(tool) }, ErrInvalidTool},
+		{"unclean tool", func(in *input) { in.tool = filepath.Dir(fakeTool) + "/./" + filepath.Base(fakeTool) }, ErrInvalidTool},
 		{"missing tool", func(in *input) { in.tool = filepath.Join(other, "missing") }, ErrInvalidTool},
 		{"directory tool", func(in *input) { in.tool = other }, ErrInvalidTool},
 		{"not executable", func(in *input) { in.tool = plain }, ErrInvalidTool},
@@ -348,17 +345,11 @@ func TestGenerateRoleRejectsInput(t *testing.T) {
 		{"unclean dir", func(in *input) { in.dir += "/." }, ErrWorkspace},
 		{"missing dir", func(in *input) { in.dir = filepath.Join(other, "missing") }, ErrWorkspace},
 		{"file dir", func(in *input) { in.dir = plain }, ErrWorkspace},
-		{"symlink dir", func(in *input) { in.dir = filepath.Join(other, "link") }, ErrWorkspace},
+		{"symlink dir", func(in *input) { in.dir = link }, ErrWorkspace},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			dir := privateDir(t)
-			link := filepath.Join(other, "link")
-			if err := os.Symlink(dir, link); err != nil {
-				t.Fatal(err)
-			}
-			t.Cleanup(func() { _ = os.Remove(link) })
-			in := input{tool: tool, dir: dir, role: ml.RoleBase, name: okRole}
+			in := input{tool: fakeTool, dir: dir, role: ml.RoleBase, name: okRole}
 			c.edit(&in)
 			data, err := generateRole(context.Background(), in.tool, in.dir, in.role, in.name)
 			requireFixed(t, data, err, c.want, in.dir, string(in.role), in.name)
@@ -383,7 +374,7 @@ func TestGenerateRoleNeedsRealDirectories(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			data, err := generateRole(context.Background(), fakeTool(t), dir, ml.RoleBase, okRole)
+			data, err := generateRole(context.Background(), fakeTool, dir, ml.RoleBase, okRole)
 			requireFixed(t, data, err, ErrWorkspace, dir)
 			if _, err := os.Lstat(filepath.Join(dir, observedFile)); !errors.Is(err, os.ErrNotExist) {
 				t.Fatal("the generator ran")
@@ -396,13 +387,13 @@ func TestGenerateRoleCancel(t *testing.T) {
 	dir := privateDir(t)
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	data, err := generateRole(ctx, fakeTool(t), dir, ml.RoleBase, okRole)
+	data, err := generateRole(ctx, fakeTool, dir, ml.RoleBase, okRole)
 	requireFixed(t, data, err, context.Canceled)
 	requireEmpty(t, dir)
 	ctx, cancel = context.WithTimeout(context.Background(), 200*time.Millisecond)
 	defer cancel()
 	start := time.Now()
-	data, err = generateRole(ctx, fakeTool(t), dir, ml.RoleBase, "slow-role")
+	data, err = generateRole(ctx, fakeTool, dir, ml.RoleBase, "slow-role")
 	requireFixed(t, data, err, context.DeadlineExceeded)
 	if time.Since(start) > 30*time.Second {
 		t.Fatal("the end of the context does not stop the generator")
