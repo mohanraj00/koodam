@@ -17,12 +17,19 @@ limitations under the License.
 package ingress
 
 import (
+	"context"
+	"errors"
 	"net/netip"
 	"reflect"
 	"slices"
 	"testing"
 
+	corev1 "k8s.io/api/core/v1"
+	networkingv1 "k8s.io/api/networking/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/apimachinery/pkg/util/intstr"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	"github.com/mohanraj00/koodam/internal/agentingress"
@@ -103,3 +110,101 @@ func TestNewTargetResolverRefuses(t *testing.T) {
 		})
 	}
 }
+
+func TestTargetCheckPolicies(t *testing.T) {
+	f := newTargetWorld(t.Context())
+	r := tgResolver(t, f)
+	if err := r.checkPolicies(f.ctx); err != nil {
+		t.Fatal("checkPolicies refused the exact guard policies")
+	}
+	if !slices.Equal(f.ops, []string{opGetPolicy, opGetPolicy}) || f.otherCtx || f.badQuery {
+		t.Fatal("checkPolicies did not make exactly one policy read for each run namespace with the context")
+	}
+}
+
+// TestTargetCheckPoliciesExact proves that the startup check uses the exact CheckPolicy result,
+// and that it permits the approved extra egress rules.
+func TestTargetCheckPoliciesExact(t *testing.T) {
+	other := func(f *targetReader) *networkingv1.NetworkPolicy {
+		return f.objs[storeKey(policyKind, tgOtherNamespace, tgPolicyName)].(*networkingv1.NetworkPolicy)
+	}
+	for _, tc := range []struct {
+		name   string
+		change func(*targetReader)
+		want   error
+		reads  int
+	}{
+		{"extra egress", func(f *targetReader) {
+			other(f).Spec.Egress = append(other(f).Spec.Egress, networkingv1.NetworkPolicyEgressRule{
+				To: []networkingv1.NetworkPolicyPeer{{IPBlock: &networkingv1.IPBlock{CIDR: "192.0.2.0/24"}}}})
+		}, nil, 2},
+		{"no egress rules", func(f *targetReader) { other(f).Spec.Egress = nil }, nil, 2},
+		{"omitted protocol", func(f *targetReader) { f.policy().Spec.Ingress[0].Ports[0].Protocol = nil }, nil, 2},
+		{"missing first", func(f *targetReader) {
+			f.remove(policyKind, tgNamespace, tgPolicyName)
+		}, ErrTargetUnavailable, 1},
+		{"missing second", func(f *targetReader) {
+			f.remove(policyKind, tgOtherNamespace, tgPolicyName)
+		}, ErrTargetUnavailable, 2},
+		{"extra ingress port", func(f *targetReader) {
+			other(f).Spec.Ingress[0].Ports = append(other(f).Spec.Ingress[0].Ports,
+				networkingv1.NetworkPolicyPort{Port: new(intstr.FromInt32(22))})
+		}, ErrTargetUnavailable, 2},
+		{"extra ingress rule", func(f *targetReader) {
+			f.policy().Spec.Ingress = append(f.policy().Spec.Ingress, networkingv1.NetworkPolicyIngressRule{})
+		}, ErrTargetUnavailable, 1},
+		{"udp guard port", func(f *targetReader) {
+			f.policy().Spec.Ingress[0].Ports[0].Protocol = new(corev1.ProtocolUDP)
+		}, ErrTargetUnavailable, 1},
+		{"pod selector drift", func(f *targetReader) {
+			f.policy().Spec.PodSelector = metav1.LabelSelector{}
+		}, ErrTargetUnavailable, 1},
+		{"no ingress type", func(f *targetReader) {
+			f.policy().Spec.PolicyTypes = []networkingv1.PolicyType{networkingv1.PolicyTypeEgress}
+		}, ErrTargetUnavailable, 1},
+		{litCaseDeleting, func(f *targetReader) {
+			f.policy().DeletionTimestamp = tgDeleting()
+		}, ErrTargetUnavailable, 1},
+		{litCaseAPIError, func(f *targetReader) { f.fail[1] = errors.New(targetCanary) }, ErrTargetUnavailable, 2},
+		{"forbidden", func(f *targetReader) {
+			f.fail[0] = apierrors.NewForbidden(networkingv1.Resource("networkpolicies"), tgPolicyName, errors.New(targetCanary))
+		}, ErrTargetUnavailable, 1},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newTargetWorld(t.Context())
+			r := tgResolver(t, f)
+			tc.change(f)
+			err := r.checkPolicies(f.ctx)
+			if err != tc.want {
+				t.Fatalf("checkPolicies returned the wrong result: got error %t, want error %t", err != nil, tc.want != nil)
+			}
+			if len(f.ops) != tc.reads || slices.ContainsFunc(f.ops, func(op string) bool { return op != opGetPolicy }) {
+				t.Fatalf("checkPolicies made %d reads, want %d policy reads only", len(f.ops), tc.reads)
+			}
+		})
+	}
+}
+
+func TestTargetCheckPoliciesCancel(t *testing.T) {
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+	f := newTargetWorld(ctx)
+	if err := tgResolver(t, f).checkPolicies(ctx); err != ErrTargetUnavailable || len(f.ops) != 0 {
+		t.Fatal("checkPolicies read a policy after the context ended")
+	}
+	during, stop := context.WithCancel(t.Context())
+	defer stop()
+	f = newTargetWorld(during)
+	f.before = func(int) { stop() }
+	if err := tgResolver(t, f).checkPolicies(during); err != ErrTargetUnavailable || len(f.ops) != 1 {
+		t.Fatal("checkPolicies did not stop after the context ended during a read")
+	}
+	var nilResolver *targetResolver
+	if nilResolver.checkPolicies(t.Context()) != ErrTargetUnavailable {
+		t.Fatal("checkPolicies of a nil resolver did not refuse")
+	}
+}
+
+const (
+	litCaseDeleting = "deleting"
+)
