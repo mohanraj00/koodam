@@ -17,12 +17,31 @@ limitations under the License.
 package ingress
 
 import (
+	"net/netip"
+	"reflect"
+	"slices"
 	"testing"
 
+	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	"github.com/mohanraj00/koodam/internal/agentingress"
 )
+
+// TestTargetFields proves that a target has only names, UIDs and the address. A new field with
+// an API object, a spec or caller data fails this test.
+func TestTargetFields(t *testing.T) {
+	kinds := []reflect.Type{reflect.TypeFor[string](), reflect.TypeFor[types.UID](), reflect.TypeFor[netip.AddrPort]()}
+	tt := reflect.TypeFor[target]()
+	if tt.NumField() != 8 {
+		t.Fatalf("a target has %d fields, want 8", tt.NumField())
+	}
+	for f := range tt.Fields() {
+		if !slices.Contains(kinds, f.Type) {
+			t.Fatal("a target field is not a name, a UID or the address")
+		}
+	}
+}
 
 func TestNewTargetResolver(t *testing.T) {
 	f := newTargetWorld(t.Context())
