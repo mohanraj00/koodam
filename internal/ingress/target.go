@@ -19,8 +19,10 @@ package ingress
 import (
 	"errors"
 	"maps"
+	"net/netip"
 
 	apivalidation "k8s.io/apimachinery/pkg/api/validation"
+	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	"github.com/mohanraj00/koodam/internal/agentingress"
@@ -34,6 +36,35 @@ var (
 	ErrTargetAbsent      = errors.New("the ingress target does not exist")
 	ErrTargetUnavailable = errors.New("the ingress target is not available")
 )
+
+// The reserved labels of the run pod and the name of the main container. The controller sets them
+// in runJob and addIdentity. A pod template cannot change them.
+const (
+	targetAgentLabel = "koodam.dev/agent"
+	targetRunLabel   = "koodam.dev/run"
+	targetContainer  = "agent"
+)
+
+// The kinds of the controller owner references of the run Job and the run pod.
+const (
+	agentKind = "Agent"
+	jobKind   = "Job"
+)
+
+// target is the backend of one ingress request. It has only the names and the UIDs of the Agent,
+// the run Job and the run pod, and the validated pod address and ingress port. It has no API
+// object, spec, env, status, key data or caller data. A pod IP and a UID are not a cryptographic
+// workload identity: the IP can go to a different pod after the last check and before the connect.
+type target struct {
+	namespace string
+	agent     string
+	agentUID  types.UID
+	job       string
+	jobUID    types.UID
+	pod       string
+	podUID    types.UID
+	addr      netip.AddrPort
+}
 
 // targetResolver finds the target of an ingress route. It reads only through reader, and only in
 // the configured run namespaces. It keeps no result between two calls. It never writes an object.
