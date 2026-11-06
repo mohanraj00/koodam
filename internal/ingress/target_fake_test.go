@@ -19,15 +19,19 @@ package ingress
 import (
 	"context"
 	"net/netip"
+	"reflect"
 	"testing"
 
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
+	networkingv1 "k8s.io/api/networking/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/apimachinery/pkg/util/intstr"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	corev1alpha1 "github.com/mohanraj00/koodam/api/v1alpha1"
@@ -63,32 +67,105 @@ const (
 	tgOtherUID     types.UID = "00000000-0000-4000-8000-000000000009"
 )
 
-// The fixed name of a fake read. A failure message never contains an object, an error or an
+// targetCanary is a fixed private detail. It is not a credential. A fake API puts it in an error.
+// An error from the resolver must not contain it.
+const targetCanary = "target-detail-canary"
+
+// The fixed names of the fake reads. A failure message never contains an object, an error or an
 // address.
 const (
-	opOther = "unexpected read"
+	policyKind = "NetworkPolicy"
+
+	getPrefix   = "get "
+	opGetPolicy = getPrefix + policyKind
+	opOther     = "unexpected read"
 )
 
-// targetReader is a local fake client.Reader. It keeps the fixed names of the reads only in memory
-// in this process. It has no write method and no object: it records each read and refuses it. The
-// constructor tests use it to prove that the constructor reads no object.
+// targetReader is a local fake client.Reader. It keeps the objects and the fixed names of the
+// reads only in memory in this process. It has no write method. It does not end a read when the
+// context ends, thus the resolver must check the context itself.
 type targetReader struct {
-	ctx context.Context // Each read must get this context.
-	ops []string
+	ctx      context.Context // Each read must get this context.
+	objs     map[string]client.Object
+	ops      []string
+	otherCtx bool
+	// badQuery is true if a read had an option or a list query that is not the exact run query.
+	badQuery bool
+	// before runs before read i, and fail gives the error of read i.
+	before func(i int)
+	fail   map[int]error
 }
 
-// newTargetWorld returns a fake with no object.
+// newTargetWorld returns a fake with the guard policy in the two configured run namespaces.
 func newTargetWorld(ctx context.Context) *targetReader {
-	return &targetReader{ctx: ctx}
+	f := &targetReader{ctx: ctx, objs: map[string]client.Object{}, fail: map[int]error{}}
+	f.put(tgPolicy(tgNamespace), tgPolicy(tgOtherNamespace))
+	return f
 }
 
-func (f *targetReader) Get(context.Context, client.ObjectKey, client.Object, ...client.GetOption) error {
-	f.ops = append(f.ops, opOther)
-	return apierrors.NewNotFound(schema.GroupResource{}, "")
+func objKind(o runtime.Object) string {
+	switch o.(type) {
+	case *networkingv1.NetworkPolicy:
+		return policyKind
+	}
+	return opOther
 }
 
-func (f *targetReader) List(context.Context, client.ObjectList, ...client.ListOption) error {
-	f.ops = append(f.ops, opOther)
+func storeKey(kind, namespace, name string) string { return kind + "/" + namespace + "/" + name }
+
+func (f *targetReader) put(objs ...client.Object) {
+	for _, o := range objs {
+		f.objs[storeKey(objKind(o), o.GetNamespace(), o.GetName())] = o
+	}
+}
+
+func (f *targetReader) remove(kind, namespace, name string) {
+	delete(f.objs, storeKey(kind, namespace, name))
+}
+
+func (f *targetReader) policy() *networkingv1.NetworkPolicy {
+	return f.objs[storeKey(policyKind, tgNamespace, tgPolicyName)].(*networkingv1.NetworkPolicy)
+}
+
+// start records the read and runs the hooks. It returns the error of the read.
+func (f *targetReader) start(ctx context.Context, op string) error {
+	i := len(f.ops)
+	f.ops = append(f.ops, op)
+	if ctx != f.ctx {
+		f.otherCtx = true
+	}
+	if f.before != nil {
+		f.before(i)
+	}
+	return f.fail[i]
+}
+
+func (f *targetReader) Get(ctx context.Context, key client.ObjectKey, obj client.Object, opts ...client.GetOption) error {
+	kind := objKind(obj)
+	op := opOther
+	if kind != opOther {
+		op = getPrefix + kind
+	}
+	if len(opts) > 0 {
+		f.badQuery = true
+	}
+	if err := f.start(ctx, op); err != nil {
+		return err
+	}
+	stored, ok := f.objs[storeKey(kind, key.Namespace, key.Name)]
+	if !ok || op == opOther {
+		return apierrors.NewNotFound(schema.GroupResource{}, "")
+	}
+	reflect.ValueOf(obj).Elem().Set(reflect.ValueOf(stored.DeepCopyObject()).Elem())
+	return nil
+}
+
+// List records an unexpected read and refuses it. The startup policy check makes no list.
+func (f *targetReader) List(ctx context.Context, _ client.ObjectList, _ ...client.ListOption) error {
+	f.badQuery = true
+	if err := f.start(ctx, opOther); err != nil {
+		return err
+	}
 	return apierrors.NewBadRequest("")
 }
 
@@ -144,6 +221,29 @@ func tgProxyLabels() map[string]string {
 func tgGuard(namespace string) agentingress.PolicyGuard {
 	return agentingress.PolicyGuard{Namespace: namespace, Name: tgPolicyName, ProxyNamespace: tgProxyNamespace,
 		ProxyLabels: tgProxyLabels()}
+}
+
+// tgPolicy returns the exact guard policy of namespace, with one egress rule.
+func tgPolicy(namespace string) *networkingv1.NetworkPolicy {
+	tcp := corev1.ProtocolTCP
+	return &networkingv1.NetworkPolicy{
+		ObjectMeta: metav1.ObjectMeta{Name: tgPolicyName, Namespace: namespace},
+		Spec: networkingv1.NetworkPolicySpec{
+			PodSelector: metav1.LabelSelector{MatchExpressions: []metav1.LabelSelectorRequirement{
+				{Key: targetAgentLabel, Operator: metav1.LabelSelectorOpExists}}},
+			PolicyTypes: []networkingv1.PolicyType{networkingv1.PolicyTypeIngress, networkingv1.PolicyTypeEgress},
+			Ingress: []networkingv1.NetworkPolicyIngressRule{{
+				From: []networkingv1.NetworkPolicyPeer{{
+					NamespaceSelector: &metav1.LabelSelector{
+						MatchLabels: map[string]string{"kubernetes.io/metadata.name": tgProxyNamespace}},
+					PodSelector: &metav1.LabelSelector{MatchLabels: tgProxyLabels()},
+				}},
+				Ports: []networkingv1.NetworkPolicyPort{{Protocol: &tcp, Port: new(intstr.FromString(agentingress.ReservedPortName))}},
+			}},
+			Egress: []networkingv1.NetworkPolicyEgressRule{{
+				Ports: []networkingv1.NetworkPolicyPort{{Protocol: &tcp, Port: new(intstr.FromInt32(8080))}}}},
+		},
+	}
 }
 
 // tgResolver returns a resolver of f with the guards of the two run namespaces.

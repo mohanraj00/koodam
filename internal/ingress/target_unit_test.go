@@ -24,6 +24,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 
 	corev1alpha1 "github.com/mohanraj00/koodam/api/v1alpha1"
+	"github.com/mohanraj00/koodam/internal/agentingress"
 )
 
 // The tests in this file call one part of the resolver directly, not through resolve.
@@ -141,5 +142,31 @@ func TestTargetEligiblePod(t *testing.T) {
 	}
 	if !eligiblePod(tgPod(tgSecondPodName, tgSecondPodUID), tgWant()) {
 		t.Fatal("eligiblePod refused a second ready pod of the run")
+	}
+}
+
+// TestTargetCheckPoliciesUnconfigured proves that the startup check of a resolver that did not
+// come from newTargetResolver refuses with ErrTargetUnavailable and reads no object. An empty
+// namespace set must never pass. TestTargetCheckPoliciesCancel has the nil resolver.
+func TestTargetCheckPoliciesUnconfigured(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		build func(*targetReader) *targetResolver
+	}{
+		{"no reader and no guards", func(*targetReader) *targetResolver { return &targetResolver{} }},
+		{"guards with no reader", func(*targetReader) *targetResolver {
+			return &targetResolver{guards: map[string]agentingress.PolicyGuard{tgNamespace: tgGuard(tgNamespace)}}
+		}},
+		{"reader with nil guards", func(f *targetReader) *targetResolver { return &targetResolver{reader: f} }},
+		{"reader with empty guards", func(f *targetReader) *targetResolver {
+			return &targetResolver{reader: f, guards: map[string]agentingress.PolicyGuard{}}
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newTargetWorld(t.Context())
+			if tc.build(f).checkPolicies(f.ctx) != ErrTargetUnavailable || len(f.ops) != 0 {
+				t.Fatal("checkPolicies of an unconfigured resolver did not refuse with no read")
+			}
+		})
 	}
 }
