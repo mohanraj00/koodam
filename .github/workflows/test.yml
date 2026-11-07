@@ -43,3 +43,7 @@ jobs:
         run: |
           go mod tidy
           make test
+
+      - name: Run the tool tests
+        if: needs.changes.outputs.docs-only != 'true'
+        run: make test-tools
