@@ -53,8 +53,12 @@ func (r *targetResolver) checkPolicies(ctx context.Context) error {
 }
 
 // lookup reads the Agent, its run Job and the run pods, and returns the target of the sole
-// eligible pod.
+// eligible pod. If the namespace has no configured guard, it refuses with ErrTargetUnavailable and
+// makes no read.
 func (r *targetResolver) lookup(ctx context.Context, namespace, agent string) (target, error) {
+	if _, ok := r.guards[namespace]; !ok {
+		return target{}, ErrTargetUnavailable
+	}
 	a := &corev1alpha1.Agent{}
 	if err := r.get(ctx, namespace, agent, a); err != nil {
 		return target{}, err

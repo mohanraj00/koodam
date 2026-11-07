@@ -236,6 +236,22 @@ func TestTargetLookupNamespace(t *testing.T) {
 	}
 }
 
+// TestTargetLookupNamespaceNotGuarded proves that lookup refuses a namespace with no configured
+// guard before any read. The fake has a valid Agent, Job and pod in that namespace. The resolver
+// has only the guard of the other namespace.
+func TestTargetLookupNamespaceNotGuarded(t *testing.T) {
+	f := newTargetWorld(t.Context())
+	r, err := newTargetResolver(f, []agentingress.PolicyGuard{tgGuard(tgOtherNamespace)})
+	if err != nil {
+		t.Fatal("newTargetResolver refused a valid configuration")
+	}
+	got, err := r.lookup(f.ctx, tgNamespace, tgAgentName)
+	refusedTarget(t, got, err, ErrTargetUnavailable)
+	if len(f.ops) != 0 {
+		t.Fatal("lookup read an object in a namespace with no configured guard")
+	}
+}
+
 // TestTargetLookupRefuses proves the fixed error of each class of lookup refusal, and that lookup
 // makes no read after the refusal. Only a missing Agent, an Agent with no ingress port and a
 // missing Job are absent.
