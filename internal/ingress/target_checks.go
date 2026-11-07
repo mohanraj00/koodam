@@ -17,6 +17,8 @@ limitations under the License.
 package ingress
 
 import (
+	"net/netip"
+
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
 	apivalidation "k8s.io/apimachinery/pkg/api/validation"
@@ -88,6 +90,63 @@ func eligiblePod(p *corev1.Pod, t target) bool {
 		return false
 	}
 	return p.Status.Phase == corev1.PodRunning && podReady(p.Status.Conditions)
+}
+
+// podAddress returns the address of the eligible pod p on port. The pod must not use the host
+// network. Its spec must have exactly one port with the name http over all containers, init
+// containers and ephemeral containers. That port must be on the main container, with the number
+// port, the TCP protocol, no host port and no host IP. An empty protocol is the API default TCP.
+// The pod IP must be a global unicast address with no zone. podAddress changes an IPv4-mapped IPv6
+// address to the IPv4 address.
+func podAddress(p *corev1.Pod, port int32) (netip.AddrPort, error) {
+	if p.Spec.HostNetwork || !soleIngressPort(&p.Spec, port) {
+		return netip.AddrPort{}, ErrTargetUnavailable
+	}
+	ip, err := netip.ParseAddr(p.Status.PodIP)
+	if err != nil || ip.Zone() != "" {
+		return netip.AddrPort{}, ErrTargetUnavailable
+	}
+	// IsGlobalUnicast permits the private IPv4 ranges and the IPv6 unique local addresses. It
+	// refuses the loopback, unspecified, multicast, link-local and IPv4 broadcast addresses.
+	ip = ip.Unmap()
+	if !ip.IsGlobalUnicast() {
+		return netip.AddrPort{}, ErrTargetUnavailable
+	}
+	return netip.AddrPortFrom(ip, uint16(port)), nil
+}
+
+// soleIngressPort is true if s has exactly one port with the name http, and if that port is the
+// ingress port of the main container.
+func soleIngressPort(s *corev1.PodSpec, port int32) bool {
+	count, main := 0, false
+	for _, c := range s.Containers {
+		for _, p := range c.Ports {
+			if p.Name != agentingress.ReservedPortName {
+				continue
+			}
+			count++
+			main = c.Name == targetContainer && p.ContainerPort == port &&
+				(p.Protocol == "" || p.Protocol == corev1.ProtocolTCP) && p.HostPort == 0 && p.HostIP == ""
+		}
+	}
+	for _, c := range s.InitContainers {
+		count += namedPorts(c.Ports)
+	}
+	for _, c := range s.EphemeralContainers {
+		count += namedPorts(c.Ports)
+	}
+	return count == 1 && main
+}
+
+// namedPorts is the count of ports in ps with the name http.
+func namedPorts(ps []corev1.ContainerPort) int {
+	n := 0
+	for _, p := range ps {
+		if p.Name == agentingress.ReservedPortName {
+			n++
+		}
+	}
+	return n
 }
 
 // podReady is true if conds has a Ready condition and each Ready condition is true.

@@ -17,11 +17,15 @@ limitations under the License.
 package ingress
 
 import (
+	"context"
+	"errors"
+	"slices"
 	"strings"
 	"testing"
 
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	corev1alpha1 "github.com/mohanraj00/koodam/api/v1alpha1"
 	"github.com/mohanraj00/koodam/internal/agentingress"
@@ -168,5 +172,188 @@ func TestTargetCheckPoliciesUnconfigured(t *testing.T) {
 				t.Fatal("checkPolicies of an unconfigured resolver did not refuse with no read")
 			}
 		})
+	}
+}
+
+// lookupReads are the exact reads of a first lookup that passes. The index of the pod list is
+// len(lookupReads)-1.
+var lookupReads = []string{opGetAgent, opGetJob, opListPods}
+
+// TestTargetLookup proves that lookup makes the exact reads with the exact pod query, and returns
+// the target of the sole eligible pod. An IPv4-mapped address becomes the IPv4 address, an empty
+// protocol is TCP, and a pod that is not eligible does not count.
+func TestTargetLookup(t *testing.T) {
+	for _, tc := range []targetCase{
+		{"one ready run pod", func(*targetReader) {}},
+		{"ipv4 mapped pod address", setIP("::ffff:" + tgPodIP)},
+		{"empty port protocol", func(f *targetReader) { mainPort(f).Protocol = "" }},
+		{"pending second pod", func(f *targetReader) {
+			p := tgPod(tgSecondPodName, tgSecondPodUID)
+			p.Status.Phase = corev1.PodPending
+			f.put(p)
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newTargetWorld(t.Context())
+			r := tgResolver(t, f)
+			tc.change(f)
+			got, err := r.lookup(f.ctx, tgNamespace, tgAgentName)
+			if err != nil || got != tgWant() {
+				t.Fatal("lookup did not return the exact target")
+			}
+			if !slices.Equal(f.ops, lookupReads) || f.otherCtx || f.badQuery {
+				t.Fatal("lookup did not make the exact reads and the exact pod query with the context")
+			}
+		})
+	}
+}
+
+// TestTargetLookupNamespace proves that lookup reads only the Agent and the namespace of the route.
+// The fake has an Agent, a Job and a pod with the same names and different UIDs in each namespace.
+// The fake also records each pod list that does not use the exact namespace, Agent and run labels.
+func TestTargetLookupNamespace(t *testing.T) {
+	const (
+		agentUID = "00000000-0000-4000-8000-000000000005"
+		jobUID   = "00000000-0000-4000-8000-000000000006"
+		podUID   = "00000000-0000-4000-8000-000000000007"
+	)
+	f := newTargetWorld(t.Context())
+	r := tgResolver(t, f)
+	f.listNamespace, f.listAgent, f.listRun = tgOtherNamespace, tgOther, tgOtherJob
+	f.put(tgOtherRun(tgNamespace, tgAgentUID, tgJobUID, tgPodUID)...)
+	f.put(tgOtherRun(tgOtherNamespace, agentUID, jobUID, podUID)...)
+
+	want := tgWant()
+	want.namespace, want.agent, want.agentUID = tgOtherNamespace, tgOther, agentUID
+	want.job, want.jobUID = tgOtherJob, jobUID
+	want.pod, want.podUID = tgOtherPod, podUID
+	got, err := r.lookup(f.ctx, tgOtherNamespace, tgOther)
+	if err != nil || got != want {
+		t.Fatal("lookup did not return the exact target of the route namespace")
+	}
+	if !slices.Equal(f.ops, lookupReads) || f.otherCtx || f.badQuery {
+		t.Fatal("lookup did not make the exact reads and the exact namespace-scoped pod query")
+	}
+}
+
+// TestTargetLookupNamespaceNotGuarded proves that lookup refuses a namespace with no configured
+// guard before any read. The fake has a valid Agent, Job and pod in that namespace. The resolver
+// has only the guard of the other namespace.
+func TestTargetLookupNamespaceNotGuarded(t *testing.T) {
+	f := newTargetWorld(t.Context())
+	r, err := newTargetResolver(f, []agentingress.PolicyGuard{tgGuard(tgOtherNamespace)})
+	if err != nil {
+		t.Fatal("newTargetResolver refused a valid configuration")
+	}
+	got, err := r.lookup(f.ctx, tgNamespace, tgAgentName)
+	refusedTarget(t, got, err, ErrTargetUnavailable)
+	if len(f.ops) != 0 {
+		t.Fatal("lookup read an object in a namespace with no configured guard")
+	}
+}
+
+// TestTargetLookupRefuses proves the fixed error of each class of lookup refusal, and that lookup
+// makes no read after the refusal. Only a missing Agent, an Agent with no ingress port and a
+// missing Job are absent.
+func TestTargetLookupRefuses(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		change func(*targetReader)
+		want   error
+		reads  int
+	}{
+		{"agent missing", func(f *targetReader) { f.remove(agentKind, tgNamespace, tgAgentName) }, ErrTargetAbsent, 1},
+		{"agent with no ingress port", func(f *targetReader) { f.agent().Spec.IngressPort = nil }, ErrTargetAbsent, 1},
+		{"agent with no run job", func(f *targetReader) { f.agent().Status.Job = "" }, ErrTargetUnavailable, 1},
+		{"job missing", func(f *targetReader) { f.remove(jobKind, tgNamespace, tgJobName) }, ErrTargetAbsent, 2},
+		{"job ended", func(f *targetReader) {
+			f.job().Status.Conditions = []batchv1.JobCondition{{Type: batchv1.JobComplete, Status: corev1.ConditionTrue}}
+		}, ErrTargetUnavailable, 2},
+		{"pod list error", func(f *targetReader) { f.fail[2] = errors.New(targetCanary) }, ErrTargetUnavailable, 3},
+		{"run pod missing", func(f *targetReader) { f.remove(podKind, tgNamespace, tgPodName) }, ErrTargetUnavailable, 3},
+		{"run pod not ready", func(f *targetReader) { f.pod().Status.Conditions = nil }, ErrTargetUnavailable, 3},
+		{"two eligible pods", func(f *targetReader) { f.put(tgPod(tgSecondPodName, tgSecondPodUID)) },
+			ErrTargetUnavailable, 3},
+		{"multicast pod address", setIP("224.0.0.1"), ErrTargetUnavailable, 3},
+		{"pod address with zone", setIP("fd00:10:244::7%eth0"), ErrTargetUnavailable, 3},
+		{"pod on host network", func(f *targetReader) { f.pod().Spec.HostNetwork = true }, ErrTargetUnavailable, 3},
+		{"udp ingress port", func(f *targetReader) { mainPort(f).Protocol = corev1.ProtocolUDP }, ErrTargetUnavailable, 3},
+		{"ingress port with host port", func(f *targetReader) { mainPort(f).HostPort = tgPort }, ErrTargetUnavailable, 3},
+		{"http port also on init container", func(f *targetReader) { f.pod().Spec.InitContainers = initWith(httpPort()) },
+			ErrTargetUnavailable, 3},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newTargetWorld(t.Context())
+			r := tgResolver(t, f)
+			tc.change(f)
+			got, err := r.lookup(f.ctx, tgNamespace, tgAgentName)
+			refusedTarget(t, got, err, tc.want)
+			if !slices.Equal(f.ops, lookupReads[:tc.reads]) || f.otherCtx {
+				t.Fatal("lookup made a read after the refusal or a read with a different context")
+			}
+		})
+	}
+}
+
+// TestTargetLookupPartialList proves that lookup refuses a partial pod list, also if the list has
+// the sole eligible pod, and that it does not read a next page. A list with an empty continue
+// token and a nil or zero remaining item count is complete.
+func TestTargetLookupPartialList(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		meta     metav1.ListMeta
+		complete bool
+	}{
+		{"continue token", metav1.ListMeta{Continue: targetCanary}, false},
+		{"one remaining item", metav1.ListMeta{RemainingItemCount: new(int64(1))}, false},
+		{"negative remaining item count", metav1.ListMeta{RemainingItemCount: new(int64(-1))}, false},
+		{"continue token and zero remaining items", metav1.ListMeta{Continue: targetCanary,
+			RemainingItemCount: new(int64(0))}, false},
+		{"no list metadata", metav1.ListMeta{}, true},
+		{"zero remaining item count", metav1.ListMeta{RemainingItemCount: new(int64(0))}, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newTargetWorld(t.Context())
+			r := tgResolver(t, f)
+			f.listMeta[len(lookupReads)-1] = tc.meta
+			got, err := r.lookup(f.ctx, tgNamespace, tgAgentName)
+			if tc.complete && (err != nil || got != tgWant()) {
+				t.Fatal("lookup refused a complete pod list")
+			}
+			if !tc.complete {
+				refusedTarget(t, got, err, ErrTargetUnavailable)
+			}
+			if !slices.Equal(f.ops, lookupReads) || f.otherCtx || f.badQuery {
+				t.Fatal("lookup did not stop at the pod list with the default list query")
+			}
+		})
+	}
+}
+
+// TestTargetLookupCancel ends the context before the first read and during each read. The fake read
+// passes, thus lookup must check the context and make no later read.
+func TestTargetLookupCancel(t *testing.T) {
+	ended, cancel := context.WithCancel(t.Context())
+	cancel()
+	f := newTargetWorld(ended)
+	got, err := tgResolver(t, f).lookup(ended, tgNamespace, tgAgentName)
+	refusedTarget(t, got, err, ErrTargetUnavailable)
+	if len(f.ops) != 0 {
+		t.Fatal("lookup read an object after the context ended")
+	}
+	for i := range lookupReads {
+		during, stop := context.WithCancel(t.Context())
+		defer stop()
+		f := newTargetWorld(during)
+		f.before = func(j int) {
+			if j == i {
+				stop()
+			}
+		}
+		got, err := tgResolver(t, f).lookup(during, tgNamespace, tgAgentName)
+		refusedTarget(t, got, err, ErrTargetUnavailable)
+		if !slices.Equal(f.ops, lookupReads[:i+1]) || f.otherCtx {
+			t.Fatalf("lookup made a read after the context ended during read %d", i)
+		}
 	}
 }

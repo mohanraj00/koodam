@@ -21,11 +21,14 @@ import (
 	"maps"
 	"slices"
 
+	batchv1 "k8s.io/api/batch/v1"
+	corev1 "k8s.io/api/core/v1"
 	networkingv1 "k8s.io/api/networking/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
+	corev1alpha1 "github.com/mohanraj00/koodam/api/v1alpha1"
 	"github.com/mohanraj00/koodam/internal/agentingress"
 )
 
@@ -47,6 +50,55 @@ func (r *targetResolver) checkPolicies(ctx context.Context) error {
 		}
 	}
 	return nil
+}
+
+// lookup reads the Agent, its run Job and the run pods, and returns the target of the sole
+// eligible pod. If the namespace has no configured guard, it refuses with ErrTargetUnavailable and
+// makes no read.
+func (r *targetResolver) lookup(ctx context.Context, namespace, agent string) (target, error) {
+	if _, ok := r.guards[namespace]; !ok {
+		return target{}, ErrTargetUnavailable
+	}
+	a := &corev1alpha1.Agent{}
+	if err := r.get(ctx, namespace, agent, a); err != nil {
+		return target{}, err
+	}
+	port, job, err := checkAgent(a, namespace, agent)
+	if err != nil {
+		return target{}, err
+	}
+	t := target{namespace: namespace, agent: agent, agentUID: a.UID, job: job}
+	j := &batchv1.Job{}
+	if err := r.get(ctx, namespace, job, j); err != nil {
+		return target{}, err
+	}
+	if err := checkJob(j, t); err != nil {
+		return target{}, err
+	}
+	t.jobUID = j.UID
+	pods := &corev1.PodList{}
+	if err := r.list(ctx, pods, client.InNamespace(namespace),
+		client.MatchingLabels{targetAgentLabel: agent, targetRunLabel: job}); err != nil {
+		return target{}, ErrTargetUnavailable
+	}
+	var selected *corev1.Pod
+	for i := range pods.Items {
+		if !eligiblePod(&pods.Items[i], t) {
+			continue
+		}
+		if selected != nil {
+			return target{}, ErrTargetUnavailable
+		}
+		selected = &pods.Items[i]
+	}
+	if selected == nil {
+		return target{}, ErrTargetUnavailable
+	}
+	if t.addr, err = podAddress(selected, port); err != nil {
+		return target{}, err
+	}
+	t.pod, t.podUID = selected.Name, selected.UID
+	return t, nil
 }
 
 // checkPolicy reads the configured Agent NetworkPolicy of g and compares it to g.
@@ -76,6 +128,27 @@ func (r *targetResolver) get(ctx context.Context, namespace, name string, obj cl
 		return ErrTargetAbsent
 	}
 	if err != nil {
+		return ErrTargetUnavailable
+	}
+	return nil
+}
+
+// list reads the objects of opts into list. It checks ctx as get does. The caller gives no limit
+// and no continue token. A list with a continue token or a nonzero remaining item count is partial
+// and gives ErrTargetUnavailable: a partial list cannot prove that a pod is the sole eligible pod.
+// list does not read a next page and does not try again.
+func (r *targetResolver) list(ctx context.Context, list client.ObjectList, opts ...client.ListOption) error {
+	if ctx.Err() != nil {
+		return ErrTargetUnavailable
+	}
+	err := r.reader.List(ctx, list, opts...)
+	if err != nil || ctx.Err() != nil {
+		return ErrTargetUnavailable
+	}
+	if list.GetContinue() != "" {
+		return ErrTargetUnavailable
+	}
+	if n := list.GetRemainingItemCount(); n != nil && *n != 0 {
 		return ErrTargetUnavailable
 	}
 	return nil
