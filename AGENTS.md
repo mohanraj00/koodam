@@ -64,6 +64,7 @@ Flag these as high priority in a PR review:
 - A dependency with a licence that is not Apache-2.0, MIT, BSD-2-Clause or BSD-3-Clause.
 - A number in the README or a doc with no results file.
 - A removed or weaker test check, or lint that is turned off.
+- A local path, a user name or a private repository name in a file, a commit message or the PR text.
 - A workflow change that adds a trigger, a permission or a secret, or removes a SHA pin.
 
 Do not review these paths: `zz_generated.*`, `config/crd/bases/`, `config/rbac/role.yaml`, `charts/koodam/files/`, `charts/koodam/crds/`, `internal/usage/prices/*.json` and `docs/results/`. Review the source of a generated file instead.
@@ -105,7 +106,7 @@ End a code review with one line. If the PR meets a condition of gate 3, write `S
 
 ## Evidence
 
-The spikes that decide each version are in the private `os-initiatives` project. The stage 1 and stage 2 spike code is in `/Users/mohangraj/Reboot/public/jobkey-spike/`. Use it as the reference for the lifecycle, not as code to copy.
+The spikes that decide each version are in a private repository of the maintainer. The stage 1 and stage 2 spike code is the reference for the lifecycle. Use it as a reference, not as code to copy. If you need the spike code, ask the maintainer for its location. Do not write a local path or a private repository name in this repository.
 
 ## Writing
 
