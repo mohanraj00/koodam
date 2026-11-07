@@ -72,6 +72,13 @@ vet: ## Run go vet against code.
 test: manifests generate fmt vet setup-envtest ## Run tests.
 	KUBEBUILDER_ASSETS="$(shell "$(ENVTEST)" use $(ENVTEST_K8S_VERSION) --bin-dir "$(LOCALBIN)" -p path)" go test $$(go list ./... | grep -v /e2e) -coverprofile cover.out
 
+.PHONY: test-tools
+test-tools: ## Run the Python tests of tools/.
+	python3 -B -m unittest discover -s tests -p 'test_*.py'
+
+.PHONY: check
+check: test test-tools ## Run the local checks before a push.
+
 # The e2e tests need kind, helm and kubectl. They build the manager image, load it into kind,
 # and install charts/koodam with the bundled gateway. Then they run Agents and probe the
 # credentials of each run after the run ends.
