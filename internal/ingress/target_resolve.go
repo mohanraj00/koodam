@@ -25,6 +25,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	networkingv1 "k8s.io/api/networking/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	apivalidation "k8s.io/apimachinery/pkg/api/validation"
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
@@ -50,6 +51,54 @@ func (r *targetResolver) checkPolicies(ctx context.Context) error {
 		}
 	}
 	return nil
+}
+
+// resolve returns the target of the Agent agent in the run namespace namespace.
+//
+// Caller contract: the handler calls resolve only after Reviewer.Review returned nil for the same
+// namespace and agent, thus after TokenReview and SubjectAccessReview. resolve does no
+// authentication or authorization. The later handler wiring must prove this order.
+//
+// If a name is not valid, resolve returns ErrRoute. If the resolver is not configured, it returns
+// ErrTargetUnavailable. If namespace is not a configured run namespace, it returns ErrTargetAbsent.
+// In these cases it reads no object. Then it reads the Agent, its run Job and the pods with the
+// reserved labels, and selects the sole eligible pod. Then it reads the Agent, the Job and the pod
+// list again, and reads the selected pod. Each of these reads must give the same target. Last, it
+// reads the Agent NetworkPolicy of the namespace and compares it to the guard. The caller does not
+// supply a URL, an address or a port.
+//
+// A missing Agent, an Agent with no ingress port, and a missing Job on the first read give
+// ErrTargetAbsent. All other refusals give ErrTargetUnavailable: an Agent or Job that is not ready
+// or has ended, a Running Agent with no run Job in its status yet, a bad owner, a partial pod list,
+// no eligible pod or two or more, a bad port or address, a policy that is missing or different, an
+// API error, an end of ctx and a change after the first read. resolve gives ctx to each read. If
+// ctx ends, it makes no further read. On a refusal, it returns an empty target.
+//
+// The checks do not fence the connect. The pod can change, or its IP can go to a different pod,
+// after the last read. This is the approved trust limit of the cluster network.
+func (r *targetResolver) resolve(ctx context.Context, namespace, agent string) (target, error) {
+	if len(apivalidation.ValidateNamespaceName(namespace, false)) > 0 ||
+		len(apivalidation.NameIsDNSSubdomain(agent, false)) > 0 {
+		return target{}, ErrRoute
+	}
+	if !r.configured() {
+		return target{}, ErrTargetUnavailable
+	}
+	g, ok := r.guards[namespace]
+	if !ok {
+		return target{}, ErrTargetAbsent
+	}
+	first, err := r.lookup(ctx, namespace, agent)
+	if err != nil {
+		return target{}, err
+	}
+	if err := r.recheck(ctx, first); err != nil {
+		return target{}, ErrTargetUnavailable
+	}
+	if err := r.checkPolicy(ctx, g); err != nil || ctx.Err() != nil {
+		return target{}, ErrTargetUnavailable
+	}
+	return first, nil
 }
 
 // lookup reads the Agent, its run Job and the run pods, and returns the target of the sole
@@ -99,6 +148,27 @@ func (r *targetResolver) lookup(ctx context.Context, namespace, agent string) (t
 	}
 	t.pod, t.podUID = selected.Name, selected.UID
 	return t, nil
+}
+
+// recheck reads the Agent, the Job and the pod list again, then reads the pod of first. Each read
+// must give exactly first: the same UIDs, run Job, labels, owners, readiness, address and port.
+func (r *targetResolver) recheck(ctx context.Context, first target) error {
+	again, err := r.lookup(ctx, first.namespace, first.agent)
+	if err != nil || again != first {
+		return ErrTargetUnavailable
+	}
+	p := &corev1.Pod{}
+	if err := r.get(ctx, first.namespace, first.pod, p); err != nil {
+		return ErrTargetUnavailable
+	}
+	if p.Name != first.pod || p.UID != first.podUID || !eligiblePod(p, first) {
+		return ErrTargetUnavailable
+	}
+	addr, err := podAddress(p, int32(first.addr.Port()))
+	if err != nil || addr != first.addr {
+		return ErrTargetUnavailable
+	}
+	return nil
 }
 
 // checkPolicy reads the configured Agent NetworkPolicy of g and compares it to g.
