@@ -47,6 +47,7 @@ import (
 const (
 	tgNamespace      = "runs"
 	tgOtherNamespace = "runs-b"
+	tgUpperNamespace = "Runs"
 	tgAgentName      = "web"
 	tgJobName        = "kd-web"
 	tgPodName        = "kd-web-x7k2p"
@@ -58,9 +59,11 @@ const (
 	tgPodIP          = "10.244.1.7"
 	tgPortSuffix     = ":8080"
 	tgAddr           = tgPodIP + tgPortSuffix
+	tgNewPodIP       = "10.244.1.8"
 	tgOther          = "other"
 	tgOtherJob       = "kd-other"
 	tgOtherPod       = "kd-other-x7k2p"
+	tgNextJob        = "kd-web-2"
 	tgInit           = "init"
 	tgNameKey        = "app.kubernetes.io/name"
 	tgInstanceKey    = "app.kubernetes.io/instance"
@@ -87,9 +90,16 @@ const (
 	opGetAgent  = getPrefix + agentKind
 	opGetJob    = getPrefix + jobKind
 	opListPods  = "list " + podKind
+	opGetPod    = getPrefix + podKind
 	opGetPolicy = getPrefix + policyKind
 	opOther     = "unexpected read"
 )
+
+// resolveReads are the exact reads of a resolve that passes. finalRead is the index of the first
+// read of the recheck.
+var resolveReads = []string{opGetAgent, opGetJob, opListPods, opGetAgent, opGetJob, opListPods, opGetPod, opGetPolicy}
+
+const finalRead = 3
 
 // targetReader is a local fake client.Reader. It keeps the objects and the fixed names of the
 // reads only in memory in this process. It has no write method. It does not end a read when the
@@ -350,4 +360,9 @@ func refusedTarget(t *testing.T, got target, err, want error) {
 	if strings.Contains(err.Error(), targetCanary) {
 		t.Fatal("the resolver error contains the API error detail")
 	}
+}
+
+// readsAre is true if ops is exactly the first n reads of a resolve that passes.
+func readsAre(ops []string, n int) bool {
+	return n <= len(resolveReads) && slices.Equal(ops, resolveReads[:n])
 }

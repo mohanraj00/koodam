@@ -80,7 +80,7 @@ func TestNewTargetResolverRefuses(t *testing.T) {
 		{litCaseEmptyNS, false, []agentingress.PolicyGuard{g("")}},
 		{"wildcard namespace", false, []agentingress.PolicyGuard{g("*")}},
 		{"wildcard after a valid namespace", false, []agentingress.PolicyGuard{g(tgNamespace), g("*")}},
-		{litCaseUpperNS, false, []agentingress.PolicyGuard{g("Runs")}},
+		{litCaseUpperNS, false, []agentingress.PolicyGuard{g(tgUpperNamespace)}},
 		{"namespace with a dot", false, []agentingress.PolicyGuard{g("runs.a")}},
 		{"duplicate namespace", false, []agentingress.PolicyGuard{g(tgNamespace), g(tgNamespace)}},
 		{"invalid policy name", false, []agentingress.PolicyGuard{{Namespace: tgNamespace, Name: "Bad_Name",
@@ -108,6 +108,29 @@ func TestNewTargetResolverRefuses(t *testing.T) {
 				t.Fatal("newTargetResolver read an object")
 			}
 		})
+	}
+}
+
+// TestNewTargetResolverCopies proves that a change to the configuration after the constructor
+// does not change the guards of the resolver.
+func TestNewTargetResolverCopies(t *testing.T) {
+	f := newTargetWorld(t.Context())
+	guards := []agentingress.PolicyGuard{tgGuard(tgNamespace), tgGuard(tgOtherNamespace)}
+	r, err := newTargetResolver(f, guards)
+	if err != nil {
+		t.Fatal("newTargetResolver refused the two valid guards")
+	}
+	guards[0].Name = tgOther
+	guards[0].Namespace = tgOther
+	guards[0].ProxyLabels[tgComponentKey] = tgOther
+	guards[1].ProxyLabels[tgInstanceKey] = tgOther
+	if err := r.checkPolicies(f.ctx); err != nil {
+		t.Fatal("a change to the configuration changed the startup policy check")
+	}
+	f.ops = nil
+	got, err := r.resolve(f.ctx, tgNamespace, tgAgentName)
+	if err != nil || got != tgWant() || !readsAre(f.ops, len(resolveReads)) {
+		t.Fatal("a change to the configuration changed the resolve")
 	}
 }
 
