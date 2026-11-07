@@ -33,18 +33,28 @@ A comment or a review with other text does not start the workflow. The comment t
 
 ### Claude review design
 
-An issue comment event reads the workflow from `main`, so a PR cannot change this workflow for its own review. The workflow has two jobs.
+An issue comment event reads the workflow from `main`, so a PR cannot change this workflow for its own review. The workflow has three jobs.
+
+The `gate` job has `contents: read` and `pull-requests: read` only, with no secret and no environment. It runs [tools/claude_review.py](../tools/claude_review.py) from the `main` checkout. It reads the PR and its comments, and it stops the run in these conditions:
+
+1. The PR head is not in this repository, and the PR does not have the label `ready-for-review`.
+2. A comment of the workflow bot already has a review of the same kind for the current head.
+3. The workflow bot has already posted 3 comments on the PR. Each run that posts counts, also a failed run.
+
+A failed run does not stop a new request for the same head. The job prints the reason in the log and posts no comment. If the gate stops the run, the `review` job and the `post` job do not run.
+
+Requests on one PR run one at a time, so the gate sees the comment of the run before. GitHub keeps only one waiting run for each PR. If a third request comes while one run is active and one waits, GitHub cancels the waiting run.
 
 The `review` job has `contents: read` only. It uses the `claude-review` environment, which holds the `CLAUDE_CODE_OAUTH_TOKEN` secret. Only the CLI step gets the secret. The environment needs a deployment branch rule for `main`. The job does these steps:
 
-1. It checks out `main` and fetches the PR commits as Git objects only. It never checks out PR files, so the PR cannot supply instructions, settings or code.
+1. It checks out `main` and fetches the PR commits as Git objects only. It never checks out PR files, so the PR cannot supply instructions, settings or code. If the PR head is not the head that the gate checked, the job fails.
 2. It writes the diff with `git diff --no-ext-diff --no-textconv -U20 origin/main...pr/head`. If the diff is empty, the job fails.
 3. It installs one exact version of the Claude Code CLI and checks the SHA-512 value of the package.
 4. It runs the CLI in restricted mode with only the `Read`, `Grep` and `Glob` tools, no MCP server, no slash command and a turn limit. These tools cannot read `/proc`. The prompt says that the diff is untrusted data.
 5. It checks the JSON result: `type` is `result`, `subtype` is `success`, `is_error` is false, `result` is not empty and `permission_denials` is empty. If a check fails, the job fails.
 6. It keeps the review text and the head SHA in an artifact.
 
-The `post` job has `contents: read`, `issues: write` and `pull-requests: write` only, with no secret and no environment. A comment on a PR needs `pull-requests: write`. It runs [tools/claude_review.py](../tools/claude_review.py) from the `main` checkout. The first line of the comment names the head SHA and says that the review is advisory. If the `review` job failed, the comment holds only `NO VALID CLAUDE REVIEW` and the head SHA.
+The `post` job has `contents: read`, `issues: write` and `pull-requests: write` only, with no secret and no environment. A comment on a PR needs `pull-requests: write`. It runs [tools/claude_review.py](../tools/claude_review.py) from the `main` checkout. The first line of the comment names the kind of review and the head SHA, and says that the review is advisory. If the `review` job failed, the comment holds only `NO VALID CLAUDE REVIEW` and the head SHA.
 
 The `post` job writes as the workflow bot. A mention in the bot comment can start a review, and a later gate can trust records from this bot. Thus the script treats the model text as untrusted. It escapes `&` and `<`, changes each `@` to a character that makes no mention, and limits the length.
 
