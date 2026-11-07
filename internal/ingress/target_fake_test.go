@@ -18,8 +18,11 @@ package ingress
 
 import (
 	"context"
+	"maps"
 	"net/netip"
 	"reflect"
+	"slices"
+	"strings"
 	"testing"
 
 	batchv1 "k8s.io/api/batch/v1"
@@ -28,6 +31,7 @@ import (
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
@@ -56,6 +60,8 @@ const (
 	tgAddr           = tgPodIP + tgPortSuffix
 	tgOther          = "other"
 	tgOtherJob       = "kd-other"
+	tgOtherPod       = "kd-other-x7k2p"
+	tgInit           = "init"
 	tgNameKey        = "app.kubernetes.io/name"
 	tgInstanceKey    = "app.kubernetes.io/instance"
 	tgComponentKey   = "app.kubernetes.io/component"
@@ -74,9 +80,13 @@ const targetCanary = "target-detail-canary"
 // The fixed names of the fake reads. A failure message never contains an object, an error or an
 // address.
 const (
+	podKind    = "Pod"
 	policyKind = "NetworkPolicy"
 
 	getPrefix   = "get "
+	opGetAgent  = getPrefix + agentKind
+	opGetJob    = getPrefix + jobKind
+	opListPods  = "list " + podKind
 	opGetPolicy = getPrefix + policyKind
 	opOther     = "unexpected read"
 )
@@ -91,20 +101,36 @@ type targetReader struct {
 	otherCtx bool
 	// badQuery is true if a read had an option or a list query that is not the exact run query.
 	badQuery bool
+	// listNamespace, listAgent and listRun are the sole namespace and labels of the exact run query.
+	listNamespace string
+	listAgent     string
+	listRun       string
+	// raw makes a list return each stored pod, with no namespace or label filter.
+	raw bool
 	// before runs before read i, and fail gives the error of read i.
 	before func(i int)
 	fail   map[int]error
+	// listMeta gives the list metadata of read i. A list read with no entry is a complete list.
+	listMeta map[int]metav1.ListMeta
 }
 
-// newTargetWorld returns a fake with the guard policy in the two configured run namespaces.
+// newTargetWorld returns a fake with one valid running target and the guard policy in the two
+// configured run namespaces.
 func newTargetWorld(ctx context.Context) *targetReader {
-	f := &targetReader{ctx: ctx, objs: map[string]client.Object{}, fail: map[int]error{}}
-	f.put(tgPolicy(tgNamespace), tgPolicy(tgOtherNamespace))
+	f := &targetReader{ctx: ctx, objs: map[string]client.Object{}, fail: map[int]error{},
+		listMeta: map[int]metav1.ListMeta{}, listNamespace: tgNamespace, listAgent: tgAgentName, listRun: tgJobName}
+	f.put(tgAgent(), tgJob(), tgPod(tgPodName, tgPodUID), tgPolicy(tgNamespace), tgPolicy(tgOtherNamespace))
 	return f
 }
 
 func objKind(o runtime.Object) string {
 	switch o.(type) {
+	case *corev1alpha1.Agent:
+		return agentKind
+	case *batchv1.Job:
+		return jobKind
+	case *corev1.Pod, *corev1.PodList:
+		return podKind
 	case *networkingv1.NetworkPolicy:
 		return policyKind
 	}
@@ -121,6 +147,18 @@ func (f *targetReader) put(objs ...client.Object) {
 
 func (f *targetReader) remove(kind, namespace, name string) {
 	delete(f.objs, storeKey(kind, namespace, name))
+}
+
+func (f *targetReader) agent() *corev1alpha1.Agent {
+	return f.objs[storeKey(agentKind, tgNamespace, tgAgentName)].(*corev1alpha1.Agent)
+}
+
+func (f *targetReader) job() *batchv1.Job {
+	return f.objs[storeKey(jobKind, tgNamespace, tgJobName)].(*batchv1.Job)
+}
+
+func (f *targetReader) pod() *corev1.Pod {
+	return f.objs[storeKey(podKind, tgNamespace, tgPodName)].(*corev1.Pod)
 }
 
 func (f *targetReader) policy() *networkingv1.NetworkPolicy {
@@ -160,13 +198,36 @@ func (f *targetReader) Get(ctx context.Context, key client.ObjectKey, obj client
 	return nil
 }
 
-// List records an unexpected read and refuses it. The startup policy check makes no list.
-func (f *targetReader) List(ctx context.Context, _ client.ObjectList, _ ...client.ListOption) error {
-	f.badQuery = true
-	if err := f.start(ctx, opOther); err != nil {
+func (f *targetReader) List(ctx context.Context, list client.ObjectList, opts ...client.ListOption) error {
+	pods, ok := list.(*corev1.PodList)
+	op := opOther
+	if ok {
+		op = opListPods
+	}
+	i := len(f.ops)
+	if err := f.start(ctx, op); err != nil {
 		return err
 	}
-	return apierrors.NewBadRequest("")
+	lo := &client.ListOptions{}
+	lo.ApplyOptions(opts)
+	want := labels.SelectorFromSet(labels.Set{targetAgentLabel: f.listAgent, targetRunLabel: f.listRun})
+	if !ok || lo.Namespace != f.listNamespace || lo.LabelSelector == nil || lo.LabelSelector.String() != want.String() ||
+		lo.FieldSelector != nil || lo.Limit != 0 || lo.Continue != "" {
+		f.badQuery = true
+	}
+	if !ok || lo.LabelSelector == nil {
+		return apierrors.NewBadRequest("")
+	}
+	pods.ListMeta = f.listMeta[i]
+	pods.Items = nil
+	for _, k := range slices.Sorted(maps.Keys(f.objs)) {
+		p, isPod := f.objs[k].(*corev1.Pod)
+		if !isPod || (!f.raw && (p.Namespace != lo.Namespace || !lo.LabelSelector.Matches(labels.Set(p.Labels)))) {
+			continue
+		}
+		pods.Items = append(pods.Items, *p.DeepCopy())
+	}
+	return nil
 }
 
 var _ client.Reader = (*targetReader)(nil)
@@ -211,6 +272,23 @@ func tgPod(name string, uid types.UID) *corev1.Pod {
 		Status: corev1.PodStatus{Phase: corev1.PodRunning, PodIP: tgPodIP,
 			Conditions: []corev1.PodCondition{{Type: corev1.PodReady, Status: corev1.ConditionTrue}}},
 	}
+}
+
+// tgOtherRun returns a valid Agent, Job and pod with the other names in namespace. All the names,
+// labels and owner references agree, and the objects have the given UIDs.
+func tgOtherRun(namespace string, agentUID, jobUID, podUID types.UID) []client.Object {
+	a := tgAgent()
+	a.Name, a.Namespace, a.UID, a.Status.Job = tgOther, namespace, agentUID, tgOtherJob
+	j := tgJob()
+	j.Name, j.Namespace, j.UID = tgOtherJob, namespace, jobUID
+	j.Labels[targetAgentLabel] = tgOther
+	j.OwnerReferences[0].Name, j.OwnerReferences[0].UID = tgOther, agentUID
+	p := tgPod(tgOtherPod, podUID)
+	p.Namespace = namespace
+	p.Labels[targetAgentLabel], p.Labels[targetRunLabel] = tgOther, tgOtherJob
+	p.Labels["batch.kubernetes.io/job-name"] = tgOtherJob
+	p.OwnerReferences[0].Name, p.OwnerReferences[0].UID = tgOtherJob, jobUID
+	return []client.Object{a, j, p}
 }
 
 func tgProxyLabels() map[string]string {
@@ -259,4 +337,17 @@ func tgResolver(t *testing.T, f *targetReader) *targetResolver {
 func tgWant() target {
 	return target{namespace: tgNamespace, agent: tgAgentName, agentUID: tgAgentUID, job: tgJobName,
 		jobUID: tgJobUID, pod: tgPodName, podUID: tgPodUID, addr: netip.MustParseAddrPort(tgAddr)}
+}
+
+// refusedTarget fails if got is not empty or if err is not exactly want. A fixed sentinel has no
+// canary, but the check also proves that no wrapper added the API error text.
+func refusedTarget(t *testing.T, got target, err, want error) {
+	t.Helper()
+	if got != (target{}) || err != want {
+		t.Fatalf("resolve did not refuse with the fixed error: empty target %t, fixed error %t",
+			got == (target{}), err == want)
+	}
+	if strings.Contains(err.Error(), targetCanary) {
+		t.Fatal("the resolver error contains the API error detail")
+	}
 }
