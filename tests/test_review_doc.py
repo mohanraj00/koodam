@@ -35,5 +35,16 @@ class ApprovalRecordTest(unittest.TestCase):
                         self.assertEqual(binding.findall(body), [])
 
 
+class RunIdTest(unittest.TestCase):
+    # The template test gives no base in its cases of a run ID that is not valid, so each case fails on the base.
+    # This test gives a valid base, so it checks the run ID check alone.
+    def test_a_review_with_a_valid_base_and_no_valid_run_fails(self):
+        head, base = 'a' * 40, 'c' * 40
+        self.assertTrue(claude_review.comment_body('success', head, 'Findings: 0', 'code', '42', base).startswith('<!-- claude-review:v2 '))
+        for run in (None, '', '0', '01', '4x', '1' * 21, '42\n<!-- x -->'):
+            with self.subTest(run=run):
+                self.assertEqual(claude_review.comment_body('success', head, 'Findings: 0', 'code', run, base),
+                                 claude_review.FAILED + '\n\nHead: ' + head)
+
 if __name__ == '__main__':
     unittest.main()
