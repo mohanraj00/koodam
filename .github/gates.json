@@ -1,0 +1,29 @@
+{
+  "version": 1,
+  "code": [
+    "api/*", "cmd/*", "internal/*", "config/*", "charts/*", "hack/*", "images/*", "test/*", "tests/*", "tools/*",
+    ".devcontainer/*", ".custom-gcl.yml", ".dockerignore", ".gitignore", ".golangci.yml", ".goreleaser.yaml",
+    "Dockerfile", "Makefile", "PROJECT", "go.mod", "go.sum"
+  ],
+  "security_sources": [
+    "internal/gateway/*", "internal/egress/*", "internal/ingress/*", "internal/agentingress/*", "internal/webhook/*",
+    "internal/harness/*", "cmd/egress-proxy/*", "cmd/agent-admission/*", "cmd/harness-install/*", "images/workspace/*"
+  ],
+  "not_security": ["*_test.go", "*/testdata/*", "*.md"],
+  "boundaries": [
+    "tools/claude_review.py", "Agent.md",
+    "config/rbac/*", "config/network-policy/*",
+    "charts/koodam/templates/rbac.yaml", "charts/koodam/templates/serviceaccount.yaml",
+    "charts/koodam/templates/workspace-networkpolicy.yaml",
+    "cmd/koodam/commands.go", "cmd/koodam/profile.go", "cmd/koodam/ssh.go", "cmd/koodam/sshconfig.go",
+    "cmd/koodam/tunnel.go", "cmd/koodam/usage.go",
+    "internal/controller/agent_controller.go", "internal/controller/egress.go", "internal/controller/identity.go",
+    "internal/controller/sshkey.go", "internal/controller/workspace_gateway.go",
+    "internal/manifestgen/rbac_command.go", "hack/litellm-prices/main.go"
+  ],
+  "level1": ["tools/claude_review.py", "Agent.md", "api/*", "config/rbac/*", "internal/gateway/*", "charts/*"],
+  "generated": [
+    "*zz_generated.*", "config/crd/bases/*", "config/rbac/role.yaml", "charts/koodam/files/*", "charts/koodam/crds/*",
+    "internal/usage/prices/*.json"
+  ]
+}

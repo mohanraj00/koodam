@@ -1,0 +1,161 @@
+name: CI
+# The ci-ok skeleton of mohanraj00/.github, with the project jobs of koodam.
+# A docs-only PR skips the project jobs, and ci-ok still passes. The check job always runs.
+# Do not use paths-ignore, because a required check can then stay pending.
+on:
+  pull_request:
+  push:
+    branches: [main]
+permissions: {}
+jobs:
+  changes:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      pull-requests: read
+    outputs:
+      code: ${{ steps.classify.outputs.code }}
+    steps:
+      # The classify step reads .github/gates.json from the base branch, so a PR cannot mark its own change as docs.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.base.sha || github.sha }}
+          persist-credentials: false
+      - id: classify
+        uses: mohanraj00/.github/gates@fb951a2ad58ba1283efc2e909d4753202e5cc742
+        with:
+          check: classify
+  # The project check always runs. make check runs the Go unit tests and the Python tests of tools/.
+  check:
+    name: Unit tests
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@4b73464bb391d4059bd26b0524d20df3927bd417 # v6.3.0
+        with:
+          go-version-file: go.mod
+      - run: |
+          go mod tidy
+          make check
+  lint:
+    name: Lint
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@4b73464bb391d4059bd26b0524d20df3927bd417 # v6.3.0
+        with:
+          go-version-file: go.mod
+      - name: Check linter configuration
+        run: make lint-config
+      - name: Run linter
+        run: make lint
+  test-e2e:
+    name: E2E on kind
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    permissions:
+      contents: read
+    steps:
+      # A PR from a fork fails here until the maintainer adds the label ok-to-test.
+      # This step fails and does not skip, because a skipped job counts as a pass in ci-ok.
+      - name: Check the label ok-to-test
+        if: >-
+          github.event_name == 'pull_request' &&
+          github.event.pull_request.head.repo.full_name != github.repository &&
+          !contains(github.event.pull_request.labels.*.name, 'ok-to-test')
+        run: |
+          echo "::error::A PR from a fork needs the label ok-to-test. After the maintainer adds it, push a commit or close and reopen the PR."
+          exit 1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@4b73464bb391d4059bd26b0524d20df3927bd417 # v6.3.0
+        with:
+          go-version-file: go.mod
+      - name: Install the latest version of kind
+        run: |
+          curl -Lo ./kind https://kind.sigs.k8s.io/dl/latest/kind-linux-$(go env GOARCH)
+          chmod +x ./kind
+          sudo mv ./kind /usr/local/bin/kind
+      - name: Verify kind installation
+        run: kind version
+      - uses: azure/setup-helm@9bc31f4ebc9c6b171d7bfbaa5d006ae7abdb4310 # v5.0.1
+        with:
+          version: v4.2.3
+      - name: Run the e2e tests
+        run: |
+          go mod tidy
+          make test-e2e
+  govulncheck:
+    name: govulncheck
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@4b73464bb391d4059bd26b0524d20df3927bd417 # v6.3.0
+        with:
+          go-version-file: go.mod
+      # Fail if the code calls a function with a known vulnerability.
+      - run: go run golang.org/x/vuln/cmd/govulncheck@v1.9.0 ./...
+  chart:
+    name: Lint and render the chart
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@4b73464bb391d4059bd26b0524d20df3927bd417 # v6.3.0
+        with:
+          go-version-file: go.mod
+      - uses: azure/setup-helm@9bc31f4ebc9c6b171d7bfbaa5d006ae7abdb4310 # v5.0.1
+        with:
+          version: v4.2.3
+      # The check fails if the chart CRD or the chart RBAC is not the same as config/.
+      - run: make helm-check
+  # The required check. Each project job is in needs. A skipped job passes. A failed or cancelled job fails.
+  ci-ok:
+    needs: [changes, check, lint, test-e2e, govulncheck, chart]
+    if: always()
+    runs-on: ubuntu-24.04
+    timeout-minutes: 2
+    permissions: {}
+    steps:
+      - name: Collect the project jobs
+        env:
+          NEEDS: ${{ toJSON(needs) }}
+        run: |
+          python3 -B -I -c '
+          import json, os, sys
+          needs = json.loads(os.environ["NEEDS"])
+          bad = sorted(k for k, v in needs.items() if v["result"] not in ("success", "skipped"))
+          if needs.get("changes", {}).get("result") != "success":
+              bad = sorted(set(bad) | {"changes"})
+          print("\n".join("%s: %s" % (k, v["result"]) for k, v in sorted(needs.items())))
+          sys.exit("Failed jobs: " + ", ".join(bad) if bad else 0)
+          '
