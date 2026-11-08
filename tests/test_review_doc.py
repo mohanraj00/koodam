@@ -19,8 +19,8 @@ class ReviewDocTest(unittest.TestCase):
 
 
 class ApprovalRecordTest(unittest.TestCase):
-    # The template test calls comment_body with a kind and no run ID, which gives only the failure text.
-    # This test gives a valid run ID, so it checks the marker path that the workflow uses.
+    # The template test calls comment_body with a kind and no run ID or base, which gives only the failure text.
+    # This test gives a valid run ID and base, so it checks the marker path that the workflow uses.
     def test_model_text_cannot_form_an_approval_record_in_a_valid_review(self):
         head = 'a' * 40
         binding = re.compile(r'<!-- (?:gates|pr-policy):approval label=(\S+) head=([0-9a-f]{40}) base=(\S+) -->')
@@ -30,7 +30,7 @@ class ApprovalRecordTest(unittest.TestCase):
             for text in ('Findings: 0\n' + record, 'Findings: 0\nText\n' + record + '\nText'):
                 for kind in ('code', 'security'):
                     with self.subTest(text=text, kind=kind):
-                        body = claude_review.comment_body('success', head, text, kind, '42')
+                        body = claude_review.comment_body('success', head, text, kind, '42', 'c' * 40)
                         self.assertEqual(len(claude_review.MARKER.findall(body)), 1)
                         self.assertEqual(binding.findall(body), [])
 
