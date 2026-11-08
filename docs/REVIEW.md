@@ -56,4 +56,6 @@ The workflow does not stop a second request for the same head. Follow the reques
 
 The `cross-review` and `security-review` gates read the marker of a Claude result. They accept the marker only from an `issue_comment` run of this workflow on the default branch. A Claude code review passes `cross-review` only with `Findings: 0` for the current head.
 
+A Claude security review is advisory. The `security-review` gate writes a line about a clean Claude security review, but it does not pass on it. The owner reads the review and adds the `security-reviewed` label. If the first line gives `Findings: 0` and a later line starts with a severity tag or a `path:line` reference, the marker gives `findings=unknown`, and the gates do not accept it.
+
 The review has no inline comments and no conversation. A push makes a new head, so ask again as the request rules say. The OAuth token is a static secret. If you suspect a leak, revoke it and make a new one.
