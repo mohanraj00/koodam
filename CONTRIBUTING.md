@@ -42,14 +42,14 @@ The kind e2e job does not run on a PR from a fork until the maintainer adds the 
 
 ## 4. Dependencies
 
-Use only dependencies with the licence Apache-2.0, MIT, BSD-2-Clause or BSD-3-Clause. Do not add a GPL, AGPL or LGPL dependency.
+The `## Contributions` section of [CONSTITUTION.md](CONSTITUTION.md#contributions) has the licence rule for dependencies.
 
 ## 5. Credentials
 
-Never put a credential (a key, a token, a password or a kubeconfig) in a test fixture, a log line, an error message or the PR text. If you find a security problem, do not open a public issue. Use the private vulnerability reporting of this repo.
+The `## Principles` section of [CONSTITUTION.md](CONSTITUTION.md#principles) has the credential rule. For a contributor, the rule also applies to a password, a kubeconfig and the PR text. If you find a security problem, do not open a public issue. Use the private vulnerability reporting of this repo.
 
 ## 6. Review
 
-The maintainer reviews each PR. Changes to `api/`, `config/rbac/`, `internal/gateway/`, `charts/` and `.github/` need a review from the code owner. An agent review starts only after the maintainer adds the label `ready-for-review`.
+The maintainer reviews each PR. Changes to `api/`, `config/rbac/`, `internal/gateway/`, `charts/` and `.github/` need a review from the code owner. The "Fork PRs" section of [docs/STANDARD.md](docs/STANDARD.md#fork-prs) has the maintainer approval that an agent review needs.
 
 A PR from a fork with no activity for 30 days is closed. You can reopen it when you continue the work.
