@@ -45,7 +45,7 @@ jobs:
       merge_base: ${{ steps.gate.outputs.merge_base }}
     steps:
       - id: gate
-        uses: mohanraj00/.github/gates@b988448e8df869ec210865c02d21affa01dee3f4
+        uses: mohanraj00/.github/gates@3af13286de74e18657601060d200a7b9cc667c8d
         with:
           check: claude-review
   review:

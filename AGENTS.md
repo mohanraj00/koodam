@@ -39,7 +39,7 @@ A PR merges only when all 4 gates pass.
    - log lines, events, status fields or errors that can hold a credential.
 
    The other harness does it. It checks credential leaks (logs, status, errors, fixtures, PR text), each RBAC verb and its reason, the revoke-first order, and input that reaches a shell, a URL or a file path. Post the result as a PR comment that starts with `Security review (<harness>):`.
-4. **Findings closed.** Fix each finding, or write the reason to not fix it in the PR. A finding out of scope becomes a new issue.
+4. **Findings closed.** Fix each finding, or write the reason to not fix it in the PR. A finding out of scope becomes a new issue. For a finding in the gate files that the project copies from `mohanraj00/.github`, use the stop rule in [docs/STANDARD.md](docs/STANDARD.md). Do not change the copy.
 
 ### Outside PRs
 

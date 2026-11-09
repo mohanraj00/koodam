@@ -29,7 +29,7 @@ jobs:
         with:
           ref: ${{ github.event.pull_request.base.sha }}
           persist-credentials: false
-      - uses: mohanraj00/.github/gates@b988448e8df869ec210865c02d21affa01dee3f4
+      - uses: mohanraj00/.github/gates@3af13286de74e18657601060d200a7b9cc667c8d
         with:
           check: cross-review
   security-review:
@@ -46,7 +46,7 @@ jobs:
         with:
           ref: ${{ github.event.pull_request.base.sha }}
           persist-credentials: false
-      - uses: mohanraj00/.github/gates@b988448e8df869ec210865c02d21affa01dee3f4
+      - uses: mohanraj00/.github/gates@3af13286de74e18657601060d200a7b9cc667c8d
         with:
           check: security-review
   acceptance:
@@ -63,6 +63,6 @@ jobs:
         with:
           ref: ${{ github.event.pull_request.base.sha }}
           persist-credentials: false
-      - uses: mohanraj00/.github/gates@b988448e8df869ec210865c02d21affa01dee3f4
+      - uses: mohanraj00/.github/gates@3af13286de74e18657601060d200a7b9cc667c8d
         with:
           check: acceptance
