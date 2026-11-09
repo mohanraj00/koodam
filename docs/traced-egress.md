@@ -80,7 +80,7 @@ Your account needs `list` on `pods` and `get` on `pods/log` in the namespace of 
 
 ## The evidence
 
-The traced egress spike (#8) decided go on 2026-10-22. The results of its confirmatory run are in `spikes/traced-egress/results/score-test2.json` of the private `os-initiatives` project:
+The traced egress spike (#8) decided go on 2026-10-22. The results of its confirmatory run are in the file `score-test2.json` in the private spike repository of the maintainer:
 
 - 360 of 360 planted calls had a span with the correct run, with 0 wrong spans.
 - 0 of 23 bypass attempts got through. With no NetworkPolicy, 20 of 21 attempts got through.

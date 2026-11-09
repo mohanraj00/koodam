@@ -24,14 +24,14 @@ Work in parallel when the issues allow it. If you only do one issue, these rules
   - `go.mod` and `go.sum`;
   - `AGENTS.md`, `Makefile` and `.github/`.
 - Keep each PR small: about 400 changed lines or fewer, not counting generated files. Split a larger issue into PRs that each pass CI.
-- Run `make test` before each push. CI is the authority for lint.
+- Run `make check` before each push. It runs the Go tests and the Python tests of `tools/`. CI is the authority for lint.
 
 ## Review gates
 
-A PR merges only when all 4 gates pass. The PR template lists them.
+A PR merges only when all 4 gates pass.
 
 1. **CI.** All workflows pass.
-2. **Cross review.** The other harness reviews the diff against `main`. A PR from Claude Code gets a review from Codex (`codex exec review --base main`). A PR from Codex gets a review from Claude Code (`claude -p "<review prompt>" --permission-mode plan`). If the reviewer has no quota, use Antigravity (`agy -p "<review prompt>" --mode plan --sandbox`). Post the result as a PR comment that starts with `Review (<harness> <version>):`.
+2. **Cross review.** The other harness reviews the diff against `main`. Ask for it in a PR comment with the exact text in [docs/REVIEW.md](docs/REVIEW.md). If the GitHub reviewer is not available, run the review on your machine. A PR from Claude Code gets a review from Codex (`codex exec review --base main`). A PR from Codex gets a review from Claude Code (`claude -p "<review prompt>" --permission-mode plan`). If the reviewer has no quota, use Antigravity (`agy -p "<review prompt>" --mode plan --sandbox`). Post a local result as a PR comment that starts with `Review (<harness> <version>):`.
 3. **Security review, if necessary.** It is necessary if the PR has the label `security`, or changes one of these:
    - keys, tokens, Secrets, logins, SSH keys or host keys;
    - RBAC markers, Roles, ServiceAccounts or NetworkPolicy;
@@ -51,6 +51,27 @@ An outside PR comes from a fork, by a person who is not the maintainer. [CONTRIB
 - The labels `needs-issue` and `too-large` are markers for the maintainer. The PR Gate does not read them.
 
 Never pass `--dangerously-skip-permissions`, `--dangerously-bypass-approvals-and-sandbox` or `--dangerously-bypass-hook-trust` to a reviewer.
+
+## Review guidelines
+
+Flag these as high priority in a PR review:
+
+- A credential value (a gateway key, a token, a login) in a log, an event, the status, a test fixture, an error or the PR text.
+- A new verb in a `+kubebuilder:rbac` marker with no reason, or a wider Role, ServiceAccount or NetworkPolicy.
+- A break of the revoke-first order: the controller deletes a resource or reads the spend before it blocks the key.
+- Input from a user or an Agent spec that reaches a shell, a URL or a file path with no check.
+- A hand edit of a generated file.
+- A dependency with a licence that is not Apache-2.0, MIT, BSD-2-Clause or BSD-3-Clause.
+- A number in the README or a doc with no results file.
+- A removed or weaker test check, or lint that is turned off.
+- A local path, a user name or a private repository name in a file, a commit message or the PR text.
+- A workflow change that adds a trigger, a permission or a secret, or removes a SHA pin.
+
+Do not review these paths: `zz_generated.*`, `config/crd/bases/`, `config/rbac/role.yaml`, `charts/koodam/files/`, `charts/koodam/crds/`, `internal/usage/prices/*.json` and `docs/results/`. Review the source of a generated file instead.
+
+Report at most 3 nits. A nit is a style or naming issue with no effect on behavior. Put the nits after the defects.
+
+End a code review with one line. If the PR meets a condition of gate 3, write `Security review: needed`, with the reason. If not, write `Security review: not needed`. A security review does not end with this line.
 
 ## Autofix
 
@@ -85,7 +106,7 @@ Never pass `--dangerously-skip-permissions`, `--dangerously-bypass-approvals-and
 
 ## Evidence
 
-The spikes that decide each version are in the private `os-initiatives` project. The stage 1 and stage 2 spike code is in `/Users/mohangraj/Reboot/public/jobkey-spike/`. Use it as the reference for the lifecycle, not as code to copy.
+The spikes that decide each version are in a private repository of the maintainer. The stage 1 and stage 2 spike code is the reference for the lifecycle. Use it as a reference, not as code to copy. If you need the spike code, ask the maintainer for its location. Do not write a local path or a private repository name in this repository.
 
 ## Writing
 
