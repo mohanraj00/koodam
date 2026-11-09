@@ -23,7 +23,7 @@ jobs:
           ref: ${{ github.event.pull_request.base.sha || github.sha }}
           persist-credentials: false
       - id: classify
-        uses: mohanraj00/.github/gates@6817e9a870c867e8fa8214406fca538ac2c6028b
+        uses: mohanraj00/.github/gates@3af13286de74e18657601060d200a7b9cc667c8d
         with:
           check: classify
   # The project check always runs. make check runs the Go unit tests and the Python tests of tools/.
