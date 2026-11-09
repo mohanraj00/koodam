@@ -1,6 +1,6 @@
 # Project standard
 
-Version: 4
+Version: 6
 
 ## Documents
 
@@ -26,6 +26,15 @@ A harness loads instructions only from its checkout. Thus, the rule text must be
 
 The label `agent:claude-code` in nookku becomes `agent:claude`. Open branches keep their names until they merge.
 
+## Threat model
+
+The gates protect against these actors:
+
+- a fork contributor with no write access;
+- text in a diff or in a file that steers a model reviewer.
+
+The gates do not protect against an actor with write access. That actor uses the owner login and has the admin bypass, so a gate cannot stop it. The rules for agents control that actor.
+
 ## Reviews
 
 | Builder | Code reviewer | Security reviewer | Security fallback |
@@ -36,7 +45,7 @@ The label `agent:claude-code` in nookku becomes `agent:claude`. Open branches ke
 | No harness | Codex app | Codex security review | Claude workflow, with a security prompt |
 
 - If the code reviewer is not available, agy does the review. If agy built the change or is not available, the owner does a manual review.
-- Ask one time for each head commit, and at most 3 times for each PR.
+- Ask one time for each head commit, and at most 3 times for each PR. The `gate` job of the Claude workflow stops a second Claude review of one kind for a head, and a Claude review after 3 of one kind.
 - At the cap, stop the requests. Examine the approach, then report to the owner. The owner decides if more reviews are necessary.
 - When a finding shows a class of problem, fix all instances of the class in the same commit.
 - Do not make a commit only for a nit. Close the thread with a reason.
@@ -49,6 +58,13 @@ The label `agent:claude-code` in nookku becomes `agent:claude`. Open branches ke
 - The fallback starts if Codex reports a limit, or gives no result in 30 minutes. The 30 minutes is an estimate.
 - CI cannot verify a local agy result. For a local agy security result, the owner adds the `security-reviewed` label.
 - A Claude workflow security result is advisory. The `security-review` gate does not accept it. The owner reads the review, then adds the `security-reviewed` label. This is the same rule as for a local agy security result.
+
+The gates are the files of `mohanraj00/.github` and their copies in each project. Use this stop rule for a finding in the gates:
+
+- Fix a finding in the gates now if an actor of the threat model can reach it, and its severity is P0 or P1.
+- Otherwise, add it to "Known limits" in `README.md` of `mohanraj00/.github`, close the finding with a reason, and do not change code.
+- Collect the other fixes of the gates in one release each month. A project repins one time for each release.
+- A reviewer disagreement about the threat model goes to the owner.
 
 The review guidelines in `AGENTS.md` are short. They state what a failure looks like in the project, the paths to skip and the limit for nits. If a finding occurs again, add a check, a test or a line in these guidelines.
 
@@ -77,6 +93,13 @@ The shared categories are:
 Each project names its boundary files. It does not list all of its source. A code reviewer can report that a security review is necessary. Then the author adds the `security-needed` label, and the gate requires the review.
 
 After a clean security review, a new push needs a new review only if the new commits touch a listed path.
+
+The security review of `mohanraj00/.github` covers the copies of its files in each project. Thus these listed changes need no review:
+
+- an exact copy of a file of `mohanraj00/.github` at the pinned SHA;
+- a change of only the SHA in a pin line of the gates action, if the new SHA is on `main` of `mohanraj00/.github`.
+
+The gate proves each one. Each other listed change still needs a review. The PR stays level 1.
 
 ## Docs-only PRs
 
@@ -164,7 +187,7 @@ Stage 2 is the owner approval of the current head and base. The owner reads the 
 - Add the `ready-for-review` label. The gate writes an approval record for the head and base.
 - Approve the PR with the GitHub Approve button. Then run the failed `acceptance` job again, because a review does not start the gates.
 
-The `acceptance` check fails for a fork PR without this approval. No review starts before this.
+The `acceptance` check fails for a fork PR without this approval. No review starts before this. The `gate` job of the Claude workflow uses the same rule, so a Claude review of a fork PR does not start without this approval. The `review` job reviews only the head and base that the `gate` job approved.
 
 - The approval allows one code review, and one security review if the trigger applies.
 - A push removes the label, and an approval of an earlier commit does not count.
