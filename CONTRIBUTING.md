@@ -50,6 +50,6 @@ The `## Principles` section of [CONSTITUTION.md](CONSTITUTION.md#principles) has
 
 ## 6. Review
 
-The maintainer reviews each PR. Changes to `api/`, `config/rbac/`, `internal/gateway/`, `charts/` and `.github/` need a review from the code owner. The "Fork PRs" section of [docs/STANDARD.md](docs/STANDARD.md#fork-prs) has the maintainer approval that an agent review needs.
+The maintainer reviews each PR. The `## Governance` section of [CONSTITUTION.md](CONSTITUTION.md#governance) and the "Approvals" section of [docs/STANDARD.md](docs/STANDARD.md#approvals) have the approval levels. The owner merges each level 1 PR, for example a change to `api/`, `config/rbac/`, `internal/gateway/`, `charts/` or `.github/`. The "Fork PRs" section of [docs/STANDARD.md](docs/STANDARD.md#fork-prs) has the maintainer approval that an agent review needs.
 
 A PR from a fork with no activity for 30 days is closed. You can reopen it when you continue the work.
