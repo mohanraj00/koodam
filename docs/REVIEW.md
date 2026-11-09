@@ -1,27 +1,31 @@
 # Review rules
 
-These rules apply to every PR to `main`. [AGENTS.md](../AGENTS.md) owns the general workflow and the 4 review gates.
+These rules apply to every PR to `main`. [STANDARD.md](STANDARD.md) owns the review gates, the reviewer for each builder, the fallback, the request cap and the rules to close a finding. This file has the request texts and the design of the Claude review workflow.
 
 ## Cross-harness review
 
-A harness does not review its own change. The branch prefix or the `agent:` label names the harness that wrote the change. The reviews run on GitHub. No harness reviews a PR by default, so the PR author asks in a PR comment.
+The branch prefix or the `agent:` label names the harness that wrote the change. The reviews run on GitHub. No harness reviews a PR by default, so the PR author asks in a PR comment.
 
-| Builder | Code review comment | Security review comment |
-|---|---|---|
-| Claude Code | `@codex review` | `@codex security review` |
-| Codex | `@claude review this PR. Use the Review guidelines in AGENTS.md.` | `@claude do a security review of this PR. Use the Review guidelines in AGENTS.md.` |
-| agy | `@claude review this PR. Use the Review guidelines in AGENTS.md.` | `@claude do a security review of this PR. Use the Review guidelines in AGENTS.md.` |
+| Review | Request comment |
+|---|---|
+| Codex code review | `@codex review` |
+| Codex security review | `@codex security review` |
+| Claude code review | `@claude review this PR. Use the Review guidelines in AGENTS.md.` |
+| Claude security review | `@claude do a security review of this PR. Use the Review guidelines in AGENTS.md.` |
+
+[STANDARD.md](STANDARD.md) says which review each builder asks for.
 
 Follow these rules for each request:
 
 1. Ask when CI is green and the PR is ready.
 2. For a Codex code review request, write `Head: <sha>` on the next line of the comment, with the short SHA of the PR head commit. Do not add this line to a Claude request. The Claude review starts only for the exact text in the table, and its comment names the head that it reviewed.
 3. Write a security review request as the exact text in the table, with no other text in the comment. If the comment has other text, for example a `Head:` line, Codex does a code review and no security review. The Codex result names the commit that it reviewed.
-4. Ask one time for each head commit. Before you ask, read the PR comments. If a request names the current head, or comes after the last push, do not ask again.
-5. If you push fixes after a review, ask again for the new head. Ask at most 3 times for each PR. After that, ask the maintainer to review.
-6. Fix each real finding, or write on the PR why it is not a defect.
+4. Before you ask, read the PR comments. If a request names the current head, or comes after the last push, do not ask again.
+5. If you push fixes after a review, ask again for the new head.
 
-For an outside PR, do not ask for a review until the maintainer adds the label `ready-for-review`. The `gate` job of the Claude workflow also stops a Claude review of a fork PR without the stage 2 owner approval of the current head and base. If the GitHub reviewer is not available, use the local fallback in AGENTS.md.
+[STANDARD.md](STANDARD.md) has the request cap and the rules to close a finding.
+
+[STANDARD.md](STANDARD.md) has the rules for a fork PR and for the fallback. The `gate` job of the Claude workflow stops a Claude review of a fork PR without the stage 2 owner approval of the current head and base. [AGENTS.md](../AGENTS.md) has the command for a local fallback review.
 
 Codex reviews through the Codex GitHub integration. Claude Code reviews through the [Claude review](../.github/workflows/claude-review.yml) workflow. The workflow starts only if all of these are true:
 
@@ -56,7 +60,7 @@ The `post` job has `contents: read`, `issues: write` and `pull-requests: write` 
 
 The `post` job writes as the workflow bot. A mention in the bot comment can start a review, and the gates trust records from this bot. Thus the script treats the model text as untrusted. It escapes `&` and `<`, changes each `@` to a character that makes no mention, and limits the length.
 
-The `gate` job stops a second request of one kind for the same head and merge base, and a request after 3 of one kind. Still follow the request rules above: ask one time for each head commit, and at most 3 times for each PR.
+The `gate` job stops a second request of one kind for the same head and merge base, and a request after 3 of one kind. Still follow the request rules above and the request cap in [STANDARD.md](STANDARD.md).
 
 `make check` runs the tests of the script and of the workflow design in `tests/test_claude_review.py`. CI runs the same tests.
 
@@ -64,6 +68,6 @@ The `gate` job stops a second request of one kind for the same head and merge ba
 
 The `cross-review` and `security-review` gates read the marker of a Claude result. They accept the marker only from an `issue_comment` run of this workflow on the default branch. A Claude code review passes `cross-review` only with `Findings: 0` for the current head and the current merge base. A new commit on the base branch does not change the merge base, so the review stays valid. If the PR gets a different base branch, the review stops, and you must ask again. The gates do not accept a `v1` marker.
 
-A Claude security review is advisory. The `security-review` gate writes a line about a clean Claude security review, but it does not pass on it. The owner reads the review and adds the `security-reviewed` label. If the review text does not agree with the count on the first line, the marker gives `findings=unknown`, and the gates do not accept it. Examples are a later line with a severity tag or a `path:line` reference, a second count that is different, and the text `INCOMPLETE REVIEW`.
+The `security-review` gate writes a line about a clean Claude security review, but it does not pass on it. [STANDARD.md](STANDARD.md) has the approval rule for a Claude security result. If the review text does not agree with the count on the first line, the marker gives `findings=unknown`, and the gates do not accept it. Examples are a later line with a severity tag or a `path:line` reference, a second count that is different, and the text `INCOMPLETE REVIEW`.
 
 The review has no inline comments and no conversation. A push makes a new head, so ask again as the request rules say. The OAuth token is a static secret. If you suspect a leak, revoke it and make a new one.

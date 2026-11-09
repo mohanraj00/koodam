@@ -7,7 +7,7 @@
 
 # Koodam
 
-Koodam (short for தொழிற்கூடம், "workspace") is where your agents live on Kubernetes. It gives Kubernetes-aware developers and teams a first-class developer experience for agent work, built from Kubernetes constructs.
+Koodam (short for தொழிற்கூடம், "workspace") is where your agents live on Kubernetes. [CONSTITUTION.md](CONSTITUTION.md) has the purpose, the boundaries and the rules of the project.
 
 ## The problem
 
@@ -26,7 +26,6 @@ Koodam adds Kubernetes resources for agent work, and an operator that reconciles
 - **Workspace.** A pod with a home on a PVC. You connect over SSH and run the harnesses in tmux, so the session keeps running when you close the laptop.
 - **Profile.** It binds namespaces, so each Workspace in them gets the same login, global files and skills.
 
-Because these are Kubernetes resources, a platform team controls them with the tools it already uses: RBAC, NetworkPolicy, LimitRange, admission policy and GitOps.
 
 > Status: pre-alpha. The API will change.
 
@@ -172,7 +171,7 @@ If `shasum -c` does not show `OK`, do not install the file.
 | v0.6 | agentic apps at scale: workload identity, MCP tools, approvals, durable runs, autoscaling, and a test on a public cloud |
 | later | shared memory across the pods of a namespace |
 
-Each version starts with a spike that decides go or no-go before the build. The spike records are the evidence for every claim here.
+[CONSTITUTION.md](CONSTITUTION.md#evidence) has the evidence rules for each claim here.
 
 ## Build
 
