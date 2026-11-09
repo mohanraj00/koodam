@@ -29,6 +29,7 @@ type helperAsset struct {
 	body, archive                   []byte
 	edit                            func(*fakeOpts)
 	noBundle, noArchive, wrongRekor bool
+	requireFreshBundle              bool
 }
 
 func newHelperAssets(t *testing.T, arch string) map[string]*helperAsset {
@@ -48,6 +49,10 @@ func (v *vendor) serveHelper(t *testing.T, w http.ResponseWriter, r *http.Reques
 		rel := "/dl/rust-v0.9.1/" + name + "-" + v.arch + "-unknown-linux-musl"
 		switch r.URL.Path {
 		case rel + ".sigstore":
+			if a.requireFreshBundle && r.Header.Get("Cache-Control") != "no-cache" {
+				w.WriteHeader(http.StatusGatewayTimeout)
+				return true
+			}
 			if a.noBundle {
 				http.NotFound(w, r)
 				return true
@@ -90,6 +95,27 @@ func TestCodexHelpers(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestCodexRetriesHelperBundleWithCacheRevalidation(t *testing.T) {
+	fastRetry(t)
+	v := newVendor(t)
+	asset := v.helpers[bubblewrap]
+	asset.requireFreshBundle = true
+	if _, err := v.install(amd64, Codex, codexTestVersion, ""); err != nil {
+		t.Fatal(err)
+	}
+	requests := 0
+	for _, path := range v.requests {
+		if strings.HasSuffix(path, "/bwrap-x86_64-unknown-linux-musl.sigstore") {
+			requests++
+		}
+	}
+	if requests != 2 {
+		t.Fatalf("helper bundle requests = %d, want 2", requests)
+	}
+	expectInstalled(t, v, Codex)
+	expectBinary(t, filepath.Join(v.installDir, bubblewrap), asset.body)
 }
 
 func TestCodexHelperChecks(t *testing.T) {

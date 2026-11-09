@@ -277,14 +277,17 @@ func (in *Installer) client() *http.Client {
 }
 
 // do sends a GET request. It sends the request again after a 429 or a 5xx response. The number
-// of retries is retries.
+// of retries is retries. After a gateway error, ask caches to revalidate the response and any
+// release-asset redirect.
 func (in *Installer) do(ctx context.Context, hc *http.Client, url string) (*http.Response, error) {
 	wait := firstWait
+	revalidate := false
 	for try := 0; ; try++ {
-		resp, err := in.doOnce(ctx, hc, url)
+		resp, err := in.doOnce(ctx, hc, url, revalidate)
 		if err != nil || try == retries || !retryable(resp.StatusCode) {
 			return resp, err
 		}
+		revalidate = revalidate || resp.StatusCode == http.StatusBadGateway || resp.StatusCode == http.StatusGatewayTimeout
 		d := retryAfter(resp.Header.Get("Retry-After"), wait, time.Now())
 		_ = resp.Body.Close()
 		t := time.NewTimer(d)
@@ -298,12 +301,15 @@ func (in *Installer) do(ctx context.Context, hc *http.Client, url string) (*http
 	}
 }
 
-func (in *Installer) doOnce(ctx context.Context, hc *http.Client, url string) (*http.Response, error) {
+func (in *Installer) doOnce(ctx context.Context, hc *http.Client, url string, revalidate bool) (*http.Response, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
 		return nil, err
 	}
 	req.Header.Set("User-Agent", "koodam-harness-install")
+	if revalidate {
+		req.Header.Set("Cache-Control", "no-cache")
+	}
 	resp, err := hc.Do(req)
 	if err != nil {
 		// A url.Error has the URL of the last redirect, which can have a signed query. Show the
