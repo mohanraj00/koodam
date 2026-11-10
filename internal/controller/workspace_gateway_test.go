@@ -331,8 +331,9 @@ var _ = Describe("Workspace gateway key", func() {
 		pod := sts.Spec.Template.Spec
 		Expect(pod.Volumes).To(ContainElement(corev1.Volume{Name: "test-gateway", VolumeSource: corev1.VolumeSource{
 			Secret: &corev1.SecretVolumeSource{SecretName: "kt-" + name + "-testkey", Optional: new(true),
-				DefaultMode: new(int32(0o440)), Items: []corev1.KeyToPath{{Key: "key", Path: "key"},
-					{Key: "alias", Path: "alias"}, {Key: "base-url", Path: "base-url"}, {Key: "model", Path: "model"}}}}}))
+				DefaultMode: new(int32(0o440)), Items: []corev1.KeyToPath{{Key: testKeyValueField, Path: "key"},
+					{Key: testKeyAliasField, Path: "alias"}, {Key: testKeyURLField, Path: "base-url"},
+					{Key: testKeyModelField, Path: testKeyModelField}}}}}))
 		Expect(pod.Containers[0].VolumeMounts).To(ContainElement(corev1.VolumeMount{Name: "test-gateway",
 			MountPath: "/etc/koodam/test-gateway", ReadOnly: true}))
 
