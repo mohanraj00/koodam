@@ -266,8 +266,9 @@ func (l *LiteLLM) BlockKey(ctx context.Context, key string) error {
 
 type keyInfo struct {
 	Info struct {
-		Status string   `json:"status"`
-		Spend  *float64 `json:"spend"`
+		Status  string   `json:"status"`
+		Spend   *float64 `json:"spend"`
+		Blocked *bool    `json:"blocked"`
 	} `json:"info"`
 }
 
@@ -282,6 +283,7 @@ type spendLog struct {
 func (l *LiteLLM) Usage(ctx context.Context, key string) (Usage, error) {
 	q := url.QueryEscape(hashOf(key))
 	var last *float64
+	blocked := false
 	// need is the count of equal reads after the first read that cover SpendSettle.
 	need := max(1, int((l.SpendSettle+l.SpendPoll-1)/max(l.SpendPoll, 1)))
 	stable, settled := 0, true
@@ -295,6 +297,7 @@ func (l *LiteLLM) Usage(ctx context.Context, key string) (Usage, error) {
 		if err != nil {
 			return Usage{}, err
 		}
+		blocked = ki.Info.Blocked != nil && *ki.Info.Blocked
 		s := ki.Info.Spend
 		if s != nil && last != nil && *s == *last {
 			stable++
@@ -319,7 +322,7 @@ func (l *LiteLLM) Usage(ctx context.Context, key string) (Usage, error) {
 	if err := l.do(ctx, http.MethodGet, "/spend/logs?api_key="+q, nil, key, &logs); err != nil {
 		return Usage{}, err
 	}
-	u := Usage{}
+	u := Usage{Blocked: blocked}
 	if last != nil {
 		u.Spend = *last
 	}

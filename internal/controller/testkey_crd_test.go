@@ -64,7 +64,7 @@ var _ = Describe("TestKey CRD", func() {
 			ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: ns},
 			Spec: corev1alpha1.TestKeySpec{
 				WorkspaceRef: corev1alpha1.TestKeyWorkspaceRef{Name: workspaceName, UID: workspaceUID},
-				TestID:       "login-smoke",
+				TestID:       testKeyTestID,
 				Budget:       resource.MustParse("0.5"),
 				TTL:          metav1.Duration{Duration: 30 * time.Minute},
 			},
@@ -79,7 +79,7 @@ var _ = Describe("TestKey CRD", func() {
 			metadataField:   map[string]any{nameField: name, namespaceField: ns},
 			specField: map[string]any{
 				"workspaceRef": map[string]any{nameField: workspaceName, uidField: workspaceUID},
-				"testID":       "login-smoke",
+				"testID":       testKeyTestID,
 				budgetField:    "0.5",
 				ttlField:       "30m",
 			},

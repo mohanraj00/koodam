@@ -160,7 +160,7 @@ func (f *fake) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			s = f.spend[i]
 		}
 		f.reads++
-		_ = json.NewEncoder(w).Encode(map[string]any{"info": map[string]any{"spend": s}})
+		_ = json.NewEncoder(w).Encode(map[string]any{"info": map[string]any{"spend": s, "blocked": f.blocked[h]}})
 	case "/spend/logs":
 		_ = json.NewEncoder(w).Encode(f.logs)
 	default:
@@ -531,5 +531,25 @@ func TestUsageReportsAMissingKey(t *testing.T) {
 	defer stop()
 	if _, err := l.Usage(context.Background(), HashKey("sk-kd-missing")); !errors.Is(err, ErrKeyNotFound) {
 		t.Fatalf("got %v, want ErrKeyNotFound", err)
+	}
+}
+
+func TestUsageReportsTheBlockedState(t *testing.T) {
+	f := newFake()
+	l, stop := client(f)
+	defer stop()
+	s := spec(t)
+	ctx := context.Background()
+	if err := l.CreateKey(ctx, s); err != nil {
+		t.Fatal(err)
+	}
+	if u, err := l.Usage(ctx, s.Value); err != nil || u.Blocked {
+		t.Fatalf("an active key: Blocked=%v, err=%v", u.Blocked, err)
+	}
+	if err := l.BlockKey(ctx, s.Value); err != nil {
+		t.Fatal(err)
+	}
+	if u, err := l.Usage(ctx, s.Value); err != nil || !u.Blocked {
+		t.Fatalf("a blocked key: Blocked=%v, err=%v", u.Blocked, err)
 	}
 }
