@@ -67,7 +67,7 @@ func TestBundledGatewayRolloutHasNoOverlap(t *testing.T) {
 			t.Fatal(err)
 		}
 		for _, c := range d.Spec.Template.Spec.Containers {
-			if c.Name != "litellm" {
+			if c.Name != litellmContainer {
 				continue
 			}
 			found = true

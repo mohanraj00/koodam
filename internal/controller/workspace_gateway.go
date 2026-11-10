@@ -339,11 +339,12 @@ func testKeyBlocked(k *corev1alpha1.TestKey) bool {
 }
 
 // testKeysPending is true if a TestKey of ws has a recorded key and done is false for it. The
-// TestKey controller blocks and revokes these keys, because it watches the Workspace.
+// TestKey controller blocks and revokes these keys, because it watches the Workspace. The list
+// is not from the cache: a cached TestKey can show no hash after the gateway has its key.
 func (r *WorkspaceReconciler) testKeysPending(ctx context.Context, ws *corev1alpha1.Workspace,
 	done func(*corev1alpha1.TestKey) bool) (bool, error) {
 	list := &corev1alpha1.TestKeyList{}
-	if err := r.List(ctx, list, client.InNamespace(ws.Namespace)); err != nil {
+	if err := r.APIReader.List(ctx, list, client.InNamespace(ws.Namespace)); err != nil {
 		return false, err
 	}
 	for i := range list.Items {
