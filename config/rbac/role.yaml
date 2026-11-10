@@ -67,6 +67,7 @@ rules:
   - agents/finalizers
   - agents/status
   - profiles/status
+  - testkeys/status
   - workspaces/finalizers
   - workspaces/status
   verbs:
@@ -79,6 +80,12 @@ rules:
   - get
   - list
   - watch
+- apiGroups:
+  - core.koodam.dev
+  resources:
+  - testkeys
+  verbs:
+  - get
 - apiGroups:
   - rbac.authorization.k8s.io
   resources:

@@ -36,6 +36,10 @@ type TestKeyReconciler struct {
 	Gateway   gateway.Gateway
 }
 
+// +kubebuilder:rbac:groups=core.koodam.dev,resources=testkeys,verbs=get
+// +kubebuilder:rbac:groups=core.koodam.dev,resources=testkeys/status,verbs=update
+// +kubebuilder:rbac:groups=core.koodam.dev,resources=workspaces,verbs=get
+
 // Reconcile writes the condition Active=False when the Workspace refuses the key. It removes
 // an old refusal when the Workspace permits the key again.
 func (r *TestKeyReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
