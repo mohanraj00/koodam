@@ -34,6 +34,9 @@ import (
 // testKeyTestID is the Nookku test ID in the TestKey tests.
 const testKeyTestID = "login-smoke"
 
+// testKeyNamePrefix is the GenerateName of the TestKeys in the policy tests.
+const testKeyNamePrefix = "testkey-request-"
+
 var _ = Describe("TestKey controller", func() {
 	DescribeTable("refuses a key before it reaches the gateway",
 		func(change func(*corev1alpha1.Workspace, *corev1alpha1.TestKey), reason string) {
@@ -50,7 +53,7 @@ var _ = Describe("TestKey controller", func() {
 				},
 			}
 			testKey := &corev1alpha1.TestKey{
-				ObjectMeta: metav1.ObjectMeta{GenerateName: "testkey-request-", Namespace: workspace.Namespace},
+				ObjectMeta: metav1.ObjectMeta{GenerateName: testKeyNamePrefix, Namespace: workspace.Namespace},
 				Spec: corev1alpha1.TestKeySpec{
 					TestID: testKeyTestID, Budget: resource.MustParse("0.5"),
 					TTL: metav1.Duration{Duration: 30 * time.Minute},
@@ -112,7 +115,7 @@ var _ = Describe("TestKey controller", func() {
 		Expect(k8sClient.Create(ctx, workspace)).To(Succeed())
 		DeferCleanup(k8sClient.Delete, ctx, workspace)
 		testKey := &corev1alpha1.TestKey{
-			ObjectMeta: metav1.ObjectMeta{GenerateName: "testkey-request-", Namespace: workspace.Namespace},
+			ObjectMeta: metav1.ObjectMeta{GenerateName: testKeyNamePrefix, Namespace: workspace.Namespace},
 			Spec: corev1alpha1.TestKeySpec{
 				WorkspaceRef: corev1alpha1.TestKeyWorkspaceRef{Name: workspace.Name, UID: workspace.UID},
 				TestID:       testKeyTestID, Budget: resource.MustParse("0.5"),
@@ -145,7 +148,7 @@ var _ = Describe("TestKey controller", func() {
 	It("refuses a key for a Workspace that does not exist", func() {
 		ctx := context.Background()
 		testKey := &corev1alpha1.TestKey{
-			ObjectMeta: metav1.ObjectMeta{GenerateName: "testkey-request-", Namespace: metav1.NamespaceDefault},
+			ObjectMeta: metav1.ObjectMeta{GenerateName: testKeyNamePrefix, Namespace: metav1.NamespaceDefault},
 			Spec: corev1alpha1.TestKeySpec{
 				WorkspaceRef: corev1alpha1.TestKeyWorkspaceRef{Name: "no-such-workspace", UID: "no-such-uid"},
 				TestID:       testKeyTestID, Budget: resource.MustParse("0.5"),
