@@ -252,6 +252,9 @@ func TestMergeRefuses(t *testing.T) {
 		{"key volume", User{Spec: corev1.PodSpec{Volumes: []corev1.Volume{{Name: "k", VolumeSource: corev1.VolumeSource{
 			Secret: &corev1.SecretVolumeSource{SecretName: runKey}}}}}},
 			"spec.podTemplate.spec.volumes[0].secret.secretName"},
+		{"test key slot", User{Spec: corev1.PodSpec{Volumes: []corev1.Volume{{Name: "k", VolumeSource: corev1.VolumeSource{
+			Secret: &corev1.SecretVolumeSource{SecretName: "kt-dev-testkey"}}}}}},
+			"spec.podTemplate.spec.volumes[0].secret.secretName"},
 		{"key projected", User{Spec: corev1.PodSpec{Volumes: []corev1.Volume{{Name: "k", VolumeSource: corev1.VolumeSource{
 			Projected: &corev1.ProjectedVolumeSource{Sources: []corev1.VolumeProjection{{ConfigMap: &corev1.ConfigMapProjection{}},
 				{Secret: &corev1.SecretProjection{LocalObjectReference: corev1.LocalObjectReference{Name: runKey}}}}}}}}}},

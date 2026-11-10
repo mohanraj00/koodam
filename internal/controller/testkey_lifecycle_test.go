@@ -372,14 +372,17 @@ var _ = Describe("TestKey lifecycle", func() {
 		Expect(apierrors.IsNotFound(err)).To(BeTrue())
 	})
 
-	It("names the slot under the reserved prefix and apart from the gateway Secrets", func() {
-		// A pod template cannot refer to a name with the reserved prefix, so an Agent cannot
-		// name the slot before the controller makes it.
-		Expect(testKeySecretName("dev")).To(HavePrefix(podtemplate.ReservedSecretPrefix))
-		for _, name := range []string{"dev", "dev-test", "kd-dev-testkey", "kd-dev"} {
+	It("names the slot apart from the Agent run Secrets and the Workspace Secrets", func() {
+		// A pod template cannot refer to a name with this prefix, so no pod names the slot.
+		Expect(testKeySecretName("dev")).To(HavePrefix(podtemplate.TestKeySecretPrefix))
+		for _, name := range []string{"dev", "dev-testkey", "kt-dev", "kt-dev-testkey", "kd-dev"} {
 			other := &corev1alpha1.Workspace{ObjectMeta: metav1.ObjectMeta{Name: name}}
-			Expect(testKeySecretName("dev")).NotTo(Equal(gatewaySecretName(other)))
+			agent := &corev1alpha1.Agent{ObjectMeta: metav1.ObjectMeta{Name: name}}
+			Expect(testKeySecretName("dev")).NotTo(BeElementOf(gatewaySecretName(other),
+				hostKeySecretName(other), runName(agent)))
 		}
+		// Each Agent run Secret has the prefix kd-, and each slot has the prefix kt-.
+		Expect(testKeySecretName("dev")).NotTo(HavePrefix(podtemplate.ReservedSecretPrefix))
 	})
 
 	It("refuses a key and revokes it when no Profile binds the namespace", func() {

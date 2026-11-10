@@ -497,7 +497,7 @@ func (r *WorkspaceReconciler) statefulSet(ws *corev1alpha1.Workspace, user strin
 		const tk = "test-gateway"
 		volumes = append(volumes, corev1.Volume{Name: tk, VolumeSource: corev1.VolumeSource{
 			Secret: &corev1.SecretVolumeSource{SecretName: testKeySecretName(ws.Name), Optional: new(true),
-				DefaultMode: new(int32(0o440))}}})
+				DefaultMode: new(int32(0o440)), Items: testKeyItems()}}})
 		container.VolumeMounts = append(container.VolumeMounts,
 			corev1.VolumeMount{Name: tk, MountPath: workspaceTestGatewayDir, ReadOnly: true})
 	}
@@ -596,6 +596,17 @@ func (r *WorkspaceReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		Watches(&corev1alpha1.TestKey{}, handler.EnqueueRequestsFromMapFunc(workspaceForTestKey)).
 		Named("workspace").
 		Complete(r)
+}
+
+// testKeyItems are the only fields of the slot Secret in the pod. A Secret with a different
+// shape gives no other field to the pod.
+func testKeyItems() []corev1.KeyToPath {
+	fields := []string{testKeyValueField, testKeyAliasField, testKeyURLField, testKeyModelField}
+	items := make([]corev1.KeyToPath, 0, len(fields))
+	for _, f := range fields {
+		items = append(items, corev1.KeyToPath{Key: f, Path: f})
+	}
+	return items
 }
 
 func workspaceForTestKey(_ context.Context, obj client.Object) []reconcile.Request {

@@ -91,12 +91,12 @@ type TestKeyReconciler struct {
 	Now func() time.Time
 }
 
-// testKeySecretName is the name of the slot Secret of a Workspace. The reserved prefix stops a
-// pod template that names the slot before the controller makes it. The suffix keeps the name
-// apart from each "<workspace>-gateway" Secret. If an Agent run has the same name, both
-// controllers refuse an object that they do not control.
+// testKeySecretName is the name of the slot Secret of a Workspace. The prefix is reserved, so a
+// pod template cannot name the slot. The prefix is not the "kd-" of the Agent run Secrets, and
+// the suffix is not the "-gateway" or "-ssh-host" of the Workspace Secrets. Thus no other
+// Secret of Koodam has a slot name.
 func testKeySecretName(workspace string) string {
-	return podtemplate.ReservedSecretPrefix + workspace + "-testkey"
+	return podtemplate.TestKeySecretPrefix + workspace + "-testkey"
 }
 
 // testKeyAlias makes a bounded alias from the test ID and the TestKey UID.
