@@ -35,6 +35,7 @@ import (
 
 	corev1alpha1 "github.com/mohanraj00/koodam/api/v1alpha1"
 	"github.com/mohanraj00/koodam/internal/gateway"
+	"github.com/mohanraj00/koodam/internal/podtemplate"
 )
 
 // tkGateway records the order of the gateway calls. If missing is true, the gateway has no
@@ -327,5 +328,15 @@ var _ = Describe("TestKey lifecycle", func() {
 		Expect(gw.ops()).To(Equal([]string{opCreate, opBlock, opUsage, opBlock, opUsage}))
 		_, err = slot()
 		Expect(apierrors.IsNotFound(err)).To(BeTrue())
+	})
+
+	It("names the slot under the reserved prefix and apart from the gateway Secrets", func() {
+		// A pod template cannot refer to a name with the reserved prefix, so an Agent cannot
+		// name the slot before the controller makes it.
+		Expect(testKeySecretName("dev")).To(HavePrefix(podtemplate.ReservedSecretPrefix))
+		for _, name := range []string{"dev", "dev-test", "kd-dev-testkey", "kd-dev"} {
+			other := &corev1alpha1.Workspace{ObjectMeta: metav1.ObjectMeta{Name: name}}
+			Expect(testKeySecretName("dev")).NotTo(Equal(gatewaySecretName(other)))
+		}
 	})
 })

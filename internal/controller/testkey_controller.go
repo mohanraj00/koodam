@@ -36,6 +36,7 @@ import (
 
 	corev1alpha1 "github.com/mohanraj00/koodam/api/v1alpha1"
 	"github.com/mohanraj00/koodam/internal/gateway"
+	"github.com/mohanraj00/koodam/internal/podtemplate"
 )
 
 const (
@@ -89,7 +90,13 @@ type TestKeyReconciler struct {
 	Now func() time.Time
 }
 
-func testKeySecretName(workspace string) string { return workspace + "-test-gateway" }
+// testKeySecretName is the name of the slot Secret of a Workspace. The reserved prefix stops a
+// pod template that names the slot before the controller makes it. The suffix keeps the name
+// apart from each "<workspace>-gateway" Secret. If an Agent run has the same name, both
+// controllers refuse an object that they do not control.
+func testKeySecretName(workspace string) string {
+	return podtemplate.ReservedSecretPrefix + workspace + "-testkey"
+}
 
 // testKeyAlias makes a bounded alias from the test ID and the TestKey UID.
 func testKeyAlias(key *corev1alpha1.TestKey) string {
