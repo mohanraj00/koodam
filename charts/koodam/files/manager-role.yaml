@@ -55,6 +55,7 @@ rules:
   - core.koodam.dev
   resources:
   - agents
+  - testkeys
   - workspaces
   verbs:
   - get
@@ -67,6 +68,8 @@ rules:
   - agents/finalizers
   - agents/status
   - profiles/status
+  - testkeys/finalizers
+  - testkeys/status
   - workspaces/finalizers
   - workspaces/status
   verbs:

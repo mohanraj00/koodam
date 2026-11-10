@@ -137,6 +137,8 @@ func main() {
 	var secureMetrics bool
 	var enableHTTP2 bool
 	var gatewayURL, gatewayKeyFile, agentGatewayURL, installerImage, workspaceImage string
+	var testKeySingleGateway bool
+	var testKeyRevokeWait time.Duration
 	var keyGrace time.Duration
 	var egress controller.EgressProxy
 	var jobTTLSeconds int
@@ -181,6 +183,10 @@ func main() {
 		"The image with /harness-install, for an Agent or a Workspace with a harness. The chart gives the manager image.")
 	flag.StringVar(&workspaceImage, "workspace-image", defaultWorkspaceImage(),
 		"The workspace image for a Workspace with no spec.image.")
+	flag.BoolVar(&testKeySingleGateway, "test-key-single-instance-gateway", false,
+		"Issue TestKeys. Set it only if the gateway has one replica and one worker (#192).")
+	flag.DurationVar(&testKeyRevokeWait, "test-key-revoke-wait", controller.DefaultTestKeyRevokeWait,
+		"The time after a TestKey block before the spend read. Use the gateway auth cache TTL plus a margin.")
 	flag.BoolVar(&agentIngressEnabled, "agent-ingress-enabled", false,
 		"If set, the controller provisions a new Agent that sets spec.ingressPort. Do not set it before the "+
 			"protected install of the Agent ingress is complete. An Agent with a stored status.keyHash can "+
@@ -339,6 +345,17 @@ func main() {
 		Egress:         egress,
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "Failed to create controller", "controller", "workspace")
+		os.Exit(1)
+	}
+	if err := (&controller.TestKeyReconciler{
+		Client:                mgr.GetClient(),
+		APIReader:             mgr.GetAPIReader(),
+		Gateway:               gw,
+		GatewayURL:            strings.TrimRight(agentGatewayURL, "/"),
+		SingleInstanceGateway: testKeySingleGateway,
+		RevokeWait:            testKeyRevokeWait,
+	}).SetupWithManager(mgr); err != nil {
+		setupLog.Error(err, "Failed to create controller", "controller", "testkey")
 		os.Exit(1)
 	}
 	// +kubebuilder:scaffold:builder

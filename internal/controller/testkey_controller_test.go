@@ -71,7 +71,8 @@ var _ = Describe("TestKey controller", func() {
 			DeferCleanup(k8sClient.Delete, ctx, testKey)
 
 			gw := &wsGateway{keys: map[string]bool{}}
-			controller := &TestKeyReconciler{Client: k8sClient, APIReader: k8sClient, Gateway: gw}
+			controller := &TestKeyReconciler{Client: k8sClient, APIReader: k8sClient, Gateway: gw,
+				SingleInstanceGateway: true}
 			key := client.ObjectKeyFromObject(testKey)
 			_, err := controller.Reconcile(ctx, reconcile.Request{NamespacedName: key})
 			Expect(err).NotTo(HaveOccurred())
@@ -125,7 +126,8 @@ var _ = Describe("TestKey controller", func() {
 		Expect(k8sClient.Create(ctx, testKey)).To(Succeed())
 		DeferCleanup(k8sClient.Delete, ctx, testKey)
 
-		controller := &TestKeyReconciler{Client: k8sClient, APIReader: k8sClient, Gateway: &wsGateway{keys: map[string]bool{}}}
+		controller := &TestKeyReconciler{Client: k8sClient, APIReader: k8sClient, Gateway: &wsGateway{keys: map[string]bool{}},
+			SingleInstanceGateway: true}
 		key := client.ObjectKeyFromObject(testKey)
 		reason := func() string {
 			_, err := controller.Reconcile(ctx, reconcile.Request{NamespacedName: key})
