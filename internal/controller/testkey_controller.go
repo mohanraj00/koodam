@@ -35,6 +35,8 @@ type TestKeyReconciler struct {
 	Gateway   gateway.Gateway
 }
 
+// Reconcile writes the condition Active=False when the Workspace refuses the key. It removes
+// an old refusal when the Workspace permits the key again.
 func (r *TestKeyReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	key := &corev1alpha1.TestKey{}
 	if err := r.APIReader.Get(ctx, req.NamespacedName, key); err != nil {
@@ -46,7 +48,14 @@ func (r *TestKeyReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ct
 		return ctrl.Result{}, err
 	}
 	reason, message := testKeyRefusal(key, workspace)
-	if reason != "" && meta.SetStatusCondition(&key.Status.Conditions, metav1.Condition{
+	if reason == "" {
+		// The Workspace now permits the key, so an old refusal is not true now.
+		if meta.RemoveStatusCondition(&key.Status.Conditions, "Active") {
+			return ctrl.Result{}, r.Status().Update(ctx, key)
+		}
+		return ctrl.Result{}, nil
+	}
+	if meta.SetStatusCondition(&key.Status.Conditions, metav1.Condition{
 		Type: "Active", Status: metav1.ConditionFalse, ObservedGeneration: key.Generation,
 		Reason: reason, Message: message,
 	}) {

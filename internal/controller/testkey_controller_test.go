@@ -97,4 +97,47 @@ var _ = Describe("TestKey controller", func() {
 			key.Spec.TTL.Duration = time.Hour + time.Second
 		}, "TTLLimitExceeded"),
 	)
+
+	It("removes an old refusal when the Workspace permits the key again", func() {
+		ctx := context.Background()
+		workspace := &corev1alpha1.Workspace{
+			ObjectMeta: metav1.ObjectMeta{GenerateName: "testkey-workspace-", Namespace: metav1.NamespaceDefault},
+			Spec: corev1alpha1.WorkspaceSpec{
+				Suspend: true,
+				TestKeys: &corev1alpha1.WorkspaceTestKeys{
+					MaxBudget: resource.MustParse("1"), MaxTTL: metav1.Duration{Duration: time.Hour},
+				},
+			},
+		}
+		Expect(k8sClient.Create(ctx, workspace)).To(Succeed())
+		DeferCleanup(k8sClient.Delete, ctx, workspace)
+		testKey := &corev1alpha1.TestKey{
+			ObjectMeta: metav1.ObjectMeta{GenerateName: "testkey-request-", Namespace: workspace.Namespace},
+			Spec: corev1alpha1.TestKeySpec{
+				WorkspaceRef: corev1alpha1.TestKeyWorkspaceRef{Name: workspace.Name, UID: workspace.UID},
+				TestID:       testKeyTestID, Budget: resource.MustParse("0.5"),
+				TTL: metav1.Duration{Duration: 30 * time.Minute},
+			},
+		}
+		Expect(k8sClient.Create(ctx, testKey)).To(Succeed())
+		DeferCleanup(k8sClient.Delete, ctx, testKey)
+
+		controller := &TestKeyReconciler{Client: k8sClient, APIReader: k8sClient, Gateway: &wsGateway{keys: map[string]bool{}}}
+		key := client.ObjectKeyFromObject(testKey)
+		reason := func() string {
+			_, err := controller.Reconcile(ctx, reconcile.Request{NamespacedName: key})
+			Expect(err).NotTo(HaveOccurred())
+			Expect(k8sClient.Get(ctx, key, testKey)).To(Succeed())
+			if c := meta.FindStatusCondition(testKey.Status.Conditions, "Active"); c != nil {
+				return c.Reason
+			}
+			return ""
+		}
+		Expect(reason()).To(Equal("WorkspaceSuspended"))
+
+		Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(workspace), workspace)).To(Succeed())
+		workspace.Spec.Suspend = false
+		Expect(k8sClient.Update(ctx, workspace)).To(Succeed())
+		Expect(reason()).NotTo(Equal("WorkspaceSuspended"))
+	})
 })
