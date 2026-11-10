@@ -262,7 +262,10 @@ func (r *TestKeyReconciler) issue(ctx context.Context, key *corev1alpha1.TestKey
 }
 
 // createSlot makes the slot Secret with a new key value. The create is atomic, so a second
-// TestKey of the Workspace gets AlreadyExists, reads the Secret of the first and waits.
+// TestKey of the Workspace gets AlreadyExists, reads the Secret of the first and waits. The
+// Secret is not immutable: the kubelet stops the watch of an immutable Secret, so a running pod
+// keeps the files of a deleted slot. The status hash finds a changed value, and a changed value
+// gets a revoke.
 func (r *TestKeyReconciler) createSlot(ctx context.Context, key *corev1alpha1.TestKey,
 	workspace *corev1alpha1.Workspace) (*corev1.Secret, error) {
 	value, err := gateway.NewKeyValue()
@@ -272,7 +275,6 @@ func (r *TestKeyReconciler) createSlot(ctx context.Context, key *corev1alpha1.Te
 	slot := &corev1.Secret{
 		ObjectMeta: metav1.ObjectMeta{Name: testKeySecretName(workspace.Name), Namespace: key.Namespace,
 			Labels: map[string]string{"app.kubernetes.io/managed-by": "koodam"}},
-		Immutable: new(true),
 		StringData: map[string]string{testKeyValueField: value, testKeyAliasField: testKeyAlias(key),
 			testKeyURLField: r.GatewayURL, testKeyModelField: workspace.Spec.Gateway.Model},
 	}

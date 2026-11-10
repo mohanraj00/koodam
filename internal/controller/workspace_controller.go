@@ -214,7 +214,9 @@ func (r *WorkspaceReconciler) apply(ctx context.Context, ws *corev1alpha1.Worksp
 		return failed, "Invalid", "The Workspace name is too long for the StatefulSet. Use 52 characters or fewer.", nil
 	}
 	if user == "" {
-		if err := r.unbind(ctx, ws); err != nil {
+		// While a TestKey is not blocked, the pod stays, and the status says that no Profile
+		// binds the namespace. That condition starts the TestKey revoke.
+		if err := r.unbind(ctx, ws); err != nil && !errors.Is(err, errTestKeysUnblocked) {
 			return "", "", "", err
 		}
 		return corev1alpha1.WorkspacePending, reasonNotBound, fmt.Sprintf("No Profile binds the namespace %q. "+
@@ -241,10 +243,17 @@ func (r *WorkspaceReconciler) apply(ctx context.Context, ws *corev1alpha1.Worksp
 		// blocks the key before the pod stops.
 		err = r.applyKey(ctx, ws)
 	}
+	if err == nil && (ws.Spec.Suspend || ws.Spec.TestKeys == nil) {
+		// A suspend stops the pod, and a removed opt-in removes the mount (#192).
+		err = r.waitTestKeyBlocks(ctx, ws)
+	}
 	if err == nil {
 		sts, err = r.applyStatefulSet(ctx, ws, want)
 	}
 	switch {
+	case errors.Is(err, errTestKeysUnblocked):
+		return corev1alpha1.WorkspacePending, "TestKeysBlocking",
+			"The pod changes after the gateway blocks each test key.", nil
 	case errors.Is(err, errNotOwned):
 		return failed, "NameConflict", "An object with a Workspace object name is not from this Workspace.", nil
 	case permanent(err):
@@ -338,6 +347,9 @@ func (r *WorkspaceReconciler) unbind(ctx context.Context, ws *corev1alpha1.Works
 		return err
 	}
 	if err := r.revokeKey(ctx, ws, secret); err != nil {
+		return err
+	}
+	if err := r.waitTestKeyBlocks(ctx, ws); err != nil {
 		return err
 	}
 	sts := &appsv1.StatefulSet{}

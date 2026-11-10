@@ -109,19 +109,7 @@ func (r *WorkspaceReconciler) applyKey(ctx context.Context, ws *corev1alpha1.Wor
 			return err
 		}
 		if !wantKey(ws) {
-			if g == nil || !ws.DeletionTimestamp.IsZero() {
-				// The Workspace stays until each of its TestKeys is revoked (#192).
-				if pending, err := r.testKeysPending(ctx, ws); err != nil || pending {
-					if err == nil {
-						err = errTestKeysPending
-					}
-					return err
-				}
-			}
-			if (g == nil || !ws.DeletionTimestamp.IsZero()) && controllerutil.RemoveFinalizer(ws, workspaceFinalizer) {
-				return r.updateMeta(ctx, ws)
-			}
-			return nil
+			return r.releaseKey(ctx, ws)
 		}
 		key = ""
 	}
@@ -305,19 +293,62 @@ func (r *WorkspaceReconciler) revokeKey(ctx context.Context, ws *corev1alpha1.Wo
 	return r.Status().Update(ctx, ws)
 }
 
+// releaseKey removes the finalizer after a Workspace delete or a gateway removal. The Workspace
+// stays until each of its TestKeys is revoked (#192).
+func (r *WorkspaceReconciler) releaseKey(ctx context.Context, ws *corev1alpha1.Workspace) error {
+	if ws.Spec.Gateway != nil && ws.DeletionTimestamp.IsZero() {
+		return nil
+	}
+	pending, err := r.testKeysPending(ctx, ws, testKeyRevoked)
+	if err != nil {
+		return err
+	}
+	if pending {
+		return errTestKeysPending
+	}
+	if controllerutil.RemoveFinalizer(ws, workspaceFinalizer) {
+		return r.updateMeta(ctx, ws)
+	}
+	return nil
+}
+
 // errTestKeysPending stops the finalizer removal while a TestKey of the Workspace has a key.
 var errTestKeysPending = errors.New("a TestKey of the Workspace is not revoked yet")
 
-// testKeysPending is true if a TestKey of ws has a recorded key and no revoke time. The
-// TestKey controller revokes these keys, because it watches the Workspace.
-func (r *WorkspaceReconciler) testKeysPending(ctx context.Context, ws *corev1alpha1.Workspace) (bool, error) {
+// errTestKeysUnblocked stops a pod stop or a mount removal while a TestKey of the Workspace
+// has a key that the gateway did not block yet. Revoke first: the block comes before the stop.
+var errTestKeysUnblocked = errors.New("a TestKey of the Workspace is not blocked yet")
+
+// waitTestKeyBlocks returns errTestKeysUnblocked while a TestKey of ws has a key that is not
+// blocked. A suspend, an unbind and a removed opt-in also start the TestKey revoke.
+func (r *WorkspaceReconciler) waitTestKeyBlocks(ctx context.Context, ws *corev1alpha1.Workspace) error {
+	pending, err := r.testKeysPending(ctx, ws, testKeyBlocked)
+	if err == nil && pending {
+		err = errTestKeysUnblocked
+	}
+	return err
+}
+
+// testKeyRevoked is true if the TestKey has a revoke time.
+func testKeyRevoked(k *corev1alpha1.TestKey) bool { return k.Status.RevokedAt != nil }
+
+// testKeyBlocked is true if the gateway blocked the key of the TestKey.
+func testKeyBlocked(k *corev1alpha1.TestKey) bool {
+	c := meta.FindStatusCondition(k.Status.Conditions, condActive)
+	return testKeyRevoked(k) || (c != nil && (c.Reason == reasonTKBlocked || c.Reason == reasonTKRevoked))
+}
+
+// testKeysPending is true if a TestKey of ws has a recorded key and done is false for it. The
+// TestKey controller blocks and revokes these keys, because it watches the Workspace.
+func (r *WorkspaceReconciler) testKeysPending(ctx context.Context, ws *corev1alpha1.Workspace,
+	done func(*corev1alpha1.TestKey) bool) (bool, error) {
 	list := &corev1alpha1.TestKeyList{}
 	if err := r.List(ctx, list, client.InNamespace(ws.Namespace)); err != nil {
 		return false, err
 	}
 	for i := range list.Items {
 		k := &list.Items[i]
-		if k.Spec.WorkspaceRef.Name == ws.Name && k.Status.KeyHash != "" && k.Status.RevokedAt == nil {
+		if k.Spec.WorkspaceRef.Name == ws.Name && k.Status.KeyHash != "" && !done(k) {
 			return true, nil
 		}
 	}

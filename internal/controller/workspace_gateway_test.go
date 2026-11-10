@@ -358,6 +358,41 @@ var _ = Describe("Workspace gateway key", func() {
 		Expect(apierrors.IsNotFound(k8sClient.Get(ctx, nn(name), &corev1alpha1.Workspace{}))).To(BeTrue())
 	})
 
+	It("stops the pod only after the gateway blocks each TestKey key", func() {
+		edit(func(ws *corev1alpha1.Workspace) {
+			ws.Spec.TestKeys = &corev1alpha1.WorkspaceTestKeys{MaxBudget: resource.MustParse("1"),
+				MaxTTL: metav1.Duration{Duration: time.Hour}}
+		})
+		mustReconcile()
+		ws := workspace()
+		tk := &corev1alpha1.TestKey{
+			ObjectMeta: metav1.ObjectMeta{Name: name + "-tk", Namespace: ns},
+			Spec: corev1alpha1.TestKeySpec{WorkspaceRef: corev1alpha1.TestKeyWorkspaceRef{Name: name, UID: ws.UID},
+				TestID: "suspend", Budget: resource.MustParse("0.5"), TTL: metav1.Duration{Duration: time.Hour}},
+		}
+		Expect(k8sClient.Create(ctx, tk)).To(Succeed())
+		DeferCleanup(k8sClient.Delete, context.Background(), tk)
+		tk.Status.KeyHash = gateway.HashKey("sk-kd-suspend")
+		meta.SetStatusCondition(&tk.Status.Conditions, metav1.Condition{Type: condActive,
+			Status: metav1.ConditionFalse, Reason: reasonTKRevoking, Message: "The revoke started."})
+		Expect(k8sClient.Status().Update(ctx, tk)).To(Succeed())
+
+		edit(func(ws *corev1alpha1.Workspace) { ws.Spec.Suspend = true })
+		mustReconcile()
+		sts := &appsv1.StatefulSet{}
+		Expect(k8sClient.Get(ctx, nn(name), sts)).To(Succeed())
+		Expect(*sts.Spec.Replicas).To(Equal(int32(1)), "the pod stays while the TestKey key is not blocked")
+		Expect(meta.FindStatusCondition(workspace().Status.Conditions, condReady).Reason).To(Equal("TestKeysBlocking"))
+
+		meta.SetStatusCondition(&tk.Status.Conditions, metav1.Condition{Type: condActive,
+			Status: metav1.ConditionFalse, Reason: reasonTKBlocked, Message: "The gateway blocked the key."})
+		Expect(k8sClient.Status().Update(ctx, tk)).To(Succeed())
+		mustReconcile()
+		Expect(k8sClient.Get(ctx, nn(name), sts)).To(Succeed())
+		Expect(*sts.Spec.Replicas).To(Equal(int32(0)))
+		Expect(workspace().Status.Phase).To(Equal(corev1alpha1.WorkspaceSuspended))
+	})
+
 	It("blocks the key, deletes the Secret and removes the mount when spec.gateway is removed", func() {
 		mustReconcile()
 		edit(func(ws *corev1alpha1.Workspace) { ws.Spec.Gateway = nil })

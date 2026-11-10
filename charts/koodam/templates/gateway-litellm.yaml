@@ -45,8 +45,11 @@ metadata:
   labels:
     {{- include "koodam.labels" . | nindent 4 }}
 spec:
-  # Keep 1 replica and 1 worker. The TestKey revoke depends on it (#192).
+  # Keep 1 replica and 1 worker. The TestKey revoke depends on it (#192). Recreate stops the
+  # old pod before the new pod starts, so an upgrade never runs 2 gateway instances.
   replicas: 1
+  strategy:
+    type: Recreate
   selector:
     matchLabels:
       {{- include "koodam.gatewaySelector" (list . "litellm") | nindent 6 }}

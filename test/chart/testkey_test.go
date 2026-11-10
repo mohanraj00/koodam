@@ -19,6 +19,9 @@ package chart
 import (
 	"strings"
 	"testing"
+
+	appsv1 "k8s.io/api/apps/v1"
+	"sigs.k8s.io/yaml"
 )
 
 // The controller issues TestKeys only for the bundled gateway, which has 1 replica and 1 worker (#192).
@@ -48,5 +51,35 @@ func TestTestKeyFlagOnlyForBundledGateway(t *testing.T) {
 				t.Fatalf("flag %s present = %v, want %v", flag, got, c.want)
 			}
 		})
+	}
+}
+
+// The bundled gateway uses Recreate, so an upgrade never runs 2 gateway pods (#192).
+func TestBundledGatewayRolloutHasNoOverlap(t *testing.T) {
+	out, err := helmTemplate(t, "")
+	if err != nil {
+		t.Fatalf("helm template failed: %v\n%s", err, out)
+	}
+	found := false
+	for _, doc := range objects(t, out, "Deployment") {
+		var d appsv1.Deployment
+		if err := yaml.Unmarshal([]byte(doc), &d); err != nil {
+			t.Fatal(err)
+		}
+		for _, c := range d.Spec.Template.Spec.Containers {
+			if c.Name != "litellm" {
+				continue
+			}
+			found = true
+			if d.Spec.Replicas == nil || *d.Spec.Replicas != 1 {
+				t.Fatalf("the gateway replicas = %v, want 1", d.Spec.Replicas)
+			}
+			if d.Spec.Strategy.Type != appsv1.RecreateDeploymentStrategyType {
+				t.Fatalf("the gateway strategy = %q, want %q", d.Spec.Strategy.Type, appsv1.RecreateDeploymentStrategyType)
+			}
+		}
+	}
+	if !found {
+		t.Fatal("the chart has no litellm container")
 	}
 }

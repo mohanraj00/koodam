@@ -189,7 +189,7 @@ var _ = Describe("TestKey lifecycle", func() {
 		s, err := slot()
 		Expect(err).NotTo(HaveOccurred())
 		Expect(metav1.IsControlledBy(s, got)).To(BeTrue())
-		Expect(*s.Immutable).To(BeTrue())
+		Expect(s.Immutable).To(BeNil())
 		value := string(s.Data[testKeyValueField])
 		Expect(value).To(HavePrefix("sk-kd-"))
 		Expect(string(s.Data[testKeyURLField])).To(Equal("http://gateway.test:4000"))
