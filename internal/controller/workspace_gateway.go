@@ -109,6 +109,15 @@ func (r *WorkspaceReconciler) applyKey(ctx context.Context, ws *corev1alpha1.Wor
 			return err
 		}
 		if !wantKey(ws) {
+			if g == nil || !ws.DeletionTimestamp.IsZero() {
+				// The Workspace stays until each of its TestKeys is revoked (#192).
+				if pending, err := r.testKeysPending(ctx, ws); err != nil || pending {
+					if err == nil {
+						err = errTestKeysPending
+					}
+					return err
+				}
+			}
 			if (g == nil || !ws.DeletionTimestamp.IsZero()) && controllerutil.RemoveFinalizer(ws, workspaceFinalizer) {
 				return r.updateMeta(ctx, ws)
 			}
@@ -294,4 +303,23 @@ func (r *WorkspaceReconciler) revokeKey(ctx context.Context, ws *corev1alpha1.Wo
 	ws.Status.KeyAlias, ws.Status.KeyHash = "", ""
 	meta.SetStatusCondition(&ws.Status.Conditions, cond)
 	return r.Status().Update(ctx, ws)
+}
+
+// errTestKeysPending stops the finalizer removal while a TestKey of the Workspace has a key.
+var errTestKeysPending = errors.New("a TestKey of the Workspace is not revoked yet")
+
+// testKeysPending is true if a TestKey of ws has a recorded key and no revoke time. The
+// TestKey controller revokes these keys, because it watches the Workspace.
+func (r *WorkspaceReconciler) testKeysPending(ctx context.Context, ws *corev1alpha1.Workspace) (bool, error) {
+	list := &corev1alpha1.TestKeyList{}
+	if err := r.List(ctx, list, client.InNamespace(ws.Namespace)); err != nil {
+		return false, err
+	}
+	for i := range list.Items {
+		k := &list.Items[i]
+		if k.Spec.WorkspaceRef.Name == ws.Name && k.Status.KeyHash != "" && k.Status.RevokedAt == nil {
+			return true, nil
+		}
+	}
+	return false, nil
 }

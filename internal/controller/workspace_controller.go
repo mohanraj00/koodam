@@ -60,10 +60,12 @@ const (
 	workspaceSSHDir     = "/etc/koodam/ssh"
 	workspaceGlobalsDir = "/etc/koodam/globals"
 	workspaceLoginDir   = "/etc/koodam/login"
-	globalsConfigMap    = "koodam-globals"
-	loginSecret         = "koodam-login"
-	workspaceUser       = int64(1000)
-	workspacePort       = int32(2222)
+	// workspaceTestGatewayDir has the files of the active TestKey: key, alias, base-url, model.
+	workspaceTestGatewayDir = "/etc/koodam/test-gateway"
+	globalsConfigMap        = "koodam-globals"
+	loginSecret             = "koodam-login"
+	workspaceUser           = int64(1000)
+	workspacePort           = int32(2222)
 
 	// maxWorkspaceName keeps the pod label controller-revision-hash (name, "-", 10 characters)
 	// at 63 characters or fewer.
@@ -470,6 +472,16 @@ func (r *WorkspaceReconciler) statefulSet(ws *corev1alpha1.Workspace, user strin
 		container.VolumeMounts = append(container.VolumeMounts,
 			corev1.VolumeMount{Name: gw, MountPath: workspaceGatewayDir, ReadOnly: true})
 	}
+	if ws.Spec.TestKeys != nil {
+		// The slot Secret of the active TestKey (#192). It is optional, so the pod starts with
+		// no TestKey. The kubelet adds and removes the files when the slot changes.
+		const tk = "test-gateway"
+		volumes = append(volumes, corev1.Volume{Name: tk, VolumeSource: corev1.VolumeSource{
+			Secret: &corev1.SecretVolumeSource{SecretName: testKeySecretName(ws.Name), Optional: new(true),
+				DefaultMode: new(int32(0o440))}}})
+		container.VolumeMounts = append(container.VolumeMounts,
+			corev1.VolumeMount{Name: tk, MountPath: workspaceTestGatewayDir, ReadOnly: true})
+	}
 	tmpl := corev1.PodTemplateSpec{ObjectMeta: metav1.ObjectMeta{Labels: labels}, Spec: corev1.PodSpec{
 		AutomountServiceAccountToken: new(false),
 		EnableServiceLinks:           new(false),
@@ -561,6 +573,16 @@ func (r *WorkspaceReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		Watches(&corev1alpha1.Profile{}, handler.EnqueueRequestsFromMapFunc(r.workspacesForProfile),
 			builder.WithPredicates(predicate.Or(predicate.GenerationChangedPredicate{},
 				predicate.Funcs{UpdateFunc: deleteStarted}))).
+		// A TestKey revoke lets the Workspace delete continue (#192).
+		Watches(&corev1alpha1.TestKey{}, handler.EnqueueRequestsFromMapFunc(workspaceForTestKey)).
 		Named("workspace").
 		Complete(r)
+}
+
+func workspaceForTestKey(_ context.Context, obj client.Object) []reconcile.Request {
+	k, ok := obj.(*corev1alpha1.TestKey)
+	if !ok {
+		return nil
+	}
+	return []reconcile.Request{{NamespacedName: client.ObjectKey{Namespace: k.Namespace, Name: k.Spec.WorkspaceRef.Name}}}
 }

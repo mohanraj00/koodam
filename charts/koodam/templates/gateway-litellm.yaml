@@ -45,6 +45,7 @@ metadata:
   labels:
     {{- include "koodam.labels" . | nindent 4 }}
 spec:
+  # Keep 1 replica and 1 worker. The TestKey revoke depends on it (#192).
   replicas: 1
   selector:
     matchLabels:
