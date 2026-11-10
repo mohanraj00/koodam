@@ -37,6 +37,9 @@ const testKeyTestID = "login-smoke"
 // testKeyNamePrefix is the GenerateName of the TestKeys in the policy tests.
 const testKeyNamePrefix = "testkey-request-"
 
+// testGatewayModel is the gateway model in the controller tests.
+const testGatewayModel = "local-model"
+
 var _ = Describe("TestKey controller", func() {
 	DescribeTable("refuses a key before it reaches the gateway",
 		func(change func(*corev1alpha1.Workspace, *corev1alpha1.TestKey), reason string) {
@@ -45,7 +48,7 @@ var _ = Describe("TestKey controller", func() {
 				ObjectMeta: metav1.ObjectMeta{GenerateName: "testkey-workspace-", Namespace: metav1.NamespaceDefault},
 				Spec: corev1alpha1.WorkspaceSpec{
 					Gateway: &corev1alpha1.WorkspaceGateway{
-						Model: "local-model", BudgetPerDay: resource.MustParse("5"),
+						Model: testGatewayModel, BudgetPerDay: resource.MustParse("5"),
 					},
 					TestKeys: &corev1alpha1.WorkspaceTestKeys{
 						MaxBudget: resource.MustParse("1"), MaxTTL: metav1.Duration{Duration: time.Hour},

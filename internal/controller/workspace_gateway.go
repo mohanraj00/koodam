@@ -275,7 +275,7 @@ func (r *WorkspaceReconciler) revokeKey(ctx context.Context, ws *corev1alpha1.Wo
 		cond.Message = "The gateway had no key for this Workspace."
 	case errors.Is(err, gateway.ErrSpendNotSettled), err == nil:
 		if err != nil {
-			cond.Message += " The spend did not settle, so the usage can be low."
+			cond.Message += spendNotSettledNote
 		}
 		ws.Status.Usage = &corev1alpha1.WorkspaceUsage{Spend: strconv.FormatFloat(u.Spend, 'f', -1, 64),
 			Calls: u.Calls, InputTokens: u.InputTokens, OutputTokens: u.OutputTokens,

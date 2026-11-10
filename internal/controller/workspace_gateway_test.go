@@ -169,7 +169,7 @@ var _ = Describe("Workspace gateway key", func() {
 		ws := &corev1alpha1.Workspace{
 			ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: ns},
 			Spec: corev1alpha1.WorkspaceSpec{Storage: resource.MustParse("1Gi"),
-				Gateway: &corev1alpha1.WorkspaceGateway{Model: "local-model", BudgetPerDay: resource.MustParse("5")}},
+				Gateway: &corev1alpha1.WorkspaceGateway{Model: testGatewayModel, BudgetPerDay: resource.MustParse("5")}},
 		}
 		Expect(k8sClient.Create(ctx, ws)).To(Succeed())
 		DeferCleanup(func() {
@@ -204,7 +204,7 @@ var _ = Describe("Workspace gateway key", func() {
 		Expect(metav1.IsControlledBy(s, ws)).To(BeTrue())
 		Expect(s.Immutable).To(HaveValue(BeTrue()))
 		Expect(string(s.Data["ANTHROPIC_BASE_URL"])).To(Equal("http://gw.test:4000"))
-		Expect(string(s.Data[modelField])).To(Equal("local-model"))
+		Expect(string(s.Data[modelField])).To(Equal(testGatewayModel))
 
 		Expect(gw.order).To(Equal([]string{opCreate}))
 		sp := gw.specs[0]

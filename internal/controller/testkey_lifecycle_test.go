@@ -138,7 +138,7 @@ var _ = Describe("TestKey lifecycle", func() {
 		workspace = &corev1alpha1.Workspace{
 			ObjectMeta: metav1.ObjectMeta{GenerateName: "tk-life-ws-", Namespace: metav1.NamespaceDefault},
 			Spec: corev1alpha1.WorkspaceSpec{
-				Gateway: &corev1alpha1.WorkspaceGateway{Model: "local-model", BudgetPerDay: resource.MustParse("5")},
+				Gateway: &corev1alpha1.WorkspaceGateway{Model: testGatewayModel, BudgetPerDay: resource.MustParse("5")},
 				TestKeys: &corev1alpha1.WorkspaceTestKeys{
 					MaxBudget: resource.MustParse("1"), MaxTTL: metav1.Duration{Duration: time.Hour}},
 			},
@@ -163,7 +163,7 @@ var _ = Describe("TestKey lifecycle", func() {
 	})
 
 	It("issues a key in the approved order and keeps it on a retry", func() {
-		k := newKey("login-smoke")
+		k := newKey(testKeyTestID)
 		res := reconcileKey(k)
 		Expect(res.RequeueAfter).To(Equal(ttl))
 
@@ -176,7 +176,7 @@ var _ = Describe("TestKey lifecycle", func() {
 		value := string(s.Data[testKeyValueField])
 		Expect(value).To(HavePrefix("sk-kd-"))
 		Expect(string(s.Data[testKeyURLField])).To(Equal("http://gateway.test:4000"))
-		Expect(string(s.Data[testKeyModelField])).To(Equal("local-model"))
+		Expect(string(s.Data[testKeyModelField])).To(Equal(testGatewayModel))
 
 		Expect(got.Status.KeyHash).To(Equal(gateway.HashKey(value)))
 		Expect(got.Status.KeyAlias).To(Equal("tk-login-smoke-" + string(got.UID)[:8]))
@@ -185,8 +185,8 @@ var _ = Describe("TestKey lifecycle", func() {
 		Expect(reason(k)).To(Equal(reasonIssued))
 		Expect(gw.specs).To(HaveLen(1))
 		Expect(gw.specs[0]).To(Equal(gateway.KeySpec{Value: value, Alias: got.Status.KeyAlias,
-			Model: "local-model", Budget: 0.5, TTL: ttl,
-			Metadata: map[string]string{"koodam_test_id": "login-smoke", "koodam_testkey": got.Name}}))
+			Model: testGatewayModel, Budget: 0.5, TTL: ttl,
+			Metadata: map[string]string{"koodam_test_id": testKeyTestID, "koodam_testkey": got.Name}}))
 
 		// No key value in the status.
 		status, err := json.Marshal(got.Status)

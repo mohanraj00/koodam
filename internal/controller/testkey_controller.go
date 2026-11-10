@@ -322,7 +322,7 @@ func (r *TestKeyReconciler) revoke(ctx context.Context, key *corev1alpha1.TestKe
 		message = "The gateway had no key for this test, and the key time is past."
 	case errors.Is(err, gateway.ErrSpendNotSettled), err == nil:
 		if err != nil {
-			message += " The spend did not settle, so the usage can be low."
+			message += spendNotSettledNote
 		}
 		key.Status.Usage = &corev1alpha1.AgentUsage{Spend: strconv.FormatFloat(u.Spend, 'f', -1, 64),
 			Calls: u.Calls, FailedCalls: u.FailedCalls, InputTokens: u.InputTokens, OutputTokens: u.OutputTokens}

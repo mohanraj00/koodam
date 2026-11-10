@@ -50,6 +50,8 @@ import (
 )
 
 const (
+	// spendNotSettledNote goes after a revoke message when the spend did not settle.
+	spendNotSettledNote = " The spend did not settle, so the usage can be low."
 	// finalizer keeps the Agent until the controller revokes the key.
 	finalizer = "koodam.dev/revoke"
 	// agentLabel is on each object that the controller makes for an Agent.
@@ -657,7 +659,7 @@ func (r *AgentReconciler) writeUsage(ctx context.Context, a *corev1alpha1.Agent,
 			msg = "The gateway had no key for this run."
 		case errors.Is(err, gateway.ErrSpendNotSettled), err == nil:
 			if err != nil {
-				msg += " The spend did not settle, so the usage can be low."
+				msg += spendNotSettledNote
 			}
 			a.Status.Usage = &corev1alpha1.AgentUsage{
 				Spend: strconv.FormatFloat(u.Spend, 'f', -1, 64), Calls: u.Calls, FailedCalls: u.FailedCalls,
