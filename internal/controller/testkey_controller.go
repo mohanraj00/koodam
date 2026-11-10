@@ -19,6 +19,7 @@ package controller
 import (
 	"context"
 
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	ctrl "sigs.k8s.io/controller-runtime"
@@ -44,10 +45,15 @@ func (r *TestKeyReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ct
 	}
 	workspace := &corev1alpha1.Workspace{}
 	ref := client.ObjectKey{Namespace: key.Namespace, Name: key.Spec.WorkspaceRef.Name}
-	if err := r.APIReader.Get(ctx, ref, workspace); err != nil {
+	var reason, message string
+	switch err := r.APIReader.Get(ctx, ref, workspace); {
+	case apierrors.IsNotFound(err):
+		reason, message = "WorkspaceNotFound", "The Workspace does not exist."
+	case err != nil:
 		return ctrl.Result{}, err
+	default:
+		reason, message = testKeyRefusal(key, workspace)
 	}
-	reason, message := testKeyRefusal(key, workspace)
 	if reason == "" {
 		// The Workspace now permits the key, so an old refusal is not true now.
 		if meta.RemoveStatusCondition(&key.Status.Conditions, "Active") {
