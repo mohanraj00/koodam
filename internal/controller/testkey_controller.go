@@ -140,11 +140,8 @@ func (r *TestKeyReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ct
 	if key.Status.RevokedAt != nil {
 		return ctrl.Result{}, r.dropFinalizer(ctx, key)
 	}
-	workspace := &corev1alpha1.Workspace{}
-	ref := client.ObjectKey{Namespace: key.Namespace, Name: key.Spec.WorkspaceRef.Name}
-	if err := r.APIReader.Get(ctx, ref, workspace); apierrors.IsNotFound(err) {
-		workspace = nil
-	} else if err != nil {
+	workspace, err := r.readWorkspace(ctx, key)
+	if err != nil {
 		return ctrl.Result{}, err
 	}
 	reason, message := r.refusal(key, workspace)
@@ -165,6 +162,20 @@ func (r *TestKeyReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ct
 		return ctrl.Result{}, r.dropFinalizer(ctx, key)
 	}
 	return ctrl.Result{}, r.setActive(ctx, key, metav1.ConditionFalse, reason, message)
+}
+
+// readWorkspace reads the Workspace of key without the cache. It returns nil if the Workspace
+// does not exist.
+func (r *TestKeyReconciler) readWorkspace(ctx context.Context, key *corev1alpha1.TestKey) (
+	*corev1alpha1.Workspace, error) {
+	workspace := &corev1alpha1.Workspace{}
+	ref := client.ObjectKey{Namespace: key.Namespace, Name: key.Spec.WorkspaceRef.Name}
+	if err := r.APIReader.Get(ctx, ref, workspace); apierrors.IsNotFound(err) {
+		return nil, nil
+	} else if err != nil {
+		return nil, err
+	}
+	return workspace, nil
 }
 
 // refusal returns a reason if the TestKey must not have a key now.
@@ -243,6 +254,15 @@ func (r *TestKeyReconciler) issue(ctx context.Context, key *corev1alpha1.TestKey
 	}
 	remaining := key.Status.ExpiresAt.Sub(r.now()).Truncate(time.Second)
 	if gateway.HashKey(value) != key.Status.KeyHash || remaining < time.Second {
+		return r.revoke(ctx, key)
+	}
+	// A suspend, an unbind or a delete can start after the first Workspace read. From the hash
+	// write on, the Workspace controller sees this key and waits for its block. A stop that did
+	// not see the hash came before the hash write, so this second read sees the stop (#192).
+	if workspace, err = r.readWorkspace(ctx, key); err != nil {
+		return ctrl.Result{}, err
+	}
+	if reason, _ := r.refusal(key, workspace); reason != "" {
 		return r.revoke(ctx, key)
 	}
 	err = r.Gateway.CreateKey(ctx, gateway.KeySpec{

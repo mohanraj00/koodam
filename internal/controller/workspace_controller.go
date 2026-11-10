@@ -216,7 +216,8 @@ func (r *WorkspaceReconciler) apply(ctx context.Context, ws *corev1alpha1.Worksp
 	if user == "" {
 		// While a TestKey is not blocked, the pod stays, and the status says that no Profile
 		// binds the namespace. That condition starts the TestKey revoke.
-		if err := r.unbind(ctx, ws); err != nil && !errors.Is(err, errTestKeysUnblocked) {
+		if err := r.unbind(ctx, ws); err != nil && !errors.Is(err, errTestKeysUnblocked) &&
+			!errors.Is(err, errUnbindPending) {
 			return "", "", "", err
 		}
 		return corev1alpha1.WorkspacePending, reasonNotBound, fmt.Sprintf("No Profile binds the namespace %q. "+
@@ -348,6 +349,12 @@ func (r *WorkspaceReconciler) unbind(ctx context.Context, ws *corev1alpha1.Works
 	}
 	if err := r.revokeKey(ctx, ws, secret); err != nil {
 		return err
+	}
+	// The TestKey controller starts a revoke when it reads ProfileBound=False. Write that
+	// condition before the stop, so a TestKey issue that the stop does not see also sees it (#192).
+	// Without the opt-in, no TestKey issue can start.
+	if ws.Spec.TestKeys != nil && meta.IsStatusConditionTrue(ws.Status.Conditions, condProfileBound) {
+		return errUnbindPending
 	}
 	if err := r.waitTestKeyBlocks(ctx, ws); err != nil {
 		return err

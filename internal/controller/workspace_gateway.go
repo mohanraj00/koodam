@@ -329,6 +329,10 @@ func (r *WorkspaceReconciler) waitTestKeyBlocks(ctx context.Context, ws *corev1a
 	return err
 }
 
+// errUnbindPending stops the pod stop of an unbind until the status has ProfileBound=False.
+// The status write starts a new reconcile.
+var errUnbindPending = errors.New("the status does not show the unbind yet")
+
 // testKeyRevoked is true if the TestKey has a revoke time.
 func testKeyRevoked(k *corev1alpha1.TestKey) bool { return k.Status.RevokedAt != nil }
 

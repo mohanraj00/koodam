@@ -93,6 +93,22 @@ func (g *tkGateway) ops() []string {
 	return append([]string(nil), g.order...)
 }
 
+// hookReader runs after on each Workspace read, with the count of the reads.
+type hookReader struct {
+	client.Reader
+	reads int
+	after func(n int)
+}
+
+func (h *hookReader) Get(ctx context.Context, key client.ObjectKey, obj client.Object, opts ...client.GetOption) error {
+	err := h.Reader.Get(ctx, key, obj, opts...)
+	if _, ok := obj.(*corev1alpha1.Workspace); ok && err == nil {
+		h.reads++
+		h.after(h.reads)
+	}
+	return err
+}
+
 var _ = Describe("TestKey lifecycle", func() {
 	const ttl = 30 * time.Minute
 	var (
@@ -167,6 +183,22 @@ var _ = Describe("TestKey lifecycle", func() {
 				_ = k8sClient.Delete(ctx, s)
 			}
 		})
+	})
+
+	It("makes no gateway key if a suspend starts after the first Workspace read", func() {
+		k := newKey("in-flight")
+		rec.APIReader = &hookReader{Reader: k8sClient, after: func(n int) {
+			if n == 1 {
+				ws := &corev1alpha1.Workspace{}
+				Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(workspace), ws)).To(Succeed())
+				ws.Spec.Suspend = true
+				Expect(k8sClient.Update(ctx, ws)).To(Succeed())
+			}
+		}}
+		reconcileKey(k)
+		Expect(gw.ops()).NotTo(ContainElement(opCreate))
+		Expect(gw.ops()).To(ContainElement(opBlock))
+		Expect(get(k).Status.KeyHash).NotTo(BeEmpty(), "the Workspace controller sees the key and waits")
 	})
 
 	It("refuses each key if the gateway is not single-instance", func() {

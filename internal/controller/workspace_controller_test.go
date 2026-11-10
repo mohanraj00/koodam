@@ -665,6 +665,24 @@ var _ = Describe("Workspace Profile binding", func() {
 		Expect(workspace().Status.KeyHash).NotTo(Equal(old))
 	})
 
+	It("writes ProfileBound=False before an unbind stops a pod with the TestKey opt-in", func() {
+		setup(true, true)
+		ws := workspace()
+		ws.Spec.TestKeys = &corev1alpha1.WorkspaceTestKeys{MaxBudget: resource.MustParse("1"),
+			MaxTTL: metav1.Duration{Duration: time.Hour}}
+		Expect(k8sClient.Update(ctx, ws)).To(Succeed())
+		reconcileOnce()
+		expectBound(true)
+		Expect(replicas()).To(Equal(int32(1)))
+
+		setLabel(false)
+		reconcileOnce()
+		expectBound(false)
+		Expect(replicas()).To(Equal(int32(1)), "the pod stays until the status shows the unbind")
+		reconcileOnce()
+		Expect(replicas()).To(Equal(int32(0)))
+	})
+
 	It("blocks the key before it stops the pod when the Profile no longer lists the namespace", func() {
 		setup(true, true)
 		reconcileOnce()
