@@ -111,6 +111,7 @@ var _ = Describe("TestKey controller", func() {
 			ObjectMeta: metav1.ObjectMeta{GenerateName: "testkey-workspace-", Namespace: metav1.NamespaceDefault},
 			Spec: corev1alpha1.WorkspaceSpec{
 				Suspend: true,
+				Gateway: &corev1alpha1.WorkspaceGateway{Model: testGatewayModel, BudgetPerDay: resource.MustParse("5")},
 				TestKeys: &corev1alpha1.WorkspaceTestKeys{
 					MaxBudget: resource.MustParse("1"), MaxTTL: metav1.Duration{Duration: time.Hour},
 				},
@@ -146,8 +147,7 @@ var _ = Describe("TestKey controller", func() {
 		Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(workspace), workspace)).To(Succeed())
 		workspace.Spec.Suspend = false
 		Expect(k8sClient.Update(ctx, workspace)).To(Succeed())
-		Expect(reason()).To(BeEmpty())
-		Expect(meta.FindStatusCondition(testKey.Status.Conditions, "Active")).To(BeNil())
+		Expect(reason()).To(Equal(reasonIssued))
 	})
 
 	It("refuses a key for a Workspace that does not exist", func() {
@@ -163,7 +163,7 @@ var _ = Describe("TestKey controller", func() {
 		Expect(k8sClient.Create(ctx, testKey)).To(Succeed())
 		DeferCleanup(k8sClient.Delete, ctx, testKey)
 
-		controller := &TestKeyReconciler{Client: k8sClient, APIReader: k8sClient}
+		controller := &TestKeyReconciler{Client: k8sClient, APIReader: k8sClient, SingleInstanceGateway: true}
 		key := client.ObjectKeyFromObject(testKey)
 		_, err := controller.Reconcile(ctx, reconcile.Request{NamespacedName: key})
 		Expect(err).NotTo(HaveOccurred())
