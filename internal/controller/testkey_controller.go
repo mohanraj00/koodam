@@ -286,7 +286,8 @@ func (r *TestKeyReconciler) readSlot(ctx context.Context, key *corev1alpha1.Test
 }
 
 // revoke follows the approved end order: Revoking, the block, the wait, the spend read, the
-// slot delete, Revoked, then the finalizer. Each step can run again.
+// slot delete, Revoked, then the finalizer. Each step can run again. The slot stays until the
+// spend read shows a blocked row, or until a late key is past its expiry.
 func (r *TestKeyReconciler) revoke(ctx context.Context, key *corev1alpha1.TestKey) (ctrl.Result, error) {
 	c := meta.FindStatusCondition(key.Status.Conditions, condActive)
 	if c == nil || (c.Reason != reasonTKRevoking && c.Reason != reasonTKBlocked) {
@@ -312,14 +313,13 @@ func (r *TestKeyReconciler) revoke(ctx context.Context, key *corev1alpha1.TestKe
 	case errors.Is(err, gateway.ErrKeyNotFound):
 		// A block of a missing row does not stop a late create (#192). Block again until a
 		// late key is past its expiry, and keep the slot until then.
-		bound := key.Status.ExpiresAt.Add(r.revokeWait())
-		if r.now().Before(bound) {
-			if err := r.Gateway.BlockKey(ctx, key.Status.KeyHash); err != nil {
-				return ctrl.Result{}, err
-			}
-			return ctrl.Result{RequeueAfter: min(r.revokeWait(), bound.Sub(r.now()))}, nil
+		if r.now().Before(key.Status.ExpiresAt.Add(r.revokeWait())) {
+			return r.blockAgain(ctx, key, "The gateway had no key for this test. The block runs again.")
 		}
 		message = "The gateway had no key for this test, and the key time is past."
+	case (errors.Is(err, gateway.ErrSpendNotSettled) || err == nil) && !u.Blocked:
+		// A late create made a row after the block. Block it and wait again (#192).
+		return r.blockAgain(ctx, key, "The gateway key was not blocked. The block runs again.")
 	case errors.Is(err, gateway.ErrSpendNotSettled), err == nil:
 		if err != nil {
 			message += spendNotSettledNote
@@ -342,6 +342,20 @@ func (r *TestKeyReconciler) revoke(ctx context.Context, key *corev1alpha1.TestKe
 		return ctrl.Result{}, err
 	}
 	return ctrl.Result{}, r.dropFinalizer(ctx, key)
+}
+
+// blockAgain blocks the key and starts the revoke wait again. The wait counts from this block,
+// so a key row that a late create made gets the full wait.
+func (r *TestKeyReconciler) blockAgain(ctx context.Context, key *corev1alpha1.TestKey,
+	message string) (ctrl.Result, error) {
+	if err := r.Gateway.BlockKey(ctx, key.Status.KeyHash); err != nil {
+		return ctrl.Result{}, err
+	}
+	meta.RemoveStatusCondition(&key.Status.Conditions, condActive)
+	meta.SetStatusCondition(&key.Status.Conditions, metav1.Condition{Type: condActive,
+		Status: metav1.ConditionFalse, Reason: reasonTKBlocked, Message: message,
+		ObservedGeneration: key.Generation, LastTransitionTime: metav1.NewTime(r.now())})
+	return ctrl.Result{RequeueAfter: r.revokeWait()}, r.Status().Update(ctx, key)
 }
 
 // deleteSlot deletes the slot Secret only if it is from key. The UID precondition stops the

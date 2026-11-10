@@ -53,6 +53,8 @@ type Usage struct {
 	FailedCalls  int64
 	InputTokens  int64
 	OutputTokens int64
+	// Blocked is true if the gateway row of the key is blocked.
+	Blocked bool
 }
 
 // Gateway is a model gateway with keys for each run.

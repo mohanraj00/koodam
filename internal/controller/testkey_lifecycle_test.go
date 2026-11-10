@@ -38,12 +38,14 @@ import (
 )
 
 // tkGateway records the order of the gateway calls. If missing is true, the gateway has no
-// row for any key, as after a block that arrived before the create.
+// row for any key, as after a block that arrived before the create. If late is true, the next
+// Usage shows a row that is not blocked, as after a create that landed after the block.
 type tkGateway struct {
 	mu      sync.Mutex
 	order   []string
 	specs   []gateway.KeySpec
 	missing bool
+	late    bool
 }
 
 func (g *tkGateway) add(op string) {
@@ -68,7 +70,11 @@ func (g *tkGateway) Usage(context.Context, string) (gateway.Usage, error) {
 	if g.missing {
 		return gateway.Usage{}, gateway.ErrKeyNotFound
 	}
-	return gateway.Usage{Spend: 0.25, Calls: 3, InputTokens: 12, OutputTokens: 4}, nil
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	blocked := !g.late
+	g.late = false
+	return gateway.Usage{Spend: 0.25, Calls: 3, InputTokens: 12, OutputTokens: 4, Blocked: blocked}, nil
 }
 
 func (g *tkGateway) ops() []string {
@@ -292,6 +298,33 @@ var _ = Describe("TestKey lifecycle", func() {
 		got := get(k)
 		Expect(reason(k)).To(Equal(reasonTKRevoked))
 		Expect(got.Status.Usage).To(BeNil())
+		_, err = slot()
+		Expect(apierrors.IsNotFound(err)).To(BeTrue())
+	})
+
+	It("blocks again and waits again if a late create made a row after the block", func() {
+		k := newKey("late")
+		reconcileKey(k)
+		Expect(k8sClient.Delete(ctx, get(k))).To(Succeed())
+		reconcileKey(k)
+		gw.late = true
+
+		now = now.Add(time.Minute)
+		res := reconcileKey(k)
+		Expect(res.RequeueAfter).To(Equal(time.Minute))
+		Expect(gw.ops()).To(Equal([]string{opCreate, opBlock, opUsage, opBlock}))
+		Expect(reason(k)).To(Equal(reasonTKBlocked))
+		_, err := slot()
+		Expect(err).NotTo(HaveOccurred(), "the slot stays until the row is blocked")
+
+		// The wait counts from the second block.
+		now = now.Add(30 * time.Second)
+		reconcileKey(k)
+		Expect(gw.ops()).To(HaveLen(4))
+
+		now = now.Add(31 * time.Second)
+		reconcileKey(k)
+		Expect(gw.ops()).To(Equal([]string{opCreate, opBlock, opUsage, opBlock, opUsage}))
 		_, err = slot()
 		Expect(apierrors.IsNotFound(err)).To(BeTrue())
 	})
