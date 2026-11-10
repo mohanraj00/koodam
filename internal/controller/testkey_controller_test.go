@@ -119,6 +119,7 @@ var _ = Describe("TestKey controller", func() {
 		}
 		Expect(k8sClient.Create(ctx, workspace)).To(Succeed())
 		DeferCleanup(k8sClient.Delete, ctx, workspace)
+		markBound(ctx, workspace, metav1.ConditionTrue)
 		testKey := &corev1alpha1.TestKey{
 			ObjectMeta: metav1.ObjectMeta{GenerateName: testKeyNamePrefix, Namespace: workspace.Namespace},
 			Spec: corev1alpha1.TestKeySpec{

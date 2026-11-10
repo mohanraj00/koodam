@@ -67,6 +67,7 @@ const (
 	reasonShape         = "GatewayShapeUnsupported"
 	reasonNoWorkspace   = "WorkspaceNotFound"
 	reasonNoGateway     = "GatewayDisabled"
+	reasonUnbound       = "ProfileNotBound"
 	reasonGatewayFailed = "GatewayError"
 )
 
@@ -176,7 +177,15 @@ func (r *TestKeyReconciler) refusal(key *corev1alpha1.TestKey, workspace *corev1
 	case workspace.Spec.Gateway == nil:
 		return reasonNoGateway, "The Workspace has no gateway."
 	}
-	return testKeyRefusal(key, workspace)
+	if reason, message := testKeyRefusal(key, workspace); reason != "" {
+		return reason, message
+	}
+	// The Workspace controller blocks the Workspace key when no Profile binds the namespace.
+	// The test keys stop with it. A new Workspace has no condition yet, so it gets no key.
+	if !meta.IsStatusConditionTrue(workspace.Status.Conditions, condProfileBound) {
+		return reasonUnbound, "No Profile binds the namespace of the Workspace."
+	}
+	return "", ""
 }
 
 func testKeyRefusal(key *corev1alpha1.TestKey, workspace *corev1alpha1.Workspace) (reason, message string) {

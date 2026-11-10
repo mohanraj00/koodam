@@ -38,6 +38,15 @@ import (
 	"github.com/mohanraj00/koodam/internal/podtemplate"
 )
 
+// markBound sets the condition ProfileBound of ws, as the Workspace controller does.
+func markBound(ctx context.Context, ws *corev1alpha1.Workspace, status metav1.ConditionStatus) {
+	GinkgoHelper()
+	Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(ws), ws)).To(Succeed())
+	meta.SetStatusCondition(&ws.Status.Conditions, metav1.Condition{Type: condProfileBound,
+		Status: status, Reason: "Test", Message: "Set by the test."})
+	Expect(k8sClient.Status().Update(ctx, ws)).To(Succeed())
+}
+
 // tkGateway records the order of the gateway calls. If missing is true, the gateway has no
 // row for any key, as after a block that arrived before the create. If late is true, the next
 // Usage shows a row that is not blocked, as after a create that landed after the block.
@@ -152,6 +161,7 @@ var _ = Describe("TestKey lifecycle", func() {
 		}
 		Expect(k8sClient.Create(ctx, workspace)).To(Succeed())
 		DeferCleanup(k8sClient.Delete, ctx, workspace)
+		markBound(ctx, workspace, metav1.ConditionTrue)
 		DeferCleanup(func() {
 			if s, err := slot(); err == nil {
 				_ = k8sClient.Delete(ctx, s)
@@ -338,5 +348,21 @@ var _ = Describe("TestKey lifecycle", func() {
 			other := &corev1alpha1.Workspace{ObjectMeta: metav1.ObjectMeta{Name: name}}
 			Expect(testKeySecretName("dev")).NotTo(Equal(gatewaySecretName(other)))
 		}
+	})
+
+	It("refuses a key and revokes it when no Profile binds the namespace", func() {
+		k := newKey("unbound")
+		reconcileKey(k)
+		Expect(reason(k)).To(Equal(reasonIssued))
+
+		markBound(ctx, workspace, metav1.ConditionFalse)
+		reconcileKey(k)
+		Expect(reason(k)).To(Equal(reasonTKBlocked))
+		Expect(gw.ops()).To(Equal([]string{opCreate, opBlock}))
+
+		fresh := newKey("unbound-new")
+		reconcileKey(fresh)
+		Expect(reason(fresh)).To(Equal(reasonUnbound))
+		Expect(gw.specs).To(HaveLen(1), "no key for a TestKey in an unbound namespace")
 	})
 })
