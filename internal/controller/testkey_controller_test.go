@@ -31,6 +31,9 @@ import (
 	corev1alpha1 "github.com/mohanraj00/koodam/api/v1alpha1"
 )
 
+// testKeyTestID is the Nookku test ID in the TestKey tests.
+const testKeyTestID = "login-smoke"
+
 var _ = Describe("TestKey controller", func() {
 	DescribeTable("refuses a key before it reaches the gateway",
 		func(change func(*corev1alpha1.Workspace, *corev1alpha1.TestKey), reason string) {
@@ -49,7 +52,7 @@ var _ = Describe("TestKey controller", func() {
 			testKey := &corev1alpha1.TestKey{
 				ObjectMeta: metav1.ObjectMeta{GenerateName: "testkey-request-", Namespace: workspace.Namespace},
 				Spec: corev1alpha1.TestKeySpec{
-					TestID: "login-smoke", Budget: resource.MustParse("0.5"),
+					TestID: testKeyTestID, Budget: resource.MustParse("0.5"),
 					TTL: metav1.Duration{Duration: 30 * time.Minute},
 				},
 			}
