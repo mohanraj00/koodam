@@ -258,6 +258,10 @@ func (r *WorkspaceReconciler) apply(ctx context.Context, ws *corev1alpha1.Worksp
 	case errors.Is(err, errTestKeysUnblocked):
 		return corev1alpha1.WorkspacePending, "TestKeysBlocking",
 			"The pod changes after the gateway blocks each test key.", nil
+	case errors.Is(err, errTestKeysPending):
+		// A TestKey status change starts the next reconcile.
+		return corev1alpha1.WorkspacePending, "TestKeysRevoking",
+			"The gateway removal completes after the revoke of each test key.", nil
 	case errors.Is(err, errNotOwned):
 		return failed, "NameConflict", "An object with a Workspace object name is not from this Workspace.", nil
 	case permanent(err):
@@ -356,8 +360,16 @@ func (r *WorkspaceReconciler) unbind(ctx context.Context, ws *corev1alpha1.Works
 	// The TestKey controller starts a revoke when it reads ProfileBound=False. Write that
 	// condition before the stop, so a TestKey issue that the stop does not see also sees it (#192).
 	// Without the opt-in, no TestKey issue can start.
-	if ws.Spec.TestKeys != nil && meta.IsStatusConditionTrue(ws.Status.Conditions, condProfileBound) {
-		return errUnbindPending
+	// The cache can show an old False after a fast unbind, bind and unbind. Thus read the
+	// condition from the API server.
+	if ws.Spec.TestKeys != nil {
+		fresh := &corev1alpha1.Workspace{}
+		if err := r.APIReader.Get(ctx, client.ObjectKeyFromObject(ws), fresh); err != nil {
+			return err
+		}
+		if meta.IsStatusConditionTrue(fresh.Status.Conditions, condProfileBound) {
+			return errUnbindPending
+		}
 	}
 	if err := r.waitTestKeyBlocks(ctx, ws); err != nil {
 		return err

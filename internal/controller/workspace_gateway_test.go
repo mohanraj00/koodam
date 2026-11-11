@@ -408,6 +408,26 @@ var _ = Describe("Workspace gateway key", func() {
 		Expect(workspace().Status.Phase).To(Equal(corev1alpha1.WorkspaceSuspended))
 	})
 
+	It("shows a pending status, not an error, while a gateway removal waits for a TestKey revoke", func() {
+		mustReconcile()
+		ws := workspace()
+		tk := &corev1alpha1.TestKey{
+			ObjectMeta: metav1.ObjectMeta{Name: name + "-tk", Namespace: ns},
+			Spec: corev1alpha1.TestKeySpec{WorkspaceRef: corev1alpha1.TestKeyWorkspaceRef{Name: name, UID: ws.UID},
+				TestID: "gateway-off", Budget: resource.MustParse("0.5"), TTL: metav1.Duration{Duration: time.Hour}},
+		}
+		Expect(k8sClient.Create(ctx, tk)).To(Succeed())
+		DeferCleanup(k8sClient.Delete, context.Background(), tk)
+		tk.Status.KeyHash = gateway.HashKey("sk-kd-gateway-off")
+		Expect(k8sClient.Status().Update(ctx, tk)).To(Succeed())
+
+		edit(func(ws *corev1alpha1.Workspace) { ws.Spec.Gateway = nil })
+		mustReconcile()
+		ready := meta.FindStatusCondition(workspace().Status.Conditions, condReady)
+		Expect(ready.Reason).To(Equal("TestKeysRevoking"))
+		Expect(controllerutil.ContainsFinalizer(workspace(), workspaceFinalizer)).To(BeTrue())
+	})
+
 	It("blocks the key, deletes the Secret and removes the mount when spec.gateway is removed", func() {
 		rec.Egress = testEgress
 		mustReconcile()

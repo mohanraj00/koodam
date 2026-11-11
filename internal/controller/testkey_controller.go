@@ -67,6 +67,7 @@ const (
 	reasonShape         = "GatewayShapeUnsupported"
 	reasonNoWorkspace   = "WorkspaceNotFound"
 	reasonNoGateway     = "GatewayDisabled"
+	reasonNoFinalizer   = "WorkspaceNotReady"
 	reasonUnbound       = "ProfileNotBound"
 	reasonGatewayFailed = "GatewayError"
 )
@@ -187,6 +188,10 @@ func (r *TestKeyReconciler) refusal(key *corev1alpha1.TestKey, workspace *corev1
 		return reasonShape, "Test keys need a gateway with one replica and one worker."
 	case workspace.Spec.Gateway == nil:
 		return reasonNoGateway, "The Workspace has no gateway."
+	case !controllerutil.ContainsFinalizer(workspace, workspaceFinalizer):
+		// Without the finalizer, a Workspace delete removes the pod at once, before the
+		// TestKey block. Revoke first: no key before the finalizer (#192).
+		return reasonNoFinalizer, "The Workspace controller did not add its finalizer yet."
 	}
 	if reason, message := testKeyRefusal(key, workspace); reason != "" {
 		return reason, message
@@ -239,8 +244,11 @@ func (r *TestKeyReconciler) issue(ctx context.Context, key *corev1alpha1.TestKey
 		}
 	}
 	if !metav1.IsControlledBy(slot, key) {
-		err := r.setActive(ctx, key, metav1.ConditionFalse, reasonSlotBusy,
-			"Another test key of this Workspace is active.")
+		message := "Another test key of this Workspace is active."
+		if owner := metav1.GetControllerOf(slot); owner == nil || owner.Kind != "TestKey" {
+			message = "A Secret that no test key owns has the slot name."
+		}
+		err := r.setActive(ctx, key, metav1.ConditionFalse, reasonSlotBusy, message)
 		return ctrl.Result{RequeueAfter: 30 * time.Second}, err
 	}
 	value := string(slot.Data[testKeyValueField])
@@ -253,7 +261,12 @@ func (r *TestKeyReconciler) issue(ctx context.Context, key *corev1alpha1.TestKey
 		}
 	}
 	remaining := key.Status.ExpiresAt.Sub(r.now()).Truncate(time.Second)
-	if gateway.HashKey(value) != key.Status.KeyHash || remaining < time.Second {
+	// The slot is not immutable. A changed field, such as a base-url to another host, gets a
+	// revoke, as a changed key value does.
+	if gateway.HashKey(value) != key.Status.KeyHash || remaining < time.Second ||
+		string(slot.Data[testKeyAliasField]) != key.Status.KeyAlias ||
+		string(slot.Data[testKeyURLField]) != r.GatewayURL ||
+		string(slot.Data[testKeyModelField]) != workspace.Spec.Gateway.Model {
 		return r.revoke(ctx, key)
 	}
 	// A suspend, an unbind or a delete can start after the first Workspace read. From the hash

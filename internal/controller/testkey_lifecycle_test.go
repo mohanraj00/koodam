@@ -175,8 +175,7 @@ var _ = Describe("TestKey lifecycle", func() {
 					MaxBudget: resource.MustParse("1"), MaxTTL: metav1.Duration{Duration: time.Hour}},
 			},
 		}
-		Expect(k8sClient.Create(ctx, workspace)).To(Succeed())
-		DeferCleanup(k8sClient.Delete, ctx, workspace)
+		createWorkspaceWithFinalizer(ctx, workspace)
 		markBound(ctx, workspace, metav1.ConditionTrue)
 		DeferCleanup(func() {
 			if s, err := slot(); err == nil {
@@ -209,6 +208,41 @@ var _ = Describe("TestKey lifecycle", func() {
 		Expect(gw.ops()).To(BeEmpty())
 		_, err := slot()
 		Expect(apierrors.IsNotFound(err)).To(BeTrue())
+	})
+
+	It("refuses a key while the Workspace has no finalizer", func() {
+		ws := &corev1alpha1.Workspace{}
+		Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(workspace), ws)).To(Succeed())
+		controllerutil.RemoveFinalizer(ws, workspaceFinalizer)
+		Expect(k8sClient.Update(ctx, ws)).To(Succeed())
+		k := newKey("no-finalizer")
+		reconcileKey(k)
+		Expect(reason(k)).To(Equal(reasonNoFinalizer))
+		Expect(gw.ops()).NotTo(ContainElement(opCreate))
+	})
+
+	It("revokes the key if a slot field changes", func() {
+		k := newKey("tamper")
+		reconcileKey(k)
+		Expect(reason(k)).To(Equal(reasonIssued))
+		s, err := slot()
+		Expect(err).NotTo(HaveOccurred())
+		s.Data[testKeyURLField] = []byte("http://other.test:4000")
+		Expect(k8sClient.Update(ctx, s)).To(Succeed())
+		reconcileKey(k)
+		Expect(gw.ops()).To(ContainElement(opBlock), "a changed base-url gets a revoke")
+		Expect(gw.specs).To(HaveLen(1), "no second create for a changed slot")
+	})
+
+	It("says so if a Secret that no test key owns has the slot name", func() {
+		Expect(k8sClient.Create(ctx, &corev1.Secret{ObjectMeta: metav1.ObjectMeta{
+			Name: testKeySecretName(workspace.Name), Namespace: workspace.Namespace}})).To(Succeed())
+		k := newKey("foreign")
+		reconcileKey(k)
+		c := meta.FindStatusCondition(get(k).Status.Conditions, condActive)
+		Expect(c.Reason).To(Equal(reasonSlotBusy))
+		Expect(c.Message).To(ContainSubstring("no test key owns"))
+		Expect(gw.ops()).NotTo(ContainElement(opCreate))
 	})
 
 	It("issues a key in the approved order and keeps it on a retry", func() {
