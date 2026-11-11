@@ -1,0 +1,28 @@
+# The App CRDs are not in the default install. Apply config/apps/crd first.
+apiVersion: core.koodam.dev/v1alpha1
+kind: AppVersion
+metadata:
+  labels:
+    app.kubernetes.io/name: koodam
+    app.kubernetes.io/managed-by: kustomize
+  name: appversion-sample-v1
+spec:
+  appRef:
+    name: app-sample
+  budgetPerDay: "5"
+  replicas: 1
+  template:
+    model: claude-sonnet-5-5
+    podTemplate:
+      spec:
+        containers:
+          - name: app
+            # Use an image digest, so that the version always runs the same image.
+            image: registry.example.com/app@sha256:0000000000000000000000000000000000000000000000000000000000000000
+            ports:
+              - name: http
+                containerPort: 8080
+            readinessProbe:
+              httpGet:
+                path: /healthz
+                port: http

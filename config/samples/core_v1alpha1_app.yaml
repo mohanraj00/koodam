@@ -1,0 +1,10 @@
+# The App CRDs are not in the default install. Apply config/apps/crd first.
+apiVersion: core.koodam.dev/v1alpha1
+kind: App
+metadata:
+  labels:
+    app.kubernetes.io/name: koodam
+    app.kubernetes.io/managed-by: kustomize
+  name: app-sample
+spec:
+  maxLiveVersions: 2

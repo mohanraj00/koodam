@@ -1,0 +1,5 @@
+# The App and AppVersion CRDs. The default install does not include them. Apply this folder only
+# for a manual App install.
+resources:
+- bases/core.koodam.dev_apps.yaml
+- bases/core.koodam.dev_appversions.yaml
