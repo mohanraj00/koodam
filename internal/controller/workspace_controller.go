@@ -18,6 +18,9 @@ package controller
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"regexp"
@@ -60,10 +63,12 @@ const (
 	workspaceSSHDir     = "/etc/koodam/ssh"
 	workspaceGlobalsDir = "/etc/koodam/globals"
 	workspaceLoginDir   = "/etc/koodam/login"
-	globalsConfigMap    = "koodam-globals"
-	loginSecret         = "koodam-login"
-	workspaceUser       = int64(1000)
-	workspacePort       = int32(2222)
+	// workspaceTestGatewayDir has the files of the active TestKey: key, alias, base-url, model.
+	workspaceTestGatewayDir = "/etc/koodam/test-gateway"
+	globalsConfigMap        = "koodam-globals"
+	loginSecret             = "koodam-login"
+	workspaceUser           = int64(1000)
+	workspacePort           = int32(2222)
 
 	// maxWorkspaceName keeps the pod label controller-revision-hash (name, "-", 10 characters)
 	// at 63 characters or fewer.
@@ -212,7 +217,10 @@ func (r *WorkspaceReconciler) apply(ctx context.Context, ws *corev1alpha1.Worksp
 		return failed, "Invalid", "The Workspace name is too long for the StatefulSet. Use 52 characters or fewer.", nil
 	}
 	if user == "" {
-		if err := r.unbind(ctx, ws); err != nil {
+		// While a TestKey is not blocked, the pod stays, and the status says that no Profile
+		// binds the namespace. That condition starts the TestKey revoke.
+		if err := r.unbind(ctx, ws); err != nil && !errors.Is(err, errTestKeysUnblocked) &&
+			!errors.Is(err, errUnbindPending) {
 			return "", "", "", err
 		}
 		return corev1alpha1.WorkspacePending, reasonNotBound, fmt.Sprintf("No Profile binds the namespace %q. "+
@@ -239,10 +247,21 @@ func (r *WorkspaceReconciler) apply(ctx context.Context, ws *corev1alpha1.Worksp
 		// blocks the key before the pod stops.
 		err = r.applyKey(ctx, ws)
 	}
+	if err == nil && (ws.Spec.Suspend || ws.Spec.TestKeys == nil) {
+		// A suspend stops the pod, and a removed opt-in removes the mount (#192).
+		err = r.waitTestKeyBlocks(ctx, ws)
+	}
 	if err == nil {
 		sts, err = r.applyStatefulSet(ctx, ws, want)
 	}
 	switch {
+	case errors.Is(err, errTestKeysUnblocked):
+		return corev1alpha1.WorkspacePending, "TestKeysBlocking",
+			"The pod changes after the gateway blocks each test key.", nil
+	case errors.Is(err, errTestKeysPending):
+		// A TestKey status change starts the next reconcile.
+		return corev1alpha1.WorkspacePending, "TestKeysRevoking",
+			"The gateway removal completes after the revoke of each test key.", nil
 	case errors.Is(err, errNotOwned):
 		return failed, "NameConflict", "An object with a Workspace object name is not from this Workspace.", nil
 	case permanent(err):
@@ -338,6 +357,23 @@ func (r *WorkspaceReconciler) unbind(ctx context.Context, ws *corev1alpha1.Works
 	if err := r.revokeKey(ctx, ws, secret); err != nil {
 		return err
 	}
+	// The TestKey controller starts a revoke when it reads ProfileBound=False. Write that
+	// condition before the stop, so a TestKey issue that the stop does not see also sees it (#192).
+	// Without the opt-in, no TestKey issue can start.
+	// The cache can show an old False after a fast unbind, bind and unbind. Thus read the
+	// condition from the API server.
+	if ws.Spec.TestKeys != nil {
+		fresh := &corev1alpha1.Workspace{}
+		if err := r.APIReader.Get(ctx, client.ObjectKeyFromObject(ws), fresh); err != nil {
+			return err
+		}
+		if meta.IsStatusConditionTrue(fresh.Status.Conditions, condProfileBound) {
+			return errUnbindPending
+		}
+	}
+	if err := r.waitTestKeyBlocks(ctx, ws); err != nil {
+		return err
+	}
 	sts := &appsv1.StatefulSet{}
 	err = r.Get(ctx, types.NamespacedName{Namespace: ws.Namespace, Name: ws.Name}, sts)
 	if apierrors.IsNotFound(err) || (err == nil && !metav1.IsControlledBy(sts, ws)) {
@@ -360,8 +396,13 @@ func (r *WorkspaceReconciler) unbind(ctx context.Context, ws *corev1alpha1.Works
 // volumeClaimTemplates cannot change.
 func (r *WorkspaceReconciler) applyStatefulSet(ctx context.Context, ws *corev1alpha1.Workspace,
 	want *appsv1.StatefulSet) (*appsv1.StatefulSet, error) {
+	hash, err := templateHash(want.Spec.Template)
+	if err != nil {
+		return nil, err
+	}
+	metav1.SetMetaDataAnnotation(&want.ObjectMeta, templateHashAnnotation, hash)
 	have := &appsv1.StatefulSet{}
-	err := r.Get(ctx, types.NamespacedName{Namespace: ws.Namespace, Name: ws.Name}, have)
+	err = r.Get(ctx, types.NamespacedName{Namespace: ws.Namespace, Name: ws.Name}, have)
 	if apierrors.IsNotFound(err) {
 		return want, r.createOwned(ctx, ws, want)
 	}
@@ -371,23 +412,63 @@ func (r *WorkspaceReconciler) applyStatefulSet(ctx context.Context, ws *corev1al
 	if !metav1.IsControlledBy(have, ws) {
 		return nil, errNotOwned
 	}
-	// DeepDerivative ignores the fields that the API server sets as defaults. Thus the
-	// controller updates the template only if it changed, for example after a manual edit.
-	// It also ignores an empty field in want, and accepts a list in want that is the start of the
-	// list in have. The egress proxy owns hostAliases and dnsConfig, thus the controller compares
-	// them exactly (#142).
+	// The hash annotation records the last template of the controller. A changed hash finds
+	// each change of the controller, also a removed field, volume, env value or annotation
+	// (#192). DeepDerivative finds a manual edit of a field in want, and ignores the fields that
+	// the API server sets as defaults. It also ignores an empty field in want, and accepts a list
+	// in want that is the start of the list in have. The egress proxy owns hostAliases and
+	// dnsConfig, thus the controller compares them exactly (#142). The volume names and the mount
+	// names are also exact, thus a manual edit cannot add a volume or a mount.
 	w, h := want.Spec.Template.Spec, have.Spec.Template.Spec
-	sameTemplate := equality.Semantic.DeepDerivative(want.Spec.Template, have.Spec.Template) &&
+	sameTemplate := have.Annotations[templateHashAnnotation] == hash &&
+		equality.Semantic.DeepDerivative(want.Spec.Template, have.Spec.Template) &&
 		equality.Semantic.DeepEqual(w.HostAliases, h.HostAliases) &&
-		equality.Semantic.DeepEqual(w.DNSConfig, h.DNSConfig)
+		equality.Semantic.DeepEqual(w.DNSConfig, h.DNSConfig) &&
+		equality.Semantic.DeepEqual(volumeNames(w), volumeNames(h))
 	if sameTemplate && have.Spec.Replicas != nil && *have.Spec.Replicas == *want.Spec.Replicas {
 		return have, nil
 	}
 	if !sameTemplate {
 		have.Spec.Template = want.Spec.Template
+		metav1.SetMetaDataAnnotation(&have.ObjectMeta, templateHashAnnotation, hash)
 	}
 	have.Spec.Replicas = want.Spec.Replicas
 	return have, r.Update(ctx, have)
+}
+
+// templateHashAnnotation is on the StatefulSet, not on the pod template. Thus a new hash does
+// not restart the pod.
+const templateHashAnnotation = "koodam.dev/template-hash"
+
+// templateHash returns the sha256 of the JSON form of the pod template of the controller.
+func templateHash(t corev1.PodTemplateSpec) (string, error) {
+	b, err := json.Marshal(t)
+	if err != nil {
+		return "", fmt.Errorf("hash the pod template: %w", err)
+	}
+	sum := sha256.Sum256(b)
+	return hex.EncodeToString(sum[:]), nil
+}
+
+// volumeNames returns the volume names of pod, then the volume mount names of each container
+// and each init container. A change of a list length changes the result.
+func volumeNames(pod corev1.PodSpec) [][]string {
+	containers := append(append([]corev1.Container{}, pod.InitContainers...), pod.Containers...)
+	volumes := make([]string, 0, len(pod.Volumes))
+	for _, v := range pod.Volumes {
+		volumes = append(volumes, v.Name)
+	}
+	names := make([][]string, 0, 1+len(containers))
+	names = append(names, volumes)
+	for _, c := range containers {
+		mounts := make([]string, 0, 1+len(c.VolumeMounts))
+		mounts = append(mounts, c.Name)
+		for _, m := range c.VolumeMounts {
+			mounts = append(mounts, m.Name)
+		}
+		names = append(names, mounts)
+	}
+	return names
 }
 
 // createOwned creates o. If an object with the same name exists, the cache did not have it. Then
@@ -445,8 +526,11 @@ func (r *WorkspaceReconciler) statefulSet(ws *corev1alpha1.Workspace, user strin
 	container := corev1.Container{
 		Name: workspaceContainer, Image: image,
 		Ports: []corev1.ContainerPort{{Name: "ssh", ContainerPort: workspacePort, Protocol: corev1.ProtocolTCP}},
+		// The probe has the API server defaults. If not, DeepDerivative sees a change in each
+		// reconcile, and the controller updates the template each time.
 		ReadinessProbe: &corev1.Probe{ProbeHandler: corev1.ProbeHandler{
-			TCPSocket: &corev1.TCPSocketAction{Port: intstr.FromInt32(workspacePort)}}},
+			TCPSocket: &corev1.TCPSocketAction{Port: intstr.FromInt32(workspacePort)}},
+			TimeoutSeconds: 1, PeriodSeconds: 10, SuccessThreshold: 1, FailureThreshold: 3},
 		VolumeMounts: []corev1.VolumeMount{
 			{Name: home, MountPath: workspaceHome},
 			{Name: ssh, MountPath: workspaceSSHDir, ReadOnly: true},
@@ -469,6 +553,16 @@ func (r *WorkspaceReconciler) statefulSet(ws *corev1alpha1.Workspace, user strin
 			Secret: &corev1.SecretVolumeSource{SecretName: gatewaySecretName(ws), DefaultMode: new(int32(0o440))}}})
 		container.VolumeMounts = append(container.VolumeMounts,
 			corev1.VolumeMount{Name: gw, MountPath: workspaceGatewayDir, ReadOnly: true})
+	}
+	if ws.Spec.TestKeys != nil {
+		// The slot Secret of the active TestKey (#192). It is optional, so the pod starts with
+		// no TestKey. The kubelet adds and removes the files when the slot changes.
+		const tk = "test-gateway"
+		volumes = append(volumes, corev1.Volume{Name: tk, VolumeSource: corev1.VolumeSource{
+			Secret: &corev1.SecretVolumeSource{SecretName: testKeySecretName(ws.Name), Optional: new(true),
+				DefaultMode: new(int32(0o440)), Items: testKeyItems()}}})
+		container.VolumeMounts = append(container.VolumeMounts,
+			corev1.VolumeMount{Name: tk, MountPath: workspaceTestGatewayDir, ReadOnly: true})
 	}
 	tmpl := corev1.PodTemplateSpec{ObjectMeta: metav1.ObjectMeta{Labels: labels}, Spec: corev1.PodSpec{
 		AutomountServiceAccountToken: new(false),
@@ -561,6 +655,27 @@ func (r *WorkspaceReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		Watches(&corev1alpha1.Profile{}, handler.EnqueueRequestsFromMapFunc(r.workspacesForProfile),
 			builder.WithPredicates(predicate.Or(predicate.GenerationChangedPredicate{},
 				predicate.Funcs{UpdateFunc: deleteStarted}))).
+		// A TestKey revoke lets the Workspace delete continue (#192).
+		Watches(&corev1alpha1.TestKey{}, handler.EnqueueRequestsFromMapFunc(workspaceForTestKey)).
 		Named("workspace").
 		Complete(r)
+}
+
+// testKeyItems are the only fields of the slot Secret in the pod. A Secret with a different
+// shape gives no other field to the pod.
+func testKeyItems() []corev1.KeyToPath {
+	fields := []string{testKeyValueField, testKeyAliasField, testKeyURLField, testKeyModelField}
+	items := make([]corev1.KeyToPath, 0, len(fields))
+	for _, f := range fields {
+		items = append(items, corev1.KeyToPath{Key: f, Path: f})
+	}
+	return items
+}
+
+func workspaceForTestKey(_ context.Context, obj client.Object) []reconcile.Request {
+	k, ok := obj.(*corev1alpha1.TestKey)
+	if !ok {
+		return nil
+	}
+	return []reconcile.Request{{NamespacedName: client.ObjectKey{Namespace: k.Namespace, Name: k.Spec.WorkspaceRef.Name}}}
 }

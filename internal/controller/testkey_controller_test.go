@@ -63,8 +63,7 @@ var _ = Describe("TestKey controller", func() {
 				},
 			}
 			change(workspace, testKey)
-			Expect(k8sClient.Create(ctx, workspace)).To(Succeed())
-			DeferCleanup(k8sClient.Delete, ctx, workspace)
+			createWorkspaceWithFinalizer(ctx, workspace)
 
 			testKey.Spec.WorkspaceRef.Name = workspace.Name
 			if testKey.Spec.WorkspaceRef.UID == "" {
@@ -117,8 +116,7 @@ var _ = Describe("TestKey controller", func() {
 				},
 			},
 		}
-		Expect(k8sClient.Create(ctx, workspace)).To(Succeed())
-		DeferCleanup(k8sClient.Delete, ctx, workspace)
+		createWorkspaceWithFinalizer(ctx, workspace)
 		markBound(ctx, workspace, metav1.ConditionTrue)
 		testKey := &corev1alpha1.TestKey{
 			ObjectMeta: metav1.ObjectMeta{GenerateName: testKeyNamePrefix, Namespace: workspace.Namespace},
@@ -174,3 +172,20 @@ var _ = Describe("TestKey controller", func() {
 		Expect(condition.Reason).To(Equal("WorkspaceNotFound"))
 	})
 })
+
+// createWorkspaceWithFinalizer creates ws with the finalizer of the Workspace controller, as a
+// Workspace with a gateway has it. The cleanup removes the finalizer and deletes ws.
+func createWorkspaceWithFinalizer(ctx context.Context, ws *corev1alpha1.Workspace) {
+	GinkgoHelper()
+	ws.Finalizers = append(ws.Finalizers, workspaceFinalizer)
+	Expect(k8sClient.Create(ctx, ws)).To(Succeed())
+	DeferCleanup(func() {
+		bg := context.Background()
+		w := &corev1alpha1.Workspace{}
+		if k8sClient.Get(bg, client.ObjectKeyFromObject(ws), w) == nil {
+			w.Finalizers = nil
+			_ = k8sClient.Update(bg, w)
+			_ = k8sClient.Delete(bg, w)
+		}
+	})
+}

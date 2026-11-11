@@ -28,6 +28,11 @@ import (
 // different run in the same namespace.
 const ReservedSecretPrefix = "kd-"
 
+// TestKeySecretPrefix is the name prefix of the TestKey slot Secrets. It is not
+// ReservedSecretPrefix, so a slot name is never the run Secret name "kd-<agent>" of an Agent.
+// A pod template cannot refer to these Secrets.
+const TestKeySecretPrefix = "kt-"
+
 // SecretRef is a reference to a Secret in a pod spec, with the path of its name field.
 type SecretRef struct {
 	Name string
@@ -72,13 +77,16 @@ func SecretRefs(s *corev1.PodSpec, path *field.Path) []SecretRef {
 	return refs
 }
 
-// reservedSecrets refuses each reference to a Secret with ReservedSecretPrefix.
+// reservedSecrets refuses each reference to a Secret with ReservedSecretPrefix or
+// TestKeySecretPrefix.
 func reservedSecrets(s *corev1.PodSpec, path *field.Path) field.ErrorList {
 	var errs field.ErrorList
 	for _, ref := range SecretRefs(s, path) {
-		if strings.HasPrefix(ref.Name, ReservedSecretPrefix) {
-			errs = append(errs, field.Forbidden(ref.Path,
-				"The pod template cannot refer to a Secret with the prefix "+ReservedSecretPrefix+"."))
+		for _, prefix := range []string{ReservedSecretPrefix, TestKeySecretPrefix} {
+			if strings.HasPrefix(ref.Name, prefix) {
+				errs = append(errs, field.Forbidden(ref.Path,
+					"The pod template cannot refer to a Secret with the prefix "+prefix+"."))
+			}
 		}
 	}
 	return errs

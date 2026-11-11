@@ -316,8 +316,124 @@ var _ = Describe("Workspace gateway key", func() {
 		Expect(apierrors.IsNotFound(k8sClient.Get(ctx, nn(name), &corev1alpha1.Workspace{}))).To(BeTrue())
 	})
 
-	It("blocks the key, deletes the Secret and removes the mount when spec.gateway is removed", func() {
+	It("mounts the TestKey slot only with the opt-in, and waits for each TestKey revoke", func() {
 		mustReconcile()
+		sts := &appsv1.StatefulSet{}
+		Expect(k8sClient.Get(ctx, nn(name), sts)).To(Succeed())
+		Expect(sts.Spec.Template.Spec.Volumes).NotTo(ContainElement(HaveField("Name", "test-gateway")))
+
+		edit(func(ws *corev1alpha1.Workspace) {
+			ws.Spec.TestKeys = &corev1alpha1.WorkspaceTestKeys{MaxBudget: resource.MustParse("1"),
+				MaxTTL: metav1.Duration{Duration: time.Hour}}
+		})
+		mustReconcile()
+		Expect(k8sClient.Get(ctx, nn(name), sts)).To(Succeed())
+		pod := sts.Spec.Template.Spec
+		Expect(pod.Volumes).To(ContainElement(corev1.Volume{Name: "test-gateway", VolumeSource: corev1.VolumeSource{
+			Secret: &corev1.SecretVolumeSource{SecretName: "kt-" + name + "-testkey", Optional: new(true),
+				DefaultMode: new(int32(0o440)), Items: []corev1.KeyToPath{{Key: testKeyValueField, Path: "key"},
+					{Key: testKeyAliasField, Path: "alias"}, {Key: testKeyURLField, Path: "base-url"},
+					{Key: testKeyModelField, Path: testKeyModelField}}}}}))
+		Expect(pod.Containers[0].VolumeMounts).To(ContainElement(corev1.VolumeMount{Name: "test-gateway",
+			MountPath: "/etc/koodam/test-gateway", ReadOnly: true}))
+
+		edit(func(ws *corev1alpha1.Workspace) { ws.Spec.TestKeys = nil })
+		mustReconcile()
+		Expect(k8sClient.Get(ctx, nn(name), sts)).To(Succeed())
+		Expect(sts.Spec.Template.Spec.Volumes).NotTo(ContainElement(HaveField("Name", "test-gateway")),
+			"the opt-out removes the slot volume")
+		Expect(sts.Spec.Template.Spec.Containers[0].VolumeMounts).NotTo(
+			ContainElement(HaveField("Name", "test-gateway")), "the opt-out removes the slot mount")
+		edit(func(ws *corev1alpha1.Workspace) {
+			ws.Spec.TestKeys = &corev1alpha1.WorkspaceTestKeys{MaxBudget: resource.MustParse("1"),
+				MaxTTL: metav1.Duration{Duration: time.Hour}}
+		})
+		mustReconcile()
+
+		ws := workspace()
+		tk := &corev1alpha1.TestKey{
+			ObjectMeta: metav1.ObjectMeta{Name: name + "-tk", Namespace: ns},
+			Spec: corev1alpha1.TestKeySpec{WorkspaceRef: corev1alpha1.TestKeyWorkspaceRef{Name: name, UID: ws.UID},
+				TestID: "teardown", Budget: resource.MustParse("0.5"), TTL: metav1.Duration{Duration: time.Hour}},
+		}
+		Expect(k8sClient.Create(ctx, tk)).To(Succeed())
+		DeferCleanup(k8sClient.Delete, context.Background(), tk)
+		tk.Status.KeyHash = gateway.HashKey("sk-kd-teardown")
+		Expect(k8sClient.Status().Update(ctx, tk)).To(Succeed())
+
+		Expect(k8sClient.Delete(ctx, ws)).To(Succeed())
+		_, err := reconcileOnce()
+		Expect(err).To(MatchError(errTestKeysPending))
+		Expect(gw.order).To(ContainElement(opBlock), "the Workspace key is blocked first")
+		Expect(controllerutil.ContainsFinalizer(workspace(), workspaceFinalizer)).To(BeTrue())
+
+		tk.Status.RevokedAt = &metav1.Time{Time: now}
+		Expect(k8sClient.Status().Update(ctx, tk)).To(Succeed())
+		mustReconcile()
+		Expect(apierrors.IsNotFound(k8sClient.Get(ctx, nn(name), &corev1alpha1.Workspace{}))).To(BeTrue())
+	})
+
+	It("stops the pod only after the gateway blocks each TestKey key", func() {
+		edit(func(ws *corev1alpha1.Workspace) {
+			ws.Spec.TestKeys = &corev1alpha1.WorkspaceTestKeys{MaxBudget: resource.MustParse("1"),
+				MaxTTL: metav1.Duration{Duration: time.Hour}}
+		})
+		mustReconcile()
+		ws := workspace()
+		tk := &corev1alpha1.TestKey{
+			ObjectMeta: metav1.ObjectMeta{Name: name + "-tk", Namespace: ns},
+			Spec: corev1alpha1.TestKeySpec{WorkspaceRef: corev1alpha1.TestKeyWorkspaceRef{Name: name, UID: ws.UID},
+				TestID: "suspend", Budget: resource.MustParse("0.5"), TTL: metav1.Duration{Duration: time.Hour}},
+		}
+		Expect(k8sClient.Create(ctx, tk)).To(Succeed())
+		DeferCleanup(k8sClient.Delete, context.Background(), tk)
+		tk.Status.KeyHash = gateway.HashKey("sk-kd-suspend")
+		meta.SetStatusCondition(&tk.Status.Conditions, metav1.Condition{Type: condActive,
+			Status: metav1.ConditionFalse, Reason: reasonTKRevoking, Message: "The revoke started."})
+		Expect(k8sClient.Status().Update(ctx, tk)).To(Succeed())
+
+		edit(func(ws *corev1alpha1.Workspace) { ws.Spec.Suspend = true })
+		mustReconcile()
+		sts := &appsv1.StatefulSet{}
+		Expect(k8sClient.Get(ctx, nn(name), sts)).To(Succeed())
+		Expect(*sts.Spec.Replicas).To(Equal(int32(1)), "the pod stays while the TestKey key is not blocked")
+		Expect(meta.FindStatusCondition(workspace().Status.Conditions, condReady).Reason).To(Equal("TestKeysBlocking"))
+
+		meta.SetStatusCondition(&tk.Status.Conditions, metav1.Condition{Type: condActive,
+			Status: metav1.ConditionFalse, Reason: reasonTKBlocked, Message: "The gateway blocked the key."})
+		Expect(k8sClient.Status().Update(ctx, tk)).To(Succeed())
+		mustReconcile()
+		Expect(k8sClient.Get(ctx, nn(name), sts)).To(Succeed())
+		Expect(*sts.Spec.Replicas).To(Equal(int32(0)))
+		Expect(workspace().Status.Phase).To(Equal(corev1alpha1.WorkspaceSuspended))
+	})
+
+	It("shows a pending status, not an error, while a gateway removal waits for a TestKey revoke", func() {
+		mustReconcile()
+		ws := workspace()
+		tk := &corev1alpha1.TestKey{
+			ObjectMeta: metav1.ObjectMeta{Name: name + "-tk", Namespace: ns},
+			Spec: corev1alpha1.TestKeySpec{WorkspaceRef: corev1alpha1.TestKeyWorkspaceRef{Name: name, UID: ws.UID},
+				TestID: "gateway-off", Budget: resource.MustParse("0.5"), TTL: metav1.Duration{Duration: time.Hour}},
+		}
+		Expect(k8sClient.Create(ctx, tk)).To(Succeed())
+		DeferCleanup(k8sClient.Delete, context.Background(), tk)
+		tk.Status.KeyHash = gateway.HashKey("sk-kd-gateway-off")
+		Expect(k8sClient.Status().Update(ctx, tk)).To(Succeed())
+
+		edit(func(ws *corev1alpha1.Workspace) { ws.Spec.Gateway = nil })
+		mustReconcile()
+		ready := meta.FindStatusCondition(workspace().Status.Conditions, condReady)
+		Expect(ready.Reason).To(Equal("TestKeysRevoking"))
+		Expect(controllerutil.ContainsFinalizer(workspace(), workspaceFinalizer)).To(BeTrue())
+	})
+
+	It("blocks the key, deletes the Secret and removes the mount when spec.gateway is removed", func() {
+		rec.Egress = testEgress
+		mustReconcile()
+		sts := &appsv1.StatefulSet{}
+		Expect(k8sClient.Get(ctx, nn(name), sts)).To(Succeed())
+		Expect(sts.Spec.Template.Annotations).To(HaveKey(gatewayURLAnnotation))
 		edit(func(ws *corev1alpha1.Workspace) { ws.Spec.Gateway = nil })
 		mustReconcile()
 		Expect(gw.order).To(Equal([]string{opCreate, opBlock, opUsage}))
@@ -325,9 +441,10 @@ var _ = Describe("Workspace gateway key", func() {
 		ws := workspace()
 		Expect(controllerutil.ContainsFinalizer(ws, workspaceFinalizer)).To(BeFalse())
 		Expect(ws.Status.KeyHash).To(BeEmpty())
-		sts := &appsv1.StatefulSet{}
 		Expect(k8sClient.Get(ctx, nn(name), sts)).To(Succeed())
 		Expect(sts.Spec.Template.Spec.Volumes).NotTo(ContainElement(HaveField("Name", "gateway")))
+		Expect(sts.Spec.Template.Annotations).NotTo(HaveKey(gatewayURLAnnotation),
+			"a removed annotation does not stay in the template")
 	})
 
 	It("keeps the key and changes the Secret URL when the egress proxy goes on", func() {

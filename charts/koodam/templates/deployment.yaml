@@ -56,6 +56,11 @@ spec:
         - --agent-gateway-url={{ . }}
         {{- end }}
         - --key-grace={{ .Values.keyGrace }}
+        {{- if eq .Values.gateway.mode "bundled" }}
+        # The bundled gateway has 1 replica and 1 worker. Only then is a block a fence, so
+        # only then does the controller issue TestKeys (#192).
+        - --test-key-single-instance-gateway
+        {{- end }}
         - --job-ttl-seconds={{ int64 .Values.jobTTLSeconds }}
         - "--installer-image={{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
         - "--workspace-image={{ include "koodam.workspaceImage" . }}"

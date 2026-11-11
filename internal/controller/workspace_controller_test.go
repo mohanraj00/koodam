@@ -100,12 +100,13 @@ var _ = Describe("Workspace Controller", func() {
 	})
 
 	It("merges spec.podTemplate into the StatefulSet", func() {
+		sidecar := corev1.Container{Name: "sidecar", Image: "busybox"}
 		ws := workspace()
 		ws.Spec.PodTemplate = &corev1alpha1.PodTemplate{Metadata: corev1alpha1.PodTemplateMetadata{
 			Labels: map[string]string{"group": "a"}, Annotations: map[string]string{"note": "b"},
 		}, Spec: corev1.PodSpec{
 			NodeSelector: map[string]string{"pool": "agents"},
-			Containers:   []corev1.Container{{Name: "sidecar", Image: "busybox"}},
+			Containers:   []corev1.Container{sidecar},
 		}}
 		Expect(k8sClient.Update(ctx, ws)).To(Succeed())
 		reconcileOnce()
@@ -118,7 +119,18 @@ var _ = Describe("Workspace Controller", func() {
 		cs := sts.Spec.Template.Spec.Containers
 		Expect(cs).To(HaveLen(2))
 		Expect(cs[0].Name).To(Equal(workspaceContainer))
-		Expect(cs[1].Name).To(Equal("sidecar"))
+		Expect(cs[1].Name).To(Equal(sidecar.Name))
+
+		ws = workspace()
+		ws.Spec.PodTemplate = &corev1alpha1.PodTemplate{Spec: corev1.PodSpec{
+			Containers: []corev1.Container{sidecar},
+		}}
+		Expect(k8sClient.Update(ctx, ws)).To(Succeed())
+		reconcileOnce()
+		get(sts, name)
+		Expect(sts.Spec.Template.Spec.NodeSelector).NotTo(HaveKey("pool"), "a removed field does not stay")
+		Expect(sts.Spec.Template.Labels).NotTo(HaveKey("group"))
+		Expect(sts.Spec.Template.Annotations).NotTo(HaveKey("note"))
 	})
 
 	It("keeps the StatefulSet if a change makes spec.podTemplate not valid", func() {
@@ -665,6 +677,42 @@ var _ = Describe("Workspace Profile binding", func() {
 		Expect(workspace().Status.KeyHash).NotTo(Equal(old))
 	})
 
+	It("writes ProfileBound=False before an unbind stops a pod with the TestKey opt-in", func() {
+		setup(true, true)
+		ws := workspace()
+		ws.Spec.TestKeys = &corev1alpha1.WorkspaceTestKeys{MaxBudget: resource.MustParse("1"),
+			MaxTTL: metav1.Duration{Duration: time.Hour}}
+		Expect(k8sClient.Update(ctx, ws)).To(Succeed())
+		reconcileOnce()
+		expectBound(true)
+		Expect(replicas()).To(Equal(int32(1)))
+
+		setLabel(false)
+		reconcileOnce()
+		expectBound(false)
+		Expect(replicas()).To(Equal(int32(1)), "the pod stays until the status shows the unbind")
+		reconcileOnce()
+		Expect(replicas()).To(Equal(int32(0)))
+	})
+
+	It("reads ProfileBound from the API server before an unbind stops a pod with the TestKey opt-in", func() {
+		setup(true, true)
+		ws := workspace()
+		ws.Spec.TestKeys = &corev1alpha1.WorkspaceTestKeys{MaxBudget: resource.MustParse("1"),
+			MaxTTL: metav1.Duration{Duration: time.Hour}}
+		// With no Workspace key, the unbind writes no status before the check.
+		ws.Spec.Gateway = nil
+		Expect(k8sClient.Update(ctx, ws)).To(Succeed())
+		reconcileOnce()
+		expectBound(true)
+
+		// The cache shows an old ProfileBound=False. The API server has True.
+		setLabel(false)
+		rec.Client = staleBoundClient{Client: k8sClient}
+		reconcileOnce()
+		Expect(replicas()).To(Equal(int32(1)), "the pod stays until the API server shows the unbind")
+	})
+
 	It("blocks the key before it stops the pod when the Profile no longer lists the namespace", func() {
 		setup(true, true)
 		reconcileOnce()
@@ -717,3 +765,19 @@ var _ = Describe("namespaceBound", func() {
 		Expect(deleteStarted(event.UpdateEvent{ObjectOld: nil, ObjectNew: deleted})).To(BeFalse())
 	})
 })
+
+// staleBoundClient returns each Workspace with ProfileBound=False, as a cache that did not see
+// the last status write.
+type staleBoundClient struct{ client.Client }
+
+func (c staleBoundClient) Get(ctx context.Context, key client.ObjectKey, obj client.Object,
+	opts ...client.GetOption) error {
+	if err := c.Client.Get(ctx, key, obj, opts...); err != nil {
+		return err
+	}
+	if ws, ok := obj.(*corev1alpha1.Workspace); ok {
+		meta.SetStatusCondition(&ws.Status.Conditions, metav1.Condition{Type: condProfileBound,
+			Status: metav1.ConditionFalse, Reason: reasonNotBound, Message: "An old cache value."})
+	}
+	return nil
+}

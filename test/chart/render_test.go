@@ -92,6 +92,9 @@ func objects(t *testing.T, out, kind string) []string {
 	return docs
 }
 
+// litellmContainer is the name of the gateway container in the bundled gateway Deployment.
+const litellmContainer = "litellm"
+
 func litellmObjects(t *testing.T, out string) (corev1.Container, string) {
 	t.Helper()
 	var container *corev1.Container
@@ -101,7 +104,7 @@ func litellmObjects(t *testing.T, out string) (corev1.Container, string) {
 			t.Fatal(err)
 		}
 		for i := range d.Spec.Template.Spec.Containers {
-			if d.Spec.Template.Spec.Containers[i].Name == "litellm" {
+			if d.Spec.Template.Spec.Containers[i].Name == litellmContainer {
 				container = &d.Spec.Template.Spec.Containers[i]
 			}
 		}

@@ -67,6 +67,7 @@ const (
 	reasonShape         = "GatewayShapeUnsupported"
 	reasonNoWorkspace   = "WorkspaceNotFound"
 	reasonNoGateway     = "GatewayDisabled"
+	reasonNoFinalizer   = "WorkspaceNotReady"
 	reasonUnbound       = "ProfileNotBound"
 	reasonGatewayFailed = "GatewayError"
 )
@@ -91,12 +92,12 @@ type TestKeyReconciler struct {
 	Now func() time.Time
 }
 
-// testKeySecretName is the name of the slot Secret of a Workspace. The reserved prefix stops a
-// pod template that names the slot before the controller makes it. The suffix keeps the name
-// apart from each "<workspace>-gateway" Secret. If an Agent run has the same name, both
-// controllers refuse an object that they do not control.
+// testKeySecretName is the name of the slot Secret of a Workspace. The prefix is reserved, so a
+// pod template cannot name the slot. The prefix is not the "kd-" of the Agent run Secrets, and
+// the suffix is not the "-gateway" or "-ssh-host" of the Workspace Secrets. Thus no other
+// Secret of Koodam has a slot name.
 func testKeySecretName(workspace string) string {
-	return podtemplate.ReservedSecretPrefix + workspace + "-testkey"
+	return podtemplate.TestKeySecretPrefix + workspace + "-testkey"
 }
 
 // testKeyAlias makes a bounded alias from the test ID and the TestKey UID.
@@ -140,11 +141,8 @@ func (r *TestKeyReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ct
 	if key.Status.RevokedAt != nil {
 		return ctrl.Result{}, r.dropFinalizer(ctx, key)
 	}
-	workspace := &corev1alpha1.Workspace{}
-	ref := client.ObjectKey{Namespace: key.Namespace, Name: key.Spec.WorkspaceRef.Name}
-	if err := r.APIReader.Get(ctx, ref, workspace); apierrors.IsNotFound(err) {
-		workspace = nil
-	} else if err != nil {
+	workspace, err := r.readWorkspace(ctx, key)
+	if err != nil {
 		return ctrl.Result{}, err
 	}
 	reason, message := r.refusal(key, workspace)
@@ -167,6 +165,20 @@ func (r *TestKeyReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ct
 	return ctrl.Result{}, r.setActive(ctx, key, metav1.ConditionFalse, reason, message)
 }
 
+// readWorkspace reads the Workspace of key without the cache. It returns nil if the Workspace
+// does not exist.
+func (r *TestKeyReconciler) readWorkspace(ctx context.Context, key *corev1alpha1.TestKey) (
+	*corev1alpha1.Workspace, error) {
+	workspace := &corev1alpha1.Workspace{}
+	ref := client.ObjectKey{Namespace: key.Namespace, Name: key.Spec.WorkspaceRef.Name}
+	if err := r.APIReader.Get(ctx, ref, workspace); apierrors.IsNotFound(err) {
+		return nil, nil
+	} else if err != nil {
+		return nil, err
+	}
+	return workspace, nil
+}
+
 // refusal returns a reason if the TestKey must not have a key now.
 func (r *TestKeyReconciler) refusal(key *corev1alpha1.TestKey, workspace *corev1alpha1.Workspace) (string, string) {
 	switch {
@@ -176,6 +188,10 @@ func (r *TestKeyReconciler) refusal(key *corev1alpha1.TestKey, workspace *corev1
 		return reasonShape, "Test keys need a gateway with one replica and one worker."
 	case workspace.Spec.Gateway == nil:
 		return reasonNoGateway, "The Workspace has no gateway."
+	case !controllerutil.ContainsFinalizer(workspace, workspaceFinalizer):
+		// Without the finalizer, a Workspace delete removes the pod at once, before the
+		// TestKey block. Revoke first: no key before the finalizer (#192).
+		return reasonNoFinalizer, "The Workspace controller did not add its finalizer yet."
 	}
 	if reason, message := testKeyRefusal(key, workspace); reason != "" {
 		return reason, message
@@ -228,8 +244,11 @@ func (r *TestKeyReconciler) issue(ctx context.Context, key *corev1alpha1.TestKey
 		}
 	}
 	if !metav1.IsControlledBy(slot, key) {
-		err := r.setActive(ctx, key, metav1.ConditionFalse, reasonSlotBusy,
-			"Another test key of this Workspace is active.")
+		message := "Another test key of this Workspace is active."
+		if owner := metav1.GetControllerOf(slot); owner == nil || owner.Kind != "TestKey" {
+			message = "A Secret that no test key owns has the slot name."
+		}
+		err := r.setActive(ctx, key, metav1.ConditionFalse, reasonSlotBusy, message)
 		return ctrl.Result{RequeueAfter: 30 * time.Second}, err
 	}
 	value := string(slot.Data[testKeyValueField])
@@ -242,7 +261,21 @@ func (r *TestKeyReconciler) issue(ctx context.Context, key *corev1alpha1.TestKey
 		}
 	}
 	remaining := key.Status.ExpiresAt.Sub(r.now()).Truncate(time.Second)
-	if gateway.HashKey(value) != key.Status.KeyHash || remaining < time.Second {
+	// The slot is not immutable. A changed field, such as a base-url to another host, gets a
+	// revoke, as a changed key value does.
+	if gateway.HashKey(value) != key.Status.KeyHash || remaining < time.Second ||
+		string(slot.Data[testKeyAliasField]) != key.Status.KeyAlias ||
+		string(slot.Data[testKeyURLField]) != r.GatewayURL ||
+		string(slot.Data[testKeyModelField]) != workspace.Spec.Gateway.Model {
+		return r.revoke(ctx, key)
+	}
+	// A suspend, an unbind or a delete can start after the first Workspace read. From the hash
+	// write on, the Workspace controller sees this key and waits for its block. A stop that did
+	// not see the hash came before the hash write, so this second read sees the stop (#192).
+	if workspace, err = r.readWorkspace(ctx, key); err != nil {
+		return ctrl.Result{}, err
+	}
+	if reason, _ := r.refusal(key, workspace); reason != "" {
 		return r.revoke(ctx, key)
 	}
 	err = r.Gateway.CreateKey(ctx, gateway.KeySpec{
@@ -262,7 +295,10 @@ func (r *TestKeyReconciler) issue(ctx context.Context, key *corev1alpha1.TestKey
 }
 
 // createSlot makes the slot Secret with a new key value. The create is atomic, so a second
-// TestKey of the Workspace gets AlreadyExists, reads the Secret of the first and waits.
+// TestKey of the Workspace gets AlreadyExists, reads the Secret of the first and waits. The
+// Secret is not immutable: the kubelet stops the watch of an immutable Secret, so a running pod
+// keeps the files of a deleted slot. The status hash finds a changed value, and a changed value
+// gets a revoke.
 func (r *TestKeyReconciler) createSlot(ctx context.Context, key *corev1alpha1.TestKey,
 	workspace *corev1alpha1.Workspace) (*corev1.Secret, error) {
 	value, err := gateway.NewKeyValue()
@@ -272,7 +308,6 @@ func (r *TestKeyReconciler) createSlot(ctx context.Context, key *corev1alpha1.Te
 	slot := &corev1.Secret{
 		ObjectMeta: metav1.ObjectMeta{Name: testKeySecretName(workspace.Name), Namespace: key.Namespace,
 			Labels: map[string]string{"app.kubernetes.io/managed-by": "koodam"}},
-		Immutable: new(true),
 		StringData: map[string]string{testKeyValueField: value, testKeyAliasField: testKeyAlias(key),
 			testKeyURLField: r.GatewayURL, testKeyModelField: workspace.Spec.Gateway.Model},
 	}

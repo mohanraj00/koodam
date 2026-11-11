@@ -93,6 +93,22 @@ func (g *tkGateway) ops() []string {
 	return append([]string(nil), g.order...)
 }
 
+// hookReader runs after on each Workspace read, with the count of the reads.
+type hookReader struct {
+	client.Reader
+	reads int
+	after func(n int)
+}
+
+func (h *hookReader) Get(ctx context.Context, key client.ObjectKey, obj client.Object, opts ...client.GetOption) error {
+	err := h.Reader.Get(ctx, key, obj, opts...)
+	if _, ok := obj.(*corev1alpha1.Workspace); ok && err == nil {
+		h.reads++
+		h.after(h.reads)
+	}
+	return err
+}
+
 var _ = Describe("TestKey lifecycle", func() {
 	const ttl = 30 * time.Minute
 	var (
@@ -159,14 +175,29 @@ var _ = Describe("TestKey lifecycle", func() {
 					MaxBudget: resource.MustParse("1"), MaxTTL: metav1.Duration{Duration: time.Hour}},
 			},
 		}
-		Expect(k8sClient.Create(ctx, workspace)).To(Succeed())
-		DeferCleanup(k8sClient.Delete, ctx, workspace)
+		createWorkspaceWithFinalizer(ctx, workspace)
 		markBound(ctx, workspace, metav1.ConditionTrue)
 		DeferCleanup(func() {
 			if s, err := slot(); err == nil {
 				_ = k8sClient.Delete(ctx, s)
 			}
 		})
+	})
+
+	It("makes no gateway key if a suspend starts after the first Workspace read", func() {
+		k := newKey("in-flight")
+		rec.APIReader = &hookReader{Reader: k8sClient, after: func(n int) {
+			if n == 1 {
+				ws := &corev1alpha1.Workspace{}
+				Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(workspace), ws)).To(Succeed())
+				ws.Spec.Suspend = true
+				Expect(k8sClient.Update(ctx, ws)).To(Succeed())
+			}
+		}}
+		reconcileKey(k)
+		Expect(gw.ops()).NotTo(ContainElement(opCreate))
+		Expect(gw.ops()).To(ContainElement(opBlock))
+		Expect(get(k).Status.KeyHash).NotTo(BeEmpty(), "the Workspace controller sees the key and waits")
 	})
 
 	It("refuses each key if the gateway is not single-instance", func() {
@@ -179,6 +210,41 @@ var _ = Describe("TestKey lifecycle", func() {
 		Expect(apierrors.IsNotFound(err)).To(BeTrue())
 	})
 
+	It("refuses a key while the Workspace has no finalizer", func() {
+		ws := &corev1alpha1.Workspace{}
+		Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(workspace), ws)).To(Succeed())
+		controllerutil.RemoveFinalizer(ws, workspaceFinalizer)
+		Expect(k8sClient.Update(ctx, ws)).To(Succeed())
+		k := newKey("no-finalizer")
+		reconcileKey(k)
+		Expect(reason(k)).To(Equal(reasonNoFinalizer))
+		Expect(gw.ops()).NotTo(ContainElement(opCreate))
+	})
+
+	It("revokes the key if a slot field changes", func() {
+		k := newKey("tamper")
+		reconcileKey(k)
+		Expect(reason(k)).To(Equal(reasonIssued))
+		s, err := slot()
+		Expect(err).NotTo(HaveOccurred())
+		s.Data[testKeyURLField] = []byte("http://other.test:4000")
+		Expect(k8sClient.Update(ctx, s)).To(Succeed())
+		reconcileKey(k)
+		Expect(gw.ops()).To(ContainElement(opBlock), "a changed base-url gets a revoke")
+		Expect(gw.specs).To(HaveLen(1), "no second create for a changed slot")
+	})
+
+	It("says so if a Secret that no test key owns has the slot name", func() {
+		Expect(k8sClient.Create(ctx, &corev1.Secret{ObjectMeta: metav1.ObjectMeta{
+			Name: testKeySecretName(workspace.Name), Namespace: workspace.Namespace}})).To(Succeed())
+		k := newKey("foreign")
+		reconcileKey(k)
+		c := meta.FindStatusCondition(get(k).Status.Conditions, condActive)
+		Expect(c.Reason).To(Equal(reasonSlotBusy))
+		Expect(c.Message).To(ContainSubstring("no test key owns"))
+		Expect(gw.ops()).NotTo(ContainElement(opCreate))
+	})
+
 	It("issues a key in the approved order and keeps it on a retry", func() {
 		k := newKey(testKeyTestID)
 		res := reconcileKey(k)
@@ -189,7 +255,7 @@ var _ = Describe("TestKey lifecycle", func() {
 		s, err := slot()
 		Expect(err).NotTo(HaveOccurred())
 		Expect(metav1.IsControlledBy(s, got)).To(BeTrue())
-		Expect(*s.Immutable).To(BeTrue())
+		Expect(s.Immutable).To(BeNil())
 		value := string(s.Data[testKeyValueField])
 		Expect(value).To(HavePrefix("sk-kd-"))
 		Expect(string(s.Data[testKeyURLField])).To(Equal("http://gateway.test:4000"))
@@ -340,14 +406,17 @@ var _ = Describe("TestKey lifecycle", func() {
 		Expect(apierrors.IsNotFound(err)).To(BeTrue())
 	})
 
-	It("names the slot under the reserved prefix and apart from the gateway Secrets", func() {
-		// A pod template cannot refer to a name with the reserved prefix, so an Agent cannot
-		// name the slot before the controller makes it.
-		Expect(testKeySecretName("dev")).To(HavePrefix(podtemplate.ReservedSecretPrefix))
-		for _, name := range []string{"dev", "dev-test", "kd-dev-testkey", "kd-dev"} {
+	It("names the slot apart from the Agent run Secrets and the Workspace Secrets", func() {
+		// A pod template cannot refer to a name with this prefix, so no pod names the slot.
+		Expect(testKeySecretName("dev")).To(HavePrefix(podtemplate.TestKeySecretPrefix))
+		for _, name := range []string{"dev", "dev-testkey", "kt-dev", "kt-dev-testkey", "kd-dev"} {
 			other := &corev1alpha1.Workspace{ObjectMeta: metav1.ObjectMeta{Name: name}}
-			Expect(testKeySecretName("dev")).NotTo(Equal(gatewaySecretName(other)))
+			agent := &corev1alpha1.Agent{ObjectMeta: metav1.ObjectMeta{Name: name}}
+			Expect(testKeySecretName("dev")).NotTo(BeElementOf(gatewaySecretName(other),
+				hostKeySecretName(other), runName(agent)))
 		}
+		// Each Agent run Secret has the prefix kd-, and each slot has the prefix kt-.
+		Expect(testKeySecretName("dev")).NotTo(HavePrefix(podtemplate.ReservedSecretPrefix))
 	})
 
 	It("refuses a key and revokes it when no Profile binds the namespace", func() {
