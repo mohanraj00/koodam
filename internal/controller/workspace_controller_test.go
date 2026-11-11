@@ -503,6 +503,9 @@ var _ = Describe("newHostKey", func() {
 // other namespaces.
 const testProfile = "ws-default"
 
+// testWorkspaceImage is the Workspace image of the reconcilers in the unit tests.
+const testWorkspaceImage = "example.com/ws:1"
+
 var _ = BeforeEach(func() {
 	ctx := context.Background()
 	p := &corev1alpha1.Profile{ObjectMeta: metav1.ObjectMeta{Name: testProfile},

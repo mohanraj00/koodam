@@ -166,7 +166,7 @@ func TestWorkspaceNookkuMarker(t *testing.T) {
 	}
 	// The marker does not need an installer image: it is the folder, not the install.
 	for _, image := range []string{"", "example.com/koodam:1"} {
-		r := &WorkspaceReconciler{Image: "example.com/ws:1", InstallerImage: image}
+		r := &WorkspaceReconciler{Image: testWorkspaceImage, InstallerImage: image}
 		for name, c := range map[string]struct {
 			w    *corev1alpha1.Workspace
 			want int

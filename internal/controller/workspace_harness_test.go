@@ -32,7 +32,7 @@ var _ = Describe("Workspace harnesses", func() {
 			Spec: corev1alpha1.WorkspaceSpec{Harnesses: h}}
 	}
 	pod := func(w *corev1alpha1.Workspace, image string) corev1.PodSpec {
-		r := &WorkspaceReconciler{Image: "example.com/ws:1", InstallerImage: image}
+		r := &WorkspaceReconciler{Image: testWorkspaceImage, InstallerImage: image}
 		return r.statefulSet(w, testProfile).Spec.Template.Spec
 	}
 
