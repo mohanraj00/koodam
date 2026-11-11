@@ -396,11 +396,13 @@ func (r *WorkspaceReconciler) applyStatefulSet(ctx context.Context, ws *corev1al
 	// controller updates the template only if it changed, for example after a manual edit.
 	// It also ignores an empty field in want, and accepts a list in want that is the start of the
 	// list in have. The egress proxy owns hostAliases and dnsConfig, thus the controller compares
-	// them exactly (#142).
+	// them exactly (#142). The controller owns the volumes and the mounts, thus it compares their
+	// names exactly. If not, a removed last volume, such as the TestKey slot, stays (#192).
 	w, h := want.Spec.Template.Spec, have.Spec.Template.Spec
 	sameTemplate := equality.Semantic.DeepDerivative(want.Spec.Template, have.Spec.Template) &&
 		equality.Semantic.DeepEqual(w.HostAliases, h.HostAliases) &&
-		equality.Semantic.DeepEqual(w.DNSConfig, h.DNSConfig)
+		equality.Semantic.DeepEqual(w.DNSConfig, h.DNSConfig) &&
+		equality.Semantic.DeepEqual(volumeNames(w), volumeNames(h))
 	if sameTemplate && have.Spec.Replicas != nil && *have.Spec.Replicas == *want.Spec.Replicas {
 		return have, nil
 	}
@@ -409,6 +411,23 @@ func (r *WorkspaceReconciler) applyStatefulSet(ctx context.Context, ws *corev1al
 	}
 	have.Spec.Replicas = want.Spec.Replicas
 	return have, r.Update(ctx, have)
+}
+
+// volumeNames returns the volume names of pod, then the volume mount names of each container
+// and each init container. A change of a list length changes the result.
+func volumeNames(pod corev1.PodSpec) [][]string {
+	names := [][]string{{}}
+	for _, v := range pod.Volumes {
+		names[0] = append(names[0], v.Name)
+	}
+	for _, c := range append(append([]corev1.Container{}, pod.InitContainers...), pod.Containers...) {
+		mounts := []string{c.Name}
+		for _, m := range c.VolumeMounts {
+			mounts = append(mounts, m.Name)
+		}
+		names = append(names, mounts)
+	}
+	return names
 }
 
 // createOwned creates o. If an object with the same name exists, the cache did not have it. Then
@@ -466,8 +485,11 @@ func (r *WorkspaceReconciler) statefulSet(ws *corev1alpha1.Workspace, user strin
 	container := corev1.Container{
 		Name: workspaceContainer, Image: image,
 		Ports: []corev1.ContainerPort{{Name: "ssh", ContainerPort: workspacePort, Protocol: corev1.ProtocolTCP}},
+		// The probe has the API server defaults. If not, DeepDerivative sees a change in each
+		// reconcile, and the controller updates the template each time.
 		ReadinessProbe: &corev1.Probe{ProbeHandler: corev1.ProbeHandler{
-			TCPSocket: &corev1.TCPSocketAction{Port: intstr.FromInt32(workspacePort)}}},
+			TCPSocket: &corev1.TCPSocketAction{Port: intstr.FromInt32(workspacePort)}},
+			TimeoutSeconds: 1, PeriodSeconds: 10, SuccessThreshold: 1, FailureThreshold: 3},
 		VolumeMounts: []corev1.VolumeMount{
 			{Name: home, MountPath: workspaceHome},
 			{Name: ssh, MountPath: workspaceSSHDir, ReadOnly: true},

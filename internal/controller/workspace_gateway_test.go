@@ -337,6 +337,19 @@ var _ = Describe("Workspace gateway key", func() {
 		Expect(pod.Containers[0].VolumeMounts).To(ContainElement(corev1.VolumeMount{Name: "test-gateway",
 			MountPath: "/etc/koodam/test-gateway", ReadOnly: true}))
 
+		edit(func(ws *corev1alpha1.Workspace) { ws.Spec.TestKeys = nil })
+		mustReconcile()
+		Expect(k8sClient.Get(ctx, nn(name), sts)).To(Succeed())
+		Expect(sts.Spec.Template.Spec.Volumes).NotTo(ContainElement(HaveField("Name", "test-gateway")),
+			"the opt-out removes the slot volume")
+		Expect(sts.Spec.Template.Spec.Containers[0].VolumeMounts).NotTo(
+			ContainElement(HaveField("Name", "test-gateway")), "the opt-out removes the slot mount")
+		edit(func(ws *corev1alpha1.Workspace) {
+			ws.Spec.TestKeys = &corev1alpha1.WorkspaceTestKeys{MaxBudget: resource.MustParse("1"),
+				MaxTTL: metav1.Duration{Duration: time.Hour}}
+		})
+		mustReconcile()
+
 		ws := workspace()
 		tk := &corev1alpha1.TestKey{
 			ObjectMeta: metav1.ObjectMeta{Name: name + "-tk", Namespace: ns},
