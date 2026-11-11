@@ -30,6 +30,9 @@ import (
 	"github.com/mohanraj00/koodam/internal/manifestlayout"
 )
 
+// agentFile is the controller-gen file name of the Agent CRD.
+const agentFile = "core.koodam.dev_agents.yaml"
+
 // syntheticCRD gives a small valid CRD of the kind.
 func syntheticCRD(kind, plural string) []byte {
 	return fmt.Appendf(nil, `---
@@ -80,7 +83,7 @@ func TestRunRoutesAppCRDsOutOfTheDefaultBase(t *testing.T) {
 	app := syntheticCRD("App", "apps")
 	version := syntheticCRD("AppVersion", "appversions")
 	staging := stage(t, map[string][]byte{
-		"core.koodam.dev_agents.yaml":      agent,
+		agentFile:                          agent,
 		"core.koodam.dev_apps.yaml":        app,
 		"core.koodam.dev_appversions.yaml": version,
 	})
@@ -110,14 +113,14 @@ func TestRunRoutesAppCRDsOutOfTheDefaultBase(t *testing.T) {
 func TestRunReplacesAnExistingFile(t *testing.T) {
 	agent := syntheticCRD("Agent", "agents")
 	root := t.TempDir()
-	dest := filepath.Join(root, "config", "crd", "bases", "core.koodam.dev_agents.yaml")
+	dest := filepath.Join(root, "config", "crd", "bases", agentFile)
 	if err := os.MkdirAll(filepath.Dir(dest), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(dest, []byte("old"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if err := run(root, stage(t, map[string][]byte{"core.koodam.dev_agents.yaml": agent})); err != nil {
+	if err := run(root, stage(t, map[string][]byte{agentFile: agent})); err != nil {
 		t.Fatalf("run: %v", err)
 	}
 	got, err := os.ReadFile(dest)
@@ -141,21 +144,21 @@ func TestRunWritesNoFileOnBadInput(t *testing.T) {
 	}{
 		"unknown kind": {
 			files: map[string][]byte{
-				"core.koodam.dev_agents.yaml": agent,
+				agentFile:                     agent,
 				"core.koodam.dev_others.yaml": syntheticCRD("Other", "others"),
 			},
 			want: manifestlayout.ErrUnknownKind,
 		},
 		"wrong file name": {
-			files: map[string][]byte{"core.koodam.dev_agents.yaml": agent, "apps.yaml": syntheticCRD("App", "apps")},
+			files: map[string][]byte{agentFile: agent, "apps.yaml": syntheticCRD("App", "apps")},
 			want:  manifestlayout.ErrNameMismatch,
 		},
 		"not yaml": {
-			files: map[string][]byte{"core.koodam.dev_agents.yaml": agent, "notes.txt": []byte("x")},
+			files: map[string][]byte{agentFile: agent, "notes.txt": []byte("x")},
 			want:  errEntry,
 		},
 		"subdirectory": {
-			files: map[string][]byte{"core.koodam.dev_agents.yaml": agent},
+			files: map[string][]byte{agentFile: agent},
 			dir:   true,
 			want:  errEntry,
 		},
