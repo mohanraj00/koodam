@@ -100,12 +100,13 @@ var _ = Describe("Workspace Controller", func() {
 	})
 
 	It("merges spec.podTemplate into the StatefulSet", func() {
+		sidecar := corev1.Container{Name: "sidecar", Image: "busybox"}
 		ws := workspace()
 		ws.Spec.PodTemplate = &corev1alpha1.PodTemplate{Metadata: corev1alpha1.PodTemplateMetadata{
 			Labels: map[string]string{"group": "a"}, Annotations: map[string]string{"note": "b"},
 		}, Spec: corev1.PodSpec{
 			NodeSelector: map[string]string{"pool": "agents"},
-			Containers:   []corev1.Container{{Name: "sidecar", Image: "busybox"}},
+			Containers:   []corev1.Container{sidecar},
 		}}
 		Expect(k8sClient.Update(ctx, ws)).To(Succeed())
 		reconcileOnce()
@@ -118,11 +119,11 @@ var _ = Describe("Workspace Controller", func() {
 		cs := sts.Spec.Template.Spec.Containers
 		Expect(cs).To(HaveLen(2))
 		Expect(cs[0].Name).To(Equal(workspaceContainer))
-		Expect(cs[1].Name).To(Equal("sidecar"))
+		Expect(cs[1].Name).To(Equal(sidecar.Name))
 
 		ws = workspace()
 		ws.Spec.PodTemplate = &corev1alpha1.PodTemplate{Spec: corev1.PodSpec{
-			Containers: []corev1.Container{{Name: "sidecar", Image: "busybox"}},
+			Containers: []corev1.Container{sidecar},
 		}}
 		Expect(k8sClient.Update(ctx, ws)).To(Succeed())
 		reconcileOnce()
