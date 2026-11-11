@@ -576,6 +576,7 @@ func (r *WorkspaceReconciler) statefulSet(ws *corev1alpha1.Workspace, user strin
 		Volumes:    volumes,
 	}}
 	addWorkspaceHarnesses(&tmpl.Spec, ws.Spec.Harnesses, r.InstallerImage)
+	addWorkspaceNookku(&tmpl.Spec, ws.Spec.Harnesses)
 	addIdentity(&tmpl.ObjectMeta, "", user)
 	r.Egress.annotate(&tmpl.ObjectMeta, ws.Spec.Gateway != nil, r.GatewayURL)
 	sts := &appsv1.StatefulSet{ObjectMeta: workspaceMeta(ws, ws.Name), Spec: appsv1.StatefulSetSpec{
