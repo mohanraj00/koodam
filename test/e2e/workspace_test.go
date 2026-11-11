@@ -258,6 +258,75 @@ var _ = Describe("Workspaces", Ordered, Label("workspace"), func() {
 		}, 2*time.Minute, 5*time.Second).Should(Succeed(), "The home PVC did not keep the file.")
 	})
 
+	// The M1 exit test of v0.4 (#287): one Nookku test uses its own gateway key (#192).
+	It("gives one Nookku test its own gateway key and revokes it after the TTL", func() {
+		By("permitting TestKeys and selecting the nookku plugin")
+		Expect(k8s.Get(ctx, client.ObjectKeyFromObject(ws), ws)).To(Succeed())
+		patch := client.MergeFrom(ws.DeepCopy())
+		ws.Spec.TestKeys = &corev1alpha1.WorkspaceTestKeys{MaxBudget: resource.MustParse("1"),
+			MaxTTL: metav1.Duration{Duration: 10 * time.Minute}}
+		ws.Spec.Harnesses = []corev1alpha1.HarnessSpec{{Name: "claude-code"},
+			{Name: "codex", Plugins: []corev1alpha1.HarnessPlugin{corev1alpha1.HarnessPluginNookku}}}
+		Expect(k8s.Patch(ctx, ws, patch)).To(Succeed())
+		// Only the new pod has the marker. The old pod stays Running during the roll.
+		Eventually(func() error { _, err := ssh("test -d /etc/koodam/nookku"); return err },
+			5*time.Minute, 5*time.Second).Should(Succeed(), "The Workspace pod has no Nookku marker.")
+		waitPhase(ws, corev1alpha1.WorkspaceRunning)
+		out, err := ssh(`bash -lc 'test -d "$NOOKKU_TESTS_DIR" && printf %s "$NOOKKU_TESTS_DIR"'`)
+		Expect(err).NotTo(HaveOccurred(), "A login shell has no Nookku test folder.")
+		Expect(out).To(Equal("/home/dev/nookku-tests"))
+
+		By("making a TestKey for one test")
+		const testID = "e2e-nookku-1"
+		Expect(k8s.Get(ctx, client.ObjectKeyFromObject(ws), ws)).To(Succeed())
+		tk := &corev1alpha1.TestKey{ObjectMeta: metav1.ObjectMeta{Name: "e2e-test", Namespace: wsNS},
+			Spec: corev1alpha1.TestKeySpec{
+				WorkspaceRef: corev1alpha1.TestKeyWorkspaceRef{Name: ws.Name, UID: ws.UID},
+				TestID:       testID, Budget: resource.MustParse("0.5"),
+				TTL: metav1.Duration{Duration: 3 * time.Minute}}}
+		Expect(k8s.Create(ctx, tk)).To(Succeed())
+		Eventually(func(g Gomega) {
+			g.Expect(k8s.Get(ctx, client.ObjectKeyFromObject(tk), tk)).To(Succeed())
+			c := meta.FindStatusCondition(tk.Status.Conditions, "Active")
+			g.Expect(c).NotTo(BeNil())
+			g.Expect(c.Reason).To(Equal("Issued"), c.Message)
+		}, time.Minute, time.Second).Should(Succeed(), "The TestKey is not issued.")
+		hash := tk.Status.KeyHash
+		Expect(keyInfo(hash).Metadata).To(HaveKeyWithValue("koodam_test_id", testID),
+			"The gateway key does not name the test.")
+
+		By("calling the gateway from the pod with the key of the test")
+		// The Workspace image has no curl, so the login shell of dev (bash) uses /dev/tcp. The key
+		// goes only into the request, and the output is only the status line.
+		call := `d=/etc/koodam/test-gateway; test -r "$d/key" || exit 3; u=$(cat "$d/base-url"); ` +
+			`case $u in http://*) ;; *) exit 4 ;; esac; hp=${u#http://}; hp=${hp%%/*}; ` +
+			`b='{"model":"'"$(cat "$d/model")"'","messages":[{"role":"user","content":"probe"}]}'; ` +
+			`case $hp in *:*) h=${hp%:*} p=${hp##*:} ;; *) h=$hp p=80 ;; esac; ` +
+			`exec 3<>"/dev/tcp/$h/$p" || exit 5; ` +
+			`printf 'POST /v1/chat/completions HTTP/1.1\r\nHost: %s\r\nAuthorization: Bearer %s\r\n` +
+			`Content-Type: application/json\r\nContent-Length: %d\r\nConnection: close\r\n\r\n%s' ` +
+			`"$hp" "$(cat "$d/key")" "${#b}" "$b" >&3; head -n 1 <&3`
+		// The kubelet adds the slot files to the pod after a sync.
+		Eventually(func(g Gomega) {
+			out, err := ssh(call)
+			g.Expect(err).NotTo(HaveOccurred())
+			g.Expect(strings.TrimSpace(out)).To(MatchRegexp(`^HTTP/1\.[01] 200 `))
+		}, 2*time.Minute, 5*time.Second).Should(Succeed(), "The test key did not work from the pod.")
+
+		By("waiting for the revoke after the TTL")
+		Eventually(func(g Gomega) {
+			g.Expect(k8s.Get(ctx, client.ObjectKeyFromObject(tk), tk)).To(Succeed())
+			g.Expect(tk.Status.RevokedAt).NotTo(BeNil())
+		}, 6*time.Minute, 5*time.Second).Should(Succeed(), "The TestKey was not revoked.")
+		Expect(keyInfo(hash).Blocked).To(BeTrue(), "The gateway did not block the test key.")
+		Expect(tk.Status.Usage).NotTo(BeNil(), "The TestKey has no usage after the revoke.")
+		Expect(tk.Status.Usage.Calls).To(BeNumerically(">=", 1), "The usage does not count the call of the test.")
+		Eventually(func() bool {
+			err := k8s.Get(ctx, client.ObjectKey{Namespace: wsNS, Name: "kt-" + wsName + "-testkey"}, &corev1.Secret{})
+			return apierrors.IsNotFound(err)
+		}, time.Minute, time.Second).Should(BeTrue(), "The slot Secret stays after the revoke.")
+	})
+
 	It("keeps a Workspace Pending in a namespace that no Profile binds", func() {
 		free := &corev1alpha1.Workspace{ObjectMeta: metav1.ObjectMeta{Name: wsName, Namespace: freeNS},
 			Spec: corev1alpha1.WorkspaceSpec{Image: workspaceImage, SSHPublicKeys: ws.Spec.SSHPublicKeys}}
@@ -332,7 +401,7 @@ func dumpWorkspaces() {
 	for _, args := range [][]string{
 		{"-n", systemNS, "logs", "-l", controllerSelector, "--tail", "200"},
 		{"get", "statefulsets,pods,pvc", "-A", "-l", wsLabel, "-o", "wide"},
-		{"get", "workspaces", "-A", "-o", "yaml"},
+		{"get", "workspaces,testkeys", "-A", "-o", "yaml"},
 		{"-n", wsNS, "get", "events", "--sort-by=.lastTimestamp"},
 		{"-n", wsNS, "logs", wsName + "-0", "--tail", "100"},
 	} {
