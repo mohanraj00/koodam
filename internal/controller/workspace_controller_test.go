@@ -119,6 +119,17 @@ var _ = Describe("Workspace Controller", func() {
 		Expect(cs).To(HaveLen(2))
 		Expect(cs[0].Name).To(Equal(workspaceContainer))
 		Expect(cs[1].Name).To(Equal("sidecar"))
+
+		ws = workspace()
+		ws.Spec.PodTemplate = &corev1alpha1.PodTemplate{Spec: corev1.PodSpec{
+			Containers: []corev1.Container{{Name: "sidecar", Image: "busybox"}},
+		}}
+		Expect(k8sClient.Update(ctx, ws)).To(Succeed())
+		reconcileOnce()
+		get(sts, name)
+		Expect(sts.Spec.Template.Spec.NodeSelector).NotTo(HaveKey("pool"), "a removed field does not stay")
+		Expect(sts.Spec.Template.Labels).NotTo(HaveKey("group"))
+		Expect(sts.Spec.Template.Annotations).NotTo(HaveKey("note"))
 	})
 
 	It("keeps the StatefulSet if a change makes spec.podTemplate not valid", func() {

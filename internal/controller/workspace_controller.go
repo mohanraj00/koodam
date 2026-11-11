@@ -18,6 +18,9 @@ package controller
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"regexp"
@@ -381,8 +384,13 @@ func (r *WorkspaceReconciler) unbind(ctx context.Context, ws *corev1alpha1.Works
 // volumeClaimTemplates cannot change.
 func (r *WorkspaceReconciler) applyStatefulSet(ctx context.Context, ws *corev1alpha1.Workspace,
 	want *appsv1.StatefulSet) (*appsv1.StatefulSet, error) {
+	hash, err := templateHash(want.Spec.Template)
+	if err != nil {
+		return nil, err
+	}
+	metav1.SetMetaDataAnnotation(&want.ObjectMeta, templateHashAnnotation, hash)
 	have := &appsv1.StatefulSet{}
-	err := r.Get(ctx, types.NamespacedName{Namespace: ws.Namespace, Name: ws.Name}, have)
+	err = r.Get(ctx, types.NamespacedName{Namespace: ws.Namespace, Name: ws.Name}, have)
 	if apierrors.IsNotFound(err) {
 		return want, r.createOwned(ctx, ws, want)
 	}
@@ -392,14 +400,16 @@ func (r *WorkspaceReconciler) applyStatefulSet(ctx context.Context, ws *corev1al
 	if !metav1.IsControlledBy(have, ws) {
 		return nil, errNotOwned
 	}
-	// DeepDerivative ignores the fields that the API server sets as defaults. Thus the
-	// controller updates the template only if it changed, for example after a manual edit.
-	// It also ignores an empty field in want, and accepts a list in want that is the start of the
-	// list in have. The egress proxy owns hostAliases and dnsConfig, thus the controller compares
-	// them exactly (#142). The controller owns the volumes and the mounts, thus it compares their
-	// names exactly. If not, a removed last volume, such as the TestKey slot, stays (#192).
+	// The hash annotation records the last template of the controller. A changed hash finds
+	// each change of the controller, also a removed field, volume, env value or annotation
+	// (#192). DeepDerivative finds a manual edit of a field in want, and ignores the fields that
+	// the API server sets as defaults. It also ignores an empty field in want, and accepts a list
+	// in want that is the start of the list in have. The egress proxy owns hostAliases and
+	// dnsConfig, thus the controller compares them exactly (#142). The volume names and the mount
+	// names are also exact, thus a manual edit cannot add a volume or a mount.
 	w, h := want.Spec.Template.Spec, have.Spec.Template.Spec
-	sameTemplate := equality.Semantic.DeepDerivative(want.Spec.Template, have.Spec.Template) &&
+	sameTemplate := have.Annotations[templateHashAnnotation] == hash &&
+		equality.Semantic.DeepDerivative(want.Spec.Template, have.Spec.Template) &&
 		equality.Semantic.DeepEqual(w.HostAliases, h.HostAliases) &&
 		equality.Semantic.DeepEqual(w.DNSConfig, h.DNSConfig) &&
 		equality.Semantic.DeepEqual(volumeNames(w), volumeNames(h))
@@ -408,9 +418,24 @@ func (r *WorkspaceReconciler) applyStatefulSet(ctx context.Context, ws *corev1al
 	}
 	if !sameTemplate {
 		have.Spec.Template = want.Spec.Template
+		metav1.SetMetaDataAnnotation(&have.ObjectMeta, templateHashAnnotation, hash)
 	}
 	have.Spec.Replicas = want.Spec.Replicas
 	return have, r.Update(ctx, have)
+}
+
+// templateHashAnnotation is on the StatefulSet, not on the pod template. Thus a new hash does
+// not restart the pod.
+const templateHashAnnotation = "koodam.dev/template-hash"
+
+// templateHash returns the sha256 of the JSON form of the pod template of the controller.
+func templateHash(t corev1.PodTemplateSpec) (string, error) {
+	b, err := json.Marshal(t)
+	if err != nil {
+		return "", fmt.Errorf("hash the pod template: %w", err)
+	}
+	sum := sha256.Sum256(b)
+	return hex.EncodeToString(sum[:]), nil
 }
 
 // volumeNames returns the volume names of pod, then the volume mount names of each container

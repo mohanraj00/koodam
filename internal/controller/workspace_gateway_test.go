@@ -409,7 +409,11 @@ var _ = Describe("Workspace gateway key", func() {
 	})
 
 	It("blocks the key, deletes the Secret and removes the mount when spec.gateway is removed", func() {
+		rec.Egress = testEgress
 		mustReconcile()
+		sts := &appsv1.StatefulSet{}
+		Expect(k8sClient.Get(ctx, nn(name), sts)).To(Succeed())
+		Expect(sts.Spec.Template.Annotations).To(HaveKey(gatewayURLAnnotation))
 		edit(func(ws *corev1alpha1.Workspace) { ws.Spec.Gateway = nil })
 		mustReconcile()
 		Expect(gw.order).To(Equal([]string{opCreate, opBlock, opUsage}))
@@ -417,9 +421,10 @@ var _ = Describe("Workspace gateway key", func() {
 		ws := workspace()
 		Expect(controllerutil.ContainsFinalizer(ws, workspaceFinalizer)).To(BeFalse())
 		Expect(ws.Status.KeyHash).To(BeEmpty())
-		sts := &appsv1.StatefulSet{}
 		Expect(k8sClient.Get(ctx, nn(name), sts)).To(Succeed())
 		Expect(sts.Spec.Template.Spec.Volumes).NotTo(ContainElement(HaveField("Name", "gateway")))
+		Expect(sts.Spec.Template.Annotations).NotTo(HaveKey(gatewayURLAnnotation),
+			"a removed annotation does not stay in the template")
 	})
 
 	It("keeps the key and changes the Secret URL when the egress proxy goes on", func() {
