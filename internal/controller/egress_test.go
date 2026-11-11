@@ -51,7 +51,7 @@ var _ = Describe("Egress proxy", func() {
 				DNSPolicy:   corev1.DNSDefault,
 				DNSConfig:   &corev1.PodDNSConfig{Nameservers: []string{"8.8.8.8"}},
 				HostAliases: []corev1.HostAlias{{IP: "203.0.113.1", Hostnames: []string{"api.example.com"}}}}}}}
-		r := &WorkspaceReconciler{Image: "example.com/ws:1", APIReader: k8sClient, Egress: testEgress}
+		r := &WorkspaceReconciler{Image: testWorkspaceImage, APIReader: k8sClient, Egress: testEgress}
 		sts, err := r.mergedStatefulSet(ctx, ws, testProfile)
 		Expect(err).NotTo(HaveOccurred())
 		pod := sts.Spec.Template.Spec

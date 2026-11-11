@@ -259,6 +259,9 @@ func invalid(a *corev1alpha1.Agent) string {
 			return "A rule is not in the agent-ceiling ClusterRole."
 		}
 	}
+	if _, set := a.Spec.Env[nookkuTestsEnv]; set && hasNookku(a.Spec.Harness) {
+		return "spec.env cannot set " + nookkuTestsEnv + " if the harness has the nookku plugin. Koodam sets it."
+	}
 	return ""
 }
 
@@ -494,6 +497,9 @@ func runJob(a *corev1alpha1.Agent, installerImage, gatewayURL string) *batchv1.J
 	tmpl := metav1.ObjectMeta{Labels: map[string]string{agentLabel: a.Name}}
 	if h := a.Spec.Harness; h != nil {
 		addHarness(&pod, h, installerImage)
+		if hasNookku(h) {
+			addAgentNookku(&pod)
+		}
 		if h.Name == harness.Codex {
 			tmpl.Annotations = map[string]string{codexConfigAnnotation: codexConfig(gatewayURL, a.Spec.Model)}
 			addCodexConfig(&pod)

@@ -18,6 +18,7 @@ COPY sshd_config /etc/koodam/sshd_config
 COPY start.sh /usr/local/bin/koodam-workspace-start
 COPY gateway.sh /etc/profile.d/koodam-gateway.sh
 COPY login.sh /etc/profile.d/koodam-login.sh
+COPY nookku.sh /etc/profile.d/koodam-nookku.sh
 COPY codex-login.sh /usr/local/bin/koodam-codex-login
 COPY profile-codex-login.sh /etc/profile.d/koodam-codex-login.sh
 RUN chmod 0755 /usr/local/bin/koodam-codex-login

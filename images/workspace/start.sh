@@ -14,6 +14,12 @@ done
 # The Debian ~/.profile adds ~/.local/bin to PATH only if the folder exists at login.
 mkdir -p "$home/.local/bin"
 
+# The controller mounts /etc/koodam/nookku if a harness has the nookku plugin. Make the Nookku
+# test folder on the home PVC. Only the user dev can read it.
+if [ -d /etc/koodam/nookku ]; then
+  mkdir -p -m 0700 "$home/nookku-tests"
+fi
+
 # Copy the global files of koodam profile push to the home. This step never fails.
 /usr/local/bin/koodam-globals || true
 

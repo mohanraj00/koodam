@@ -1,7 +1,6 @@
 # Nookku preset (#83)
 
-Status: API validation only. No controller reads the plugin. Koodam installs nothing and mounts
-nothing for it at this stage.
+Status: the API validation and the test folder. Koodam installs no Nookku file at this stage.
 
 ## The field
 
@@ -41,13 +40,27 @@ spec:
 
 A Workspace that selects `nookku` needs no test volume declaration.
 
+## The test folder
+
+Nookku writes its tests to the folder in `NOOKKU_TESTS_DIR`. Koodam gives this folder to the pod,
+so that the tests stay after the pod stops.
+
+- **Agent.** The controller mounts the volume `nookku-tests` in the agent container at
+  `/koodam/nookku-tests`, and sets `NOOKKU_TESTS_DIR=/koodam/nookku-tests`. The init containers
+  do not mount it. Koodam sets this env, so the Agent cannot set `NOOKKU_TESTS_DIR` in
+  `spec.env` or in the main container of the pod template. The Agent also cannot mount a volume
+  at `/koodam/nookku-tests` or in it. If it does, the Agent fails with a fixed message and
+  Koodam makes no gateway key.
+- **Workspace.** If a harness of the Workspace has `nookku`, the controller mounts the empty
+  read-only folder `/etc/koodam/nookku`. When the pod starts, the image makes
+  `/home/dev/nookku-tests` on the home PVC, with mode `0700`. A login shell exports
+  `NOOKKU_TESTS_DIR=/home/dev/nookku-tests`. If you already exported `NOOKKU_TESTS_DIR`, the login
+  shell does not change it. The folder needs the Workspace image of this release.
+
+If you remove `nookku` from a Workspace, the folder and its tests stay on the home PVC. A new
+login shell does not export `NOOKKU_TESTS_DIR`.
+
 ## Later work
-
-These parts are approved for a later step. They are not done:
-
-- the mount of `nookku-tests` at `/koodam/nookku-tests` in the Agent pod;
-- the directory `/home/dev/nookku-tests` on the home PVC of a Workspace, and
-  `NOOKKU_TESTS_DIR` in the login shell.
 
 These parts are not approved: the Python and Nookku dependencies, the images, the plugin pin or
 artifact, the install, and the Codex trust writes.
