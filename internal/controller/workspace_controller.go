@@ -417,12 +417,15 @@ func (r *WorkspaceReconciler) applyStatefulSet(ctx context.Context, ws *corev1al
 // and each init container. A change of a list length changes the result.
 func volumeNames(pod corev1.PodSpec) [][]string {
 	containers := append(append([]corev1.Container{}, pod.InitContainers...), pod.Containers...)
-	names := make([][]string, 1, 1+len(containers))
+	volumes := make([]string, 0, len(pod.Volumes))
 	for _, v := range pod.Volumes {
-		names[0] = append(names[0], v.Name)
+		volumes = append(volumes, v.Name)
 	}
+	names := make([][]string, 0, 1+len(containers))
+	names = append(names, volumes)
 	for _, c := range containers {
-		mounts := []string{c.Name}
+		mounts := make([]string, 0, 1+len(c.VolumeMounts))
+		mounts = append(mounts, c.Name)
 		for _, m := range c.VolumeMounts {
 			mounts = append(mounts, m.Name)
 		}
