@@ -416,11 +416,12 @@ func (r *WorkspaceReconciler) applyStatefulSet(ctx context.Context, ws *corev1al
 // volumeNames returns the volume names of pod, then the volume mount names of each container
 // and each init container. A change of a list length changes the result.
 func volumeNames(pod corev1.PodSpec) [][]string {
-	names := [][]string{{}}
+	containers := append(append([]corev1.Container{}, pod.InitContainers...), pod.Containers...)
+	names := make([][]string, 1, 1+len(containers))
 	for _, v := range pod.Volumes {
 		names[0] = append(names[0], v.Name)
 	}
-	for _, c := range append(append([]corev1.Container{}, pod.InitContainers...), pod.Containers...) {
+	for _, c := range containers {
 		mounts := []string{c.Name}
 		for _, m := range c.VolumeMounts {
 			mounts = append(mounts, m.Name)
