@@ -48,6 +48,9 @@ spec:
 `, kind, plural, kind, kind, plural, strings.ToLower(kind))
 }
 
+// agentCRD gives a synthetic Agent CRD.
+func agentCRD() []byte { return syntheticCRD("Agent", "agents") }
+
 func stage(t *testing.T, files map[string][]byte) string {
 	t.Helper()
 	dir := t.TempDir()
@@ -79,7 +82,7 @@ func tree(t *testing.T, root string) []string {
 }
 
 func TestRunRoutesAppCRDsOutOfTheDefaultBase(t *testing.T) {
-	agent := syntheticCRD("Agent", "agents")
+	agent := agentCRD()
 	app := syntheticCRD("App", "apps")
 	version := syntheticCRD("AppVersion", "appversions")
 	staging := stage(t, map[string][]byte{
@@ -111,7 +114,7 @@ func TestRunRoutesAppCRDsOutOfTheDefaultBase(t *testing.T) {
 }
 
 func TestRunReplacesAnExistingFile(t *testing.T) {
-	agent := syntheticCRD("Agent", "agents")
+	agent := agentCRD()
 	root := t.TempDir()
 	dest := filepath.Join(root, "config", "crd", "bases", agentFile)
 	if err := os.MkdirAll(filepath.Dir(dest), 0o755); err != nil {
@@ -136,7 +139,7 @@ func TestRunReplacesAnExistingFile(t *testing.T) {
 }
 
 func TestRunWritesNoFileOnBadInput(t *testing.T) {
-	agent := syntheticCRD("Agent", "agents")
+	agent := agentCRD()
 	for name, tc := range map[string]struct {
 		files map[string][]byte
 		dir   bool
