@@ -25,24 +25,38 @@ Koodam adds Kubernetes resources for agent work, and an operator that reconciles
 - **Agent.** One `Agent` gets a model key with a budget and a TTL, a ServiceAccount with only the access it asks for, and a Job. When the run ends, Koodam revokes all of it and writes the spend to the status.
 - **Workspace.** A pod with a home on a PVC. You connect over SSH and run the harnesses in tmux, so the session keeps running when you close the laptop.
 - **Profile.** It binds namespaces, so each Workspace in them gets the same login, global files and skills.
+- **TestKey.** One short-lived gateway key for one Nookku test in a Workspace. The key has its own budget and TTL.
 
+## Status and compatibility
 
-> Status: pre-alpha. The API will change.
+The current release is v0.3.0. The `main` branch has v0.4 work with no tag yet. [CHANGELOG.md](CHANGELOG.md) lists it.
+
+The resources are `Agent`, `Workspace`, `Profile` and `TestKey`. The `App` resource is not in `main`.
+
+The `nookku` plugin field gives the pod a Nookku test folder: `/koodam/nookku-tests` in an Agent pod and `/home/dev/nookku-tests` in a Workspace pod. Koodam does not install Nookku. [docs/nookku-preset.md](docs/nookku-preset.md) has the rules.
+
+The API version is `v1alpha1`. It can change between tags, and a change can break your manifests. Read the changelog before you upgrade.
+
+Status: pre-alpha.
 
 ## Docs
 
-v0.2 adds Workspaces. A Workspace is a pod with a home on a PVC. I connect to it over SSH and run the harnesses in tmux. A Profile binds my namespaces, so each Workspace in them gets my Claude Code login, my global files and my skills.
+A Workspace is a pod with a home on a PVC. I connect to it over SSH and run the harnesses in tmux. A Profile binds my namespaces, so each Workspace in them gets my Claude Code login, my global files and my skills.
 
 - [Quick start](docs/quickstart.md): install the chart and the CLI, then run 1 Agent.
 - [Workspaces](docs/workspaces.md): make a Workspace and connect with `koodam ssh`.
 - [Profiles](docs/profiles.md): the namespace binding, the shared login, the global files, the project files and the memory.
 - [The CLI](docs/cli.md): each command, and the spend and the projected cost.
 - [The gateway](docs/gateway.md): the budget, the revoke and the spend.
+- [Test keys](docs/test-keys.md): the TestKey resource, the key slot in the Workspace pod and the revoke.
+- [Nookku](docs/nookku.md): the Workspace setup for Nookku, the span contract and the test folder.
+- [Nookku preset](docs/nookku-preset.md): the `nookku` plugin field and the Nookku test folder.
+- [Release checklist](docs/release-checklist.md): the steps before a tag.
 - [Traced egress](docs/traced-egress.md): the egress proxy, the spans and `koodam trace`.
 - [Architecture](docs/architecture.md): the controller, the gateway, the Workspace pod, the PVC home and the tunnel.
 - [Bring your Claude Code to Kubernetes, not a new agent platform](https://mohanraj00.github.io/tech/introducing-koodam/): the blog post. Why I built Koodam, and a day with a Workspace.
 
-## What one Agent gets (v0.1 target)
+## What one Agent gets
 
 ```yaml
 apiVersion: core.koodam.dev/v1alpha1
@@ -82,7 +96,7 @@ Put the instructions and the skills in the repo that the run works on. Then both
 - **Instructions:** write `AGENTS.md`. Codex reads it. Claude Code reads it if the repo has no `CLAUDE.md`. If the repo has a `CLAUDE.md`, put `@AGENTS.md` in it.
 - **Skills:** put them in `.agents/skills/<name>/SKILL.md`. Codex reads this folder. Claude Code reads `.claude/skills`, so link it: `mkdir -p .claude && ln -s ../.agents/skills .claude/skills`.
 
-Skills and config for each user, outside the repo, come with the profiles in v0.2.
+Skills and config for each user, outside the repo, come from the Profile.
 
 The gateway gives each run a budget, a revoke and the real spend. [docs/gateway.md](docs/gateway.md) tells how to configure it.
 
@@ -134,7 +148,7 @@ Each release tag `vX.Y.Z` publishes 3 things: the controller image `ghcr.io/moha
 The chart installs the controller and the `Agent` CRD. It uses an existing LiteLLM gateway, or it installs its own:
 
 ```sh
-VERSION=0.1.0
+VERSION=0.3.0
 kubectl create namespace koodam-system
 kubectl -n koodam-system create secret generic koodam-gateway --from-file=master-key=./master-key
 helm install koodam oci://ghcr.io/mohanraj00/charts/koodam --version "$VERSION" -n koodam-system \
@@ -146,7 +160,7 @@ With an existing gateway, do not use `values-bundled.yaml`. Pass `--set gateway.
 The CLI is for linux and darwin, on amd64 and arm64. Check the archive against `checksums.txt` before you install it:
 
 ```sh
-VERSION=0.1.0
+VERSION=0.3.0
 OS=linux     # or darwin
 ARCH=amd64   # or arm64
 FILE="koodam_${VERSION}_${OS}_${ARCH}.tar.gz"
