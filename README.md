@@ -29,7 +29,7 @@ Koodam adds Kubernetes resources for agent work, and an operator that reconciles
 
 ## Status and compatibility
 
-The stable release is v0.3.0. The pre-release [v0.4.0-alpha.1](https://github.com/mohanraj00/koodam/releases/tag/v0.4.0-alpha.1) has the TestKey work. [CHANGELOG.md](CHANGELOG.md) lists it.
+The current release is v0.3.0. It is the stable release. The pre-release [v0.4.0-alpha.1](https://github.com/mohanraj00/koodam/releases/tag/v0.4.0-alpha.1) has the TestKey work. [CHANGELOG.md](CHANGELOG.md) lists it.
 
 The resources are `Agent`, `Workspace`, `Profile` and `TestKey`. The `App` resource is not in `main`.
 
