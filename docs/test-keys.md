@@ -5,7 +5,7 @@ A TestKey is one short-lived gateway key for one Nookku test in a Workspace. The
 ## What is active
 
 - The TestKey API, the Workspace field `spec.testKeys`, the TestKey controller and the key slot in the Workspace pod are in `main`.
-- The controller issues keys only if the manager flag `--test-key-single-instance-gateway` is set. The chart sets it. Set it only if the gateway has 1 replica and 1 worker. Without it, a TestKey gets no key.
+- The controller issues keys only if the manager flag `--test-key-single-instance-gateway` is set. The chart sets it only if `gateway.mode` is `bundled`, because the bundled gateway has 1 replica and 1 worker. The chart has no value for an existing gateway, so TestKeys do not work with `gateway.mode: existing`. Without the flag, a TestKey gets no key.
 - The Nookku install, the plugin pin and the runtime dependencies are not active yet. They wait for owner approval. Koodam gives the key and the test folder, and you install Nookku yourself.
 
 ## Separate allowance
