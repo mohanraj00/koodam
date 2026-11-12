@@ -2,9 +2,13 @@
 
 This file records the changes for each Koodam version. The newest version is first.
 
-## Unreleased (v0.4, in build)
+## Unreleased
 
-The v0.4 work is in `main`. It has no tag and no release. Some parts are in `main` but are not active yet. This section marks those parts.
+No changes yet.
+
+## v0.4.0-alpha.1 (pre-release)
+
+This is a pre-release, not the v0.4 release. The API is `v1alpha1` and can change between tags. The tag has no date in this file until the maintainer cuts it. Some parts are in the tag but are not active yet. The sections below mark those parts.
 
 ### TestKeys and Nookku tests
 
@@ -16,7 +20,7 @@ The v0.4 work is in `main`. It has no tag and no release. Some parts are in `mai
 - Add a kind test. One Nookku test gets its own TestKey, calls the gateway with it, and the key is revoked after the TTL ([#288](https://github.com/mohanraj00/koodam/pull/288)).
 - Not active yet: the Nookku install, the plugin pin and the runtime dependencies. These steps wait for owner approval.
 
-### Apps
+### Apps (not active yet)
 
 - Add App pod identity to egress spans ([#206](https://github.com/mohanraj00/koodam/pull/206)).
 - Add App targets to `koodam trace` ([#207](https://github.com/mohanraj00/koodam/pull/207)).
@@ -24,7 +28,7 @@ The v0.4 work is in `main`. It has no tag and no release. Some parts are in `mai
 - Add the CRD routing plan for the App output ([#226](https://github.com/mohanraj00/koodam/pull/226)).
 - Not active yet: the `App` resource, the traffic split and the rollout.
 
-### Agent ingress
+### Agent ingress (not active yet)
 
 - Add the optional, immutable `Agent.spec.ingressPort`. The default chart and Kustomize output refuse the field ([#210](https://github.com/mohanraj00/koodam/pull/210), [#212](https://github.com/mohanraj00/koodam/pull/212)).
 - Add the strict Agent admission checks, the HTTP handler and the admission binary ([#213](https://github.com/mohanraj00/koodam/pull/213), [#215](https://github.com/mohanraj00/koodam/pull/215), [#216](https://github.com/mohanraj00/koodam/pull/216)).
