@@ -6,9 +6,9 @@ This file records the changes for each Koodam version. The newest version is fir
 
 No changes yet.
 
-## v0.4.0-alpha.1 (pre-release)
+## v0.4.0-alpha.1 (pre-release, 2026-11-12)
 
-This is a pre-release, not the v0.4 release. The API is `v1alpha1` and can change between tags. The tag has no date in this file until the maintainer cuts it. Some parts are in the tag but are not active yet. The sections below mark those parts.
+This is a pre-release, not the v0.4 release. The API is `v1alpha1` and can change between tags. Some parts are in the tag but are not active yet. The sections below mark those parts.
 
 ### TestKeys and Nookku tests
 
