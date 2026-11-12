@@ -29,7 +29,6 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/intstr"
-	"k8s.io/utils/ptr"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	corev1alpha1 "github.com/mohanraj00/koodam/api/v1alpha1"
@@ -50,6 +49,7 @@ var _ = Describe("App and AppVersion CRDs", func() {
 		httpPort      = "http"
 		appModel      = "test-model"
 		budgetOneUnit = "1"
+		sidecarName   = "sidecar"
 	)
 
 	create := func(obj client.Object) error {
@@ -111,16 +111,17 @@ var _ = Describe("App and AppVersion CRDs", func() {
 		u := &unstructured.Unstructured{Object: map[string]any{
 			"apiVersion": corev1alpha1.GroupVersion.String(),
 			"kind":       "App",
-			"metadata":   map[string]any{"name": "app-zero", "namespace": ns},
 			specField:    map[string]any{"maxLiveVersions": int64(0)},
 		}}
+		u.SetName("app-zero")
+		u.SetNamespace(ns)
 		expectInvalid(create(u), "maxLiveVersions")
 	})
 
 	It("accepts a valid AppVersion and defaults replicas and lifecycle", func() {
 		v := newVersion("v-valid")
 		Expect(create(v)).To(Succeed())
-		Expect(v.Spec.Replicas).To(Equal(ptr.To(int32(1))))
+		Expect(v.Spec.Replicas).To(Equal(new(int32(1))))
 		Expect(v.Spec.Lifecycle).To(Equal(corev1alpha1.AppVersionActive))
 	})
 
@@ -162,13 +163,13 @@ var _ = Describe("App and AppVersion CRDs", func() {
 		Expect(create(v)).To(Succeed())
 		Expect(update(v, func(c *corev1alpha1.AppVersion) {
 			c.Spec.BudgetPerDay = resource.MustParse("2.5")
-			c.Spec.Replicas = ptr.To(int32(3))
+			c.Spec.Replicas = new(int32(3))
 		})).To(Succeed())
 	})
 
 	It("refuses negative replicas", func() {
 		v := newVersion("v-replicas")
-		v.Spec.Replicas = ptr.To(int32(-1))
+		v.Spec.Replicas = new(int32(-1))
 		expectInvalid(create(v), "replicas")
 	})
 
@@ -185,7 +186,7 @@ var _ = Describe("App and AppVersion CRDs", func() {
 	It("refuses a pod template with no app container or with 2 app containers", func() {
 		const message = "The pod template must have 1 container with the name app."
 		sidecar := appContainer()
-		sidecar.Name = "sidecar"
+		sidecar.Name = sidecarName
 		expectInvalid(create(newVersion("v-no-app-container", sidecar)), message)
 		expectInvalid(create(newVersion("v-two-app-containers", appContainer(), appContainer())), message)
 	})
@@ -208,7 +209,7 @@ var _ = Describe("App and AppVersion CRDs", func() {
 
 	It("accepts a sidecar with no probe and no port", func() {
 		c := appContainer()
-		sidecar := corev1.Container{Name: "sidecar", Image: appImage}
+		sidecar := corev1.Container{Name: sidecarName, Image: appImage}
 		Expect(create(newVersion("v-sidecar", c, sidecar))).To(Succeed())
 	})
 
