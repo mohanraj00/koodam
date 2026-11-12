@@ -46,4 +46,20 @@ resources:
   kind: TestKey
   path: github.com/mohanraj00/koodam/api/v1alpha1
   version: v1alpha1
+- api:
+    crdVersion: v1
+    namespaced: true
+  domain: koodam.dev
+  group: core
+  kind: App
+  path: github.com/mohanraj00/koodam/api/v1alpha1
+  version: v1alpha1
+- api:
+    crdVersion: v1
+    namespaced: true
+  domain: koodam.dev
+  group: core
+  kind: AppVersion
+  path: github.com/mohanraj00/koodam/api/v1alpha1
+  version: v1alpha1
 version: "3"

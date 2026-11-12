@@ -4,7 +4,9 @@ This file records the changes for each Koodam version. The newest version is fir
 
 ## Unreleased
 
-No changes yet.
+### Apps (not active yet)
+
+- Add the namespaced `App` and `AppVersion` types with their CRD rules. The CRDs are in `config/apps/crd/bases`, so the default install and the chart do not install them. No controller uses them yet ([#294](https://github.com/mohanraj00/koodam/pull/294)).
 
 ## v0.4.0-alpha.1 (pre-release, 2026-11-12)
 
