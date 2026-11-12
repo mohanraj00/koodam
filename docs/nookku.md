@@ -2,7 +2,7 @@
 
 Nookku tests an app agent. It runs as a plugin of the harness (Claude Code or Codex). Koodam gives the harness a Workspace pod on Kubernetes. This page gives the design of the 2 tools together, and the contracts between them.
 
-> Status: v0.3 design, in build. The issues are #142, #143, #144, #145, #146, #165, #166 and #168. Each contract below names its issue. Do not use a part before its issue is merged.
+> Status: the span contract, the egress proxy and `koodam trace` are in v0.3.0. The test keys, the `nookku` plugin field and the test folder are in `main` for v0.4, with no tag yet. The Nookku install, the plugin pin and the runtime dependencies are not active yet.
 
 ## The parts
 
@@ -46,7 +46,7 @@ flowchart LR
 
 The Nookku side (Nookku 0.5.6): the test folder from `NOOKKU_TESTS_DIR`, a kind proof of the HTTP tap, the gateway spend logs as a source, and `nookku trace --egress`. The proof of Nookku inside a Workspace comes in Nookku 0.6.0, after #142 and #143 merge.
 
-The Nookku plugin preset of #83 is not in v0.3.
+The `nookku` plugin field and the test folder (#83) are in `main`, not in v0.3.0. [nookku-preset.md](nookku-preset.md) has them.
 
 ## Contract 1: the span
 
@@ -165,7 +165,18 @@ This traffic goes direct, so it has no span. The Nookku HTTP tap records it.
 - A Workspace with a gateway key gets the alias `ws-<namespace>-<name>-<hash>`, in `status.keyAlias`.
 - A Workspace with a subscription login has no gateway key.
 - LiteLLM keeps the spend logs for each key alias. Koodam never writes the key value to a status, an event or a log. A span holds no header, no query string and no `http` path. The pod chooses only the host and the SNI ([egress-spans.md](egress-spans.md), #170).
-- Koodam gives no key for each Nookku test in v0.3. That needs a new API. Match the spend logs to a test by the time window and the key alias.
+- A TestKey gives 1 key for each Nookku test, with the alias `tk-<testID>-<uid>`. Match the spend logs to a test by the alias. [test-keys.md](test-keys.md) has the API. Before v0.4, match by the time window and the key alias.
+
+## Contract 6: the test key and the test folder
+
+These parts are in `main` and are not in v0.3.0.
+
+- **Test key.** A TestKey (see [test-keys.md](test-keys.md)) gives the Workspace pod a read-only slot at `/etc/koodam/test-gateway`. The files are `key`, `alias`, `base-url` and `model`. The pod has no files there when no TestKey is active. The Workspace needs `spec.gateway` and `spec.testKeys`.
+- **Revoke first.** At the end, the controller blocks the key, waits, reads the spend, then deletes the slot. The status of the TestKey has the spend.
+- **Test folder in a Workspace.** If a harness has the plugin `nookku`, the pod gets the empty folder `/etc/koodam/nookku`. The image makes `/home/dev/nookku-tests` on the home PVC, and a login shell exports `NOOKKU_TESTS_DIR`. The older steps in Contract 4 still work.
+- **Test folder in an Agent.** The Agent declares the PVC volume `nookku-tests`. The pod mounts it at `/koodam/nookku-tests` and sets `NOOKKU_TESTS_DIR`.
+
+**Not active yet:** the Nookku install, the plugin pin and the runtime dependencies. Koodam does not install Nookku or a plugin in the pod. You install them. These steps wait for owner approval.
 
 ## Limits
 

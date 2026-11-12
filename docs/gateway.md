@@ -48,7 +48,7 @@ Do not use `echo` for the key. `echo` adds a newline at the end, and the newline
 Then install the chart:
 
 ```sh
-VERSION=0.1.0
+VERSION=0.3.0
 helm install koodam oci://ghcr.io/mohanraj00/charts/koodam --version "$VERSION" -n koodam-system \
   -f "https://raw.githubusercontent.com/mohanraj00/koodam/v$VERSION/charts/koodam/values-bundled.yaml"
 ```
