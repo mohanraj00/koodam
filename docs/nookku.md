@@ -2,7 +2,7 @@
 
 Nookku tests an app agent. It runs as a plugin of the harness (Claude Code or Codex). Koodam gives the harness a Workspace pod on Kubernetes. This page gives the design of the 2 tools together, and the contracts between them.
 
-> Status: the span contract, the egress proxy and `koodam trace` are in v0.3.0. The test keys, the `nookku` plugin field and the test folder are in `main` for v0.4, with no tag yet. The Nookku install, the plugin pin and the runtime dependencies are not active yet.
+> Status: the span contract, the egress proxy and `koodam trace` are in v0.3.0. The test keys, the `nookku` plugin field and the test folder are in the pre-release v0.4.0-alpha.1. The Nookku install, the plugin pin and the runtime dependencies are not active yet.
 
 ## The parts
 
