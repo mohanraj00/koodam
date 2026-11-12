@@ -76,6 +76,7 @@ func sourceIndex() []sourceRoute {
 	return []sourceRoute{
 		{path: "internal/controller/agent_controller.go", role: RoleBase},
 		{path: "internal/controller/profile_controller.go", role: RoleBase},
+		{path: "internal/controller/testkey_controller.go", role: RoleBase},
 		{path: "internal/controller/workspace_controller.go", role: RoleBase},
 		{path: "internal/controller/app_controller.go", role: RoleApp},
 		{path: "internal/controller/appversion_controller.go", role: RoleApp},

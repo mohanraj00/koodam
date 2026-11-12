@@ -22,7 +22,8 @@ import (
 )
 
 // AppSpec is the desired state of an App. An App is an application that serves clients. Its
-// AppVersions hold the pods. No controller uses the App at this time.
+// AppVersions hold the pods. The AppVersion controller binds each version to its App and reads
+// maxLiveVersions.
 type AppSpec struct {
 	// MaxLiveVersions is the maximum number of AppVersions of this App that can have a gateway
 	// key at the same time. The count includes the candidate versions, the versions that drain

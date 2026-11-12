@@ -39,7 +39,8 @@ const (
 	AppVersionRetiring AppVersionLifecycle = "Retiring"
 )
 
-// The condition types of an AppVersion. No controller sets them at this time.
+// The condition types of an AppVersion. The AppVersion controller sets Revoking, Revoked and
+// TracedEgress. No controller sets TrafficAllowed and SessionsEnded at this time.
 const (
 	// AppVersionTrafficAllowed tells if the version can get public traffic.
 	AppVersionTrafficAllowed = "TrafficAllowed"
@@ -53,8 +54,8 @@ const (
 	AppVersionTracedEgress = "TracedEgress"
 )
 
-// AppVersionSpec is one version of an App. The developer writes it. No controller uses it at
-// this time.
+// AppVersionSpec is one version of an App. The developer writes it. The AppVersion controller
+// makes a Deployment, a Service, a Role and one gateway key from it.
 type AppVersionSpec struct {
 	// AppRef is the App of this version, in the same namespace. You cannot change it after
 	// create.

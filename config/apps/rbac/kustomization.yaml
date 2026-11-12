@@ -1,0 +1,6 @@
+# The role of the App controller and its binding. The default install does not include them. Apply
+# this folder only for a manual App install, and start the manager with --apps-enabled.
+namePrefix: koodam-
+resources:
+- role.yaml
+- role_binding.yaml

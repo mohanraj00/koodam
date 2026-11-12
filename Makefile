@@ -52,9 +52,10 @@ manifests: controller-gen ## Generate ClusterRole and CustomResourceDefinition o
 	webhook_out="$$(mktemp -d "$${TMPDIR:-/tmp}/koodam-webhook.XXXXXX")"; \
 	crd_out="$$(mktemp -d "$${TMPDIR:-/tmp}/koodam-crd.XXXXXX")"; \
 	trap 'rm -rf -- "$$webhook_out" "$$crd_out"' EXIT; \
-	"$(CONTROLLER_GEN)" rbac:roleName=manager-role crd webhook paths="./..." output:crd:artifacts:config="$$crd_out" \
+	"$(CONTROLLER_GEN)" crd webhook paths="./..." output:crd:artifacts:config="$$crd_out" \
 		output:webhook:artifacts:config="$$webhook_out"; \
 	go run ./hack/crd-route "$$crd_out"
+	go run ./hack/rbac-route "$(CONTROLLER_GEN)"
 	go run ./hack/crd-optional config/crd/bases/core.koodam.dev_agents.yaml config/crd/bases/core.koodam.dev_workspaces.yaml
 	go run ./hack/agent-ingress-crd config/crd/bases/core.koodam.dev_agents.yaml config/agent-ingress/crd/bases/core.koodam.dev_agents.yaml
 

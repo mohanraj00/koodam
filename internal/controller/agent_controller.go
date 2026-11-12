@@ -250,14 +250,8 @@ func invalid(a *corev1alpha1.Agent) string {
 	if err := agentingress.Check(a.Spec); err != nil {
 		return err.Error()
 	}
-	in := func(have, ceil []string) bool {
-		return len(have) > 0 && !slices.ContainsFunc(have, func(s string) bool { return !slices.Contains(ceil, s) })
-	}
-	for _, rule := range a.Spec.Rules {
-		if len(rule.NonResourceURLs) > 0 || !in(rule.APIGroups, ceiling.APIGroups) ||
-			!in(rule.Resources, ceiling.Resources) || !in(rule.Verbs, ceiling.Verbs) {
-			return "A rule is not in the agent-ceiling ClusterRole."
-		}
+	if !inCeiling(a.Spec.Rules) {
+		return "A rule is not in the agent-ceiling ClusterRole."
 	}
 	if _, set := a.Spec.Env[nookkuTestsEnv]; set && hasNookku(a.Spec.Harness) {
 		return "spec.env cannot set " + nookkuTestsEnv + " if the harness has the nookku plugin. Koodam sets it."
