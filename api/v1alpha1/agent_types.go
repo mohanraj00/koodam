@@ -29,6 +29,7 @@ import (
 // +kubebuilder:validation:XValidation:rule="!has(self.podTemplate) || !has(self.podTemplate.spec) || !has(self.podTemplate.spec.containers) || !self.podTemplate.spec.containers.exists(c, c.name == 'agent' && (has(c.image) || has(c.command)))",message="Set the image and the command in spec.image and spec.command, not in the pod template."
 // +kubebuilder:validation:XValidation:rule="has(self.ingressPort) == has(oldSelf.ingressPort) && (!has(self.ingressPort) || self.ingressPort == oldSelf.ingressPort)",message="spec.ingressPort is immutable. You cannot add, remove or change it after create."
 // +kubebuilder:validation:XValidation:rule="!has(self.harness) || !has(self.harness.plugins) || !('nookku' in self.harness.plugins) || (has(self.podTemplate) && has(self.podTemplate.spec) && has(self.podTemplate.spec.volumes) && self.podTemplate.spec.volumes.exists(v, v.name == 'nookku-tests' && has(v.persistentVolumeClaim) && size(v.persistentVolumeClaim.claimName) > 0))",message="The nookku plugin needs the volume nookku-tests in spec.podTemplate.spec.volumes, with a persistentVolumeClaim and a claimName."
+// +kubebuilder:validation:XValidation:rule="has(self.model) != has(self.models)",message="Set model or models, and not the two."
 type AgentSpec struct {
 	// Image is the agent container image.
 	// +required
@@ -43,10 +44,21 @@ type AgentSpec struct {
 	// +optional
 	Env map[string]string `json:"env,omitempty"`
 
-	// Model is the gateway model name. The key permits only this model.
-	// +required
+	// Model is the gateway model name. It is the short form of a models list with 1 item. The
+	// key permits only this model.
+	// +optional
 	// +kubebuilder:validation:MinLength=1
-	Model string `json:"model"`
+	Model string `json:"model,omitempty"`
+
+	// Models are the gateway model names that the key permits. The gateway refuses a call to a
+	// different model. The first model is the model of the harness. Set model or models, and
+	// not the two.
+	// +optional
+	// +listType=set
+	// +kubebuilder:validation:MinItems=1
+	// +kubebuilder:validation:MaxItems=16
+	// +kubebuilder:validation:items:MinLength=1
+	Models []string `json:"models,omitempty"`
 
 	// Budget is the maximum spend of the run, in the currency of the gateway price table.
 	// The gateway refuses calls after the budget.
@@ -151,6 +163,15 @@ type AgentUsage struct {
 	// InputTokens and OutputTokens are the sums over the successful calls.
 	InputTokens  int64 `json:"inputTokens,omitempty"`
 	OutputTokens int64 `json:"outputTokens,omitempty"`
+}
+
+// ModelList gives back the models that the key permits. The first model is the model of the
+// harness.
+func (s *AgentSpec) ModelList() []string {
+	if s.Model != "" {
+		return []string{s.Model}
+	}
+	return s.Models
 }
 
 // AgentStatus is the observed state of an Agent.

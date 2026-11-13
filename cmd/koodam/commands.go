@@ -25,6 +25,7 @@ import (
 	"os"
 	"regexp"
 	"slices"
+	"strings"
 	"text/tabwriter"
 	"time"
 
@@ -422,7 +423,7 @@ func printAgents(out io.Writer, agents []corev1alpha1.Agent, spend bool) {
 				a.Spec.Budget.String(), u.Spend, u.Calls, u.FailedCalls, u.InputTokens, u.OutputTokens)
 		} else {
 			_, _ = fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n", a.Name, a.Status.Phase,
-				a.Spec.Model, harnessText(a.Spec.Harness), a.Spec.Budget.String(), u.Spend,
+				strings.Join(a.Spec.ModelList(), ","), harnessText(a.Spec.Harness), a.Spec.Budget.String(), u.Spend,
 				timeText(a.Status.StartedAt), timeText(a.Status.CompletedAt),
 				a.Status.KeyAlias)
 		}
