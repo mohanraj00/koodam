@@ -142,7 +142,7 @@ func main() {
 	var keyGrace time.Duration
 	var egress controller.EgressProxy
 	var jobTTLSeconds int
-	var agentIngressEnabled bool
+	var agentIngressEnabled, appsEnabled bool
 	var tlsOpts []func(*tls.Config)
 	flag.StringVar(&metricsAddr, "metrics-bind-address", "0", "The address the metrics endpoint binds to. "+
 		"Use :8443 for HTTPS or :8080 for HTTP, or leave as 0 to disable the metrics service.")
@@ -187,6 +187,9 @@ func main() {
 		"Issue TestKeys. Set it only if the gateway has one replica and one worker (#192).")
 	flag.DurationVar(&testKeyRevokeWait, "test-key-revoke-wait", controller.DefaultTestKeyRevokeWait,
 		"The time after a TestKey block before the spend read. Use the gateway auth cache TTL plus a margin.")
+	flag.BoolVar(&appsEnabled, "apps-enabled", false,
+		"If set, the manager runs the AppVersion controller. The App CRDs and the App role in config/apps "+
+			"must be installed first.")
 	flag.BoolVar(&agentIngressEnabled, "agent-ingress-enabled", false,
 		"If set, the controller provisions a new Agent that sets spec.ingressPort. Do not set it before the "+
 			"protected install of the Agent ingress is complete. An Agent with a stored status.keyHash can "+
@@ -357,6 +360,19 @@ func main() {
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "Failed to create controller", "controller", "testkey")
 		os.Exit(1)
+	}
+	if appsEnabled {
+		if err := (&controller.AppVersionReconciler{
+			Client:     mgr.GetClient(),
+			Scheme:     mgr.GetScheme(),
+			APIReader:  mgr.GetAPIReader(),
+			Gateway:    gw,
+			GatewayURL: strings.TrimRight(agentGatewayURL, "/"),
+			Egress:     egress,
+		}).SetupWithManager(mgr); err != nil {
+			setupLog.Error(err, "Failed to create controller", "controller", "appversion")
+			os.Exit(1)
+		}
 	}
 	// +kubebuilder:scaffold:builder
 

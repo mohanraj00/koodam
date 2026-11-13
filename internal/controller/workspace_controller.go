@@ -214,7 +214,7 @@ func (r *WorkspaceReconciler) apply(ctx context.Context, ws *corev1alpha1.Worksp
 	corev1alpha1.WorkspacePhase, string, string, error) {
 	const failed = corev1alpha1.WorkspaceFailed
 	if len(ws.Name) > maxWorkspaceName {
-		return failed, "Invalid", "The Workspace name is too long for the StatefulSet. Use 52 characters or fewer.", nil
+		return failed, reasonInvalid, "The Workspace name is too long for the StatefulSet. Use 52 characters or fewer.", nil
 	}
 	if user == "" {
 		// While a TestKey is not blocked, the pod stays, and the status says that no Profile
@@ -263,10 +263,10 @@ func (r *WorkspaceReconciler) apply(ctx context.Context, ws *corev1alpha1.Worksp
 		return corev1alpha1.WorkspacePending, "TestKeysRevoking",
 			"The gateway removal completes after the revoke of each test key.", nil
 	case errors.Is(err, errNotOwned):
-		return failed, "NameConflict", "An object with a Workspace object name is not from this Workspace.", nil
+		return failed, reasonNameConflict, "An object with a Workspace object name is not from this Workspace.", nil
 	case permanent(err):
 		logf.FromContext(ctx).Info("The API server refused a Workspace object", "reason", err.Error())
-		return failed, "Refused", "The API server refused a Workspace object.", nil
+		return failed, reasonRefused, "The API server refused a Workspace object.", nil
 	case err != nil:
 		return "", "", "", err
 	case ws.Spec.Suspend:
@@ -288,7 +288,7 @@ func workspaceMeta(ws *corev1alpha1.Workspace, name string) metav1.ObjectMeta {
 	}
 }
 
-func hostKeySecretName(ws *corev1alpha1.Workspace) string { return ws.Name + "-ssh-host" }
+func hostKeySecretName(ws *corev1alpha1.Workspace) string { return ws.Name + hostKeySecretSuffix }
 func sshConfigMapName(ws *corev1alpha1.Workspace) string  { return ws.Name + "-ssh" }
 
 // hostKey makes the host key Secret one time only. It returns the public host key. The private

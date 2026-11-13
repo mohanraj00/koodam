@@ -1,0 +1,16 @@
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  labels:
+    app.kubernetes.io/name: koodam
+    app.kubernetes.io/managed-by: kustomize
+  name: app-manager-rolebinding
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: app-manager-role
+subjects:
+# The ServiceAccount of the default install (config/default). kustomize does not change this name.
+- kind: ServiceAccount
+  name: koodam-controller-manager
+  namespace: koodam-system

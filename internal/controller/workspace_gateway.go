@@ -52,7 +52,13 @@ const (
 	reasonRenewFailed = "RenewFailed"
 )
 
-func gatewaySecretName(ws *corev1alpha1.Workspace) string { return ws.Name + "-gateway" }
+func gatewaySecretName(ws *corev1alpha1.Workspace) string { return ws.Name + gatewaySecretSuffix }
+
+// gatewaySecretSuffix and hostKeySecretSuffix are the name suffixes of the Workspace Secrets.
+const (
+	gatewaySecretSuffix = "-gateway"
+	hostKeySecretSuffix = "-ssh-host"
+)
 
 // wantKey is true if the pod must have a gateway key now.
 func wantKey(ws *corev1alpha1.Workspace) bool {
@@ -170,7 +176,7 @@ func (r *WorkspaceReconciler) renewKey(ctx context.Context, ws *corev1alpha1.Wor
 	g := ws.Spec.Gateway
 	spec := gateway.KeySpec{Value: key, Alias: ws.Status.KeyAlias, Model: g.Model,
 		Budget: g.BudgetPerDay.AsApproximateFloat64(), BudgetPeriod: 24 * time.Hour, TTL: r.keyTTL(),
-		Metadata: map[string]string{"uid": string(ws.UID), "namespace": ws.Namespace, "workspace": ws.Name}}
+		Metadata: map[string]string{metaUID: string(ws.UID), metaNamespace: ws.Namespace, "workspace": ws.Name}}
 	if r.untilRenew(ws.Status.KeyHash) > 0 {
 		return
 	}

@@ -41,7 +41,7 @@ const (
 	UserLabel      = "koodam.dev/user"
 	// AppLabel and AppVersionLabel are the reserved labels of an App pod. The values are the names
 	// of the App and the AppVersion. A pod with these labels must have no Agent, Workspace or run
-	// label. There is no App controller yet. It must use these names.
+	// label. The AppVersion controller in internal/controller sets them.
 	AppLabel        = "koodam.dev/app"
 	AppVersionLabel = "koodam.dev/app-version"
 )
