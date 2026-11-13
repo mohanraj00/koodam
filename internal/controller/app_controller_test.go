@@ -120,9 +120,32 @@ var _ = Describe("App controller", func() {
 	}
 	backends := func(u *unstructured.Unstructured) []any {
 		rules, _, _ := unstructured.NestedSlice(u.Object, "spec", "rules")
-		Expect(rules).To(HaveLen(1))
-		refs, _, _ := unstructured.NestedSlice(rules[0].(map[string]any), "backendRefs")
+		Expect(rules).NotTo(BeEmpty())
+		// The weight rule is the last rule. It has no match.
+		last := rules[len(rules)-1].(map[string]any)
+		Expect(last).NotTo(HaveKey("matches"))
+		refs, _, _ := unstructured.NestedSlice(last, "backendRefs")
 		return refs
+	}
+	// pinned gives back the Service names of the session rules, in the order of the route.
+	pinned := func(u *unstructured.Unstructured) []string {
+		rules, _, _ := unstructured.NestedSlice(u.Object, "spec", "rules")
+		names := make([]string, 0, len(rules))
+		for _, r := range rules[:len(rules)-1] {
+			rule := r.(map[string]any)
+			matches, _, _ := unstructured.NestedSlice(rule, "matches")
+			Expect(matches).To(HaveLen(1))
+			headers, _, _ := unstructured.NestedSlice(matches[0].(map[string]any), "headers")
+			Expect(headers).To(HaveLen(1))
+			refs, _, _ := unstructured.NestedSlice(rule, "backendRefs")
+			Expect(refs).To(HaveLen(1))
+			svc := refs[0].(map[string]any)[metaNameKey].(string)
+			// The header value is the version of the backend, so a session stays on its version.
+			Expect(headers[0]).To(Equal(map[string]any{metaNameKey: corev1alpha1.AppVersionHeader,
+				"value": svc[len("kd-"):]}))
+			names = append(names, svc)
+		}
+		return names
 	}
 	status := func() []corev1alpha1.AppEndpointStatus {
 		app := &corev1alpha1.App{}
@@ -162,6 +185,7 @@ var _ = Describe("App controller", func() {
 			backend("-v1", 8080, 90),
 			backend("-v2", 9090, 10),
 		}))
+		Expect(pinned(u)).To(Equal([]string{"kd-" + appName + "-v1", "kd-" + appName + "-v2"}))
 		Expect(status()).To(HaveLen(1))
 		Expect(status()[0].RouteState).To(Equal(corev1alpha1.AppRoutePending))
 		Expect(status()[0].Weights).To(Equal([]corev1alpha1.AppEndpointVersion{
@@ -190,6 +214,10 @@ var _ = Describe("App controller", func() {
 
 		Expect(backends(route("web"))).To(Equal([]any{
 			backend("-v1", 8080, 50)}))
+		// The retiring version v2 drains: it has a session rule and no weight. The version v4
+		// with the weight 0 gets a session only from a client that sends the header.
+		Expect(pinned(route("web"))).To(Equal([]string{"kd-" + appName + "-v1", "kd-" + appName + "-v2",
+			"kd-" + appName + "-v4"}))
 		st := status()[0]
 		Expect(st.Weights).To(Equal([]corev1alpha1.AppEndpointVersion{weight(appName+"-v1", 50),
 			weight(appName+"-v2", 0), weight(appName+"-v3", 0), weight(appName+"-v4", 0)}))
@@ -209,6 +237,7 @@ var _ = Describe("App controller", func() {
 		Expect(k8sClient.Update(ctx, svc)).To(Succeed())
 		mustReconcile()
 		Expect(backends(route("web"))).To(BeEmpty())
+		Expect(pinned(route("web"))).To(BeEmpty())
 	})
 
 	It("updates the weights and deletes the route of an endpoint that is gone", func() {

@@ -40,6 +40,8 @@ import (
 
 const (
 	gatewayAPIGroup = "gateway.networking.k8s.io"
+	// metaNameKey is the JSON field "name" of a backendRef and of a header match.
+	metaNameKey = "name"
 	// appRoutePoll is the time between 2 reads of the route state. The controller has no watch
 	// on the HTTPRoute, so that it starts on a cluster with no Gateway API.
 	appRoutePoll = 30 * time.Second
@@ -126,11 +128,11 @@ func newRoute() *unstructured.Unstructured {
 func (r *AppReconciler) applyRoute(ctx context.Context, app *corev1alpha1.App, ep *corev1alpha1.AppEndpoint,
 	versions []corev1alpha1.AppVersion) (corev1alpha1.AppEndpointStatus, error) {
 	st := corev1alpha1.AppEndpointStatus{Name: ep.Name}
-	refs, down, err := r.backends(ctx, app, ep, versions, &st)
+	refs, pins, down, err := r.backends(ctx, app, ep, versions, &st)
 	if err != nil {
 		return st, err
 	}
-	want := appRoute(app, ep, refs)
+	want := appRoute(app, ep, refs, pins)
 	have := newRoute()
 	err = r.APIReader.Get(ctx, client.ObjectKeyFromObject(want), have)
 	switch {
@@ -171,71 +173,82 @@ func (r *AppReconciler) applyRoute(ctx context.Context, app *corev1alpha1.App, e
 	return st, nil
 }
 
-// backends gives back the backendRefs of the route. It writes the weights in effect to st. A
-// version that cannot serve has the weight 0 and no backendRef. down has the names of the
-// versions that have a weight in the spec and cannot serve.
+// backends gives back the backendRefs of the weight rule and the rules that keep a session on
+// one version. It writes the weights in effect to st. A version that cannot get a new session
+// has the weight 0 and no backendRef. A version that drains keeps its session rule. down has the
+// names of the versions that have a weight in the spec and cannot get a new session.
 func (r *AppReconciler) backends(ctx context.Context, app *corev1alpha1.App, ep *corev1alpha1.AppEndpoint,
-	versions []corev1alpha1.AppVersion, st *corev1alpha1.AppEndpointStatus) (refs []any, down []string, err error) {
+	versions []corev1alpha1.AppVersion, st *corev1alpha1.AppEndpointStatus) (refs, pins []any, down []string, err error) {
 	for _, v := range ep.Versions {
 		weight := int32(0)
 		if v.Weight != nil {
 			weight = *v.Weight
 		}
-		if weight > 0 {
-			port, err := r.servingPort(ctx, app, versions, v.Name, ep.Port)
-			if err != nil {
-				return nil, nil, err
-			}
-			if port == 0 {
-				down, weight = append(down, v.Name), 0
-			} else {
-				refs = append(refs, backendRef("kd-"+v.Name, port, weight))
-			}
+		port, active, err := r.servingPort(ctx, app, versions, v.Name, ep.Port)
+		if err != nil {
+			return nil, nil, nil, err
+		}
+		if port != 0 {
+			pins = append(pins, map[string]any{
+				"matches": []any{map[string]any{"headers": []any{map[string]any{
+					metaNameKey: corev1alpha1.AppVersionHeader, "value": v.Name}}}},
+				"backendRefs": []any{backendRef("kd-"+v.Name, port, 1)},
+			})
+		}
+		switch {
+		case weight > 0 && (port == 0 || !active):
+			down, weight = append(down, v.Name), 0
+		case weight > 0:
+			refs = append(refs, backendRef("kd-"+v.Name, port, weight))
 		}
 		st.Weights = append(st.Weights, corev1alpha1.AppEndpointVersion{Name: v.Name, Weight: &weight})
 	}
-	return refs, down, nil
+	return refs, pins, down, nil
 }
 
 // backendRef is one backendRef of a route: a Service of this namespace, a port number and a weight.
 func backendRef(service string, port, weight int32) map[string]any {
-	return map[string]any{"name": service, "port": int64(port), "weight": int64(weight)}
+	return map[string]any{metaNameKey: service, "port": int64(port), "weight": int64(weight)}
 }
 
 // servingPort gives back the number of the Service port with the name port of a version that can
-// serve. It gives back 0 if the version is not bound to this App, is not active, has no key or
-// has no Service with this port.
+// serve. It gives back 0 if the version is not bound to this App, has no key, has a revoke that
+// started or has no Service with this port. active is false for a version that retires: it can
+// serve the sessions that it has, and it gets no new session.
 func (r *AppReconciler) servingPort(ctx context.Context, app *corev1alpha1.App, versions []corev1alpha1.AppVersion,
-	name, port string) (int32, error) {
+	name, port string) (number int32, active bool, err error) {
 	for i := range versions {
 		av := &versions[i]
 		if av.Name != name {
 			continue
 		}
 		if av.Spec.AppRef.Name != app.Name || av.Status.BoundAppUID != app.UID || !av.DeletionTimestamp.IsZero() ||
-			av.Spec.Lifecycle == corev1alpha1.AppVersionRetiring || av.Status.KeyHash == "" ||
+			av.Status.KeyHash == "" ||
 			meta.FindStatusCondition(av.Status.Conditions, corev1alpha1.AppVersionRevoking) != nil {
-			return 0, nil
+			return 0, false, nil
 		}
+		active = av.Spec.Lifecycle != corev1alpha1.AppVersionRetiring
 		svc := &corev1.Service{}
 		err := r.APIReader.Get(ctx, types.NamespacedName{Namespace: av.Namespace, Name: appVersionName(av)}, svc)
 		if apierrors.IsNotFound(err) || (err == nil && !metav1.IsControlledBy(svc, av)) {
-			return 0, nil
+			return 0, false, nil
 		}
 		if err != nil {
-			return 0, err
+			return 0, false, err
 		}
 		for _, p := range svc.Spec.Ports {
 			if p.Name == port {
-				return p.Port, nil
+				return p.Port, active, nil
 			}
 		}
 	}
-	return 0, nil
+	return 0, false, nil
 }
 
 // appRoute is the HTTPRoute of an endpoint. The values are JSON types, as unstructured needs.
-func appRoute(app *corev1alpha1.App, ep *corev1alpha1.AppEndpoint, refs []any) *unstructured.Unstructured {
+// The session rules have a header match, so they come before the weight rule in the order of
+// the Gateway API.
+func appRoute(app *corev1alpha1.App, ep *corev1alpha1.AppEndpoint, refs, pins []any) *unstructured.Unstructured {
 	parent := map[string]any{"group": gatewayAPIGroup, "kind": "Gateway", "name": ep.Gateway.Name}
 	if ep.Gateway.Namespace != "" {
 		parent["namespace"] = ep.Gateway.Namespace
@@ -247,7 +260,7 @@ func appRoute(app *corev1alpha1.App, ep *corev1alpha1.AppEndpoint, refs []any) *
 	if len(refs) > 0 {
 		rule["backendRefs"] = refs
 	}
-	spec := map[string]any{"parentRefs": []any{parent}, "rules": []any{rule}}
+	spec := map[string]any{"parentRefs": []any{parent}, "rules": append(pins, rule)}
 	if len(ep.Hostnames) > 0 {
 		hosts := make([]any, 0, len(ep.Hostnames))
 		for _, h := range ep.Hostnames {
