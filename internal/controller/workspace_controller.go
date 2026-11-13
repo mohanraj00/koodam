@@ -288,7 +288,7 @@ func workspaceMeta(ws *corev1alpha1.Workspace, name string) metav1.ObjectMeta {
 	}
 }
 
-func hostKeySecretName(ws *corev1alpha1.Workspace) string { return ws.Name + "-ssh-host" }
+func hostKeySecretName(ws *corev1alpha1.Workspace) string { return ws.Name + hostKeySecretSuffix }
 func sshConfigMapName(ws *corev1alpha1.Workspace) string  { return ws.Name + "-ssh" }
 
 // hostKey makes the host key Secret one time only. It returns the public host key. The private

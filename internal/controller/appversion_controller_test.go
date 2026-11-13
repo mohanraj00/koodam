@@ -233,6 +233,19 @@ var _ = Describe("AppVersion controller", func() {
 		Expect(gone(&corev1.Secret{}, name)).To(BeTrue())
 	})
 
+	It("makes no key for a template with a Secret name of a Workspace that does not exist", func() {
+		newApp(2)
+		newVersion(name)
+		av := version(name)
+		av.Spec.Template.PodTemplate.Spec.Volumes = []corev1.Volume{{Name: "other", VolumeSource: corev1.VolumeSource{
+			Secret: &corev1.SecretVolumeSource{SecretName: "victim" + gatewaySecretSuffix, Optional: new(true)}}}}
+		Expect(k8sClient.Update(ctx, av)).To(Succeed())
+		mustReconcile()
+		Expect(cond(name, condProvisioned).Reason).To(Equal(reasonInvalid))
+		Expect(gw.order).To(BeEmpty())
+		Expect(gone(&corev1.Secret{}, name)).To(BeTrue())
+	})
+
 	It("keeps a new version in wait while the App has maxLiveVersions versions with a key", func() {
 		newApp(1)
 		newVersion(name)

@@ -21,6 +21,7 @@ import (
 	"errors"
 	"fmt"
 	"slices"
+	"strings"
 	"sync"
 	"time"
 
@@ -44,6 +45,7 @@ import (
 
 	corev1alpha1 "github.com/mohanraj00/koodam/api/v1alpha1"
 	"github.com/mohanraj00/koodam/internal/gateway"
+	"github.com/mohanraj00/koodam/internal/podtemplate"
 )
 
 const (
@@ -156,6 +158,13 @@ func invalidAppVersion(av *corev1alpha1.AppVersion) string {
 	if !inCeiling(av.Spec.Template.Rules) {
 		return "A rule is not in the agent-ceiling ClusterRole."
 	}
+	// The owner check of the shared merge accepts a Secret that does not exist. A Workspace can
+	// make its Secrets after the Deployment of this version, so the App refuses these names always.
+	for _, ref := range podtemplate.SecretRefs(&av.Spec.Template.PodTemplate.Spec, nil) {
+		if strings.HasSuffix(ref.Name, gatewaySecretSuffix) || strings.HasSuffix(ref.Name, hostKeySecretSuffix) {
+			return "A Secret name that ends with -gateway or -ssh-host is reserved for a Workspace."
+		}
+	}
 	c := appContainer(&av.Spec.Template.PodTemplate.Spec)
 	if c == nil || len(c.Ports) == 0 {
 		return "The app container must have 1 or more ports."
@@ -243,7 +252,13 @@ func (r *AppVersionReconciler) apply(ctx context.Context, av *corev1alpha1.AppVe
 		Type: condProvisioned, Status: metav1.ConditionTrue, Reason: "Provisioned",
 		Message: "The key, the Role, the Deployment and the Service are ready.", ObservedGeneration: av.Generation,
 	})
-	meta.SetStatusCondition(&av.Status.Conditions, r.Egress.condition(av.Generation))
+	egress := r.Egress.condition(av.Generation)
+	if egress.Status == metav1.ConditionTrue {
+		// The default-deny NetworkPolicy for App pods is not in this version (#183).
+		egress.Message = "The pod DNS and the gateway calls go through the egress proxy. " +
+			"No NetworkPolicy stops a direct call from an App pod."
+	}
+	meta.SetStatusCondition(&av.Status.Conditions, egress)
 	if err := r.writeStatus(ctx, av, old); err != nil {
 		return ctrl.Result{}, err
 	}

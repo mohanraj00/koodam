@@ -52,7 +52,13 @@ const (
 	reasonRenewFailed = "RenewFailed"
 )
 
-func gatewaySecretName(ws *corev1alpha1.Workspace) string { return ws.Name + "-gateway" }
+func gatewaySecretName(ws *corev1alpha1.Workspace) string { return ws.Name + gatewaySecretSuffix }
+
+// gatewaySecretSuffix and hostKeySecretSuffix are the name suffixes of the Workspace Secrets.
+const (
+	gatewaySecretSuffix = "-gateway"
+	hostKeySecretSuffix = "-ssh-host"
+)
 
 // wantKey is true if the pod must have a gateway key now.
 func wantKey(ws *corev1alpha1.Workspace) bool {
