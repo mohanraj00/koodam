@@ -203,23 +203,29 @@ var _ = Describe("App controller", func() {
 
 	It("gives no traffic to a version that cannot serve", func() {
 		app := newApp(endpoint("web", weight(appName+"-v1", 50), weight(appName+"-v2", 50),
-			weight(appName+"-v3", 50), weight(appName+"-v4", 0)))
+			weight(appName+"-v3", 50), weight(appName+"-v4", 0), weight(appName+"-v5", 0)))
 		newVersion(app, appName+"-v1", 8080)
 		retiring := newVersion(app, appName+"-v2", 8080)
 		retiring.Spec.Lifecycle = corev1alpha1.AppVersionRetiring
 		Expect(k8sClient.Update(ctx, retiring)).To(Succeed())
 		// v3 does not exist. v4 has the weight 0.
 		newVersion(app, appName+"-v4", 8080)
+		// v5 has the weight 0 and retires. It never got traffic, so it stays closed.
+		closed := newVersion(app, appName+"-v5", 8080)
+		closed.Spec.Lifecycle = corev1alpha1.AppVersionRetiring
+		Expect(k8sClient.Update(ctx, closed)).To(Succeed())
 		mustReconcile()
 
 		Expect(backends(route("web"))).To(Equal([]any{
 			backend("-v1", 8080, 50)}))
-		// The retiring version v2 drains: it has a session rule and no weight. The version v4
-		// with the weight 0 has no session rule, so a caller cannot select it with the header.
+		// The retiring version v2 drains: it has a session rule and no weight. The versions v4
+		// and v5 with the weight 0 have no session rule, so a caller cannot select them with the
+		// header.
 		Expect(pinned(route("web"))).To(Equal([]string{"kd-" + appName + "-v1", "kd-" + appName + "-v2"}))
 		st := status()[0]
 		Expect(st.Weights).To(Equal([]corev1alpha1.AppEndpointVersion{weight(appName+"-v1", 50),
-			weight(appName+"-v2", 0), weight(appName+"-v3", 0), weight(appName+"-v4", 0)}))
+			weight(appName+"-v2", 0), weight(appName+"-v3", 0), weight(appName+"-v4", 0),
+			weight(appName+"-v5", 0)}))
 		Expect(st.Message).To(ContainSubstring(appName + "-v2, " + appName + "-v3."))
 	})
 

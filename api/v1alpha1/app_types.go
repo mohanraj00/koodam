@@ -55,8 +55,8 @@ type AppSpec struct {
 
 // AppVersionHeader is the HTTP header that keeps a client session on one version. A request
 // with this header and the name of a version goes to that version only, if the version has a
-// weight of more than 0 in the endpoint or drains. The header is not proof of a session: each
-// caller can send it. The app
+// weight of more than 0 in the spec of the endpoint. A version with such a weight keeps the rule
+// while it drains. The header is not proof of a session: each caller can send it. The app
 // container has the name of its version in the env variable KOODAM_APP_VERSION, so the app can
 // give the name to its client.
 const AppVersionHeader = "Koodam-App-Version"

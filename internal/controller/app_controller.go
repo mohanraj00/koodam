@@ -175,8 +175,8 @@ func (r *AppReconciler) applyRoute(ctx context.Context, app *corev1alpha1.App, e
 
 // backends gives back the backendRefs of the weight rule and the rules that keep a session on
 // one version. It writes the weights in effect to st. A version that cannot get a new session
-// has the weight 0 and no backendRef. A version that drains keeps its session rule. A version
-// with the weight 0 in the spec has no session rule, unless it drains. down has the
+// has the weight 0 and no backendRef. A version that drains keeps its session rule if it has a
+// weight in the spec. A version with the weight 0 in the spec has no session rule. down has the
 // names of the versions that have a weight in the spec and cannot get a new session.
 func (r *AppReconciler) backends(ctx context.Context, app *corev1alpha1.App, ep *corev1alpha1.AppEndpoint,
 	versions []corev1alpha1.AppVersion, st *corev1alpha1.AppEndpointStatus) (refs, pins []any, down []string, err error) {
@@ -189,10 +189,11 @@ func (r *AppReconciler) backends(ctx context.Context, app *corev1alpha1.App, ep 
 		if err != nil {
 			return nil, nil, nil, err
 		}
-		// A caller can send the header with each version name. Thus only a version that gets
-		// traffic from the weights, or that drains the sessions that it has, gets a session rule.
-		// A version with the weight 0 that does not retire is not open to a caller.
-		if port != 0 && (weight > 0 || !active) {
+		// A caller can send the header with each version name. Thus only a version with a weight
+		// in the spec gets a session rule. Such a version got traffic from the weights, and it
+		// keeps the rule while it drains. A version with the weight 0 is not open to a caller,
+		// also while it retires.
+		if port != 0 && weight > 0 {
 			pins = append(pins, map[string]any{
 				"matches": []any{map[string]any{"headers": []any{map[string]any{
 					metaNameKey: corev1alpha1.AppVersionHeader, "value": v.Name}}}},
