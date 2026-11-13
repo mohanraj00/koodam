@@ -168,7 +168,7 @@ func (r *AgentReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl
 		}
 		if !metav1.IsControlledBy(job, a) {
 			// A different Job has the run name. Its result is not the result of this run.
-			return ctrl.Result{}, r.fail(ctx, a, corev1alpha1.AgentFailed, "NameConflict")
+			return ctrl.Result{}, r.fail(ctx, a, corev1alpha1.AgentFailed, reasonNameConflict)
 		}
 		phase, reason, done := jobEnd(job)
 		changed := setJobTimes(a, job)
@@ -330,7 +330,7 @@ func (r *AgentReconciler) sameRun(ctx context.Context, a *corev1alpha1.Agent, wa
 
 func (r *AgentReconciler) provision(ctx context.Context, a *corev1alpha1.Agent) error {
 	log := logf.FromContext(ctx)
-	msg, reason := invalid(a), "Invalid"
+	msg, reason := invalid(a), reasonInvalid
 	if msg == "" && a.Spec.Harness != nil && r.InstallerImage == "" {
 		msg = "The controller has no installer image, so it cannot install a harness."
 	}
@@ -364,7 +364,7 @@ func (r *AgentReconciler) provision(ctx context.Context, a *corev1alpha1.Agent) 
 	key, err := r.runKey(ctx, a)
 	switch {
 	case errors.Is(err, errNotOwned):
-		return r.fail(ctx, a, corev1alpha1.AgentFailed, "NameConflict")
+		return r.fail(ctx, a, corev1alpha1.AgentFailed, reasonNameConflict)
 	case err != nil:
 		return err
 	case a.Status.KeyHash != "" && gateway.HashKey(key) != a.Status.KeyHash:
@@ -388,7 +388,7 @@ func (r *AgentReconciler) provision(ctx context.Context, a *corev1alpha1.Agent) 
 			return err
 		}
 	}
-	md := map[string]string{"uid": string(a.UID), "namespace": a.Namespace, "agent": a.Name, "user": a.Spec.User}
+	md := map[string]string{"uid": string(a.UID), metaNamespace: a.Namespace, "agent": a.Name, "user": a.Spec.User}
 	if a.Spec.Harness != nil {
 		// The gateway can then group the spend by harness.
 		md["harness"] = a.Spec.Harness.Name
@@ -425,11 +425,11 @@ func (r *AgentReconciler) provision(ctx context.Context, a *corev1alpha1.Agent) 
 			}
 			if !same {
 				log.Info("An object with the run name is not from this Agent", "kind", fmt.Sprintf("%T", o))
-				return r.fail(ctx, a, corev1alpha1.AgentFailed, "NameConflict")
+				return r.fail(ctx, a, corev1alpha1.AgentFailed, reasonNameConflict)
 			}
 		case permanent(err):
 			log.Info("The API server refused the run", "kind", fmt.Sprintf("%T", o), "reason", err.Error())
-			return r.fail(ctx, a, corev1alpha1.AgentFailed, "Refused")
+			return r.fail(ctx, a, corev1alpha1.AgentFailed, reasonRefused)
 		case err != nil:
 			return err
 		}

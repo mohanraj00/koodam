@@ -123,7 +123,7 @@ var _ = Describe("AppVersion controller", func() {
 		now = time.Date(2026, 11, 13, 9, 0, 0, 0, time.UTC)
 		rec = &AppVersionReconciler{Client: k8sClient, Scheme: k8sClient.Scheme(), APIReader: k8sClient,
 			Gateway: gw, GatewayURL: testGatewayURL, KeyTTL: ttl, Now: func() time.Time { return now },
-			Egress: EgressProxy{IP: "10.96.0.50", Port: 8080, ClusterDomain: "cluster.local"}}
+			Egress: EgressProxy{IP: "10.96.0.50", Port: 8080, ClusterDomain: testEgress.ClusterDomain}}
 		DeferCleanup(func() {
 			cleanup(name)
 			cleanup(name + "-b")
@@ -193,6 +193,7 @@ var _ = Describe("AppVersion controller", func() {
 		Expect(k8sClient.Get(ctx, nn("kd-"+name), svc)).To(Succeed())
 		Expect(svc.Spec.Selector).To(Equal(want))
 		Expect(svc.Spec.Ports[0].Port).To(Equal(int32(8080)))
+		Expect(d.Spec.Template.Spec.SecurityContext.FSGroup).To(Equal(new(appKeyGroup)))
 		role := &rbacv1.Role{}
 		Expect(k8sClient.Get(ctx, nn("kd-"+name), role)).To(Succeed())
 		Expect(role.Rules).To(HaveLen(1))
@@ -252,6 +253,25 @@ var _ = Describe("AppVersion controller", func() {
 		_, err = reconcileName(name + "-b")
 		Expect(err).NotTo(HaveOccurred())
 		Expect(gw.order).To(Equal([]string{opCreate, opBlock, opCreate}))
+	})
+
+	It("makes the Service again when the ports of the template change", func() {
+		newApp(2)
+		newVersion(name)
+		mustReconcile()
+		av := version(name)
+		c := &av.Spec.Template.PodTemplate.Spec.Containers[0]
+		c.Ports = append(c.Ports, corev1.ContainerPort{Name: "admin", ContainerPort: 9090})
+		Expect(k8sClient.Update(ctx, av)).To(Succeed())
+
+		_, err := reconcileName(name)
+		Expect(err).To(HaveOccurred())
+		mustReconcile()
+		svc := &corev1.Service{}
+		Expect(k8sClient.Get(ctx, nn("kd-"+name), svc)).To(Succeed())
+		Expect(svc.Spec.Ports).To(HaveLen(2))
+		Expect(svc.Spec.Ports[1].Port).To(Equal(int32(9090)))
+		Expect(cond(name, condProvisioned).Status).To(Equal(metav1.ConditionTrue))
 	})
 
 	It("sends a new budget to the same key, and applies a replicas change", func() {

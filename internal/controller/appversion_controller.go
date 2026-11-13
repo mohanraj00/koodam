@@ -62,6 +62,8 @@ const (
 	appGatewayURLEnv = "KOODAM_GATEWAY_URL"
 	appModelEnv      = "KOODAM_GATEWAY_MODEL"
 	appKeyFileEnv    = "KOODAM_GATEWAY_KEY_FILE"
+	// appKeyGroup is the group of the key file in the pod.
+	appKeyGroup = int64(1000)
 	// appLiveWait is the time between 2 checks of a version that waits for a free live slot.
 	appLiveWait = 30 * time.Second
 )
@@ -203,23 +205,9 @@ func (r *AppVersionReconciler) apply(ctx context.Context, av *corev1alpha1.AppVe
 	}
 	av.Status.BoundAppUID = app.UID
 
-	msg, reason := invalidAppVersion(av), "Invalid"
-	var deploy *appsv1.Deployment
-	if msg == "" {
-		user, err := boundProfile(ctx, r.Client, av.Namespace)
-		if err != nil {
-			return ctrl.Result{}, err
-		}
-		// The merge comes before the key, so that a template that is not valid makes no key.
-		if deploy, err = r.deployment(ctx, av, user); err != nil {
-			if !isInvalidTemplate(err) {
-				return ctrl.Result{}, err
-			}
-			msg, reason = err.Error(), reasonInvalidPodTemplate
-		}
-	}
-	if msg != "" {
-		return ctrl.Result{}, r.wait(ctx, av, old, reason, msg)
+	deploy, err := r.template(ctx, av, old)
+	if err != nil || deploy == nil {
+		return ctrl.Result{}, err
 	}
 	if av.Status.KeyHash == "" {
 		full, err := r.liveFull(ctx, av, app)
@@ -231,49 +219,9 @@ func (r *AppVersionReconciler) apply(ctx context.Context, av *corev1alpha1.AppVe
 				"The App has spec.maxLiveVersions versions with a key. This version waits.")
 		}
 	}
-	if controllerutil.AddFinalizer(av, appFinalizer) {
-		// Update gives back the status of the API server, so keep the status in memory.
-		st := av.Status.DeepCopy()
-		if err := r.Update(ctx, av); err != nil {
-			return ctrl.Result{}, err
-		}
-		av.Status = *st
-	}
-	// The Secret comes first. A retry after a crash finds the key value in it.
-	secret, err := r.readSecret(ctx, av)
-	switch {
-	case errors.Is(err, errNotOwned) && av.Status.KeyHash == "":
-		return ctrl.Result{}, r.wait(ctx, av, old, "NameConflict",
-			"A Secret with the version name is not from this AppVersion.")
-	case err != nil && !errors.Is(err, errNotOwned):
+	key, err := r.enroll(ctx, av, old)
+	if err != nil || key == "" {
 		return ctrl.Result{}, err
-	}
-	key := ""
-	if secret != nil {
-		key = string(secret.Data[appKeyField])
-	}
-	switch {
-	case av.Status.KeyHash != "" && gateway.HashKey(key) != av.Status.KeyHash:
-		// The Secret is gone or changed. The controller does not make a second key.
-		return ctrl.Result{}, r.revoke(ctx, av, "SecretLost")
-	case key == "":
-		if key, err = gateway.NewKeyValue(); err != nil {
-			return ctrl.Result{}, err
-		}
-		s := &corev1.Secret{ObjectMeta: appVersionMeta(av), Immutable: new(true),
-			StringData: map[string]string{appKeyField: key}}
-		if err := r.Create(ctx, s); err != nil {
-			return ctrl.Result{}, err
-		}
-	}
-	if av.Status.KeyHash == "" {
-		// Write the hash before the key exists, so that a revoke can always find the key.
-		av.Status.KeyAlias = "kdapp-" + string(av.UID)
-		av.Status.KeyHash = gateway.HashKey(key)
-		if err := r.Status().Update(ctx, av); err != nil {
-			return ctrl.Result{}, err
-		}
-		old = av.Status.DeepCopy()
 	}
 	renewErr, err := r.applyKey(ctx, av, key)
 	if errors.Is(err, gateway.ErrKeyNotFound) {
@@ -300,6 +248,81 @@ func (r *AppVersionReconciler) apply(ctx context.Context, av *corev1alpha1.AppVe
 		return ctrl.Result{}, errRenewFailed
 	}
 	return ctrl.Result{RequeueAfter: r.untilRenew(av.Status.KeyHash)}, nil
+}
+
+// template makes the Deployment of a valid version. If the version is not valid, it writes the
+// condition and gives back no Deployment.
+func (r *AppVersionReconciler) template(ctx context.Context, av *corev1alpha1.AppVersion,
+	old *corev1alpha1.AppVersionStatus) (*appsv1.Deployment, error) {
+	msg, reason := invalidAppVersion(av), reasonInvalid
+	if msg == "" {
+		user, err := boundProfile(ctx, r.Client, av.Namespace)
+		if err != nil {
+			return nil, err
+		}
+		// The merge comes before the key, so that a template that is not valid makes no key.
+		deploy, err := r.deployment(ctx, av, user)
+		if err == nil {
+			return deploy, nil
+		}
+		if !isInvalidTemplate(err) {
+			return nil, err
+		}
+		msg, reason = err.Error(), reasonInvalidPodTemplate
+	}
+	return nil, r.wait(ctx, av, old, reason, msg)
+}
+
+// enroll adds the finalizer, makes the key Secret and writes the key hash to the status. It
+// gives back the key value. If the version waits or the controller revokes it, the value is
+// empty. It sets old to the status that the API server has.
+func (r *AppVersionReconciler) enroll(ctx context.Context, av *corev1alpha1.AppVersion,
+	old *corev1alpha1.AppVersionStatus) (string, error) {
+	if controllerutil.AddFinalizer(av, appFinalizer) {
+		// Update gives back the status of the API server, so keep the status in memory.
+		st := av.Status.DeepCopy()
+		if err := r.Update(ctx, av); err != nil {
+			return "", err
+		}
+		av.Status = *st
+	}
+	// The Secret comes first. A retry after a crash finds the key value in it.
+	secret, err := r.readSecret(ctx, av)
+	switch {
+	case errors.Is(err, errNotOwned) && av.Status.KeyHash == "":
+		return "", r.wait(ctx, av, old, reasonNameConflict,
+			"A Secret with the version name is not from this AppVersion.")
+	case err != nil && !errors.Is(err, errNotOwned):
+		return "", err
+	}
+	key := ""
+	if secret != nil {
+		key = string(secret.Data[appKeyField])
+	}
+	switch {
+	case av.Status.KeyHash != "" && gateway.HashKey(key) != av.Status.KeyHash:
+		// The Secret is gone or changed. The controller does not make a second key.
+		return "", r.revoke(ctx, av, "SecretLost")
+	case key == "":
+		if key, err = gateway.NewKeyValue(); err != nil {
+			return "", err
+		}
+		s := &corev1.Secret{ObjectMeta: appVersionMeta(av), Immutable: new(true),
+			StringData: map[string]string{appKeyField: key}}
+		if err := r.Create(ctx, s); err != nil {
+			return "", err
+		}
+	}
+	if av.Status.KeyHash == "" {
+		// Write the hash before the key exists, so that a revoke can always find the key.
+		av.Status.KeyAlias = "kdapp-" + string(av.UID)
+		av.Status.KeyHash = gateway.HashKey(key)
+		if err := r.Status().Update(ctx, av); err != nil {
+			return "", err
+		}
+		*old = *av.Status.DeepCopy()
+	}
+	return key, nil
 }
 
 // wait writes the condition Provisioned=False. The controller changes no object of the version.
@@ -379,7 +402,7 @@ func (r *AppVersionReconciler) applyKey(ctx context.Context, av *corev1alpha1.Ap
 	renewFailed bool, err error) {
 	spec := gateway.KeySpec{Value: key, Alias: av.Status.KeyAlias, Model: av.Spec.Template.Model,
 		Budget: av.Spec.BudgetPerDay.AsApproximateFloat64(), BudgetPeriod: 24 * time.Hour, TTL: r.keyTTL(),
-		Metadata: map[string]string{"uid": string(av.UID), "namespace": av.Namespace,
+		Metadata: map[string]string{"uid": string(av.UID), metaNamespace: av.Namespace,
 			"app": av.Spec.AppRef.Name, "appVersion": av.Name}}
 	c := meta.FindStatusCondition(av.Status.Conditions, condGatewayKey)
 	switch {
@@ -439,7 +462,7 @@ func (r *AppVersionReconciler) applyObjects(ctx context.Context, av *corev1alpha
 		case apierrors.IsAlreadyExists(err):
 			have := o.DeepCopyObject().(client.Object)
 			if _, err := r.getOwned(ctx, av, have); errors.Is(err, errNotOwned) {
-				return "NameConflict", nil
+				return reasonNameConflict, nil
 			} else if err != nil {
 				return "", err
 			}
@@ -451,9 +474,17 @@ func (r *AppVersionReconciler) applyObjects(ctx context.Context, av *corev1alpha
 				}
 				return "", fmt.Errorf("the version Role had different rules, so the controller makes it again")
 			}
+			// The controller has no update grant for a Service. A Service with different ports
+			// goes, and the next reconcile makes it again.
+			if svc, ok := have.(*corev1.Service); ok && !equality.Semantic.DeepEqual(svc.Spec.Ports, svcPorts) {
+				if err := r.deleteOwned(ctx, av, &corev1.Service{}); err != nil {
+					return "", err
+				}
+				return "", fmt.Errorf("the version Service had different ports, so the controller makes it again")
+			}
 		case permanent(err):
 			logf.FromContext(ctx).Info("The API server refused an object of the version", "kind", fmt.Sprintf("%T", o))
-			return "Refused", nil
+			return reasonRefused, nil
 		case err != nil:
 			return "", err
 		}
@@ -462,7 +493,7 @@ func (r *AppVersionReconciler) applyObjects(ctx context.Context, av *corev1alpha
 	found, err := r.getOwned(ctx, av, have)
 	switch {
 	case errors.Is(err, errNotOwned):
-		return "NameConflict", nil
+		return reasonNameConflict, nil
 	case err != nil:
 		return "", err
 	case !found:
@@ -476,7 +507,7 @@ func (r *AppVersionReconciler) applyObjects(ctx context.Context, av *corev1alpha
 	}
 	if permanent(err) {
 		logf.FromContext(ctx).Info("The API server refused the Deployment of the version")
-		return "Refused", nil
+		return reasonRefused, nil
 	}
 	return "", err
 }
@@ -493,6 +524,9 @@ func (r *AppVersionReconciler) deployment(ctx context.Context, av *corev1alpha1.
 	base.Spec = corev1.PodSpec{
 		ServiceAccountName:           name,
 		AutomountServiceAccountToken: new(len(av.Spec.Template.Rules) > 0),
+		// The key file has owner root, group appKeyGroup and mode 0440. Each container process gets
+		// this group, so an app that is not root can read the key.
+		SecurityContext: &corev1.PodSecurityContext{FSGroup: new(appKeyGroup)},
 		Volumes: []corev1.Volume{{Name: vol, VolumeSource: corev1.VolumeSource{Secret: &corev1.SecretVolumeSource{
 			SecretName: name, DefaultMode: new(int32(0o440))}}}},
 		Containers: []corev1.Container{{

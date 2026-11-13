@@ -40,8 +40,20 @@ const (
 	agentContainer     = "agent"
 )
 
-// reasonInvalidPodTemplate is the condition reason for a spec.podTemplate that Koodam refuses.
-const reasonInvalidPodTemplate = "InvalidPodTemplate"
+// These are condition reasons that more than one controller writes.
+const (
+	// reasonInvalidPodTemplate is the reason for a spec.podTemplate that Koodam refuses.
+	reasonInvalidPodTemplate = "InvalidPodTemplate"
+	// reasonInvalid is the reason for a spec that is not valid.
+	reasonInvalid = "Invalid"
+	// reasonNameConflict is the reason for an object with the correct name and a different owner.
+	reasonNameConflict = "NameConflict"
+	// reasonRefused is the reason for an object that the API server refused.
+	reasonRefused = "Refused"
+)
+
+// metaNamespace is the key of the namespace in the metadata of a gateway key.
+const metaNamespace = "namespace"
 
 // invalidTemplateError is a spec.podTemplate that the merge refuses. A retry cannot fix it. The
 // message has the field paths and the names only, never a value of env.

@@ -27,8 +27,12 @@ import (
 )
 
 const (
-	baseSource = "package controller\n\n// +kubebuilder:rbac:groups=batch,resources=jobs,verbs=get\n\n// a is a function.\nfunc a() {}\n"
-	appSource  = "package controller\n\n// +kubebuilder:rbac:groups=apps,resources=deployments,verbs=get\n\n// b is a function.\nfunc b() {}\n"
+	baseFile   = "internal/controller/agent_controller.go"
+	appFile    = "internal/controller/appversion_controller.go"
+	baseSource = "package controller\n\n// +kubebuilder:rbac:groups=batch,resources=jobs,verbs=get\n\n" +
+		"// a is a function.\nfunc a() {}\n"
+	appSource = "package controller\n\n// +kubebuilder:rbac:groups=apps,resources=deployments,verbs=get\n\n" +
+		"// b is a function.\nfunc b() {}\n"
 )
 
 // fakeGen writes a role with the name and the staged markers as a comment, as a stand-in for
@@ -62,8 +66,8 @@ func writeTree(t *testing.T, files map[string]string) string {
 
 func TestRunSplitsTheRoles(t *testing.T) {
 	root := writeTree(t, map[string]string{
-		"internal/controller/agent_controller.go":      baseSource,
-		"internal/controller/appversion_controller.go": appSource,
+		baseFile:        baseSource,
+		appFile:         appSource,
 		"bin/tool/x.go": appSource,
 		".hidden/x.go":  appSource,
 	})
@@ -96,15 +100,15 @@ func TestRunWritesNoFileOnAnError(t *testing.T) {
 		want  error
 	}{
 		"a marker in a file that is not in the index": {
-			files: map[string]string{"internal/controller/agent_controller.go": baseSource,
-				"internal/controller/appversion_controller.go": appSource, "internal/other/x.go": appSource},
+			files: map[string]string{baseFile: baseSource,
+				appFile: appSource, "internal/other/x.go": appSource},
 			gen: fakeGen, want: manifestlayout.ErrUnindexedSource},
 		"a role group with no marker": {
-			files: map[string]string{"internal/controller/agent_controller.go": baseSource},
+			files: map[string]string{baseFile: baseSource},
 			gen:   fakeGen, want: errNoGroup},
 		"a role with a different name": {
-			files: map[string]string{"internal/controller/agent_controller.go": baseSource,
-				"internal/controller/appversion_controller.go": appSource},
+			files: map[string]string{baseFile: baseSource,
+				appFile: appSource},
 			gen: wrongName, want: manifestlayout.ErrNotRole},
 	} {
 		t.Run(name, func(t *testing.T) {
