@@ -215,9 +215,8 @@ var _ = Describe("App controller", func() {
 		Expect(backends(route("web"))).To(Equal([]any{
 			backend("-v1", 8080, 50)}))
 		// The retiring version v2 drains: it has a session rule and no weight. The version v4
-		// with the weight 0 gets a session only from a client that sends the header.
-		Expect(pinned(route("web"))).To(Equal([]string{"kd-" + appName + "-v1", "kd-" + appName + "-v2",
-			"kd-" + appName + "-v4"}))
+		// with the weight 0 has no session rule, so a caller cannot select it with the header.
+		Expect(pinned(route("web"))).To(Equal([]string{"kd-" + appName + "-v1", "kd-" + appName + "-v2"}))
 		st := status()[0]
 		Expect(st.Weights).To(Equal([]corev1alpha1.AppEndpointVersion{weight(appName+"-v1", 50),
 			weight(appName+"-v2", 0), weight(appName+"-v3", 0), weight(appName+"-v4", 0)}))
