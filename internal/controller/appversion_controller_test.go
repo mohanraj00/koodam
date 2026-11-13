@@ -237,7 +237,7 @@ var _ = Describe("AppVersion controller", func() {
 		newApp(2)
 		newVersion(name)
 		av := version(name)
-		av.Spec.Template.PodTemplate.Spec.Volumes = []corev1.Volume{{Name: "other", VolumeSource: corev1.VolumeSource{
+		av.Spec.Template.PodTemplate.Spec.Volumes = []corev1.Volume{{Name: "peer-key", VolumeSource: corev1.VolumeSource{
 			Secret: &corev1.SecretVolumeSource{SecretName: "victim" + gatewaySecretSuffix, Optional: new(true)}}}}
 		Expect(k8sClient.Update(ctx, av)).To(Succeed())
 		mustReconcile()
