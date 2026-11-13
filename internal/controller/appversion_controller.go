@@ -345,7 +345,13 @@ func (r *AppVersionReconciler) apply(ctx context.Context, av *corev1alpha1.AppVe
 	if renewErr {
 		return ctrl.Result{}, errRenewFailed
 	}
-	return ctrl.Result{RequeueAfter: r.untilRenew(av.Status.KeyHash)}, nil
+	// A version with no key has no renew timer. It gets the same period, so the controller makes
+	// a deleted NetworkPolicy again. The controller does not watch the policies.
+	after := r.untilRenew(av.Status.KeyHash)
+	if av.Status.KeyHash == "" {
+		after = r.keyTTL() / 4
+	}
+	return ctrl.Result{RequeueAfter: after}, nil
 }
 
 // applyVersionKey makes or renews the key of a version with a model. A version with no model

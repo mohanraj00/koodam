@@ -552,7 +552,8 @@ var _ = Describe("AppVersion controller", func() {
 		av := version(name)
 		av.Spec.Template.Model, av.Spec.BudgetPerDay = "", nil
 		Expect(k8sClient.Update(ctx, av)).To(Succeed())
-		Expect(mustReconcile().RequeueAfter).To(BeZero())
+		// A version with no key has a periodic reconcile, so a deleted NetworkPolicy comes back.
+		Expect(mustReconcile().RequeueAfter).To(Equal(ttl / 4))
 
 		// No gateway call, no Secret, no finalizer, no alias and no hash.
 		Expect(gw.order).To(BeEmpty())
