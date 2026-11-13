@@ -17,6 +17,7 @@ limitations under the License.
 package chart
 
 import (
+	"slices"
 	"strings"
 	"testing"
 )
@@ -72,12 +73,12 @@ func TestAppsWithEgressProxy(t *testing.T) {
 	}
 	// The proxy gives an App pod an identity only in a named namespace, so the chart refuses the
 	// Apps with the proxy and no namespace.
-	apps := append(set, "apps.enabled=true", "apps.ingressNamespaces={gateway-system,edge}")
+	apps := slices.Concat(set, []string{"apps.enabled=true", "apps.ingressNamespaces={gateway-system,edge}"})
 	if out, err := helmTemplate(t, "", apps...); err == nil ||
 		!strings.Contains(out, "workspace.networkPolicy.namespaces must have each namespace of the Apps") {
 		t.Errorf("the Apps with the proxy and no namespace are accepted: %v", err)
 	}
-	on, err := helmTemplate(t, "", append(apps, "workspace.networkPolicy.namespaces={shop}")...)
+	on, err := helmTemplate(t, "", slices.Concat(apps, []string{"workspace.networkPolicy.namespaces={shop}"})...)
 	if err != nil {
 		t.Fatalf("helm template failed: %v\n%s", err, on)
 	}
