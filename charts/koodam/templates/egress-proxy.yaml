@@ -239,10 +239,14 @@ spec:
   - Ingress
   - Egress
   ingress:
-  # Only the Agent and Workspace pods can use the proxy. The proxy also refuses a call from a pod
-  # that it cannot find in its pod watch.
+  # Only the Agent and Workspace pods can use the proxy, and the App pods if apps.enabled is true.
+  # The proxy also refuses a call from a pod that it cannot find in its pod watch.
   - from:
-    {{- range $label := list "koodam.dev/agent" "koodam.dev/workspace" }}
+    {{- $clients := list "koodam.dev/agent" "koodam.dev/workspace" }}
+    {{- if $.Values.apps.enabled }}
+    {{- $clients = append $clients "koodam.dev/app" }}
+    {{- end }}
+    {{- range $label := $clients }}
     - namespaceSelector: {}
       podSelector:
         matchExpressions:

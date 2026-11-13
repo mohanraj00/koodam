@@ -1,0 +1,33 @@
+{{- if .Values.apps.enabled }}
+{{- $fullname := include "koodam.fullname" . -}}
+{{- /* The App CRDs come from config/apps/crd/bases (controller-gen). Helm keeps them on an uninstall. */ -}}
+{{- range $file := list "files/app-crd-apps.yaml" "files/app-crd-appversions.yaml" }}
+{{- $crd := $.Files.Get $file | fromYaml }}
+{{- $_ := set $crd.metadata "annotations" (merge (dict "helm.sh/resource-policy" "keep") ($crd.metadata.annotations | default dict)) }}
+{{- $_ := set $crd.metadata "labels" (include "koodam.labels" $ | fromYaml) }}
+{{ toYaml $crd }}
+---
+{{- end }}
+# The rules of the App controllers. They come from config/apps/rbac/role.yaml (controller-gen).
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ $fullname }}-app-manager-role
+  labels:
+    {{- include "koodam.labels" . | nindent 4 }}
+rules:
+{{ include "koodam.rules" (dict "ctx" . "file" "files/app-manager-role.yaml") }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: {{ $fullname }}-app-manager-rolebinding
+  labels:
+    {{- include "koodam.labels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: {{ $fullname }}-app-manager-role
+subjects:
+{{ include "koodam.subject" . }}
+{{- end }}

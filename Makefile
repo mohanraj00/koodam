@@ -193,6 +193,9 @@ helm-sync: manifests ## Copy the CRD and the RBAC rules from config/ into the He
 	cp config/rbac/agent_ceiling_role.yaml $(CHART)/files/agent-ceiling-role.yaml
 	cp config/rbac/leader_election_role.yaml $(CHART)/files/leader-election-role.yaml
 	cp config/rbac/metrics_auth_role.yaml $(CHART)/files/metrics-auth-role.yaml
+	cp config/apps/rbac/role.yaml $(CHART)/files/app-manager-role.yaml
+	cp config/apps/crd/bases/core.koodam.dev_apps.yaml $(CHART)/files/app-crd-apps.yaml
+	cp config/apps/crd/bases/core.koodam.dev_appversions.yaml $(CHART)/files/app-crd-appversions.yaml
 
 # LITELLM_COMMIT pins the LiteLLM price file for koodam usage. Change it, then run make prices.
 LITELLM_COMMIT ?= 191967c20781877d606885f03f50721ab825ba0a

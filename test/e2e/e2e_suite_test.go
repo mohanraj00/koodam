@@ -157,6 +157,8 @@ func installChart(extra ...string) {
 		"-f", "test/e2e/testdata/values-e2e.yaml",
 		"--set", "image.repository=" + managerImage[:i], "--set", "image.tag=" + managerImage[i+1:],
 		"--set", "metrics.enabled=true", "--set", "jobTTLSeconds=" + strconv.Itoa(jobTTL),
+		// The App parts are in the one install of the suite. They need no site input.
+		"--set", "apps.enabled=true",
 		"--wait", "--timeout", "10m"}, extra...)
 	out, err := utils.Run(exec.Command("helm", args...))
 	Expect(err).NotTo(HaveOccurred(), "Failed to install the chart: "+out)
