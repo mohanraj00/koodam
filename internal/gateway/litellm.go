@@ -27,6 +27,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"slices"
 	"strings"
 	"time"
 )
@@ -222,7 +223,13 @@ func (l *LiteLLM) CreateKey(ctx context.Context, s KeySpec) error {
 
 // keyBody has the fields that CreateKey and RenewKey both send.
 func keyBody(s KeySpec) map[string]any {
-	body := map[string]any{keyField: s.Value, "models": []string{s.Model}, "max_budget": s.Budget,
+	models := []string{s.Model}
+	for _, m := range s.Models {
+		if m != "" && !slices.Contains(models, m) {
+			models = append(models, m)
+		}
+	}
+	body := map[string]any{keyField: s.Value, "models": models, "max_budget": s.Budget,
 		"duration": fmt.Sprintf("%ds", int64(s.TTL/time.Second))}
 	if s.BudgetPeriod > 0 {
 		body["budget_duration"] = fmt.Sprintf("%ds", int64(s.BudgetPeriod/time.Second))

@@ -57,7 +57,9 @@ const (
 )
 
 // AppVersionSpec is one version of an App. The developer writes it. The AppVersion controller
-// makes a Deployment, a Service, a Role and one gateway key from it.
+// makes a Deployment, a Service and a Role from it, and one gateway key if the template declares
+// a model.
+// +kubebuilder:validation:XValidation:rule="(has(self.template.model) || has(self.template.models)) == has(self.budgetPerDay)",message="budgetPerDay is necessary with a model, and it is not permitted with no model."
 type AppVersionSpec struct {
 	// AppRef is the App of this version, in the same namespace. You cannot change it after
 	// create.
@@ -79,10 +81,11 @@ type AppVersionSpec struct {
 
 	// BudgetPerDay is the maximum spend of the version key in one day, in the currency of the
 	// gateway price table. It has no default, and it must be more than zero. You can change it.
-	// The version keeps the same key.
-	// +required
+	// The version keeps the same key. It is necessary if the template declares a model. A
+	// version with no model has no key and no budget.
+	// +optional
 	// +kubebuilder:validation:XValidation:rule="quantity(string(self)).isGreaterThan(quantity('0'))",message="budgetPerDay must be more than zero"
-	BudgetPerDay resource.Quantity `json:"budgetPerDay"`
+	BudgetPerDay *resource.Quantity `json:"budgetPerDay,omitempty"`
 
 	// Lifecycle is Active or Retiring. A change to Retiring stops new sessions. Then the version
 	// drains and revokes its key. You cannot change Retiring back to Active.
@@ -108,12 +111,24 @@ type AppReference struct {
 // ValidatingAdmissionPolicy of config/apps/admission refuses a port with no name, a port that is
 // not TCP and a host port.
 // +kubebuilder:validation:XValidation:rule="has(self.podTemplate.spec) && has(self.podTemplate.spec.containers) && self.podTemplate.spec.containers.exists_one(c, c.name == 'app')",message="The pod template must have 1 container with the name app."
+// +kubebuilder:validation:XValidation:rule="!(has(self.model) && has(self.models))",message="Use model or models, not the two."
 // +kubebuilder:validation:XValidation:rule="!has(self.podTemplate.spec) || !has(self.podTemplate.spec.containers) || self.podTemplate.spec.containers.all(c, c.name != 'app' || (has(c.image) && size(c.image) > 0 && has(c.readinessProbe) && has(c.ports) && size(c.ports) > 0))",message="The app container must have an image, a readiness probe and 1 or more ports."
 type AppVersionTemplate struct {
-	// Model is the gateway model name. The version key permits only this model.
-	// +required
+	// Model is the gateway model name. It is the short form of a models list with 1 item. The
+	// version key permits only this model.
+	// +optional
 	// +kubebuilder:validation:MinLength=1
-	Model string `json:"model"`
+	Model string `json:"model,omitempty"`
+
+	// Models are the gateway model names that the version key permits. The gateway refuses a
+	// call to a different model. If the template has no model and no models, the version gets
+	// no gateway key.
+	// +optional
+	// +listType=set
+	// +kubebuilder:validation:MinItems=1
+	// +kubebuilder:validation:MaxItems=16
+	// +kubebuilder:validation:items:MinLength=1
+	Models []string `json:"models,omitempty"`
 
 	// Rules are the RBAC rules of the version Role, in the namespace of the AppVersion only.
 	// +optional
@@ -124,6 +139,15 @@ type AppVersionTemplate struct {
 	PodTemplate PodTemplate `json:"podTemplate"`
 }
 
+// ModelList gives back the models that the version key permits. It is empty for a version with
+// no model.
+func (t *AppVersionTemplate) ModelList() []string {
+	if t.Model != "" {
+		return []string{t.Model}
+	}
+	return t.Models
+}
+
 // AppVersionStatus is the observed state of an AppVersion. It never holds a key value, a
 // session identifier, a token, an environment value or a header.
 type AppVersionStatus struct {
@@ -132,7 +156,8 @@ type AppVersionStatus struct {
 	// +optional
 	BoundAppUID types.UID `json:"boundAppUID,omitempty"`
 
-	// KeyAlias identifies the gateway key. The key value is never in the status.
+	// KeyAlias identifies the gateway key. The key value is never in the status. A version with
+	// no model has no key and no alias.
 	// +optional
 	KeyAlias string `json:"keyAlias,omitempty"`
 

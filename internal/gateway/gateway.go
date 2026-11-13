@@ -35,9 +35,13 @@ var ErrKeyNotFound = errors.New("gateway: key not found")
 // KeySpec is the key for one run. The caller makes Value with NewKeyValue and saves it
 // before CreateKey, so that a retry after a crash uses the same key.
 type KeySpec struct {
-	Value  string
-	Alias  string
-	Model  string
+	Value string
+	Alias string
+	// Model is the first model that the key permits. It is required.
+	Model string
+	// Models are more models that the key permits. The gateway refuses a call to a model that
+	// is not Model and not in Models.
+	Models []string
 	Budget float64
 	// BudgetPeriod resets the spend of the key after each period. If it is 0, the budget is
 	// for the full life of the key.
