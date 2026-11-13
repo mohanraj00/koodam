@@ -188,7 +188,9 @@ var _ = Describe("Thin App", Ordered, Label("app"), func() {
 		By("waiting for the route and the pods of the 2 versions")
 		Eventually(func() string { return endpoint().RouteState }, 5*time.Minute, 2*time.Second).
 			Should(Equal(corev1alpha1.AppRouteAccepted))
-		Expect(endpoint().Weights).To(Equal([]corev1alpha1.AppEndpointVersion{weight(v1, 80), weight(v2, 20)}))
+		// The route can be Accepted before a version has its key. Then the weight in effect is 0.
+		Eventually(func() []corev1alpha1.AppEndpointVersion { return endpoint().Weights }, 5*time.Minute, 2*time.Second).
+			Should(Equal([]corev1alpha1.AppEndpointVersion{weight(v1, 80), weight(v2, 20)}))
 		for _, v := range []string{v1, v2} {
 			_, err := utils.Run(exec.Command("kubectl", "-n", appNS, "rollout", "status", "deployment/kd-"+v,
 				"--timeout", "5m"))
