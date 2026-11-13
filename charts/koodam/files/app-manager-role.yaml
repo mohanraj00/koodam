@@ -36,6 +36,7 @@ rules:
 - apiGroups:
   - core.koodam.dev
   resources:
+  - apps/finalizers
   - apps/status
   - appversions/finalizers
   - appversions/status

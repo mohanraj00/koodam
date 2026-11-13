@@ -70,13 +70,14 @@ func TestAppsWithEgressProxy(t *testing.T) {
 	if strings.Contains(off, "koodam.dev/app\n") {
 		t.Error("the policy of the proxy permits App pods with apps.enabled false")
 	}
-	on, err := helmTemplate(t, "", append(set, "apps.enabled=true")...)
+	on, err := helmTemplate(t, "", append(set, "apps.enabled=true", "apps.ingressNamespaces={gateway-system,edge}")...)
 	if err != nil {
 		t.Fatalf("helm template failed: %v\n%s", err, on)
 	}
 	for _, s := range []string{"--egress-proxy-namespace=koodam-system",
 		"--egress-proxy-pod-labels=app.kubernetes.io/component=egress-proxy,app.kubernetes.io/instance=koodam," +
-			"app.kubernetes.io/name=koodam", "key: koodam.dev/app\n"} {
+			"app.kubernetes.io/name=koodam", "key: koodam.dev/app\n",
+		"--app-ingress-namespaces=gateway-system,edge"} {
 		if !strings.Contains(on, s) {
 			t.Errorf("the install with apps.enabled and the egress proxy does not have %q", s)
 		}

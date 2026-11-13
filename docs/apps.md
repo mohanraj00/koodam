@@ -83,4 +83,4 @@ Koodam cannot see a session, so the end of the drain time is the end of the sess
 
 ## Egress
 
-With the egress proxy of the chart, each AppVersion gets a NetworkPolicy. The pods get ingress only on the ports of the `app` container, and egress only to the egress proxy. Then the condition `TracedEgress` of the AppVersion is `True`. With this policy, an App pod has no path to the API server.
+With the egress proxy of the chart, each AppVersion gets a NetworkPolicy. The pods get egress only to the egress proxy. The policy permits no ingress by default. Set `apps.ingressNamespaces` to the namespace of the Gateway data plane, and then the pods of that namespace can send traffic to the ports of the `app` container. Then the condition `TracedEgress` of the AppVersion is `True`. With this policy, an App pod has no path to the API server.

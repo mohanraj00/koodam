@@ -225,6 +225,10 @@ egressProxy:
 # the Apps of the cluster stay.
 apps:
   enabled: false
+  # The namespaces whose pods can send traffic to the App pods, for example the namespace of the
+  # Gateway data plane. It has an effect only with egressProxy.enabled: then each AppVersion has
+  # a NetworkPolicy, and that policy permits no ingress if this list is empty.
+  ingressNamespaces: []
 
 # The metrics endpoint (HTTPS). If true, the chart adds the metrics Service and the
 # metrics-auth ClusterRole (tokenreviews and subjectaccessreviews, verb create).

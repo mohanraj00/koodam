@@ -80,6 +80,9 @@ spec:
         {{- $labels = append $labels (printf "%s=%s" $k $v) }}
         {{- end }}
         - "--egress-proxy-pod-labels={{ join "," $labels }}"
+        {{- with .Values.apps.ingressNamespaces }}
+        - "--app-ingress-namespaces={{ join "," . }}"
+        {{- end }}
         {{- end }}
         {{- end }}
         ports:
