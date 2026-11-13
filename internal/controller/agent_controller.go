@@ -47,6 +47,7 @@ import (
 	"github.com/mohanraj00/koodam/internal/agentingress"
 	"github.com/mohanraj00/koodam/internal/gateway"
 	"github.com/mohanraj00/koodam/internal/harness"
+	"github.com/mohanraj00/koodam/internal/outputdigest"
 )
 
 const (
@@ -120,6 +121,7 @@ type AgentReconciler struct {
 // +kubebuilder:rbac:groups=core.koodam.dev,resources=agents/finalizers,verbs=update
 // +kubebuilder:rbac:groups=batch,resources=jobs,verbs=get;list;watch;create;delete
 // +kubebuilder:rbac:groups="",resources=secrets,verbs=get;create;delete
+// +kubebuilder:rbac:groups="",resources=pods,verbs=list
 // +kubebuilder:rbac:groups="",resources=serviceaccounts,verbs=get;create;delete
 // +kubebuilder:rbac:groups=rbac.authorization.k8s.io,resources=roles;rolebindings,verbs=get;create;delete
 
@@ -335,8 +337,8 @@ func (r *AgentReconciler) sameRun(ctx context.Context, a *corev1alpha1.Agent, wa
 func (r *AgentReconciler) provision(ctx context.Context, a *corev1alpha1.Agent) error {
 	log := logf.FromContext(ctx)
 	msg, reason := invalid(a), reasonInvalid
-	if msg == "" && a.Spec.Harness != nil && r.InstallerImage == "" {
-		msg = "The controller has no installer image, so it cannot install a harness."
+	if msg == "" {
+		msg = r.noInstaller(a)
 	}
 	// The merge comes before the key, so that a template that is not valid makes no key.
 	job := runJob(a, r.InstallerImage, r.GatewayURL)
@@ -350,6 +352,9 @@ func (r *AgentReconciler) provision(ctx context.Context, a *corev1alpha1.Agent) 
 			msg, reason = err.Error(), reasonInvalidPodTemplate
 		}
 		r.Egress.apply(&job.Spec.Template.Spec, a.Namespace)
+		if msg == "" && a.Spec.Output != nil && !addOutputDigest(&job.Spec.Template.Spec, a.Spec.Output.Path, r.InstallerImage) {
+			msg = "spec.output.path must be a file in a volume of spec.podTemplate that the agent container mounts."
+		}
 	}
 	if msg != "" {
 		log.Info("The Agent is not valid", "reason", msg)
@@ -386,6 +391,7 @@ func (r *AgentReconciler) provision(ctx context.Context, a *corev1alpha1.Agent) 
 	if a.Status.KeyHash == "" {
 		// Write the hash before the key exists, so that a revoke can always find the key.
 		a.Status.Phase = corev1alpha1.AgentPending
+		a.Status.RunID = string(a.UID)
 		a.Status.KeyAlias = alias
 		a.Status.KeyHash = gateway.HashKey(key)
 		if err := r.Status().Update(ctx, a); err != nil {
@@ -474,10 +480,12 @@ func gatewayEnv(url, m, key string) map[string]string {
 // while the controller is down, the result of the run is lost. Thus deleteEndedJob deletes it.
 func runJob(a *corev1alpha1.Agent, installerImage, gatewayURL string) *batchv1.Job {
 	name := runName(a)
-	env := make([]corev1.EnvVar, 0, len(a.Spec.Env)+1)
+	env := make([]corev1.EnvVar, 0, len(a.Spec.Env)+2)
 	for k, v := range a.Spec.Env {
 		env = append(env, corev1.EnvVar{Name: k, Value: v})
 	}
+	// The run can write its identity to its output. It is equal to status.runID.
+	env = append(env, corev1.EnvVar{Name: runIDEnv, Value: string(a.UID)})
 	pod := corev1.PodSpec{
 		RestartPolicy:      corev1.RestartPolicyNever,
 		ServiceAccountName: name,
@@ -579,6 +587,102 @@ func addHarness(pod *corev1.PodSpec, h *corev1alpha1.HarnessSpec, image string) 
 	}
 }
 
+// noInstaller gives back the reason why the controller cannot make the helper containers of the
+// run, or "".
+func (r *AgentReconciler) noInstaller(a *corev1alpha1.Agent) string {
+	switch {
+	case r.InstallerImage != "":
+		return ""
+	case a.Spec.Harness != nil:
+		return "The controller has no installer image, so it cannot install a harness."
+	case a.Spec.Output != nil:
+		return "The controller has no installer image, so it cannot compute the digest of spec.output."
+	}
+	return ""
+}
+
+// outputContainer is the name of the container that computes the digest of spec.output.
+const outputContainer = "koodam-output"
+
+// runIDEnv is the env variable of the agent container with the run identity.
+const runIDEnv = "KOODAM_RUN_ID"
+
+// addOutputDigest adds a sidecar container that computes the digest of the file at path when
+// the agent container ends. The sidecar gets a read-only mount of the volume that has the file.
+// It gives back false if no volume of the pod template has the path: the harness volume and the
+// other volumes of Koodam are not for output.
+func addOutputDigest(pod *corev1.PodSpec, path, image string) bool {
+	var mount *corev1.VolumeMount
+	for i := range pod.Containers[0].VolumeMounts {
+		m := &pod.Containers[0].VolumeMounts[i]
+		dir := strings.TrimSuffix(m.MountPath, "/") + "/"
+		if strings.HasPrefix(path, dir) && !strings.HasPrefix(m.Name, "koodam-") && m.Name != "harness" &&
+			(mount == nil || len(m.MountPath) > len(mount.MountPath)) {
+			mount = m
+		}
+	}
+	if mount == nil {
+		return false
+	}
+	ro := *mount.DeepCopy()
+	ro.ReadOnly = true
+	pod.InitContainers = append(pod.InitContainers, corev1.Container{
+		Name: outputContainer, Image: image, Command: []string{"/output-digest", "--path", path},
+		// An init container with this policy is a sidecar. The kubelet stops it after the agent
+		// container ends, and then the command writes the digest to its termination message.
+		RestartPolicy:   new(corev1.ContainerRestartPolicyAlways),
+		VolumeMounts:    []corev1.VolumeMount{ro},
+		SecurityContext: helperSecurityContext(),
+		Resources: corev1.ResourceRequirements{Requests: corev1.ResourceList{
+			corev1.ResourceCPU: resource.MustParse("10m"), corev1.ResourceMemory: resource.MustParse("16Mi")}},
+	})
+	return true
+}
+
+// readOutput reads the digest of spec.output from the termination message of the sidecar of the
+// newest pod of the run. It sets the status in memory one time. The message comes from a pod, so
+// outputdigest.Parse accepts only a digest of the correct form.
+func (r *AgentReconciler) readOutput(ctx context.Context, a *corev1alpha1.Agent) error {
+	if a.Spec.Output == nil || a.Status.Output != nil {
+		return nil
+	}
+	out := &corev1alpha1.AgentOutputStatus{Path: a.Spec.Output.Path, Reason: "NoResult"}
+	a.Status.Output = out
+	pods := &corev1.PodList{}
+	if err := r.APIReader.List(ctx, pods, client.InNamespace(a.Namespace),
+		client.MatchingLabels{batchv1.JobNameLabel: runName(a), agentLabel: a.Name}); err != nil {
+		a.Status.Output = nil
+		return err
+	}
+	var newest *corev1.Pod
+	for i := range pods.Items {
+		if p := &pods.Items[i]; newest == nil || newest.CreationTimestamp.Before(&p.CreationTimestamp) {
+			newest = p
+		}
+	}
+	if newest == nil {
+		return nil
+	}
+	// The path of the status is the path that the sidecar got, not a later value of the spec.
+	for _, c := range newest.Spec.InitContainers {
+		if c.Name == outputContainer && len(c.Command) == 3 {
+			out.Path = c.Command[2]
+		}
+	}
+	for _, s := range newest.Status.InitContainerStatuses {
+		if s.Name != outputContainer || s.State.Terminated == nil {
+			continue
+		}
+		if res, ok := outputdigest.Parse(s.State.Terminated.Message); ok {
+			out.SHA256, out.Reason = res.SHA256, res.Reason
+			if res.Reason == "" {
+				out.Size = &res.Size
+			}
+		}
+	}
+	return nil
+}
+
 // fail writes the end phase and the reason before the revoke. A retry then continues the revoke
 // and does not provision again.
 func (r *AgentReconciler) fail(ctx context.Context, a *corev1alpha1.Agent, phase corev1alpha1.AgentPhase,
@@ -621,6 +725,10 @@ func (r *AgentReconciler) revoke(ctx context.Context, a *corev1alpha1.Agent) err
 		}
 	}
 	if c == nil || c.Status != metav1.ConditionTrue {
+		// The key is blocked. The read of the digest deletes nothing, and writeUsage writes it.
+		if err := r.readOutput(ctx, a); err != nil {
+			return err
+		}
 		if err := r.writeUsage(ctx, a, reason); err != nil {
 			return err
 		}

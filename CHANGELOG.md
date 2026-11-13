@@ -4,6 +4,11 @@ This file records the changes for each Koodam version. The newest version is fir
 
 ## Unreleased
 
+### Agents
+
+- Add `status.runID` to the Agent. It is the UID of the Agent, so it does not change after a controller restart. The agent container has it in `KOODAM_RUN_ID` ([#315](https://github.com/mohanraj00/koodam/pull/315)).
+- Add `spec.output.path` to the Agent. When the run ends, `status.output` has the SHA-256 digest and the size of this file. A sidecar container of the run pod computes the digest, and the controller never reads the file. [docs/agent-output.md](docs/agent-output.md) has the guide for durable output ([#315](https://github.com/mohanraj00/koodam/pull/315)).
+
 ### Apps (not active yet)
 
 - Add the namespaced `App` and `AppVersion` types with their CRD rules. The CRDs are in `config/apps/crd/bases`, so the default install and the chart do not install them. ([#294](https://github.com/mohanraj00/koodam/pull/294)).

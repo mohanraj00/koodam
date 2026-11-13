@@ -165,6 +165,27 @@ spec:
                 minItems: 1
                 type: array
                 x-kubernetes-list-type: set
+              output:
+                description: |-
+                  Output is the one output file of the run. When the run ends, the status shows the
+                  SHA-256 digest and the size of this file. The file must be in a volume of spec.podTemplate
+                  that the agent container mounts. A change after the run starts has no effect: the status
+                  shows the path that the run used.
+                properties:
+                  path:
+                    description: |-
+                      Path is the absolute path of the file in the agent container. It has no "." part and no
+                      ".." part.
+                    maxLength: 1024
+                    type: string
+                    x-kubernetes-validations:
+                    - message: path must be an absolute file path with no . part and
+                        no .. part.
+                      rule: self.startsWith('/') && !self.endsWith('/') && !self.split('/').exists(p,
+                        p == '.' || p == '..')
+                required:
+                - path
+                type: object
               podTemplate:
                 description: |-
                   PodTemplate changes the run pod, for example its resources, runtime class or node selector.
@@ -9167,6 +9188,30 @@ spec:
                   and uses it to block the key and to read the usage. The gateway refuses the hash for
                   model calls, so it is not a credential.
                 type: string
+              output:
+                description: |-
+                  Output is the digest of the file of spec.output. The controller writes it one time, when
+                  the run ends.
+                properties:
+                  path:
+                    description: |-
+                      Path is the path of the file that the run used. It is the spec.output.path at the start of
+                      the run.
+                    type: string
+                  reason:
+                    description: |-
+                      Reason tells why the run has no digest: NotFound, NotRegularFile, ReadError or NoResult.
+                      It is empty if the status has a digest.
+                    type: string
+                  sha256:
+                    description: SHA256 is the SHA-256 digest of the file, as 64 lower-case
+                      hex characters.
+                    type: string
+                  size:
+                    description: Size is the size of the file in bytes.
+                    format: int64
+                    type: integer
+                type: object
               phase:
                 description: Phase is the lifecycle phase.
                 enum:
@@ -9179,6 +9224,12 @@ spec:
                 description: RevokedAt is the time when the controller blocked the
                   key and deleted the credentials.
                 format: date-time
+                type: string
+              runID:
+                description: |-
+                  RunID is the identity of the run. It is the UID of the Agent, so it is the same after a
+                  controller restart and for each pod of the run. An external system can record it with
+                  the output digest.
                 type: string
               startedAt:
                 description: StartedAt is the start time of the run Job. The controller

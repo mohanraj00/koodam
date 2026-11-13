@@ -74,12 +74,18 @@ func installerContainer(name, vol, harness, version, libc, image string) corev1.
 		Name: name, Image: image,
 		Command: []string{"/harness-install", "-harness", harness, "-version", version, "-libc", libc,
 			"-dir", harnessDir},
-		VolumeMounts: []corev1.VolumeMount{{Name: vol, MountPath: harnessDir}},
-		SecurityContext: &corev1.SecurityContext{
-			RunAsNonRoot: new(true), RunAsUser: new(int64(65532)), AllowPrivilegeEscalation: new(false),
-			ReadOnlyRootFilesystem: new(true),
-			Capabilities:           &corev1.Capabilities{Drop: []corev1.Capability{"ALL"}},
-			SeccompProfile:         &corev1.SeccompProfile{Type: corev1.SeccompProfileTypeRuntimeDefault},
-		},
+		VolumeMounts:    []corev1.VolumeMount{{Name: vol, MountPath: harnessDir}},
+		SecurityContext: helperSecurityContext(),
+	}
+}
+
+// helperSecurityContext is the security context of a helper container from the Koodam image: the
+// user of the image, no privilege, no capability and a read-only root file system.
+func helperSecurityContext() *corev1.SecurityContext {
+	return &corev1.SecurityContext{
+		RunAsNonRoot: new(true), RunAsUser: new(int64(65532)), AllowPrivilegeEscalation: new(false),
+		ReadOnlyRootFilesystem: new(true),
+		Capabilities:           &corev1.Capabilities{Drop: []corev1.Capability{"ALL"}},
+		SeccompProfile:         &corev1.SeccompProfile{Type: corev1.SeccompProfileTypeRuntimeDefault},
 	}
 }

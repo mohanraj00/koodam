@@ -255,7 +255,8 @@ var _ = Describe("Agent Controller", func() {
 		Expect(job.Spec.TTLSecondsAfterFinished).To(BeNil(), "the controller deletes the Job, not Kubernetes")
 		c := job.Spec.Template.Spec.Containers[0]
 		Expect(c.EnvFrom[0].SecretRef.Name).To(Equal("kd-" + name))
-		Expect(c.Env).To(Equal([]corev1.EnvVar{{Name: "TASK", Value: "t1"}}))
+		Expect(c.Env).To(Equal([]corev1.EnvVar{{Name: "TASK", Value: "t1"}, {Name: runIDEnv, Value: string(a.UID)}}))
+		Expect(a.Status.RunID).To(Equal(string(a.UID)))
 		Expect(job.Spec.Template.Spec.InitContainers).To(BeEmpty(), "no harness, so no installer")
 		Expect(job.Spec.Template.Spec.Volumes).To(BeEmpty())
 		Expect(job.Spec.Template.Labels).To(HaveKeyWithValue(RunLabel, "kd-"+name))
@@ -345,7 +346,7 @@ var _ = Describe("Agent Controller", func() {
 		Expect(job.Spec.Template.Spec.InitContainers[0].Command).To(Equal(installArgs(codexName, "", "glibc")),
 			"an empty version is the latest version")
 		Expect(job.Spec.Template.Spec.Containers[0].Env).To(Equal([]corev1.EnvVar{
-			{Name: pathEnv, Value: "/opt/bin:/koodam/bin"}}))
+			{Name: pathEnv, Value: "/opt/bin:/koodam/bin"}, {Name: runIDEnv, Value: string(agent().UID)}}))
 	})
 
 	It("gives Codex a model provider for the gateway", func() {
@@ -492,6 +493,88 @@ wire_api = "responses"
 		By("doing nothing after the revoke")
 		reconcileOnce(r)
 		Expect(gw.blocked).To(HaveLen(1))
+	})
+
+	const outVolume, outFile = "out", "/out/report.txt"
+	// setOutput gives the Agent an output path and a volume at /out.
+	setOutput := func(path string) {
+		a := agent()
+		a.Spec.Output = &corev1alpha1.AgentOutput{Path: path}
+		a.Spec.PodTemplate = &corev1alpha1.PodTemplate{Spec: corev1.PodSpec{
+			Volumes: []corev1.Volume{{Name: outVolume, VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{}}}},
+			Containers: []corev1.Container{{Name: agentContainer,
+				VolumeMounts: []corev1.VolumeMount{{Name: outVolume, MountPath: "/out"}}}}}}
+		Expect(k8sClient.Update(ctx, a)).To(Succeed())
+	}
+	// runPod makes the pod of the run Job, with the termination message of the output sidecar.
+	runPod := func(job *batchv1.Job, message string) {
+		pod := &corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: job.Name + "-pod", Namespace: ns,
+			Labels: map[string]string{batchv1.JobNameLabel: job.Name, agentLabel: name}}, Spec: job.Spec.Template.Spec}
+		Expect(k8sClient.Create(ctx, pod)).To(Succeed())
+		DeferCleanup(func() { Expect(client.IgnoreNotFound(k8sClient.Delete(ctx, pod))).To(Succeed()) })
+		pod.Status.InitContainerStatuses = []corev1.ContainerStatus{{Name: outputContainer,
+			State: corev1.ContainerState{Terminated: &corev1.ContainerStateTerminated{Message: message}}}}
+		Expect(k8sClient.Status().Update(ctx, pod)).To(Succeed())
+	}
+
+	It("writes the digest of spec.output and a stable run identity when the run ends", func() {
+		const digest = "5891b5b522d5df086d0ff0b110fbd9d21bb4fc7163af34d08286a2e846f6be03"
+		setOutput(outFile)
+		r := newReconciler()
+		r.InstallerImage = installerImage
+		reconcileOnce(r)
+		runID := agent().Status.RunID
+		Expect(runID).To(Equal(string(agent().UID)))
+
+		// The sidecar has the output volume as a read-only mount, and no other mount.
+		job := &batchv1.Job{}
+		Expect(exists(job)).To(BeTrue())
+		side := job.Spec.Template.Spec.InitContainers[0]
+		Expect(side.Name).To(Equal(outputContainer))
+		Expect(side.Image).To(Equal(installerImage))
+		Expect(side.Command).To(Equal([]string{"/output-digest", "--path", outFile}))
+		Expect(*side.RestartPolicy).To(Equal(corev1.ContainerRestartPolicyAlways))
+		Expect(side.VolumeMounts).To(Equal([]corev1.VolumeMount{{Name: outVolume, MountPath: "/out", ReadOnly: true}}))
+
+		runPod(job, `{"sha256":"`+digest+`","size":6}`)
+		endJob(batchv1.JobComplete)
+		// A new reconciler is a controller restart. The run identity does not change.
+		reconcileOnce(newReconciler())
+		expectRevoked(corev1alpha1.AgentSucceeded)
+		a := agent()
+		Expect(a.Status.RunID).To(Equal(runID))
+		Expect(a.Status.Output).To(Equal(&corev1alpha1.AgentOutputStatus{Path: outFile, SHA256: digest,
+			Size: new(int64(6))}))
+	})
+
+	It("writes a reason and no digest when the sidecar has no valid result", func() {
+		setOutput(outFile)
+		r := newReconciler()
+		r.InstallerImage = installerImage
+		reconcileOnce(r)
+		job := &batchv1.Job{}
+		Expect(exists(job)).To(BeTrue())
+		// The message is not from the sidecar command. The controller does not copy it.
+		runPod(job, `{"sha256":"not-a-digest","size":1}`)
+		endJob(batchv1.JobComplete)
+		reconcileOnce(r)
+		Expect(agent().Status.Output).To(Equal(&corev1alpha1.AgentOutputStatus{Path: outFile, Reason: "NoResult"}))
+	})
+
+	It("refuses an output path that is not in a volume of the pod template", func() {
+		setOutput("/tmp/report.txt")
+		r := newReconciler()
+		r.InstallerImage = installerImage
+		reconcileOnce(r)
+		c := meta.FindStatusCondition(agent().Status.Conditions, condProvisioned)
+		Expect(c.Reason).To(Equal(reasonInvalid))
+		Expect(gw.created).To(BeEmpty())
+		// The API server refuses a path with a parent part and a path that is not absolute.
+		for _, path := range []string{"/out/../etc/passwd", "out/report.txt", "/out/"} {
+			a := agent()
+			a.Spec.Output = &corev1alpha1.AgentOutput{Path: path}
+			Expect(apierrors.IsInvalid(k8sClient.Update(ctx, a))).To(BeTrue(), path)
+		}
 	})
 
 	It("deletes the Job of a revoked run after the TTL from the end time", func() {

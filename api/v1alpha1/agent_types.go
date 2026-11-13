@@ -69,6 +69,13 @@ type AgentSpec struct {
 	// +optional
 	User string `json:"user,omitempty"`
 
+	// Output is the one output file of the run. When the run ends, the status shows the
+	// SHA-256 digest and the size of this file. The file must be in a volume of spec.podTemplate
+	// that the agent container mounts. A change after the run starts has no effect: the status
+	// shows the path that the run used.
+	// +optional
+	Output *AgentOutput `json:"output,omitempty"`
+
 	// DeadlineSeconds stops the Job. The key TTL is this value plus a grace period.
 	// +optional
 	// +kubebuilder:default=900
@@ -174,8 +181,51 @@ func (s *AgentSpec) ModelList() []string {
 	return s.Models
 }
 
+// AgentOutput is the output file of an Agent run.
+type AgentOutput struct {
+	// Path is the absolute path of the file in the agent container. It has no "." part and no
+	// ".." part.
+	// +required
+	// +kubebuilder:validation:MaxLength=1024
+	// +kubebuilder:validation:XValidation:rule="self.startsWith('/') && !self.endsWith('/') && !self.split('/').exists(p, p == '.' || p == '..')",message="path must be an absolute file path with no . part and no .. part."
+	Path string `json:"path"`
+}
+
+// AgentOutputStatus is the digest of the output file of a run. It never has the content of the
+// file.
+type AgentOutputStatus struct {
+	// Path is the path of the file that the run used. It is the spec.output.path at the start of
+	// the run.
+	// +optional
+	Path string `json:"path,omitempty"`
+
+	// SHA256 is the SHA-256 digest of the file, as 64 lower-case hex characters.
+	// +optional
+	SHA256 string `json:"sha256,omitempty"`
+
+	// Size is the size of the file in bytes.
+	// +optional
+	Size *int64 `json:"size,omitempty"`
+
+	// Reason tells why the run has no digest: NotFound, NotRegularFile, ReadError or NoResult.
+	// It is empty if the status has a digest.
+	// +optional
+	Reason string `json:"reason,omitempty"`
+}
+
 // AgentStatus is the observed state of an Agent.
 type AgentStatus struct {
+	// RunID is the identity of the run. It is the UID of the Agent, so it is the same after a
+	// controller restart and for each pod of the run. An external system can record it with
+	// the output digest.
+	// +optional
+	RunID string `json:"runID,omitempty"`
+
+	// Output is the digest of the file of spec.output. The controller writes it one time, when
+	// the run ends.
+	// +optional
+	Output *AgentOutputStatus `json:"output,omitempty"`
+
 	// Phase is the lifecycle phase.
 	// +optional
 	Phase AgentPhase `json:"phase,omitempty"`
