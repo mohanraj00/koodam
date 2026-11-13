@@ -161,11 +161,14 @@ func invalidAppVersion(av *corev1alpha1.AppVersion) string {
 	if !inCeiling(av.Spec.Template.Rules) {
 		return "A rule is not in the agent-ceiling ClusterRole."
 	}
-	// The owner check of the shared merge accepts a Secret that does not exist. A Workspace can
-	// make its Secrets after the Deployment of this version, so the App refuses these names always.
+	// The owner check of the shared merge accepts a Secret that does not exist, and the login
+	// Secret has no owner. A Workspace or the CLI can make these Secrets after the Deployment of
+	// this version, so the App refuses these names always.
 	for _, ref := range podtemplate.SecretRefs(&av.Spec.Template.PodTemplate.Spec, nil) {
-		if strings.HasSuffix(ref.Name, gatewaySecretSuffix) || strings.HasSuffix(ref.Name, hostKeySecretSuffix) {
-			return "A Secret name that ends with -gateway or -ssh-host is reserved for a Workspace."
+		if ref.Name == loginSecret || strings.HasSuffix(ref.Name, gatewaySecretSuffix) ||
+			strings.HasSuffix(ref.Name, hostKeySecretSuffix) {
+			return "The Secret name " + loginSecret + " and a name that ends with -gateway or -ssh-host are " +
+				"reserved for a Workspace."
 		}
 	}
 	c := appContainer(&av.Spec.Template.PodTemplate.Spec)

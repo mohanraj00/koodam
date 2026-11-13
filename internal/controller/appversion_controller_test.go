@@ -241,15 +241,20 @@ var _ = Describe("AppVersion controller", func() {
 
 	It("makes no key for a template with a Secret name of a Workspace that does not exist", func() {
 		newApp(2)
-		newVersion(name)
-		av := version(name)
-		av.Spec.Template.PodTemplate.Spec.Volumes = []corev1.Volume{{Name: "peer-key", VolumeSource: corev1.VolumeSource{
-			Secret: &corev1.SecretVolumeSource{SecretName: "victim" + gatewaySecretSuffix, Optional: new(true)}}}}
-		Expect(k8sClient.Update(ctx, av)).To(Succeed())
-		mustReconcile()
-		Expect(cond(name, condProvisioned).Reason).To(Equal(reasonInvalid))
+		for i, secret := range []string{"victim" + gatewaySecretSuffix, "victim" + hostKeySecretSuffix, loginSecret} {
+			s := fmt.Sprintf("%s-%d", name, i)
+			newVersion(s)
+			DeferCleanup(cleanup, s)
+			av := version(s)
+			av.Spec.Template.PodTemplate.Spec.Volumes = []corev1.Volume{{Name: "peer-key", VolumeSource: corev1.VolumeSource{
+				Secret: &corev1.SecretVolumeSource{SecretName: secret, Optional: new(true)}}}}
+			Expect(k8sClient.Update(ctx, av)).To(Succeed())
+			_, err := reconcileName(s)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(cond(s, condProvisioned).Reason).To(Equal(reasonInvalid), secret)
+			Expect(gone(&corev1.Secret{}, s)).To(BeTrue())
+		}
 		Expect(gw.order).To(BeEmpty())
-		Expect(gone(&corev1.Secret{}, name)).To(BeTrue())
 	})
 
 	It("keeps a new version in wait while the App has maxLiveVersions versions with a key", func() {
