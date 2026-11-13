@@ -77,6 +77,18 @@ var _ = Describe("AppVersion admission policy", Ordered, func() {
 	}
 
 	BeforeAll(func() {
+		// This cleanup runs after the delete of the policy. The API server enforces a deleted
+		// policy for a short time, and a spec of a different container must not get its refusal.
+		DeferCleanup(func() {
+			Eventually(func() error {
+				probe := newVersion("policy-gone", func(av *corev1alpha1.AppVersion) { port(av).Name = "" })
+				err := k8sClient.Create(ctx, probe)
+				if err == nil {
+					_ = k8sClient.Delete(ctx, probe)
+				}
+				return err
+			}, time.Minute, time.Second).Should(Succeed())
+		})
 		src, err := os.ReadFile(filepath.Join("..", "..", "config", "apps", "admission", "policy.yaml"))
 		Expect(err).NotTo(HaveOccurred())
 		for doc := range bytes.SplitSeq(src, []byte("\n---\n")) {
