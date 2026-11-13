@@ -70,6 +70,21 @@ spec:
         - --egress-proxy-port={{ int64 .Values.egressProxy.port }}
         - --cluster-domain={{ .Values.egressProxy.dns.clusterDomain }}
         {{- end }}
+        {{- if .Values.apps.enabled }}
+        - --apps-enabled
+        {{- if .Values.egressProxy.enabled }}
+        # Each AppVersion gets a NetworkPolicy with egress to these pods only.
+        - --egress-proxy-namespace={{ .Release.Namespace }}
+        {{- $labels := list }}
+        {{- range $k, $v := include "koodam.gatewaySelector" (list . "egress-proxy") | fromYaml }}
+        {{- $labels = append $labels (printf "%s=%s" $k $v) }}
+        {{- end }}
+        - "--egress-proxy-pod-labels={{ join "," $labels }}"
+        {{- with .Values.apps.ingressNamespaces }}
+        - "--app-ingress-namespaces={{ join "," . }}"
+        {{- end }}
+        {{- end }}
+        {{- end }}
         ports:
         - containerPort: 8081
           name: health

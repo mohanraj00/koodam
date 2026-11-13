@@ -219,6 +219,19 @@ egressProxy:
     # More egress rules (NetworkPolicyEgressRule), for example for a gateway at a private address.
     extraEgress: []
 
+# Apps. If enabled is true, the chart installs the App and AppVersion CRDs and the App role, and
+# the manager runs the App controllers. An App endpoint needs a Gateway API implementation in
+# the cluster. The chart does not install one. Helm keeps the App CRDs on an uninstall, so that
+# the Apps of the cluster stay.
+# With egressProxy.enabled, name each namespace of the Apps in workspace.networkPolicy.namespaces:
+# the proxy gives an App pod an identity only in a named namespace.
+apps:
+  enabled: false
+  # The namespaces whose pods can send traffic to the App pods, for example the namespace of the
+  # Gateway data plane. It has an effect only with egressProxy.enabled: then each AppVersion has
+  # a NetworkPolicy, and that policy permits no ingress if this list is empty.
+  ingressNamespaces: []
+
 # The metrics endpoint (HTTPS). If true, the chart adds the metrics Service and the
 # metrics-auth ClusterRole (tokenreviews and subjectaccessreviews, verb create).
 metrics:

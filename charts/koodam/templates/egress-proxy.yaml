@@ -6,6 +6,11 @@
 {{- $name := printf "%s-egress-proxy" (include "koodam.fullname" .) -}}
 {{- $np := dig "networkPolicy" dict (.Values.workspace | default dict) | default dict -}}
 {{- $namespaces := $np.namespaces | default list -}}
+{{- if and (dig "enabled" false (.Values.apps | default dict)) (not $namespaces) }}
+{{- /* The proxy gives an App pod an identity only in a named namespace. With no identity, the
+proxy refuses each call of the pod, and the NetworkPolicy of the version permits no other egress. */ -}}
+{{- fail "With apps.enabled and egressProxy.enabled, workspace.networkPolicy.namespaces must have each namespace of the Apps." }}
+{{- end }}
 {{- $epnp := $ep.networkPolicy | default dict -}}
 {{- $podLabels := include "koodam.gatewaySelector" (list . "egress-proxy") | fromYaml -}}
 {{- /* A spread item with no labelSelector gets the labels of the proxy pods of this release. */ -}}
@@ -239,10 +244,14 @@ spec:
   - Ingress
   - Egress
   ingress:
-  # Only the Agent and Workspace pods can use the proxy. The proxy also refuses a call from a pod
-  # that it cannot find in its pod watch.
+  # Only the Agent and Workspace pods can use the proxy, and the App pods if apps.enabled is true.
+  # The proxy also refuses a call from a pod that it cannot find in its pod watch.
   - from:
-    {{- range $label := list "koodam.dev/agent" "koodam.dev/workspace" }}
+    {{- $clients := list "koodam.dev/agent" "koodam.dev/workspace" }}
+    {{- if $.Values.apps.enabled }}
+    {{- $clients = append $clients "koodam.dev/app" }}
+    {{- end }}
+    {{- range $label := $clients }}
     - namespaceSelector: {}
       podSelector:
         matchExpressions:
