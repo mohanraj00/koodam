@@ -65,6 +65,9 @@ const (
 	appGatewayURLEnv = "KOODAM_GATEWAY_URL"
 	appModelEnv      = "KOODAM_GATEWAY_MODEL"
 	appKeyFileEnv    = "KOODAM_GATEWAY_KEY_FILE"
+	// appVersionEnv has the name of the AppVersion. The app can give it to a client, and the
+	// client sends it in the header corev1alpha1.AppVersionHeader to stay on this version.
+	appVersionEnv = "KOODAM_APP_VERSION"
 	// appKeyGroup is the group of the key file in the pod.
 	appKeyGroup = int64(1000)
 	// reasonIssuing is the reason of the condition GatewayKey from the enrollment until the
@@ -134,9 +137,54 @@ func (r *AppVersionReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 	case !av.DeletionTimestamp.IsZero():
 		return ctrl.Result{}, r.revoke(ctx, av, "Deleted")
 	case av.Spec.Lifecycle == corev1alpha1.AppVersionRetiring:
-		return ctrl.Result{}, r.revoke(ctx, av, "Retired")
+		return r.retire(ctx, av)
 	}
 	return r.apply(ctx, av)
+}
+
+// retire drains a retiring version and then revokes its key. In the drain time the version keeps
+// its key and its pods, and the App controller sends it no new session. A version with no key has
+// no session, so its revoke starts immediately.
+func (r *AppVersionReconciler) retire(ctx context.Context, av *corev1alpha1.AppVersion) (ctrl.Result, error) {
+	const reason = "Retired"
+	if av.Status.KeyHash == "" {
+		return ctrl.Result{}, r.revoke(ctx, av, reason)
+	}
+	set := func(t string, s metav1.ConditionStatus, why, msg string) {
+		meta.SetStatusCondition(&av.Status.Conditions, metav1.Condition{Type: t, Status: s, Reason: why,
+			Message: msg, ObservedGeneration: av.Generation, LastTransitionTime: metav1.NewTime(r.now())})
+	}
+	if !meta.IsStatusConditionFalse(av.Status.Conditions, corev1alpha1.AppVersionTrafficAllowed) {
+		// The time of this condition is the start of the drain.
+		set(corev1alpha1.AppVersionTrafficAllowed, metav1.ConditionFalse, "Retiring", "The version gets no new session.")
+		set(corev1alpha1.AppVersionSessionsEnded, metav1.ConditionFalse, "Draining",
+			"The version keeps its key and its pods until the end of the drain time.")
+		if err := r.Status().Update(ctx, av); err != nil {
+			return ctrl.Result{}, err
+		}
+	}
+	app := &corev1alpha1.App{}
+	err := r.APIReader.Get(ctx, types.NamespacedName{Namespace: av.Namespace, Name: av.Spec.AppRef.Name}, app)
+	if err != nil && !apierrors.IsNotFound(err) {
+		return ctrl.Result{}, err
+	}
+	// A version with no App has no endpoint and no drain time.
+	drain := time.Duration(0)
+	if err == nil && app.Spec.DrainSeconds != nil {
+		drain = time.Duration(*app.Spec.DrainSeconds) * time.Second
+	}
+	start := meta.FindStatusCondition(av.Status.Conditions, corev1alpha1.AppVersionTrafficAllowed).LastTransitionTime
+	left := start.Add(drain).Sub(r.now())
+	if left <= 0 {
+		set(corev1alpha1.AppVersionSessionsEnded, metav1.ConditionTrue, "DrainTimeEnded", "The drain time is at its end.")
+		return ctrl.Result{}, r.revoke(ctx, av, reason)
+	}
+	// The version keeps its objects and the renew of its key.
+	res, err := r.apply(ctx, av)
+	if err == nil && (res.RequeueAfter == 0 || res.RequeueAfter > left) {
+		res.RequeueAfter = left
+	}
+	return res, err
 }
 
 func appVersionName(av *corev1alpha1.AppVersion) string { return "kd-" + av.Name }
@@ -277,6 +325,11 @@ func (r *AppVersionReconciler) apply(ctx context.Context, av *corev1alpha1.AppVe
 		}
 		// A version that waits for an object keeps the renew of its key.
 		setProvisioned(av, reason)
+	}
+	if av.Spec.Lifecycle != corev1alpha1.AppVersionRetiring {
+		meta.SetStatusCondition(&av.Status.Conditions, metav1.Condition{Type: corev1alpha1.AppVersionTrafficAllowed,
+			Status: metav1.ConditionTrue, Reason: "Serving", Message: "The version can get new sessions.",
+			ObservedGeneration: av.Generation})
 	}
 	egress, err := r.egressCondition(ctx, av)
 	if err != nil {
@@ -652,6 +705,7 @@ func (r *AppVersionReconciler) deployment(ctx context.Context, av *corev1alpha1.
 				{Name: appGatewayURLEnv, Value: r.GatewayURL},
 				{Name: appModelEnv, Value: av.Spec.Template.Model},
 				{Name: appKeyFileEnv, Value: workspaceGatewayDir + "/" + appKeyField},
+				{Name: appVersionEnv, Value: av.Name},
 			},
 			VolumeMounts: []corev1.VolumeMount{{Name: vol, MountPath: workspaceGatewayDir, ReadOnly: true}},
 		}},

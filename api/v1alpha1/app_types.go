@@ -34,6 +34,16 @@ type AppSpec struct {
 	// +kubebuilder:validation:Minimum=1
 	MaxLiveVersions int32 `json:"maxLiveVersions,omitempty"`
 
+	// DrainSeconds is the time that a retiring version keeps its pods and its key. In this
+	// time the version gets no new session, and a client that sends the version header stays
+	// on the version. Koodam cannot see a session, so the end of this time is the end of the
+	// sessions. Then the controller revokes the key.
+	// +optional
+	// +kubebuilder:default=300
+	// +kubebuilder:validation:Minimum=0
+	// +kubebuilder:validation:Maximum=604800
+	DrainSeconds *int32 `json:"drainSeconds,omitempty"`
+
 	// Endpoints are the named entries of the App. The App controller makes one Gateway API
 	// HTTPRoute for each endpoint. The route sends a weight of the traffic to each version.
 	// +optional
@@ -42,6 +52,14 @@ type AppSpec struct {
 	// +kubebuilder:validation:MaxItems=16
 	Endpoints []AppEndpoint `json:"endpoints,omitempty"`
 }
+
+// AppVersionHeader is the HTTP header that keeps a client session on one version. A request
+// with this header and the name of a version goes to that version only, if the version has a
+// weight of more than 0 in the spec of the endpoint. A version with such a weight keeps the rule
+// while it drains. The header is not proof of a session: each caller can send it. The app
+// container has the name of its version in the env variable KOODAM_APP_VERSION, so the app can
+// give the name to its client.
+const AppVersionHeader = "Koodam-App-Version"
 
 // AppEndpoint is one named entry of an App on a Gateway.
 type AppEndpoint struct {
@@ -71,12 +89,13 @@ type AppEndpoint struct {
 	// +kubebuilder:validation:MaxLength=15
 	Port string `json:"port"`
 
-	// Versions are the AppVersions of the endpoint, each with its weight.
+	// Versions are the AppVersions of the endpoint, each with its weight. An HTTPRoute has 16
+	// rules at most: 1 rule for the weights and 1 rule for the header of each version.
 	// +required
 	// +listType=map
 	// +listMapKey=name
 	// +kubebuilder:validation:MinItems=1
-	// +kubebuilder:validation:MaxItems=16
+	// +kubebuilder:validation:MaxItems=15
 	Versions []AppEndpointVersion `json:"versions"`
 }
 
@@ -139,7 +158,7 @@ type AppEndpointStatus struct {
 	Name string `json:"name"`
 
 	// Weights are the weights in effect. A version that cannot serve has the weight 0, and the
-	// route does not send traffic to it.
+	// route sends no new session to it.
 	// +optional
 	// +listType=atomic
 	Weights []AppEndpointVersion `json:"weights,omitempty"`

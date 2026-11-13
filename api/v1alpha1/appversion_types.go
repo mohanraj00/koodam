@@ -39,12 +39,13 @@ const (
 	AppVersionRetiring AppVersionLifecycle = "Retiring"
 )
 
-// The condition types of an AppVersion. The AppVersion controller sets Revoking, Revoked and
-// TracedEgress. No controller sets TrafficAllowed and SessionsEnded at this time.
+// The condition types of an AppVersion. The AppVersion controller sets them.
 const (
-	// AppVersionTrafficAllowed tells if the version can get public traffic.
+	// AppVersionTrafficAllowed tells if the version can get new sessions. It is False from the
+	// time that the version starts to retire.
 	AppVersionTrafficAllowed = "TrafficAllowed"
-	// AppVersionSessionsEnded tells if all sessions of a retiring version are ended.
+	// AppVersionSessionsEnded tells if the drain time of a retiring version is at its end.
+	// Koodam cannot see a session, so the end of the drain time is the end of the sessions.
 	AppVersionSessionsEnded = "SessionsEnded"
 	// AppVersionRevoking tells that the revoke of the key started. This state is terminal.
 	AppVersionRevoking = "Revoking"

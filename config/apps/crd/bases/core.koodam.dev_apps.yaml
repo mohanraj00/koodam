@@ -48,6 +48,17 @@ spec:
           spec:
             description: spec defines the desired state of App
             properties:
+              drainSeconds:
+                default: 300
+                description: |-
+                  DrainSeconds is the time that a retiring version keeps its pods and its key. In this
+                  time the version gets no new session, and a client that sends the version header stays
+                  on the version. Koodam cannot see a session, so the end of this time is the end of the
+                  sessions. Then the controller revokes the key.
+                format: int32
+                maximum: 604800
+                minimum: 0
+                type: integer
               endpoints:
                 description: |-
                   Endpoints are the named entries of the App. The App controller makes one Gateway API
@@ -103,8 +114,9 @@ spec:
                       minLength: 1
                       type: string
                     versions:
-                      description: Versions are the AppVersions of the endpoint, each
-                        with its weight.
+                      description: |-
+                        Versions are the AppVersions of the endpoint, each with its weight. An HTTPRoute has 16
+                        rules at most: 1 rule for the weights and 1 rule for the header of each version.
                       items:
                         description: AppEndpointVersion is the weight of one AppVersion
                           in an endpoint.
@@ -126,7 +138,7 @@ spec:
                         - name
                         - weight
                         type: object
-                      maxItems: 16
+                      maxItems: 15
                       minItems: 1
                       type: array
                       x-kubernetes-list-map-keys:
@@ -238,7 +250,7 @@ spec:
                     weights:
                       description: |-
                         Weights are the weights in effect. A version that cannot serve has the weight 0, and the
-                        route does not send traffic to it.
+                        route sends no new session to it.
                       items:
                         description: AppEndpointVersion is the weight of one AppVersion
                           in an endpoint.

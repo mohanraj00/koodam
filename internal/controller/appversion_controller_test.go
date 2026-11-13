@@ -83,8 +83,9 @@ var _ = Describe("AppVersion controller", func() {
 		return apierrors.IsNotFound(k8sClient.Get(ctx, nn("kd-"+s), o))
 	}
 	newApp := func(maxLive int32) {
+		// The drain time is 0, so that a retiring version revokes its key immediately.
 		app := &corev1alpha1.App{ObjectMeta: metav1.ObjectMeta{Name: appName, Namespace: ns},
-			Spec: corev1alpha1.AppSpec{MaxLiveVersions: maxLive}}
+			Spec: corev1alpha1.AppSpec{MaxLiveVersions: maxLive, DrainSeconds: new(int32(0))}}
 		Expect(k8sClient.Create(ctx, app)).To(Succeed())
 	}
 	newVersion := func(s string, rules ...rbacv1.PolicyRule) {
@@ -509,6 +510,59 @@ var _ = Describe("AppVersion controller", func() {
 		// The revoke is terminal.
 		mustReconcile()
 		Expect(gw.order).To(Equal([]string{opCreate, opBlock}))
+	})
+
+	It("drains a retiring version before the revoke", func() {
+		newApp(2)
+		app := &corev1alpha1.App{}
+		Expect(k8sClient.Get(ctx, nn(appName), app)).To(Succeed())
+		app.Spec.DrainSeconds = new(int32(600))
+		Expect(k8sClient.Update(ctx, app)).To(Succeed())
+		newVersion(name)
+		mustReconcile()
+		Expect(cond(name, corev1alpha1.AppVersionTrafficAllowed).Status).To(Equal(metav1.ConditionTrue))
+
+		av := version(name)
+		av.Spec.Lifecycle = corev1alpha1.AppVersionRetiring
+		Expect(k8sClient.Update(ctx, av)).To(Succeed())
+		// In the drain time the version keeps its key, its Secret and its pods.
+		Expect(mustReconcile().RequeueAfter).To(Equal(10 * time.Minute))
+		Expect(cond(name, corev1alpha1.AppVersionTrafficAllowed).Status).To(Equal(metav1.ConditionFalse))
+		Expect(cond(name, corev1alpha1.AppVersionSessionsEnded).Reason).To(Equal("Draining"))
+		Expect(cond(name, corev1alpha1.AppVersionRevoking)).To(BeNil())
+		Expect(gw.order).NotTo(ContainElement(opBlock))
+		Expect(gone(&appsv1.Deployment{}, name)).To(BeFalse())
+
+		// The start of the drain does not move with a later reconcile.
+		now = now.Add(9 * time.Minute)
+		Expect(mustReconcile().RequeueAfter).To(Equal(time.Minute))
+		Expect(gw.order).NotTo(ContainElement(opBlock))
+
+		// At the end of the drain time the key is blocked before the objects go.
+		now = now.Add(time.Minute)
+		mustReconcile()
+		Expect(gw.order[len(gw.order)-1]).To(Equal(opBlock))
+		Expect(cond(name, corev1alpha1.AppVersionSessionsEnded).Status).To(Equal(metav1.ConditionTrue))
+		Expect(cond(name, corev1alpha1.AppVersionRevoked).Reason).To(Equal("Retired"))
+		Expect(gone(&appsv1.Deployment{}, name)).To(BeTrue())
+	})
+
+	It("does not wait for the drain time when a retiring version is deleted", func() {
+		newApp(2)
+		app := &corev1alpha1.App{}
+		Expect(k8sClient.Get(ctx, nn(appName), app)).To(Succeed())
+		app.Spec.DrainSeconds = new(int32(600))
+		Expect(k8sClient.Update(ctx, app)).To(Succeed())
+		newVersion(name)
+		mustReconcile()
+		av := version(name)
+		av.Spec.Lifecycle = corev1alpha1.AppVersionRetiring
+		Expect(k8sClient.Update(ctx, av)).To(Succeed())
+		mustReconcile()
+		Expect(k8sClient.Delete(ctx, version(name))).To(Succeed())
+		mustReconcile()
+		Expect(gw.order[len(gw.order)-1]).To(Equal(opBlock))
+		Expect(apierrors.IsNotFound(k8sClient.Get(ctx, nn(name), &corev1alpha1.AppVersion{}))).To(BeTrue())
 	})
 
 	It("revokes and makes no second key when the gateway lost the key", func() {
