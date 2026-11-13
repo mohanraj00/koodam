@@ -1,0 +1,27 @@
+# A test stub of the Gateway API HTTPRoute for envtest. It has the group, the version, the kind
+# and the status subresource of the real CRD, and no schema rules. Do not install it in a cluster.
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: httproutes.gateway.networking.k8s.io
+  annotations:
+    # The API server requires this annotation for a *.k8s.io group.
+    api-approved.kubernetes.io: unapproved, test stub
+spec:
+  group: gateway.networking.k8s.io
+  names:
+    kind: HTTPRoute
+    listKind: HTTPRouteList
+    plural: httproutes
+    singular: httproute
+  scope: Namespaced
+  versions:
+  - name: v1
+    served: true
+    storage: true
+    subresources:
+      status: {}
+    schema:
+      openAPIV3Schema:
+        type: object
+        x-kubernetes-preserve-unknown-fields: true

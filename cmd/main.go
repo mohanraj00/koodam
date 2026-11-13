@@ -124,6 +124,9 @@ func checkEgress(e controller.EgressProxy) error {
 	if errs := validation.IsDNS1123Subdomain(e.ClusterDomain); len(errs) > 0 {
 		return fmt.Errorf("--cluster-domain=%q is not valid: %s", e.ClusterDomain, strings.Join(errs, "; "))
 	}
+	if errs := validation.IsDNS1123Label(e.Namespace); e.Namespace != "" && len(errs) > 0 {
+		return fmt.Errorf("--egress-proxy-namespace=%q is not valid: %s", e.Namespace, strings.Join(errs, "; "))
+	}
 	return nil
 }
 
@@ -141,6 +144,7 @@ func main() {
 	var testKeyRevokeWait time.Duration
 	var keyGrace time.Duration
 	var egress controller.EgressProxy
+	var egressPodLabels string
 	var jobTTLSeconds int
 	var agentIngressEnabled, appsEnabled bool
 	var tlsOpts []func(*tls.Config)
@@ -174,6 +178,11 @@ func main() {
 	flag.StringVar(&egress.IP, "egress-proxy-ip", "",
 		"The ClusterIP of the egress proxy. If set, the pods use it as their DNS server and their gateway.")
 	flag.IntVar(&egress.Port, "egress-proxy-port", 3128, "The HTTP port of the egress proxy.")
+	flag.StringVar(&egress.Namespace, "egress-proxy-namespace", "",
+		"The namespace of the egress proxy pods. With --egress-proxy-pod-labels, each AppVersion gets a "+
+			"NetworkPolicy that permits egress to these pods only.")
+	flag.StringVar(&egressPodLabels, "egress-proxy-pod-labels", "",
+		"The labels of the egress proxy pods, as key=value pairs with a comma between them.")
 	flag.StringVar(&egress.ClusterDomain, "cluster-domain", "cluster.local", "The DNS domain of the cluster.")
 	flag.DurationVar(&keyGrace, "key-grace", time.Minute, "The time that is added to deadlineSeconds for the key TTL.")
 	flag.IntVar(&jobTTLSeconds, "job-ttl-seconds", controller.DefaultJobTTLSeconds,
@@ -188,7 +197,7 @@ func main() {
 	flag.DurationVar(&testKeyRevokeWait, "test-key-revoke-wait", controller.DefaultTestKeyRevokeWait,
 		"The time after a TestKey block before the spend read. Use the gateway auth cache TTL plus a margin.")
 	flag.BoolVar(&appsEnabled, "apps-enabled", false,
-		"If set, the manager runs the AppVersion controller. The App CRDs and the App role in config/apps "+
+		"If set, the manager runs the App and AppVersion controllers. The App CRDs and the App role in config/apps "+
 			"must be installed first.")
 	flag.BoolVar(&agentIngressEnabled, "agent-ingress-enabled", false,
 		"If set, the controller provisions a new Agent that sets spec.ingressPort. Do not set it before the "+
@@ -309,6 +318,10 @@ func main() {
 	if agentGatewayURL == "" {
 		agentGatewayURL = gatewayURL
 	}
+	if egress.PodLabels, err = labels.ConvertSelectorToLabelsMap(egressPodLabels); err != nil {
+		setupLog.Error(err, "--egress-proxy-pod-labels is not valid")
+		os.Exit(1)
+	}
 	if err := checkEgress(egress); err != nil {
 		setupLog.Error(err, "The egress proxy flags are not valid")
 		os.Exit(1)
@@ -371,6 +384,11 @@ func main() {
 			Egress:     egress,
 		}).SetupWithManager(mgr); err != nil {
 			setupLog.Error(err, "Failed to create controller", "controller", "appversion")
+			os.Exit(1)
+		}
+		if err := (&controller.AppReconciler{Client: mgr.GetClient(), APIReader: mgr.GetAPIReader()}).
+			SetupWithManager(mgr); err != nil {
+			setupLog.Error(err, "Failed to create controller", "controller", "app")
 			os.Exit(1)
 		}
 	}

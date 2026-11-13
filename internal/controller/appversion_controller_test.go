@@ -29,6 +29,7 @@ import (
 	. "github.com/onsi/gomega"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
+	networkingv1 "k8s.io/api/networking/v1"
 	rbacv1 "k8s.io/api/rbac/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
@@ -109,7 +110,8 @@ var _ = Describe("AppVersion controller", func() {
 		om := metav1.ObjectMeta{Name: "kd-" + s, Namespace: ns}
 		for _, o := range []client.Object{&corev1alpha1.AppVersion{ObjectMeta: metav1.ObjectMeta{Name: s, Namespace: ns}},
 			&corev1.Secret{ObjectMeta: om}, &appsv1.Deployment{ObjectMeta: om}, &corev1.Service{ObjectMeta: om},
-			&rbacv1.RoleBinding{ObjectMeta: om}, &rbacv1.Role{ObjectMeta: om}, &corev1.ServiceAccount{ObjectMeta: om}} {
+			&rbacv1.RoleBinding{ObjectMeta: om}, &rbacv1.Role{ObjectMeta: om}, &corev1.ServiceAccount{ObjectMeta: om},
+			&networkingv1.NetworkPolicy{ObjectMeta: om}} {
 			Expect(client.IgnoreNotFound(k8sClient.Delete(bg, o))).To(Succeed())
 		}
 	}
@@ -132,6 +134,51 @@ var _ = Describe("AppVersion controller", func() {
 			app := &corev1alpha1.App{ObjectMeta: metav1.ObjectMeta{Name: appName, Namespace: ns}}
 			Expect(client.IgnoreNotFound(k8sClient.Delete(context.Background(), app))).To(Succeed())
 		})
+	})
+
+	It("makes a default-deny NetworkPolicy with egress to the proxy only, and then the egress is traced", func() {
+		proxy := map[string]string{"app.kubernetes.io/component": "egress-proxy"}
+		rec.Egress.Namespace, rec.Egress.PodLabels = "koodam-system", proxy
+		newApp(2)
+		newVersion(name)
+		mustReconcile()
+
+		np := &networkingv1.NetworkPolicy{}
+		Expect(k8sClient.Get(ctx, nn("kd-"+name), np)).To(Succeed())
+		Expect(metav1.IsControlledBy(np, version(name))).To(BeTrue())
+		Expect(np.Spec.PodSelector.MatchLabels).To(Equal(map[string]string{appLabel: appName, appVersionLabel: name}))
+		Expect(np.Spec.PolicyTypes).To(ConsistOf(networkingv1.PolicyTypeIngress, networkingv1.PolicyTypeEgress))
+		// The ingress is the port of the app container only.
+		Expect(np.Spec.Ingress).To(HaveLen(1))
+		Expect(np.Spec.Ingress[0].From).To(BeEmpty())
+		Expect(np.Spec.Ingress[0].Ports).To(HaveLen(1))
+		Expect(np.Spec.Ingress[0].Ports[0].Port.IntValue()).To(Equal(8080))
+		// The egress has 1 rule, and its only peer is the proxy pods.
+		Expect(np.Spec.Egress).To(HaveLen(1))
+		Expect(np.Spec.Egress[0].To).To(Equal([]networkingv1.NetworkPolicyPeer{{
+			NamespaceSelector: &metav1.LabelSelector{MatchLabels: map[string]string{
+				"kubernetes.io/metadata.name": "koodam-system"}},
+			PodSelector: &metav1.LabelSelector{MatchLabels: proxy}}}))
+		Expect(np.Spec.Egress[0].Ports).To(HaveLen(5))
+		egress := cond(name, corev1alpha1.AppVersionTracedEgress)
+		Expect(egress.Status).To(Equal(metav1.ConditionTrue))
+
+		// The controller restores a policy that a person made wider.
+		np.Spec.Egress = append(np.Spec.Egress, networkingv1.NetworkPolicyEgressRule{})
+		Expect(k8sClient.Update(ctx, np)).To(Succeed())
+		mustReconcile()
+		Expect(k8sClient.Get(ctx, nn("kd-"+name), np)).To(Succeed())
+		Expect(np.Spec.Egress).To(HaveLen(1))
+
+		// A policy that is not from the version does not count, and the version makes no pod.
+		newVersion(name + "-b")
+		foreign := &networkingv1.NetworkPolicy{ObjectMeta: metav1.ObjectMeta{Name: "kd-" + name + "-b", Namespace: ns}}
+		Expect(k8sClient.Create(ctx, foreign)).To(Succeed())
+		_, err := reconcileName(name + "-b")
+		Expect(err).NotTo(HaveOccurred())
+		Expect(cond(name+"-b", condProvisioned).Reason).To(Equal(reasonNameConflict))
+		Expect(cond(name+"-b", corev1alpha1.AppVersionTracedEgress).Reason).To(Equal(reasonNoEgressPolicy))
+		Expect(gone(&appsv1.Deployment{}, name+"-b")).To(BeTrue())
 	})
 
 	It("makes the key, the Role, the Deployment and the Service, and writes only the alias and the hash", func() {

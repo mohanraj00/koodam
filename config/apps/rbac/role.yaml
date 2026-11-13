@@ -36,6 +36,14 @@ rules:
 - apiGroups:
   - core.koodam.dev
   resources:
+  - apps/status
+  - appversions/finalizers
+  - appversions/status
+  verbs:
+  - update
+- apiGroups:
+  - core.koodam.dev
+  resources:
   - appversions
   verbs:
   - get
@@ -43,9 +51,20 @@ rules:
   - update
   - watch
 - apiGroups:
-  - core.koodam.dev
+  - gateway.networking.k8s.io
   resources:
-  - appversions/finalizers
-  - appversions/status
+  - httproutes
   verbs:
+  - create
+  - delete
+  - get
+  - list
+  - update
+- apiGroups:
+  - networking.k8s.io
+  resources:
+  - networkpolicies
+  verbs:
+  - create
+  - get
   - update
