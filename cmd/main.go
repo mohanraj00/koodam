@@ -144,7 +144,7 @@ func main() {
 	var testKeyRevokeWait time.Duration
 	var keyGrace time.Duration
 	var egress controller.EgressProxy
-	var egressPodLabels string
+	var egressPodLabels, appIngressNamespaces string
 	var jobTTLSeconds int
 	var agentIngressEnabled, appsEnabled bool
 	var tlsOpts []func(*tls.Config)
@@ -183,6 +183,9 @@ func main() {
 			"NetworkPolicy that permits egress to these pods only.")
 	flag.StringVar(&egressPodLabels, "egress-proxy-pod-labels", "",
 		"The labels of the egress proxy pods, as key=value pairs with a comma between them.")
+	flag.StringVar(&appIngressNamespaces, "app-ingress-namespaces", "",
+		"The namespaces whose pods can send traffic to the App pods, with a comma between them. Use the "+
+			"namespace of the Gateway data plane. If it is empty, the NetworkPolicy of an AppVersion permits no ingress.")
 	flag.StringVar(&egress.ClusterDomain, "cluster-domain", "cluster.local", "The DNS domain of the cluster.")
 	flag.DurationVar(&keyGrace, "key-grace", time.Minute, "The time that is added to deadlineSeconds for the key TTL.")
 	flag.IntVar(&jobTTLSeconds, "job-ttl-seconds", controller.DefaultJobTTLSeconds,
@@ -322,6 +325,17 @@ func main() {
 		setupLog.Error(err, "--egress-proxy-pod-labels is not valid")
 		os.Exit(1)
 	}
+	var ingressNamespaces []string
+	for ns := range strings.SplitSeq(appIngressNamespaces, ",") {
+		if ns == "" {
+			continue
+		}
+		if errs := validation.IsDNS1123Label(ns); len(errs) > 0 {
+			setupLog.Error(nil, "--app-ingress-namespaces has a namespace that is not valid", "namespace", ns)
+			os.Exit(1)
+		}
+		ingressNamespaces = append(ingressNamespaces, ns)
+	}
 	if err := checkEgress(egress); err != nil {
 		setupLog.Error(err, "The egress proxy flags are not valid")
 		os.Exit(1)
@@ -376,12 +390,13 @@ func main() {
 	}
 	if appsEnabled {
 		if err := (&controller.AppVersionReconciler{
-			Client:     mgr.GetClient(),
-			Scheme:     mgr.GetScheme(),
-			APIReader:  mgr.GetAPIReader(),
-			Gateway:    gw,
-			GatewayURL: strings.TrimRight(agentGatewayURL, "/"),
-			Egress:     egress,
+			Client:            mgr.GetClient(),
+			Scheme:            mgr.GetScheme(),
+			APIReader:         mgr.GetAPIReader(),
+			Gateway:           gw,
+			GatewayURL:        strings.TrimRight(agentGatewayURL, "/"),
+			Egress:            egress,
+			IngressNamespaces: ingressNamespaces,
 		}).SetupWithManager(mgr); err != nil {
 			setupLog.Error(err, "Failed to create controller", "controller", "appversion")
 			os.Exit(1)

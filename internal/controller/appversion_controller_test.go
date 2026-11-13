@@ -142,15 +142,24 @@ var _ = Describe("AppVersion controller", func() {
 		newApp(2)
 		newVersion(name)
 		mustReconcile()
+		// With no ingress namespace, the policy permits no ingress.
+		first := &networkingv1.NetworkPolicy{}
+		Expect(k8sClient.Get(ctx, nn("kd-"+name), first)).To(Succeed())
+		Expect(first.Spec.PolicyTypes).To(ContainElement(networkingv1.PolicyTypeIngress))
+		Expect(first.Spec.Ingress).To(BeEmpty())
+		rec.IngressNamespaces = []string{"gateway-system"}
+		mustReconcile()
 
 		np := &networkingv1.NetworkPolicy{}
 		Expect(k8sClient.Get(ctx, nn("kd-"+name), np)).To(Succeed())
 		Expect(metav1.IsControlledBy(np, version(name))).To(BeTrue())
 		Expect(np.Spec.PodSelector.MatchLabels).To(Equal(map[string]string{appLabel: appName, appVersionLabel: name}))
 		Expect(np.Spec.PolicyTypes).To(ConsistOf(networkingv1.PolicyTypeIngress, networkingv1.PolicyTypeEgress))
-		// The ingress is the port of the app container only.
+		// The ingress is the port of the app container only, from the pods of the ingress namespace only.
 		Expect(np.Spec.Ingress).To(HaveLen(1))
-		Expect(np.Spec.Ingress[0].From).To(BeEmpty())
+		Expect(np.Spec.Ingress[0].From).To(Equal([]networkingv1.NetworkPolicyPeer{{
+			NamespaceSelector: &metav1.LabelSelector{MatchExpressions: []metav1.LabelSelectorRequirement{{
+				Key: "kubernetes.io/metadata.name", Operator: metav1.LabelSelectorOpIn, Values: []string{"gateway-system"}}}}}}))
 		Expect(np.Spec.Ingress[0].Ports).To(HaveLen(1))
 		Expect(np.Spec.Ingress[0].Ports[0].Port.IntValue()).To(Equal(8080))
 		// The egress has 1 rule, and its only peer is the proxy pods.

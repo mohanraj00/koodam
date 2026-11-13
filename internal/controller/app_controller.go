@@ -50,6 +50,10 @@ var httpRouteGVK = schema.GroupVersionKind{Group: gatewayAPIGroup, Version: "v1"
 // AppReconciler makes one Gateway API HTTPRoute for each endpoint of an App. The route sends a
 // weight of the traffic to the Service of each version. The controller is not a router: the
 // Gateway API implementation of the cluster moves the traffic.
+//
+// Each route has a controller owner reference to its App, with blockOwnerDeletion. The API server
+// permits this reference only with update on apps/finalizers, if the admission plugin
+// OwnerReferencesPermissionEnforcement is on.
 type AppReconciler struct {
 	client.Client
 	// APIReader reads the App, the AppVersions, the Services and the routes directly, not from
@@ -58,6 +62,7 @@ type AppReconciler struct {
 }
 
 // +kubebuilder:rbac:groups=core.koodam.dev,resources=apps/status,verbs=update
+// +kubebuilder:rbac:groups=core.koodam.dev,resources=apps/finalizers,verbs=update
 // +kubebuilder:rbac:groups=gateway.networking.k8s.io,resources=httproutes,verbs=get;list;create;update;delete
 
 // Reconcile makes the routes of the endpoints, deletes the routes of the endpoints that are gone

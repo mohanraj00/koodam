@@ -53,10 +53,13 @@ const (
 	egressHTTPPort = 8080
 )
 
-// policy is the default-deny NetworkPolicy of the pods with the labels sel. The pods get ingress
-// only on their own ports, and egress only to the pods of the egress proxy. It gives back nil if
-// the controller does not know the pods of the proxy.
-func (e EgressProxy) policy(m metav1.ObjectMeta, sel map[string]string, ports []corev1.ContainerPort) *networkingv1.NetworkPolicy {
+// policy is the default-deny NetworkPolicy of the pods with the labels sel. The pods get egress
+// only to the pods of the egress proxy. They get ingress only from the pods of the namespaces
+// from, on their own ports. If from is empty, the policy permits no ingress: a rule with no
+// source opens the ports to each workload, and it also opens a namespace that has a default-deny
+// policy. It gives back nil if the controller does not know the pods of the proxy.
+func (e EgressProxy) policy(m metav1.ObjectMeta, sel map[string]string, ports []corev1.ContainerPort,
+	from []string) *networkingv1.NetworkPolicy {
 	if e.IP == "" || e.Namespace == "" || len(e.PodLabels) == 0 {
 		return nil
 	}
@@ -64,14 +67,20 @@ func (e EgressProxy) policy(m metav1.ObjectMeta, sel map[string]string, ports []
 	port := func(proto *corev1.Protocol, n int) networkingv1.NetworkPolicyPort {
 		return networkingv1.NetworkPolicyPort{Protocol: proto, Port: new(intstr.FromInt(n))}
 	}
-	in := make([]networkingv1.NetworkPolicyPort, 0, len(ports))
-	for _, p := range ports {
-		in = append(in, port(&tcp, int(p.ContainerPort)))
+	var ingress []networkingv1.NetworkPolicyIngressRule
+	if len(from) > 0 {
+		in := make([]networkingv1.NetworkPolicyPort, 0, len(ports))
+		for _, p := range ports {
+			in = append(in, port(&tcp, int(p.ContainerPort)))
+		}
+		ingress = []networkingv1.NetworkPolicyIngressRule{{Ports: in, From: []networkingv1.NetworkPolicyPeer{{
+			NamespaceSelector: &metav1.LabelSelector{MatchExpressions: []metav1.LabelSelectorRequirement{{
+				Key: corev1.LabelMetadataName, Operator: metav1.LabelSelectorOpIn, Values: from}}}}}}}
 	}
 	return &networkingv1.NetworkPolicy{ObjectMeta: m, Spec: networkingv1.NetworkPolicySpec{
 		PodSelector: metav1.LabelSelector{MatchLabels: sel},
 		PolicyTypes: []networkingv1.PolicyType{networkingv1.PolicyTypeIngress, networkingv1.PolicyTypeEgress},
-		Ingress:     []networkingv1.NetworkPolicyIngressRule{{Ports: in}},
+		Ingress:     ingress,
 		Egress: []networkingv1.NetworkPolicyEgressRule{{
 			To: []networkingv1.NetworkPolicyPeer{{
 				NamespaceSelector: &metav1.LabelSelector{MatchLabels: map[string]string{

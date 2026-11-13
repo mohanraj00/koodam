@@ -94,6 +94,10 @@ type AppVersionReconciler struct {
 	GatewayURL string
 	// Egress sends the egress of the app pods through the egress proxy.
 	Egress EgressProxy
+	// IngressNamespaces are the namespaces whose pods can send traffic to the app pods, for
+	// example the namespace of the Gateway data plane. If it is empty, the NetworkPolicy of a
+	// version permits no ingress, and the platform team adds its own policy for the Gateway.
+	IngressNamespaces []string
 	// KeyTTL is the TTL of a version key. If it is 0, the controller uses DefaultWorkspaceKeyTTL.
 	// The controller renews the key when the last renew is older than KeyTTL/4.
 	KeyTTL time.Duration
@@ -558,7 +562,7 @@ func (r *AppVersionReconciler) applyObjects(ctx context.Context, av *corev1alpha
 			Selector: appVersionLabels(av), Ports: svcPorts}},
 	}
 	// The NetworkPolicy is first, so that no pod of the version starts before its policy.
-	want := r.Egress.policy(appVersionMeta(av), appVersionLabels(av), ports)
+	want := r.Egress.policy(appVersionMeta(av), appVersionLabels(av), ports, r.IngressNamespaces)
 	if want != nil {
 		objs = append([]client.Object{want.DeepCopy()}, objs...)
 	}
