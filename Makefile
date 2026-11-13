@@ -194,6 +194,7 @@ helm-sync: manifests ## Copy the CRD and the RBAC rules from config/ into the He
 	cp config/rbac/leader_election_role.yaml $(CHART)/files/leader-election-role.yaml
 	cp config/rbac/metrics_auth_role.yaml $(CHART)/files/metrics-auth-role.yaml
 	cp config/apps/rbac/role.yaml $(CHART)/files/app-manager-role.yaml
+	cp config/apps/admission/policy.yaml $(CHART)/files/app-admission-policy.yaml
 	cp config/apps/crd/bases/core.koodam.dev_apps.yaml $(CHART)/files/app-crd-apps.yaml
 	cp config/apps/crd/bases/core.koodam.dev_appversions.yaml $(CHART)/files/app-crd-appversions.yaml
 

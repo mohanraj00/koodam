@@ -4,7 +4,7 @@ An `App` is an application that serves clients. Each `AppVersion` of the App is 
 
 ## Install
 
-Set `apps.enabled=true` in the chart. The chart then installs the `App` and `AppVersion` CRDs and the App role, and the manager runs the App controllers. Helm keeps the App CRDs on an uninstall.
+Set `apps.enabled=true` in the chart. The chart then installs the `App` and `AppVersion` CRDs, the App role and the admission policy of the AppVersion, and the manager runs the App controllers. Helm keeps the App CRDs on an uninstall.
 
 An endpoint of an App needs a Gateway API implementation in the cluster, with the `HTTPRoute` of the standard channel. The chart does not install one. Koodam has no router: the Gateway API implementation moves the traffic. The kind test of this repository uses Envoy Gateway.
 
@@ -53,6 +53,14 @@ spec:
 ```
 
 The second version `shop-v2` has the same form. The `Gateway` with the name `public` must permit routes from the namespace of the App.
+
+## Admission checks
+
+A `ValidatingAdmissionPolicy` holds the checks of an AppVersion that the CRD cannot hold:
+
+- After the version has a gateway key, `spec.template` cannot change. To change the template, make a new AppVersion. `replicas`, `budgetPerDay` and `lifecycle` can change.
+- The name of the AppVersion is a DNS label with 60 characters or fewer, and `spec.appRef.name` has 63 characters or fewer.
+- Each port of the `app` container has a name and the TCP protocol, with no host port.
 
 ## Endpoints and weights
 

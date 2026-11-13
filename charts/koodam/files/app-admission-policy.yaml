@@ -1,0 +1,51 @@
+# The checks of an AppVersion that the CRD cannot hold. The CRD cannot compare the template with
+# the status, and the rule for the ports is too costly for a CRD.
+#
+# The policy does not match the status subresource, so the status writes of the controller do not
+# pass through it. The checks of the name and the ports apply to a create and to a template
+# change only. Thus an AppVersion from before this policy can still lose its finalizer.
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicy
+metadata:
+  name: koodam-appversion
+spec:
+  failurePolicy: Fail
+  matchConstraints:
+    resourceRules:
+    - apiGroups: ["core.koodam.dev"]
+      apiVersions: ["v1alpha1"]
+      operations: ["CREATE", "UPDATE"]
+      resources: ["appversions"]
+  variables:
+  # sameTemplate is true for an update that does not change spec.template.
+  - name: sameTemplate
+    expression: "request.operation == 'UPDATE' && object.spec.template == oldObject.spec.template"
+  # live is true if the version has a gateway key.
+  - name: live
+    expression: "request.operation == 'UPDATE' && has(oldObject.status) && has(oldObject.status.keyHash) && oldObject.status.keyHash != ''"
+  validations:
+  - expression: "!variables.live || variables.sameTemplate"
+    message: "spec.template is immutable after the version has a gateway key. Make a new AppVersion."
+    reason: Invalid
+  - expression: "request.operation != 'CREATE' || (size(object.metadata.name) <= 60 && object.metadata.name.matches('^[a-z0-9]([-a-z0-9]*[a-z0-9])?$'))"
+    message: "The AppVersion name must be a DNS label with 60 characters or fewer."
+    reason: Invalid
+  - expression: "request.operation != 'CREATE' || size(object.spec.appRef.name) <= 63"
+    message: "spec.appRef.name must have 63 characters or fewer."
+    reason: Invalid
+  - expression: >-
+      variables.sameTemplate ||
+      object.spec.template.podTemplate.spec.containers.filter(c, c.name == 'app').all(c,
+      has(c.ports) && c.ports.all(p, has(p.name) && size(p.name) > 0 &&
+      (!has(p.protocol) || p.protocol == 'TCP') &&
+      (!has(p.hostPort) || p.hostPort == 0) && (!has(p.hostIP) || p.hostIP == '')))
+    message: "Each port of the app container must have a name and the TCP protocol, with no host port."
+    reason: Invalid
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicyBinding
+metadata:
+  name: koodam-appversion
+spec:
+  policyName: koodam-appversion
+  validationActions: ["Deny"]

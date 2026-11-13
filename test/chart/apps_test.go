@@ -29,7 +29,8 @@ func TestAppsOnlyIfEnabled(t *testing.T) {
 	if err != nil {
 		t.Fatalf("helm template failed: %v\n%s", err, off)
 	}
-	for _, s := range []string{flag, role, "appversions.core.koodam.dev", "httproutes", "--egress-proxy-namespace"} {
+	for _, s := range []string{flag, role, "appversions.core.koodam.dev", "httproutes", "--egress-proxy-namespace",
+		"ValidatingAdmissionPolicy"} {
 		if strings.Contains(off, s) {
 			t.Errorf("the default install has %q", s)
 		}
@@ -47,6 +48,10 @@ func TestAppsOnlyIfEnabled(t *testing.T) {
 		if !strings.Contains(crd, "helm.sh/resource-policy: keep") {
 			t.Error("an App CRD does not have the keep policy")
 		}
+	}
+	const policy = "ValidatingAdmissionPolicy"
+	if len(objects(t, on, policy)) != 1 || len(objects(t, on, policy+"Binding")) != 1 {
+		t.Error("the install with apps.enabled does not have the admission policy and its binding")
 	}
 	const binding = "ClusterRoleBinding"
 	if !strings.Contains(on, flag) || len(objects(t, on, binding)) <= len(objects(t, off, binding)) {

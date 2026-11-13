@@ -1,0 +1,4 @@
+# The ValidatingAdmissionPolicy of the AppVersion and its binding. The default install does not
+# include them. Apply this folder for a manual App install, after config/apps/crd.
+resources:
+- policy.yaml

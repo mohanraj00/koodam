@@ -8,6 +8,10 @@
 {{ toYaml $crd }}
 ---
 {{- end }}
+# The ValidatingAdmissionPolicy of the AppVersion and its binding. They come from
+# config/apps/admission/policy.yaml.
+{{ .Files.Get "files/app-admission-policy.yaml" }}
+---
 # The rules of the App controllers. They come from config/apps/rbac/role.yaml (controller-gen).
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole

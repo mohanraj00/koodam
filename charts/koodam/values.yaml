@@ -219,8 +219,8 @@ egressProxy:
     # More egress rules (NetworkPolicyEgressRule), for example for a gateway at a private address.
     extraEgress: []
 
-# Apps. If enabled is true, the chart installs the App and AppVersion CRDs and the App role, and
-# the manager runs the App controllers. An App endpoint needs a Gateway API implementation in
+# Apps. If enabled is true, the chart installs the App and AppVersion CRDs, the App role and the
+# ValidatingAdmissionPolicy of the AppVersion, and the manager runs the App controllers. An App endpoint needs a Gateway API implementation in
 # the cluster. The chart does not install one. Helm keeps the App CRDs on an uninstall, so that
 # the Apps of the cluster stay.
 apps:
