@@ -261,7 +261,10 @@ func (r *AppVersionReconciler) apply(ctx context.Context, av *corev1alpha1.AppVe
 	if err != nil {
 		return ctrl.Result{}, err
 	}
-	if deploy != nil {
+	// After a renew that failed, the key has the model of the last renew. The objects stay as
+	// they are until the gateway accepts the key settings, so the pods do not get a model that the
+	// key refuses.
+	if deploy != nil && !renewErr {
 		reason, err := r.applyObjects(ctx, av, deploy)
 		if err != nil {
 			return ctrl.Result{}, err

@@ -318,18 +318,32 @@ var _ = Describe("AppVersion controller", func() {
 		Expect(c.ObservedGeneration).To(Equal(version(name).Generation))
 	})
 
-	It("sends a new budget to the same key, and applies a replicas change", func() {
+	It("sends a new budget and a new model to the same key, and applies the template after the renew", func() {
+		const nextModel = "next-model"
+		podModel := func() string {
+			d := &appsv1.Deployment{}
+			Expect(k8sClient.Get(ctx, nn("kd-"+name), d)).To(Succeed())
+			for _, e := range d.Spec.Template.Spec.Containers[0].Env {
+				if e.Name == appModelEnv {
+					return e.Value
+				}
+			}
+			return ""
+		}
 		newApp(2)
 		newVersion(name)
 		mustReconcile()
 		av := version(name)
 		av.Spec.BudgetPerDay = resource.MustParse("9")
 		av.Spec.Replicas = new(int32(3))
+		av.Spec.Template.Model = nextModel
 		Expect(k8sClient.Update(ctx, av)).To(Succeed())
 
 		gw.renewErr = errors.New("gateway down")
 		_, err := reconcileName(name)
 		Expect(err).To(MatchError(errRenewFailed))
+		// The key refuses the new model, so the pods keep the old model.
+		Expect(podModel()).To(Equal(testGatewayModel))
 		c := cond(name, condGatewayKey)
 		Expect(c.Status).To(Equal(metav1.ConditionFalse))
 		Expect(c.ObservedGeneration).To(Equal(int64(1)))
@@ -338,6 +352,8 @@ var _ = Describe("AppVersion controller", func() {
 		mustReconcile()
 		Expect(gw.order).To(Equal([]string{opCreate, opRenew}))
 		Expect(gw.specs[1].Budget).To(Equal(9.0))
+		Expect(gw.specs[1].Model).To(Equal(nextModel))
+		Expect(podModel()).To(Equal(nextModel))
 		Expect(gw.specs[1].Value).To(Equal(gw.specs[0].Value))
 		c = cond(name, condGatewayKey)
 		Expect(c.Status).To(Equal(metav1.ConditionTrue))
