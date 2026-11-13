@@ -555,11 +555,12 @@ var _ = Describe("AppVersion controller", func() {
 		// A version with no key has a periodic reconcile, so a deleted NetworkPolicy comes back.
 		Expect(mustReconcile().RequeueAfter).To(Equal(ttl / 4))
 
-		// No gateway call, no Secret, no finalizer, no alias and no hash.
+		// No gateway call, no Secret, no alias and no hash. The finalizer keeps the version until
+		// the controller deletes its objects.
 		Expect(gw.order).To(BeEmpty())
 		Expect(gone(&corev1.Secret{}, name)).To(BeTrue())
 		av = version(name)
-		Expect(av.Finalizers).To(BeEmpty())
+		Expect(av.Finalizers).To(Equal([]string{appFinalizer}))
 		Expect(av.Status.KeyAlias).To(BeEmpty())
 		Expect(av.Status.KeyHash).To(BeEmpty())
 		Expect(cond(name, condGatewayKey).Reason).To(Equal(reasonNoModel))
@@ -582,6 +583,29 @@ var _ = Describe("AppVersion controller", func() {
 		Expect(err).NotTo(HaveOccurred())
 		Expect(cond(name+"-c", condProvisioned).Status).To(Equal(metav1.ConditionTrue))
 
+		// A delete that orphans the objects does not keep the pods and their access.
+		newVersion(name + "-d")
+		DeferCleanup(func() { cleanup(name + "-d") })
+		d2 := version(name + "-d")
+		d2.Spec.Template.Model, d2.Spec.BudgetPerDay = "", nil
+		Expect(k8sClient.Update(ctx, d2)).To(Succeed())
+		_, err = reconcileName(name + "-d")
+		Expect(err).NotTo(HaveOccurred())
+		Expect(gone(&rbacv1.Role{}, name+"-d")).To(BeFalse())
+		Expect(k8sClient.Delete(ctx, version(name+"-d"),
+			client.PropagationPolicy(metav1.DeletePropagationOrphan))).To(Succeed())
+		_, err = reconcileName(name + "-d")
+		Expect(err).NotTo(HaveOccurred())
+		for _, o := range []client.Object{&appsv1.Deployment{}, &rbacv1.RoleBinding{}, &rbacv1.Role{},
+			&corev1.ServiceAccount{}} {
+			Expect(gone(o, name+"-d")).To(BeTrue())
+		}
+		// envtest has no garbage collector, so the orphan finalizer of the API server can stay.
+		left := &corev1alpha1.AppVersion{}
+		if k8sClient.Get(ctx, nn(name+"-d"), left) == nil {
+			Expect(left.Finalizers).NotTo(ContainElement(appFinalizer))
+		}
+
 		av.Spec.Lifecycle = corev1alpha1.AppVersionRetiring
 		Expect(k8sClient.Update(ctx, av)).To(Succeed())
 		Expect(mustReconcile().RequeueAfter).To(Equal(10 * time.Minute))
@@ -592,6 +616,7 @@ var _ = Describe("AppVersion controller", func() {
 		Expect(gone(&appsv1.Deployment{}, name)).To(BeTrue())
 		Expect(gone(&corev1.Service{}, name)).To(BeTrue())
 		Expect(gw.order).NotTo(ContainElement(opBlock))
+		Expect(version(name).Finalizers).To(BeEmpty())
 	})
 
 	It("drains a retiring version before the revoke", func() {
