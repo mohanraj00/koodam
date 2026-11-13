@@ -229,6 +229,23 @@ apps:
   # Gateway data plane. It has an effect only with egressProxy.enabled: then each AppVersion has
   # a NetworkPolicy, and that policy permits no ingress if this list is empty.
   ingressNamespaces: []
+  # The signed claim check at the ingress of each App. With an issuer, each AppVersion pod gets a
+  # check container, and a request with no valid JWT of the issuer gets the status 401. The check
+  # accepts RS256 and ES256. It protects a version only with egressProxy.enabled, because only
+  # then a NetworkPolicy stops a direct call to the app container.
+  claimCheck:
+    # The necessary value of the claim iss. If it is empty, the Apps have no claim check.
+    issuer: ""
+    # A value that the claim aud must have.
+    audience: ""
+    # The claim with the caller label. The app container gets it in the header Koodam-Caller.
+    callerClaim: sub
+    # The claim with the tenant label. The app container gets it in the header Koodam-Tenant. If
+    # it is empty, the check reads no tenant label.
+    tenantClaim: ""
+    # The JWKS document of the issuer, as text. It has public keys only. A change of this value
+    # starts the manager again, and then each AppVersion gets new pods.
+    jwks: ""
 
 # The metrics endpoint (HTTPS). If true, the chart adds the metrics Service and the
 # metrics-auth ClusterRole (tokenreviews and subjectaccessreviews, verb create).

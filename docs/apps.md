@@ -85,6 +85,35 @@ The App controller makes one `HTTPRoute` for each endpoint, with the name `kd-<a
 
 A request with the header `Koodam-App-Version: <version>` goes to that version only, if the version has a weight of more than 0 in the spec of the endpoint. A retiring version with such a weight keeps this rule for the drain time. The header is not proof of a session: each caller can send it. A version with the weight 0 gets no traffic, also while it retires. The app container has the name of its version in the env variable `KOODAM_APP_VERSION`. Thus the app can give the name to its client, and the client sends the header to stay on the version. Koodam does not use the session persistence of the Gateway API, because it is not in the standard channel.
 
+## The signed claim check
+
+The operator can require a signed claim for each request to an App. The claim is a JWT from one issuer. The check is on for each App of the cluster when the chart has an issuer:
+
+```yaml
+apps:
+  enabled: true
+  claimCheck:
+    issuer: https://issuer.example.com
+    audience: shop
+    callerClaim: sub
+    tenantClaim: tenant
+    jwks: '{"keys":[...]}'
+```
+
+Then each AppVersion pod gets the container `koodam-claim` in front of the `app` container:
+
+- The Service of the version sends each request to the check container. The route and the weights do not change.
+- The check accepts the algorithms RS256 and ES256 only. It verifies the signature with the keys of `jwks`, and it checks `iss`, `aud`, `exp` and `nbf`.
+- A request with no valid claim gets the status 401. It does not get to the `app` container.
+- The `app` container does not get the token. It gets the caller label in the header `Koodam-Caller`, and the tenant label in `Koodam-Tenant` if `tenantClaim` is set. A caller cannot set these headers.
+- The check container writes one JSON line for each request to its log: the time, the App, the version, the method, the status, the outcome and the 2 labels. The line has no token, no path and no header.
+
+`jwks` has the public keys of the issuer. A change of `jwks` starts the manager again, and then each AppVersion gets new pods. A JWKS URL is not in this step.
+
+The check protects a version only if the version has its NetworkPolicy, thus only with `egressProxy.enabled`. The policy permits ingress to the port of the check container only. With no policy, a pod of the cluster can call the port of the `app` container directly. The condition `ClaimCheck` of the AppVersion shows the state: `True` with the reason `Enforced`, or `False` with the reason `NoNetworkPolicy`.
+
+The kubelet sends the probes of the `app` container directly to that container, with no claim.
+
 ## Retire a version
 
 Set `spec.lifecycle: Retiring` on the AppVersion. This change is terminal.
