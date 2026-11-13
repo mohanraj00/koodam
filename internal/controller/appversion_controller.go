@@ -64,6 +64,9 @@ const (
 	appKeyFileEnv    = "KOODAM_GATEWAY_KEY_FILE"
 	// appKeyGroup is the group of the key file in the pod.
 	appKeyGroup = int64(1000)
+	// reasonIssuing is the reason of the condition GatewayKey from the enrollment until the
+	// gateway confirms the key.
+	reasonIssuing = "Issuing"
 	// appLiveWait is the time between 2 checks of a version that waits for a free live slot.
 	appLiveWait = 30 * time.Second
 )
@@ -317,6 +320,10 @@ func (r *AppVersionReconciler) enroll(ctx context.Context, av *corev1alpha1.AppV
 		// Write the hash before the key exists, so that a revoke can always find the key.
 		av.Status.KeyAlias = "kdapp-" + string(av.UID)
 		av.Status.KeyHash = gateway.HashKey(key)
+		// The condition records the generation of the first key request. See applyKey.
+		meta.SetStatusCondition(&av.Status.Conditions, metav1.Condition{Type: condGatewayKey,
+			Status: metav1.ConditionFalse, Reason: reasonIssuing,
+			Message: "The controller makes the gateway key.", ObservedGeneration: av.Generation})
 		if err := r.Status().Update(ctx, av); err != nil {
 			return "", err
 		}
@@ -406,9 +413,16 @@ func (r *AppVersionReconciler) applyKey(ctx context.Context, av *corev1alpha1.Ap
 			"app": av.Spec.AppRef.Name, "appVersion": av.Name}}
 	c := meta.FindStatusCondition(av.Status.Conditions, condGatewayKey)
 	switch {
-	case c == nil:
+	case c == nil || c.Reason == reasonIssuing:
 		if err := r.Gateway.CreateKey(ctx, spec); err != nil {
 			return false, err
+		}
+		// CreateKey does not change a key that exists. If the spec changed after an earlier
+		// request that possibly made the key, send the budget of this generation.
+		if c != nil && c.ObservedGeneration != av.Generation {
+			if err := r.Gateway.RenewKey(ctx, spec); err != nil {
+				return false, err
+			}
 		}
 		logf.FromContext(ctx).Info("Issued the version key", "keyAlias", av.Status.KeyAlias)
 	case c.Status == metav1.ConditionTrue && c.ObservedGeneration == av.Generation &&

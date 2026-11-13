@@ -274,6 +274,26 @@ var _ = Describe("AppVersion controller", func() {
 		Expect(cond(name, condProvisioned).Status).To(Equal(metav1.ConditionTrue))
 	})
 
+	It("sends the new budget if the spec changed before the status had the key", func() {
+		newApp(2)
+		newVersion(name)
+		mustReconcile()
+		// This is the state after a crash between CreateKey and the status write.
+		av := version(name)
+		meta.SetStatusCondition(&av.Status.Conditions, metav1.Condition{Type: condGatewayKey,
+			Status: metav1.ConditionFalse, Reason: reasonIssuing, ObservedGeneration: av.Generation})
+		Expect(k8sClient.Status().Update(ctx, av)).To(Succeed())
+		av.Spec.BudgetPerDay = resource.MustParse("2")
+		Expect(k8sClient.Update(ctx, av)).To(Succeed())
+
+		mustReconcile()
+		Expect(gw.order).To(Equal([]string{opCreate, opCreate, opRenew}))
+		Expect(gw.specs[2].Budget).To(Equal(2.0))
+		c := cond(name, condGatewayKey)
+		Expect(c.Status).To(Equal(metav1.ConditionTrue))
+		Expect(c.ObservedGeneration).To(Equal(version(name).Generation))
+	})
+
 	It("sends a new budget to the same key, and applies a replicas change", func() {
 		newApp(2)
 		newVersion(name)
