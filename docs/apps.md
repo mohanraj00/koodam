@@ -69,7 +69,7 @@ The App controller makes one `HTTPRoute` for each endpoint, with the name `kd-<a
 
 ## Sessions
 
-A request with the header `Koodam-App-Version: <version>` goes to that version only, if the version has a weight of more than 0 in the endpoint or drains. The header is not proof of a session: each caller can send it. A version with the weight 0 that does not retire gets no traffic. The app container has the name of its version in the env variable `KOODAM_APP_VERSION`. Thus the app can give the name to its client, and the client sends the header to stay on the version. Koodam does not use the session persistence of the Gateway API, because it is not in the standard channel.
+A request with the header `Koodam-App-Version: <version>` goes to that version only, if the version has a weight of more than 0 in the spec of the endpoint. A retiring version with such a weight keeps this rule for the drain time. The header is not proof of a session: each caller can send it. A version with the weight 0 gets no traffic, also while it retires. The app container has the name of its version in the env variable `KOODAM_APP_VERSION`. Thus the app can give the name to its client, and the client sends the header to stay on the version. Koodam does not use the session persistence of the Gateway API, because it is not in the standard channel.
 
 ## Retire a version
 
