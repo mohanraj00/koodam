@@ -246,7 +246,14 @@ func (r *AppVersionReconciler) apply(ctx context.Context, av *corev1alpha1.AppVe
 	if err != nil || key == "" {
 		return ctrl.Result{}, err
 	}
-	renewErr, err := r.applyKey(ctx, av, key)
+	model := av.Spec.Template.Model
+	if deploy == nil {
+		// The pods keep the model of the last valid template, so the key keeps it too.
+		if model, err = r.appliedModel(ctx, av); err != nil {
+			return ctrl.Result{}, err
+		}
+	}
+	renewErr, err := r.applyKey(ctx, av, key, model)
 	if errors.Is(err, gateway.ErrKeyNotFound) {
 		// The gateway lost a key that it had. The controller does not make the key again.
 		return ctrl.Result{}, r.revoke(ctx, av, "KeyLost")
@@ -440,13 +447,31 @@ func (r *AppVersionReconciler) getOwned(ctx context.Context, av *corev1alpha1.Ap
 	return true, nil
 }
 
+// appliedModel is the model in the Deployment of the version. If the version has no Deployment,
+// it is the model of the spec.
+func (r *AppVersionReconciler) appliedModel(ctx context.Context, av *corev1alpha1.AppVersion) (string, error) {
+	d := &appsv1.Deployment{}
+	found, err := r.getOwned(ctx, av, d)
+	if err != nil && !errors.Is(err, errNotOwned) {
+		return "", err
+	}
+	if c := appContainer(&d.Spec.Template.Spec); found && err == nil && c != nil {
+		for _, e := range c.Env {
+			if e.Name == appModelEnv {
+				return e.Value, nil
+			}
+		}
+	}
+	return av.Spec.Template.Model, nil
+}
+
 // applyKey makes the key at the gateway, or renews it. The condition GatewayKey exists only
 // after a CreateKey without error. Thus a missing key after that is a lost key, and applyKey
 // returns gateway.ErrKeyNotFound. A new budget is in the condition only after the gateway
 // accepted it. renewFailed is true if a renew failed and the key stays valid until its TTL ends.
-func (r *AppVersionReconciler) applyKey(ctx context.Context, av *corev1alpha1.AppVersion, key string) (
+func (r *AppVersionReconciler) applyKey(ctx context.Context, av *corev1alpha1.AppVersion, key, model string) (
 	renewFailed bool, err error) {
-	spec := gateway.KeySpec{Value: key, Alias: av.Status.KeyAlias, Model: av.Spec.Template.Model,
+	spec := gateway.KeySpec{Value: key, Alias: av.Status.KeyAlias, Model: model,
 		Budget: av.Spec.BudgetPerDay.AsApproximateFloat64(), BudgetPeriod: 24 * time.Hour, TTL: r.keyTTL(),
 		Metadata: map[string]string{metaUID: string(av.UID), metaNamespace: av.Namespace,
 			"app": av.Spec.AppRef.Name, "appVersion": av.Name}}

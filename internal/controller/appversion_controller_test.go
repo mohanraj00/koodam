@@ -353,12 +353,15 @@ var _ = Describe("AppVersion controller", func() {
 		mustReconcile()
 		av := version(name)
 		av.Spec.Template.Rules = []rbacv1.PolicyRule{outsideCeiling}
+		av.Spec.Template.Model = "model-of-the-refused-template"
 		Expect(k8sClient.Update(ctx, av)).To(Succeed())
 
 		now = now.Add(ttl/4 + time.Second)
 		res := mustReconcile()
 		Expect(res.RequeueAfter).To(BeNumerically(">", 0))
 		Expect(gw.order).To(Equal([]string{opCreate, opRenew}))
+		// The pods keep the model of the last valid template, so the key keeps it too.
+		Expect(gw.specs[1].Model).To(Equal(testGatewayModel))
 		Expect(cond(name, condProvisioned).Reason).To(Equal(reasonInvalid))
 		role := &rbacv1.Role{}
 		Expect(k8sClient.Get(ctx, nn("kd-"+name), role)).To(Succeed())
