@@ -677,6 +677,19 @@ func subPathEnv(expr string, agent []corev1.EnvVar) ([]corev1.EnvVar, bool) {
 	return env, true
 }
 
+// reasonNoResult is the reason of an output with no result from the sidecar of the run.
+const reasonNoResult = "NoResult"
+
+// outputSidecar gives back the sidecar that computes the digest, or nil.
+func outputSidecar(cs []corev1.Container) *corev1.Container {
+	for i := range cs {
+		if cs[i].Name == outputContainer && len(cs[i].Command) >= 3 {
+			return &cs[i]
+		}
+	}
+	return nil
+}
+
 // readOutput reads the digest of the output file from the termination message of the sidecar of
 // the newest pod of the run. It sets the status in memory one time. The message comes from a pod, so
 // outputdigest.Parse accepts only a digest of the correct form.
@@ -705,17 +718,26 @@ func (r *AgentReconciler) readOutput(ctx context.Context, a *corev1alpha1.Agent)
 			newest = p
 		}
 	}
-	// The sidecar of the pod says if the run has an output, and gives its path. A change of
-	// spec.output after the start of the run has no effect.
-	out := &corev1alpha1.AgentOutputStatus{Reason: "NoResult"}
-	if newest != nil {
-		for _, c := range newest.Spec.InitContainers {
-			if c.Name == outputContainer && len(c.Command) >= 3 {
-				out.Path = c.Command[2]
+	// The sidecar of the Job template says if the run has an output, and gives its path. A change
+	// of spec.output after the start of the run has no effect.
+	out := &corev1alpha1.AgentOutputStatus{Reason: reasonNoResult}
+	var side *corev1.Container
+	if owned {
+		side = outputSidecar(job.Spec.Template.Spec.InitContainers)
+	}
+	switch {
+	case side != nil:
+		out.Path = side.Command[2]
+		// The sidecar of the pod must be the sidecar of the Job template: the same image and the
+		// same command. A different container with this name does not give the result.
+		if newest != nil {
+			got := outputSidecar(newest.Spec.InitContainers)
+			if got == nil || got.Image != side.Image || !slices.Equal(got.Command, side.Command) {
+				newest = nil
 			}
 		}
-	} else if a.Spec.Output != nil {
-		out.Path = a.Spec.Output.Path
+	case !owned && a.Spec.Output != nil:
+		out.Path, newest = a.Spec.Output.Path, nil
 	}
 	if out.Path == "" {
 		return nil

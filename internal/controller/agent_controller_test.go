@@ -562,7 +562,7 @@ wire_api = "responses"
 		runPod(job, `{"sha256":"not-a-digest","size":1}`)
 		endJob(batchv1.JobComplete)
 		reconcileOnce(r)
-		Expect(agent().Status.Output).To(Equal(&corev1alpha1.AgentOutputStatus{Path: outFile, Reason: "NoResult"}))
+		Expect(agent().Status.Output).To(Equal(&corev1alpha1.AgentOutputStatus{Path: outFile, Reason: reasonNoResult}))
 	})
 
 	It("does not read the digest from a pod that is not from the Job of this run", func() {
@@ -578,7 +578,23 @@ wire_api = "responses"
 		runPod(stale, `{"sha256":"5891b5b522d5df086d0ff0b110fbd9d21bb4fc7163af34d08286a2e846f6be03","size":6}`)
 		endJob(batchv1.JobComplete)
 		reconcileOnce(r)
-		Expect(agent().Status.Output).To(Equal(&corev1alpha1.AgentOutputStatus{Path: outFile, Reason: "NoResult"}))
+		Expect(agent().Status.Output).To(Equal(&corev1alpha1.AgentOutputStatus{Path: outFile, Reason: reasonNoResult}))
+	})
+
+	It("does not read the digest from a pod with a different output container", func() {
+		setOutput(outFile)
+		r := newReconciler()
+		r.InstallerImage = installerImage
+		reconcileOnce(r)
+		job := &batchv1.Job{}
+		Expect(exists(job)).To(BeTrue())
+		// The pod names the Job as its owner, but its container is not the container of the Job.
+		forged := job.DeepCopy()
+		forged.Spec.Template.Spec.InitContainers[0].Command = []string{"/bin/sh", "-c", "exit 0"}
+		runPod(forged, `{"sha256":"5891b5b522d5df086d0ff0b110fbd9d21bb4fc7163af34d08286a2e846f6be03","size":6}`)
+		endJob(batchv1.JobComplete)
+		reconcileOnce(r)
+		Expect(agent().Status.Output).To(Equal(&corev1alpha1.AgentOutputStatus{Path: outFile, Reason: reasonNoResult}))
 	})
 
 	It("uses a file mount at the output path before a mount of its directory", func() {
