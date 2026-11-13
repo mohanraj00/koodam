@@ -252,8 +252,16 @@ var _ = Describe("Thin App", Ordered, Label("app"), func() {
 		By("keeping a session on one version with the header")
 		Expect(call(30, v2)).To(Equal(map[string]int{v2: 30}))
 		Expect(call(30, v1)).To(Equal(map[string]int{v1: 30}))
-		// The version with no model has the weight 0. It serves a client that sends its name.
-		Expect(call(10, static)).To(Equal(map[string]int{static: 10}))
+		// The version with no model has the weight 0, so a caller cannot select it with the header.
+		Expect(call(10, static)).NotTo(HaveKey(static))
+
+		By("giving a weight to the version with no model")
+		app := &corev1alpha1.App{}
+		Expect(k8s.Get(ctx, client.ObjectKey{Namespace: appNS, Name: appName}, app)).To(Succeed())
+		app.Spec.Endpoints[0].Versions = []corev1alpha1.AppEndpointVersion{weight(v1, 80), weight(v2, 20), weight(static, 1)}
+		Expect(k8s.Update(ctx, app)).To(Succeed())
+		Eventually(func() map[string]int { return call(10, static) }, time.Minute, time.Second).
+			Should(Equal(map[string]int{static: 10}), "The version with no model serves with no gateway key.")
 	})
 
 	It("drains a retiring version and then revokes its key", func() {
@@ -264,9 +272,9 @@ var _ = Describe("Thin App", Ordered, Label("app"), func() {
 
 		By("sending each new session to the other version")
 		Eventually(func() []corev1alpha1.AppEndpointVersion { return endpoint().Weights }, time.Minute, time.Second).
-			Should(Equal([]corev1alpha1.AppEndpointVersion{weight(v1, 0), weight(v2, 20), weight(static, 0)}))
+			Should(Equal([]corev1alpha1.AppEndpointVersion{weight(v1, 0), weight(v2, 20), weight(static, 1)}))
 		Eventually(func() map[string]int { return call(20, "") }, time.Minute, time.Second).
-			Should(Equal(map[string]int{v2: 20}))
+			ShouldNot(HaveKey(v1))
 
 		By("revoking the key after the drain time")
 		Eventually(func() bool {
@@ -280,7 +288,7 @@ var _ = Describe("Thin App", Ordered, Label("app"), func() {
 			return apierrors.IsNotFound(k8s.Get(ctx, client.ObjectKey{Namespace: appNS, Name: "kd-" + v1},
 				&appsv1.Deployment{}))
 		}, time.Minute, time.Second).Should(BeTrue())
-		// The other version serves all the traffic.
-		Expect(call(20, "")).To(Equal(map[string]int{v2: 20}))
+		// The other versions serve all the traffic.
+		Expect(call(20, "")).NotTo(HaveKey(v1))
 	})
 })
