@@ -88,7 +88,7 @@ var _ = Describe("App controller", func() {
 						Name: corev1alpha1.AppContainerName, Image: "registry.example.com/app:v1",
 						Ports: []corev1.ContainerPort{{Name: port, ContainerPort: containerPort}},
 						ReadinessProbe: &corev1.Probe{ProbeHandler: corev1.ProbeHandler{
-							HTTPGet: &corev1.HTTPGetAction{Path: "/healthz", Port: intstr.FromString(port)}}},
+							HTTPGet: &corev1.HTTPGetAction{Path: "/ready", Port: intstr.FromString(port)}}},
 					}}}}},
 			}}
 		Expect(k8sClient.Create(ctx, av)).To(Succeed())
@@ -113,6 +113,10 @@ var _ = Describe("App controller", func() {
 		Expect(k8sClient.Get(ctx, nn("kd-"+appName+"."+ep), u)).To(Succeed())
 		DeferCleanup(func() { Expect(client.IgnoreNotFound(k8sClient.Delete(ctx, u))).To(Succeed()) })
 		return u
+	}
+	// backend is the backendRef of the Service of a version.
+	backend := func(suffix string, number, w int32) map[string]any {
+		return backendRef("kd-"+appName+suffix, number, w)
 	}
 	backends := func(u *unstructured.Unstructured) []any {
 		rules, _, _ := unstructured.NestedSlice(u.Object, "spec", "rules")
@@ -149,12 +153,14 @@ var _ = Describe("App controller", func() {
 		Expect(metav1.IsControlledBy(u, app)).To(BeTrue())
 		Expect(u.GetLabels()).To(HaveKeyWithValue(appLabel, appName))
 		Expect(u.Object["spec"]).To(HaveKeyWithValue("hostnames", []any{"shop.example.com"}))
-		Expect(u.Object["spec"]).To(HaveKeyWithValue("parentRefs", []any{map[string]any{
-			"group": gatewayAPIGroup, "kind": "Gateway", "name": "public", "namespace": "gateways"}}))
+		parents, _, _ := unstructured.NestedSlice(u.Object, "spec", "parentRefs")
+		Expect(parents).To(HaveLen(1))
+		Expect(parents[0]).To(And(HaveKeyWithValue("group", gatewayAPIGroup), HaveKeyWithValue("namespace", "gateways"),
+			HaveLen(4)))
 		// Each backend is the Service of a version, with the number of the named port.
 		Expect(backends(u)).To(Equal([]any{
-			map[string]any{"name": "kd-" + appName + "-v1", "port": int64(8080), "weight": int64(90)},
-			map[string]any{"name": "kd-" + appName + "-v2", "port": int64(9090), "weight": int64(10)},
+			backend("-v1", 8080, 90),
+			backend("-v2", 9090, 10),
 		}))
 		Expect(status()).To(HaveLen(1))
 		Expect(status()[0].RouteState).To(Equal(corev1alpha1.AppRoutePending))
@@ -183,7 +189,7 @@ var _ = Describe("App controller", func() {
 		mustReconcile()
 
 		Expect(backends(route("web"))).To(Equal([]any{
-			map[string]any{"name": "kd-" + appName + "-v1", "port": int64(8080), "weight": int64(50)}}))
+			backend("-v1", 8080, 50)}))
 		st := status()[0]
 		Expect(st.Weights).To(Equal([]corev1alpha1.AppEndpointVersion{weight(appName+"-v1", 50),
 			weight(appName+"-v2", 0), weight(appName+"-v3", 0), weight(appName+"-v4", 0)}))

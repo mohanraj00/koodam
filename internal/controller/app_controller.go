@@ -184,12 +184,17 @@ func (r *AppReconciler) backends(ctx context.Context, app *corev1alpha1.App, ep 
 			if port == 0 {
 				down, weight = append(down, v.Name), 0
 			} else {
-				refs = append(refs, map[string]any{"name": "kd-" + v.Name, "port": int64(port), "weight": int64(weight)})
+				refs = append(refs, backendRef("kd-"+v.Name, port, weight))
 			}
 		}
 		st.Weights = append(st.Weights, corev1alpha1.AppEndpointVersion{Name: v.Name, Weight: &weight})
 	}
 	return refs, down, nil
+}
+
+// backendRef is one backendRef of a route: a Service of this namespace, a port number and a weight.
+func backendRef(service string, port, weight int32) map[string]any {
+	return map[string]any{"name": service, "port": int64(port), "weight": int64(weight)}
 }
 
 // servingPort gives back the number of the Service port with the name port of a version that can
