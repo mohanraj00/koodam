@@ -110,6 +110,8 @@ type AppVersionReconciler struct {
 	// example the namespace of the Gateway data plane. If it is empty, the NetworkPolicy of a
 	// version permits no ingress, and the platform team adds its own policy for the Gateway.
 	IngressNamespaces []string
+	// Claim is the signed claim check at the ingress of each App.
+	Claim AppClaimCheck
 	// KeyTTL is the TTL of a version key. If it is 0, the controller uses DefaultWorkspaceKeyTTL.
 	// The controller renews the key when the last renew is older than KeyTTL/4.
 	KeyTTL time.Duration
@@ -339,6 +341,11 @@ func (r *AppVersionReconciler) apply(ctx context.Context, av *corev1alpha1.AppVe
 		return ctrl.Result{}, err
 	}
 	meta.SetStatusCondition(&av.Status.Conditions, egress)
+	if r.Claim.enabled() {
+		meta.SetStatusCondition(&av.Status.Conditions, r.Claim.condition(egress.Status, av.Generation))
+	} else {
+		meta.RemoveStatusCondition(&av.Status.Conditions, condClaimCheck)
+	}
 	if err := r.writeStatus(ctx, av, old); err != nil {
 		return ctrl.Result{}, err
 	}
@@ -651,10 +658,17 @@ func (r *AppVersionReconciler) applyObjects(ctx context.Context, av *corev1alpha
 	deploy *appsv1.Deployment) (string, error) {
 	name := appVersionName(av)
 	ports := appContainer(&deploy.Spec.Template.Spec).Ports
+	// With the claim check, the Service and the NetworkPolicy use the ports of the check
+	// container. Then no request gets to the app container with no check.
+	listen := r.Claim.listenPorts(ports)
 	svcPorts := make([]corev1.ServicePort, 0, len(ports))
-	for _, p := range ports {
+	for i, p := range ports {
+		target := intstr.FromString(p.Name)
+		if r.Claim.enabled() {
+			target = intstr.FromInt32(listen[i].ContainerPort)
+		}
 		svcPorts = append(svcPorts, corev1.ServicePort{Name: p.Name, Port: p.ContainerPort,
-			TargetPort: intstr.FromString(p.Name), Protocol: corev1.ProtocolTCP})
+			TargetPort: target, Protocol: corev1.ProtocolTCP})
 	}
 	objs := []client.Object{
 		&corev1.ServiceAccount{ObjectMeta: appVersionMeta(av), AutomountServiceAccountToken: new(false)},
@@ -667,7 +681,7 @@ func (r *AppVersionReconciler) applyObjects(ctx context.Context, av *corev1alpha
 			Selector: appVersionLabels(av), Ports: svcPorts}},
 	}
 	// The NetworkPolicy is first, so that no pod of the version starts before its policy.
-	want := r.Egress.policy(appVersionMeta(av), appVersionLabels(av), ports, r.IngressNamespaces)
+	want := r.Egress.policy(appVersionMeta(av), appVersionLabels(av), listen, r.IngressNamespaces)
 	if want != nil {
 		objs = append([]client.Object{want.DeepCopy()}, objs...)
 	}
@@ -780,6 +794,7 @@ func (r *AppVersionReconciler) deployment(ctx context.Context, av *corev1alpha1.
 	}
 	c := appContainer(&tmpl.Spec)
 	c.Ports, c.ReadinessProbe, c.LivenessProbe, c.StartupProbe = ports, ready, live, start
+	r.Claim.add(&tmpl, av, ports)
 	r.Egress.apply(&tmpl.Spec, av.Namespace)
 	hash, err := templateHash(tmpl)
 	if err != nil {
