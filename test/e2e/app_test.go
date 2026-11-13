@@ -72,6 +72,8 @@ var _ = Describe("Thin App", Ordered, Label("app"), func() {
 		drainSeconds = 45
 	)
 	var fwd *exec.Cmd
+	// token is the signed claim of each request of call. With no token, call sends no claim.
+	var token string
 
 	gatewayObject := func(kind, namespace, name string, spec map[string]any) *unstructured.Unstructured {
 		u := &unstructured.Unstructured{Object: map[string]any{"spec": spec}}
@@ -116,6 +118,9 @@ var _ = Describe("Thin App", Ordered, Label("app"), func() {
 			if pin != "" {
 				req.Header.Set(corev1alpha1.AppVersionHeader, pin)
 			}
+			if token != "" {
+				req.Header.Set("Authorization", "Bearer "+token)
+			}
 			resp, err := httpClient.Do(req)
 			if err != nil {
 				got["error"]++
@@ -133,6 +138,7 @@ var _ = Describe("Thin App", Ordered, Label("app"), func() {
 	}
 
 	BeforeAll(func() {
+		token = claimToken("e2e-client")
 		DeferCleanup(func() {
 			if fwd != nil && fwd.Process != nil {
 				_ = fwd.Process.Kill()
@@ -248,6 +254,21 @@ var _ = Describe("Thin App", Ordered, Label("app"), func() {
 		// The weights are 80 and 20. The limits are wide, so that the test is stable.
 		Expect(got[v2]).To(BeNumerically(">=", 10), "v2 gets a part of the traffic: %v", got)
 		Expect(got[v1]).To(BeNumerically(">", got[v2]), "v1 gets the larger part: %v", got)
+
+		By("refusing a request with no signed claim or with a claim of a different key")
+		valid := token
+		for _, bad := range []string{"", valid[:len(valid)-4] + "AAAA"} {
+			token = bad
+			Expect(call(5, "")).To(Equal(map[string]int{"401": 5}))
+		}
+		token = valid
+		// The suite has no egress proxy, so the version has no NetworkPolicy. The status says
+		// that a pod of the cluster can call the app container directly.
+		av := &corev1alpha1.AppVersion{}
+		Expect(k8s.Get(ctx, client.ObjectKey{Namespace: appNS, Name: v1}, av)).To(Succeed())
+		check := meta.FindStatusCondition(av.Status.Conditions, "ClaimCheck")
+		Expect(check).NotTo(BeNil())
+		Expect(check.Reason).To(Equal("NoNetworkPolicy"))
 
 		By("keeping a session on one version with the header")
 		Expect(call(30, v2)).To(Equal(map[string]int{v2: 30}))

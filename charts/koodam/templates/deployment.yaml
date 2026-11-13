@@ -4,6 +4,7 @@
 {{- if or (lt (int64 .Values.jobTTLSeconds) 60) (gt (int64 .Values.jobTTLSeconds) 2147483647) }}
 {{- fail "jobTTLSeconds must be from 60 to 2147483647." }}
 {{- end }}
+{{- $claim := and .Values.apps.enabled .Values.apps.claimCheck.issuer }}
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -21,6 +22,10 @@ spec:
     metadata:
       annotations:
         kubectl.kubernetes.io/default-container: manager
+        {{- if $claim }}
+        # A new JWKS starts the manager again, because the manager reads the file at its start.
+        checksum/app-claim-jwks: {{ .Values.apps.claimCheck.jwks | sha256sum }}
+        {{- end }}
         {{- with .Values.podAnnotations }}
         {{- toYaml . | nindent 8 }}
         {{- end }}
@@ -84,6 +89,16 @@ spec:
         - "--app-ingress-namespaces={{ join "," . }}"
         {{- end }}
         {{- end }}
+        {{- if $claim }}
+        {{- with .Values.apps.claimCheck }}
+        # Each request to an App needs a signed claim of this issuer.
+        - {{ printf "--app-claim-issuer=%s" .issuer | quote }}
+        - {{ printf "--app-claim-audience=%s" (required "apps.claimCheck.audience is necessary with an issuer." .audience) | quote }}
+        - {{ printf "--app-claim-caller-claim=%s" .callerClaim | quote }}
+        - {{ printf "--app-claim-tenant-claim=%s" .tenantClaim | quote }}
+        - --app-claim-jwks-file=/etc/koodam/app-claim/jwks.json
+        {{- end }}
+        {{- end }}
         {{- end }}
         ports:
         - containerPort: 8081
@@ -118,7 +133,18 @@ spec:
         - name: gateway
           mountPath: /etc/koodam/gateway
           readOnly: true
+        {{- if $claim }}
+        - name: app-claim
+          mountPath: /etc/koodam/app-claim
+          readOnly: true
+        {{- end }}
       volumes:
+      {{- if $claim }}
+      # The JWKS of the issuer of the App claim check. It has public keys only.
+      - name: app-claim
+        configMap:
+          name: {{ include "koodam.fullname" . }}-app-claim-jwks
+      {{- end }}
       # The master key is a file, never a flag value or an environment variable.
       - name: gateway
         secret:

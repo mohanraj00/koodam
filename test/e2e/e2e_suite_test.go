@@ -159,6 +159,8 @@ func installChart(extra ...string) {
 		"--set", "metrics.enabled=true", "--set", "jobTTLSeconds=" + strconv.Itoa(jobTTL),
 		// The App parts are in the one install of the suite. They need no site input.
 		"--set", "apps.enabled=true",
+		// The suite is the issuer of the App claim check.
+		"-f", claimValues(),
 		"--wait", "--timeout", "10m"}, extra...)
 	out, err := utils.Run(exec.Command("helm", args...))
 	Expect(err).NotTo(HaveOccurred(), "Failed to install the chart: "+out)
