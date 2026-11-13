@@ -23,7 +23,7 @@ import (
 
 // AppSpec is the desired state of an App. An App is an application that serves clients. Its
 // AppVersions hold the pods. The AppVersion controller binds each version to its App and reads
-// maxLiveVersions.
+// maxLiveVersions. The App controller makes the routes of the endpoints.
 type AppSpec struct {
 	// MaxLiveVersions is the maximum number of AppVersions of this App that can have a gateway
 	// key at the same time. The count includes the candidate versions, the versions that drain
@@ -33,6 +33,125 @@ type AppSpec struct {
 	// +kubebuilder:default=2
 	// +kubebuilder:validation:Minimum=1
 	MaxLiveVersions int32 `json:"maxLiveVersions,omitempty"`
+
+	// Endpoints are the named entries of the App. The App controller makes one Gateway API
+	// HTTPRoute for each endpoint. The route sends a weight of the traffic to each version.
+	// +optional
+	// +listType=map
+	// +listMapKey=name
+	// +kubebuilder:validation:MaxItems=16
+	Endpoints []AppEndpoint `json:"endpoints,omitempty"`
+}
+
+// AppEndpoint is one named entry of an App on a Gateway.
+type AppEndpoint struct {
+	// Name is the name of the endpoint. The HTTPRoute has the name kd-<app>.<endpoint>.
+	// +required
+	// +kubebuilder:validation:MaxLength=63
+	// +kubebuilder:validation:Pattern=`^[a-z0-9]([-a-z0-9]*[a-z0-9])?$`
+	Name string `json:"name"`
+
+	// Gateway is the Gateway API Gateway that gets the traffic of the endpoint. The Gateway
+	// must permit routes from the namespace of the App.
+	// +required
+	Gateway AppGatewayReference `json:"gateway"`
+
+	// Hostnames are the host names of the HTTPRoute. If it is empty, the route matches each
+	// host name of the Gateway listener.
+	// +optional
+	// +listType=set
+	// +kubebuilder:validation:MaxItems=16
+	// +kubebuilder:validation:items:MinLength=1
+	// +kubebuilder:validation:items:MaxLength=253
+	Hostnames []string `json:"hostnames,omitempty"`
+
+	// Port is the name of the port of the app container that gets the traffic.
+	// +required
+	// +kubebuilder:validation:MinLength=1
+	// +kubebuilder:validation:MaxLength=15
+	Port string `json:"port"`
+
+	// Versions are the AppVersions of the endpoint, each with its weight.
+	// +required
+	// +listType=map
+	// +listMapKey=name
+	// +kubebuilder:validation:MinItems=1
+	// +kubebuilder:validation:MaxItems=16
+	Versions []AppEndpointVersion `json:"versions"`
+}
+
+// AppGatewayReference is a Gateway API Gateway.
+type AppGatewayReference struct {
+	// Name is the name of the Gateway.
+	// +required
+	// +kubebuilder:validation:MinLength=1
+	// +kubebuilder:validation:MaxLength=253
+	Name string `json:"name"`
+
+	// Namespace is the namespace of the Gateway. If it is empty, it is the namespace of the App.
+	// +optional
+	// +kubebuilder:validation:MaxLength=63
+	Namespace string `json:"namespace,omitempty"`
+
+	// SectionName is the name of one listener of the Gateway. If it is empty, the route
+	// attaches to each listener that permits it.
+	// +optional
+	// +kubebuilder:validation:MaxLength=253
+	SectionName string `json:"sectionName,omitempty"`
+}
+
+// AppEndpointVersion is the weight of one AppVersion in an endpoint.
+type AppEndpointVersion struct {
+	// Name is the name of the AppVersion.
+	// +required
+	// +kubebuilder:validation:MinLength=1
+	// +kubebuilder:validation:MaxLength=253
+	Name string `json:"name"`
+
+	// Weight is the part of the traffic that the version gets, relative to the sum of the
+	// weights of the endpoint. A version with the weight 0 gets no traffic.
+	// +required
+	// +kubebuilder:validation:Minimum=0
+	// +kubebuilder:validation:Maximum=1000000
+	Weight *int32 `json:"weight"`
+}
+
+// The route states of an endpoint.
+const (
+	// AppRouteAccepted tells that each parent Gateway accepted the route.
+	AppRouteAccepted = "Accepted"
+	// AppRoutePending tells that no Gateway controller reported the route state.
+	AppRoutePending = "Pending"
+	// AppRouteNotAccepted tells that a Gateway refused the route or a backend.
+	AppRouteNotAccepted = "NotAccepted"
+	// AppRouteNoGatewayAPI tells that the cluster does not have the Gateway API HTTPRoute.
+	AppRouteNoGatewayAPI = "NoGatewayAPI"
+	// AppRouteNameConflict tells that an HTTPRoute with the route name is not from this App.
+	AppRouteNameConflict = "NameConflict"
+	// AppRouteRefused tells that the API server refused the route.
+	AppRouteRefused = "Refused"
+)
+
+// AppEndpointStatus is the observed state of one endpoint.
+type AppEndpointStatus struct {
+	// Name is the name of the endpoint.
+	// +required
+	Name string `json:"name"`
+
+	// Weights are the weights in effect. A version that cannot serve has the weight 0, and the
+	// route does not send traffic to it.
+	// +optional
+	// +listType=atomic
+	Weights []AppEndpointVersion `json:"weights,omitempty"`
+
+	// RouteState is the state of the HTTPRoute of the endpoint: Accepted, Pending,
+	// NotAccepted, NoGatewayAPI, NameConflict or Refused.
+	// +optional
+	RouteState string `json:"routeState,omitempty"`
+
+	// Message tells why the route has this state, or which versions cannot serve.
+	// +optional
+	Message string `json:"message,omitempty"`
 }
 
 // AppStatus is the observed state of an App.
@@ -42,6 +161,12 @@ type AppStatus struct {
 	// +listMapKey=type
 	// +optional
 	Conditions []metav1.Condition `json:"conditions,omitempty"`
+
+	// Endpoints has the weights in effect and the route state of each endpoint.
+	// +optional
+	// +listType=map
+	// +listMapKey=name
+	Endpoints []AppEndpointStatus `json:"endpoints,omitempty"`
 }
 
 // +kubebuilder:object:root=true

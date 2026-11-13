@@ -66,7 +66,9 @@ var _ = BeforeSuite(func() {
 
 	By("bootstrapping test environment")
 	testEnv = &envtest.Environment{
-		CRDDirectoryPaths:     []string{filepath.Join("..", "..", "config", "crd", "bases"), filepath.Join("..", "..", "config", "apps", "crd", "bases")},
+		CRDDirectoryPaths: []string{filepath.Join("..", "..", "config", "crd", "bases"), filepath.Join("..", "..", "config", "apps", "crd", "bases"),
+			// A stub of the Gateway API HTTPRoute, for the App controller.
+			filepath.Join("testdata", "gateway-api")},
 		ErrorIfCRDPathMissing: true,
 	}
 

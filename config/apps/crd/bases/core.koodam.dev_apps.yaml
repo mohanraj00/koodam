@@ -48,6 +48,101 @@ spec:
           spec:
             description: spec defines the desired state of App
             properties:
+              endpoints:
+                description: |-
+                  Endpoints are the named entries of the App. The App controller makes one Gateway API
+                  HTTPRoute for each endpoint. The route sends a weight of the traffic to each version.
+                items:
+                  description: AppEndpoint is one named entry of an App on a Gateway.
+                  properties:
+                    gateway:
+                      description: |-
+                        Gateway is the Gateway API Gateway that gets the traffic of the endpoint. The Gateway
+                        must permit routes from the namespace of the App.
+                      properties:
+                        name:
+                          description: Name is the name of the Gateway.
+                          maxLength: 253
+                          minLength: 1
+                          type: string
+                        namespace:
+                          description: Namespace is the namespace of the Gateway.
+                            If it is empty, it is the namespace of the App.
+                          maxLength: 63
+                          type: string
+                        sectionName:
+                          description: |-
+                            SectionName is the name of one listener of the Gateway. If it is empty, the route
+                            attaches to each listener that permits it.
+                          maxLength: 253
+                          type: string
+                      required:
+                      - name
+                      type: object
+                    hostnames:
+                      description: |-
+                        Hostnames are the host names of the HTTPRoute. If it is empty, the route matches each
+                        host name of the Gateway listener.
+                      items:
+                        maxLength: 253
+                        minLength: 1
+                        type: string
+                      maxItems: 16
+                      type: array
+                      x-kubernetes-list-type: set
+                    name:
+                      description: Name is the name of the endpoint. The HTTPRoute
+                        has the name kd-<app>.<endpoint>.
+                      maxLength: 63
+                      pattern: ^[a-z0-9]([-a-z0-9]*[a-z0-9])?$
+                      type: string
+                    port:
+                      description: Port is the name of the port of the app container
+                        that gets the traffic.
+                      maxLength: 15
+                      minLength: 1
+                      type: string
+                    versions:
+                      description: Versions are the AppVersions of the endpoint, each
+                        with its weight.
+                      items:
+                        description: AppEndpointVersion is the weight of one AppVersion
+                          in an endpoint.
+                        properties:
+                          name:
+                            description: Name is the name of the AppVersion.
+                            maxLength: 253
+                            minLength: 1
+                            type: string
+                          weight:
+                            description: |-
+                              Weight is the part of the traffic that the version gets, relative to the sum of the
+                              weights of the endpoint. A version with the weight 0 gets no traffic.
+                            format: int32
+                            maximum: 1000000
+                            minimum: 0
+                            type: integer
+                        required:
+                        - name
+                        - weight
+                        type: object
+                      maxItems: 16
+                      minItems: 1
+                      type: array
+                      x-kubernetes-list-map-keys:
+                      - name
+                      x-kubernetes-list-type: map
+                  required:
+                  - gateway
+                  - name
+                  - port
+                  - versions
+                  type: object
+                maxItems: 16
+                type: array
+                x-kubernetes-list-map-keys:
+                - name
+                x-kubernetes-list-type: map
               maxLiveVersions:
                 default: 2
                 description: |-
@@ -121,6 +216,58 @@ spec:
                 type: array
                 x-kubernetes-list-map-keys:
                 - type
+                x-kubernetes-list-type: map
+              endpoints:
+                description: Endpoints has the weights in effect and the route state
+                  of each endpoint.
+                items:
+                  description: AppEndpointStatus is the observed state of one endpoint.
+                  properties:
+                    message:
+                      description: Message tells why the route has this state, or
+                        which versions cannot serve.
+                      type: string
+                    name:
+                      description: Name is the name of the endpoint.
+                      type: string
+                    routeState:
+                      description: |-
+                        RouteState is the state of the HTTPRoute of the endpoint: Accepted, Pending,
+                        NotAccepted, NoGatewayAPI, NameConflict or Refused.
+                      type: string
+                    weights:
+                      description: |-
+                        Weights are the weights in effect. A version that cannot serve has the weight 0, and the
+                        route does not send traffic to it.
+                      items:
+                        description: AppEndpointVersion is the weight of one AppVersion
+                          in an endpoint.
+                        properties:
+                          name:
+                            description: Name is the name of the AppVersion.
+                            maxLength: 253
+                            minLength: 1
+                            type: string
+                          weight:
+                            description: |-
+                              Weight is the part of the traffic that the version gets, relative to the sum of the
+                              weights of the endpoint. A version with the weight 0 gets no traffic.
+                            format: int32
+                            maximum: 1000000
+                            minimum: 0
+                            type: integer
+                        required:
+                        - name
+                        - weight
+                        type: object
+                      type: array
+                      x-kubernetes-list-type: atomic
+                  required:
+                  - name
+                  type: object
+                type: array
+                x-kubernetes-list-map-keys:
+                - name
                 x-kubernetes-list-type: map
             type: object
         required:

@@ -27,6 +27,7 @@ import (
 
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
+	networkingv1 "k8s.io/api/networking/v1"
 	rbacv1 "k8s.io/api/rbac/v1"
 	"k8s.io/apimachinery/pkg/api/equality"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -69,8 +70,8 @@ const (
 	// reasonIssuing is the reason of the condition GatewayKey from the enrollment until the
 	// gateway confirms the key.
 	reasonIssuing = "Issuing"
-	// reasonNoEgressPolicy is the reason of the condition TracedEgress while no NetworkPolicy
-	// enforces the egress path of the App pods.
+	// reasonNoEgressPolicy is the reason of the condition TracedEgress while the version has no
+	// NetworkPolicy that enforces the egress path of its pods.
 	reasonNoEgressPolicy = "NoEgressPolicy"
 	// appLiveWait is the time between 2 checks of a version that waits for a free live slot.
 	appLiveWait = 30 * time.Second
@@ -93,6 +94,10 @@ type AppVersionReconciler struct {
 	GatewayURL string
 	// Egress sends the egress of the app pods through the egress proxy.
 	Egress EgressProxy
+	// IngressNamespaces are the namespaces whose pods can send traffic to the app pods, for
+	// example the namespace of the Gateway data plane. If it is empty, the NetworkPolicy of a
+	// version permits no ingress, and the platform team adds its own policy for the Gateway.
+	IngressNamespaces []string
 	// KeyTTL is the TTL of a version key. If it is 0, the controller uses DefaultWorkspaceKeyTTL.
 	// The controller renews the key when the last renew is older than KeyTTL/4.
 	KeyTTL time.Duration
@@ -110,6 +115,7 @@ type AppVersionReconciler struct {
 // +kubebuilder:rbac:groups=core.koodam.dev,resources=appversions/finalizers,verbs=update
 // +kubebuilder:rbac:groups=apps,resources=deployments,verbs=get;list;watch;create;update;delete
 // +kubebuilder:rbac:groups="",resources=services,verbs=get;list;watch;create;delete
+// +kubebuilder:rbac:groups=networking.k8s.io,resources=networkpolicies,verbs=get;create;update
 
 // Reconcile makes the key and the objects of an active AppVersion. It revokes the key when the
 // AppVersion is deleted or retired, or when its App or its Secret is gone.
@@ -272,13 +278,9 @@ func (r *AppVersionReconciler) apply(ctx context.Context, av *corev1alpha1.AppVe
 		// A version that waits for an object keeps the renew of its key.
 		setProvisioned(av, reason)
 	}
-	egress := r.Egress.condition(av.Generation)
-	if egress.Status == metav1.ConditionTrue {
-		// The pod DNS goes to the proxy, but no NetworkPolicy selects the App pods before #183.
-		// Thus an App pod can make a direct call with no span, and the condition is False.
-		egress.Status, egress.Reason = metav1.ConditionFalse, reasonNoEgressPolicy
-		egress.Message = "The pod DNS goes to the egress proxy, but no NetworkPolicy enforces the egress path " +
-			"of an App pod."
+	egress, err := r.egressCondition(ctx, av)
+	if err != nil {
+		return ctrl.Result{}, err
 	}
 	meta.SetStatusCondition(&av.Status.Conditions, egress)
 	if err := r.writeStatus(ctx, av, old); err != nil {
@@ -288,6 +290,28 @@ func (r *AppVersionReconciler) apply(ctx context.Context, av *corev1alpha1.AppVe
 		return ctrl.Result{}, errRenewFailed
 	}
 	return ctrl.Result{RequeueAfter: r.untilRenew(av.Status.KeyHash)}, nil
+}
+
+// egressCondition gives back the condition TracedEgress. It is True only if the pod DNS goes to
+// the egress proxy and the NetworkPolicy of the version exists. Without the policy, an App pod
+// can make a direct call with no span.
+func (r *AppVersionReconciler) egressCondition(ctx context.Context, av *corev1alpha1.AppVersion) (metav1.Condition, error) {
+	c := r.Egress.condition(av.Generation)
+	if c.Status != metav1.ConditionTrue {
+		return c, nil
+	}
+	found, err := r.getOwned(ctx, av, &networkingv1.NetworkPolicy{})
+	switch {
+	case err != nil && !errors.Is(err, errNotOwned):
+		return c, err
+	case !found || err != nil:
+		c.Status, c.Reason = metav1.ConditionFalse, reasonNoEgressPolicy
+		c.Message = "The pod DNS goes to the egress proxy, but no NetworkPolicy enforces the egress path " +
+			"of the pods of this version."
+	default:
+		c.Message = "The pod DNS goes to the egress proxy, and a NetworkPolicy permits egress to the proxy only."
+	}
+	return c, nil
 }
 
 // template makes the Deployment of a valid version. If the version is not valid, it writes the
@@ -537,6 +561,11 @@ func (r *AppVersionReconciler) applyObjects(ctx context.Context, av *corev1alpha
 		&corev1.Service{ObjectMeta: appVersionMeta(av), Spec: corev1.ServiceSpec{
 			Selector: appVersionLabels(av), Ports: svcPorts}},
 	}
+	// The NetworkPolicy is first, so that no pod of the version starts before its policy.
+	want := r.Egress.policy(appVersionMeta(av), appVersionLabels(av), ports, r.IngressNamespaces)
+	if want != nil {
+		objs = append([]client.Object{want.DeepCopy()}, objs...)
+	}
 	for _, o := range objs {
 		err := r.Create(ctx, o)
 		switch {
@@ -549,6 +578,13 @@ func (r *AppVersionReconciler) applyObjects(ctx context.Context, av *corev1alpha
 			}
 			// The controller has no update grant for a Role. A Role with different rules goes, and
 			// the next reconcile makes it again.
+			if np, ok := have.(*networkingv1.NetworkPolicy); ok && !equality.Semantic.DeepEqual(np.Spec, want.Spec) {
+				// An update keeps the pods in a policy. A delete does not.
+				np.Spec = want.Spec
+				if err := r.Update(ctx, np); err != nil {
+					return "", err
+				}
+			}
 			if role, ok := have.(*rbacv1.Role); ok && !equality.Semantic.DeepEqual(role.Rules, av.Spec.Template.Rules) {
 				if err := r.deleteOwned(ctx, av, &rbacv1.Role{}); err != nil {
 					return "", err
