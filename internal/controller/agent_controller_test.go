@@ -297,10 +297,11 @@ var _ = Describe("Agent Controller", func() {
 		Expect(exists(sec)).To(BeTrue())
 		Expect(string(sec.Data[modelField])).To(Equal(first))
 
-		// The API server refuses the 2 forms together and an Agent with no model.
+		// The API server refuses the 2 forms together, an Agent with no model and a model two times.
 		for _, change := range []func(*corev1alpha1.Agent){
 			func(b *corev1alpha1.Agent) { b.Spec.Model = first },
 			func(b *corev1alpha1.Agent) { b.Spec.Models = nil },
+			func(b *corev1alpha1.Agent) { b.Spec.Models = []string{first, second, first} },
 		} {
 			bad := agent()
 			change(bad)
