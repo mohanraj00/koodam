@@ -353,6 +353,7 @@ var _ = Describe("AppVersion controller", func() {
 		Expect(svc.Spec.Ports).To(HaveLen(2))
 		Expect(svc.Spec.Ports[1].Port).To(Equal(int32(9090)))
 		Expect(cond(name, condProvisioned).Status).To(Equal(metav1.ConditionTrue))
+		Expect(cond(name, condStarted).Status).To(Equal(metav1.ConditionTrue))
 	})
 
 	It("sends the new budget if the spec changed before the status had the key", func() {

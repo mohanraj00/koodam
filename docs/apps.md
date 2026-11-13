@@ -64,7 +64,7 @@ The second version `shop-v2` has the same form. The `Gateway` with the name `pub
 
 A `ValidatingAdmissionPolicy` holds the checks of an AppVersion that the CRD cannot hold:
 
-- After the version has a gateway key or its objects, `spec.template` cannot change. To change the template, make a new AppVersion. `replicas`, `budgetPerDay` and `lifecycle` can change.
+- After the version has a gateway key, or after the controller started to make its objects (the condition `Started`), `spec.template` cannot change. A later failure does not remove this lock. To change the template, make a new AppVersion. `replicas`, `budgetPerDay` and `lifecycle` can change.
 - The name of the AppVersion is a DNS label with 60 characters or fewer, and `spec.appRef.name` has 63 characters or fewer.
 - Each port of the `app` container has a name and the TCP protocol, with no host port.
 

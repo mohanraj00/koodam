@@ -273,8 +273,12 @@ var _ = Describe("Thin App", Ordered, Label("app"), func() {
 		By("sending each new session to the other version")
 		Eventually(func() []corev1alpha1.AppEndpointVersion { return endpoint().Weights }, time.Minute, time.Second).
 			Should(Equal([]corev1alpha1.AppEndpointVersion{weight(v1, 0), weight(v2, 20), weight(static, 1)}))
-		Eventually(func() map[string]int { return call(20, "") }, time.Minute, time.Second).
-			ShouldNot(HaveKey(v1))
+		// Each answer comes from a version that stays, so an error or a 503 fails the test.
+		rest := func() int {
+			got := call(20, "")
+			return got[v2] + got[static]
+		}
+		Eventually(rest, time.Minute, time.Second).Should(Equal(20))
 
 		By("revoking the key after the drain time")
 		Eventually(func() bool {
@@ -289,6 +293,6 @@ var _ = Describe("Thin App", Ordered, Label("app"), func() {
 				&appsv1.Deployment{}))
 		}, time.Minute, time.Second).Should(BeTrue())
 		// The other versions serve all the traffic.
-		Expect(call(20, "")).NotTo(HaveKey(v1))
+		Expect(rest()).To(Equal(20))
 	})
 })

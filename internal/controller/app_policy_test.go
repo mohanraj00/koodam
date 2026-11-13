@@ -27,6 +27,7 @@ import (
 	. "github.com/onsi/gomega"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/api/meta"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
@@ -145,7 +146,10 @@ var _ = Describe("AppVersion admission policy", Ordered, func() {
 			av.Spec.Template.Model, av.Spec.BudgetPerDay = "", nil
 		})
 		Expect(create(keyless)).To(Succeed())
-		setProvisioned(keyless, "")
+		// The lock stays after the controller cannot make an object.
+		meta.SetStatusCondition(&keyless.Status.Conditions, metav1.Condition{Type: condStarted,
+			Status: metav1.ConditionTrue, Reason: condStarted})
+		setProvisioned(keyless, reasonRefused)
 		Expect(k8sClient.Status().Update(ctx, keyless)).To(Succeed())
 		keyless.Spec.Template.PodTemplate.Spec.Containers[0].Image = "registry.example.com/policy:v2"
 		refused(k8sClient.Update(ctx, keyless), "spec.template is immutable")

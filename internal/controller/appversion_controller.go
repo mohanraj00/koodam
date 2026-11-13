@@ -81,6 +81,10 @@ const (
 	// reasonNoEgressPolicy is the reason of the condition TracedEgress while the version has no
 	// NetworkPolicy that enforces the egress path of its pods.
 	reasonNoEgressPolicy = "NoEgressPolicy"
+	// condStarted is True from the first time that the controller starts to make the objects of
+	// the version. It never becomes False, so the admission policy can keep the template
+	// immutable after a later failure.
+	condStarted = "Started"
 	// appLiveWait is the time between 2 checks of a version that waits for a free live slot.
 	appLiveWait = 30 * time.Second
 )
@@ -308,6 +312,16 @@ func (r *AppVersionReconciler) apply(ctx context.Context, av *corev1alpha1.AppVe
 	// they are until the gateway accepts the key settings, so the pods do not get a model that the
 	// key refuses.
 	if deploy != nil && !renewErr {
+		// The record of the start is in the status before the first object exists.
+		if !meta.IsStatusConditionTrue(av.Status.Conditions, condStarted) {
+			meta.SetStatusCondition(&av.Status.Conditions, metav1.Condition{Type: condStarted,
+				Status: metav1.ConditionTrue, Reason: condStarted,
+				Message: "The controller started to make the objects of the version.", ObservedGeneration: av.Generation})
+			if err := r.writeStatus(ctx, av, old); err != nil {
+				return ctrl.Result{}, err
+			}
+			*old = *av.Status.DeepCopy()
+		}
 		reason, err := r.applyObjects(ctx, av, deploy)
 		if err != nil {
 			return ctrl.Result{}, err
