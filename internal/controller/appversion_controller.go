@@ -69,6 +69,9 @@ const (
 	// reasonIssuing is the reason of the condition GatewayKey from the enrollment until the
 	// gateway confirms the key.
 	reasonIssuing = "Issuing"
+	// reasonNoEgressPolicy is the reason of the condition TracedEgress while no NetworkPolicy
+	// enforces the egress path of the App pods.
+	reasonNoEgressPolicy = "NoEgressPolicy"
 	// appLiveWait is the time between 2 checks of a version that waits for a free live slot.
 	appLiveWait = 30 * time.Second
 )
@@ -254,9 +257,11 @@ func (r *AppVersionReconciler) apply(ctx context.Context, av *corev1alpha1.AppVe
 	})
 	egress := r.Egress.condition(av.Generation)
 	if egress.Status == metav1.ConditionTrue {
-		// The default-deny NetworkPolicy for App pods is not in this version (#183).
-		egress.Message = "The pod DNS and the gateway calls go through the egress proxy. " +
-			"No NetworkPolicy stops a direct call from an App pod."
+		// The pod DNS goes to the proxy, but no NetworkPolicy selects the App pods before #183.
+		// Thus an App pod can make a direct call with no span, and the condition is False.
+		egress.Status, egress.Reason = metav1.ConditionFalse, reasonNoEgressPolicy
+		egress.Message = "The pod DNS goes to the egress proxy, but no NetworkPolicy enforces the egress path " +
+			"of an App pod."
 	}
 	meta.SetStatusCondition(&av.Status.Conditions, egress)
 	if err := r.writeStatus(ctx, av, old); err != nil {

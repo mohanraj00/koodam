@@ -50,7 +50,8 @@ const (
 	AppVersionRevoking = "Revoking"
 	// AppVersionRevoked tells that the gateway blocked the key.
 	AppVersionRevoked = "Revoked"
-	// AppVersionTracedEgress tells if the model calls of the version go through traced egress.
+	// AppVersionTracedEgress tells if the egress of the version pods goes through traced egress.
+	// It is False while no NetworkPolicy enforces the egress path of the App pods.
 	AppVersionTracedEgress = "TracedEgress"
 )
 

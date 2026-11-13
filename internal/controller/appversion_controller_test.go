@@ -152,9 +152,13 @@ var _ = Describe("AppVersion controller", func() {
 		Expect(av.Status.BoundAppUID).NotTo(BeEmpty())
 		Expect(fmt.Sprintf("%+v", av.Status)).NotTo(ContainSubstring(key))
 		Expect(logs.String()).NotTo(ContainSubstring(key))
-		for _, t := range []string{condProvisioned, condGatewayKey, corev1alpha1.AppVersionTracedEgress} {
+		for _, t := range []string{condProvisioned, condGatewayKey} {
 			Expect(meta.IsStatusConditionTrue(av.Status.Conditions, t)).To(BeTrue(), t)
 		}
+		// No NetworkPolicy enforces the egress path of an App pod, so the condition is False.
+		egress := meta.FindStatusCondition(av.Status.Conditions, corev1alpha1.AppVersionTracedEgress)
+		Expect(egress.Status).To(Equal(metav1.ConditionFalse))
+		Expect(egress.Reason).To(Equal(reasonNoEgressPolicy))
 
 		Expect(gw.order).To(Equal([]string{opCreate}))
 		spec := gw.specs[0]
