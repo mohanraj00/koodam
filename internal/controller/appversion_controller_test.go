@@ -60,6 +60,8 @@ var _ = Describe("AppVersion controller", func() {
 		n       int
 	)
 	nn := func(s string) types.NamespacedName { return types.NamespacedName{Namespace: ns, Name: s} }
+	// outsideCeiling is a rule that the agent-ceiling ClusterRole does not have.
+	outsideCeiling := rbacv1.PolicyRule{APIGroups: []string{""}, Resources: []string{"secrets"}, Verbs: []string{"get"}}
 	reconcileName := func(s string) (ctrl.Result, error) {
 		return rec.Reconcile(ctx, reconcile.Request{NamespacedName: nn(s)})
 	}
@@ -230,7 +232,7 @@ var _ = Describe("AppVersion controller", func() {
 
 	It("makes no key for a rule that is not in the ceiling", func() {
 		newApp(2)
-		newVersion(name, rbacv1.PolicyRule{APIGroups: []string{""}, Resources: []string{"secrets"}, Verbs: []string{"get"}})
+		newVersion(name, outsideCeiling)
 		mustReconcile()
 		Expect(cond(name, condProvisioned).Reason).To(Equal("Invalid"))
 		Expect(gw.order).To(BeEmpty())
@@ -338,6 +340,24 @@ var _ = Describe("AppVersion controller", func() {
 		d := &appsv1.Deployment{}
 		Expect(k8sClient.Get(ctx, nn("kd-"+name), d)).To(Succeed())
 		Expect(*d.Spec.Replicas).To(Equal(int32(3)))
+	})
+
+	It("keeps the renew of the key when the template of a live version is not valid", func() {
+		newApp(2)
+		newVersion(name)
+		mustReconcile()
+		av := version(name)
+		av.Spec.Template.Rules = []rbacv1.PolicyRule{outsideCeiling}
+		Expect(k8sClient.Update(ctx, av)).To(Succeed())
+
+		now = now.Add(ttl/4 + time.Second)
+		res := mustReconcile()
+		Expect(res.RequeueAfter).To(BeNumerically(">", 0))
+		Expect(gw.order).To(Equal([]string{opCreate, opRenew}))
+		Expect(cond(name, condProvisioned).Reason).To(Equal(reasonInvalid))
+		role := &rbacv1.Role{}
+		Expect(k8sClient.Get(ctx, nn("kd-"+name), role)).To(Succeed())
+		Expect(role.Rules).To(BeEmpty())
 	})
 
 	It("renews the key after TTL/4", func() {

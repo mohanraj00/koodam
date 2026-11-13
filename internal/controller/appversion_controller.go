@@ -221,8 +221,13 @@ func (r *AppVersionReconciler) apply(ctx context.Context, av *corev1alpha1.AppVe
 	av.Status.BoundAppUID = app.UID
 
 	deploy, err := r.template(ctx, av, old)
-	if err != nil || deploy == nil {
+	if err != nil || (deploy == nil && av.Status.KeyHash == "") {
 		return ctrl.Result{}, err
+	}
+	if deploy == nil {
+		// The template is not valid, and the version has a key. The objects stay as they are, and
+		// the key keeps its renew. template wrote the condition.
+		*old = *av.Status.DeepCopy()
 	}
 	if av.Status.KeyHash == "" {
 		full, err := r.liveFull(ctx, av, app)
@@ -246,15 +251,14 @@ func (r *AppVersionReconciler) apply(ctx context.Context, av *corev1alpha1.AppVe
 	if err != nil {
 		return ctrl.Result{}, err
 	}
-	if reason, err := r.applyObjects(ctx, av, deploy); err != nil {
-		return ctrl.Result{}, err
-	} else if reason != "" {
-		return ctrl.Result{}, r.wait(ctx, av, old, reason, "The controller cannot make an object of the version.")
+	if deploy != nil {
+		reason, err := r.applyObjects(ctx, av, deploy)
+		if err != nil {
+			return ctrl.Result{}, err
+		}
+		// A version that waits for an object keeps the renew of its key.
+		setProvisioned(av, reason)
 	}
-	meta.SetStatusCondition(&av.Status.Conditions, metav1.Condition{
-		Type: condProvisioned, Status: metav1.ConditionTrue, Reason: "Provisioned",
-		Message: "The key, the Role, the Deployment and the Service are ready.", ObservedGeneration: av.Generation,
-	})
 	egress := r.Egress.condition(av.Generation)
 	if egress.Status == metav1.ConditionTrue {
 		// The pod DNS goes to the proxy, but no NetworkPolicy selects the App pods before #183.
@@ -350,6 +354,18 @@ func (r *AppVersionReconciler) enroll(ctx context.Context, av *corev1alpha1.AppV
 		*old = *av.Status.DeepCopy()
 	}
 	return key, nil
+}
+
+// setProvisioned sets the condition Provisioned after the controller applied the objects. An
+// empty reason is success. A different reason is from applyObjects.
+func setProvisioned(av *corev1alpha1.AppVersion, reason string) {
+	c := metav1.Condition{Type: condProvisioned, Status: metav1.ConditionTrue, Reason: "Provisioned",
+		Message: "The key, the Role, the Deployment and the Service are ready.", ObservedGeneration: av.Generation}
+	if reason != "" {
+		c.Status, c.Reason = metav1.ConditionFalse, reason
+		c.Message = "The controller cannot make an object of the version."
+	}
+	meta.SetStatusCondition(&av.Status.Conditions, c)
 }
 
 // wait writes the condition Provisioned=False. The controller changes no object of the version.
