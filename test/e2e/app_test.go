@@ -67,9 +67,9 @@ var _ = Describe("Thin App", Ordered, Label("app"), func() {
 		egChart, egVersion, egNS = "oci://docker.io/envoyproxy/gateway-helm", "1.10.0", "envoy-gateway-system"
 		gwName, appName, v1, v2  = "public", "shop", "shop-v1", "shop-v2"
 		// static is a version with no model. It has no gateway key.
-		static = "shop-static"
-		localURL                 = "http://127.0.0.1:18080/"
-		drainSeconds             = 45
+		static       = "shop-static"
+		localURL     = "http://127.0.0.1:18080/"
+		drainSeconds = 45
 	)
 	var fwd *exec.Cmd
 
