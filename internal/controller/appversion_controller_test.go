@@ -261,7 +261,7 @@ var _ = Describe("AppVersion controller", func() {
 		mustReconcile()
 		av := version(name)
 		c := &av.Spec.Template.PodTemplate.Spec.Containers[0]
-		c.Ports = append(c.Ports, corev1.ContainerPort{Name: "admin", ContainerPort: 9090})
+		c.Ports = append(c.Ports, corev1.ContainerPort{Name: "extra", ContainerPort: 9090})
 		Expect(k8sClient.Update(ctx, av)).To(Succeed())
 
 		_, err := reconcileName(name)

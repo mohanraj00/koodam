@@ -388,7 +388,7 @@ func (r *AgentReconciler) provision(ctx context.Context, a *corev1alpha1.Agent) 
 			return err
 		}
 	}
-	md := map[string]string{"uid": string(a.UID), metaNamespace: a.Namespace, "agent": a.Name, "user": a.Spec.User}
+	md := map[string]string{metaUID: string(a.UID), metaNamespace: a.Namespace, "agent": a.Name, "user": a.Spec.User}
 	if a.Spec.Harness != nil {
 		// The gateway can then group the spend by harness.
 		md["harness"] = a.Spec.Harness.Name

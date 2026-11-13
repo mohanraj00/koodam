@@ -52,8 +52,12 @@ const (
 	reasonRefused = "Refused"
 )
 
-// metaNamespace is the key of the namespace in the metadata of a gateway key.
-const metaNamespace = "namespace"
+// metaNamespace and metaUID are the keys of the namespace and the owner UID in the metadata of a
+// gateway key.
+const (
+	metaNamespace = "namespace"
+	metaUID       = "uid"
+)
 
 // invalidTemplateError is a spec.podTemplate that the merge refuses. A retry cannot fix it. The
 // message has the field paths and the names only, never a value of env.

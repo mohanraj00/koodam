@@ -402,7 +402,7 @@ func (r *AppVersionReconciler) applyKey(ctx context.Context, av *corev1alpha1.Ap
 	renewFailed bool, err error) {
 	spec := gateway.KeySpec{Value: key, Alias: av.Status.KeyAlias, Model: av.Spec.Template.Model,
 		Budget: av.Spec.BudgetPerDay.AsApproximateFloat64(), BudgetPeriod: 24 * time.Hour, TTL: r.keyTTL(),
-		Metadata: map[string]string{"uid": string(av.UID), metaNamespace: av.Namespace,
+		Metadata: map[string]string{metaUID: string(av.UID), metaNamespace: av.Namespace,
 			"app": av.Spec.AppRef.Name, "appVersion": av.Name}}
 	c := meta.FindStatusCondition(av.Status.Conditions, condGatewayKey)
 	switch {
