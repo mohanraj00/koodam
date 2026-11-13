@@ -223,6 +223,8 @@ egressProxy:
 # the manager runs the App controllers. An App endpoint needs a Gateway API implementation in
 # the cluster. The chart does not install one. Helm keeps the App CRDs on an uninstall, so that
 # the Apps of the cluster stay.
+# With egressProxy.enabled, name each namespace of the Apps in workspace.networkPolicy.namespaces:
+# the proxy gives an App pod an identity only in a named namespace.
 apps:
   enabled: false
   # The namespaces whose pods can send traffic to the App pods, for example the namespace of the
