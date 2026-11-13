@@ -510,6 +510,10 @@ wire_api = "responses"
 	runPod := func(job *batchv1.Job, message string) {
 		pod := &corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: job.Name + "-pod", Namespace: ns,
 			Labels: map[string]string{batchv1.JobNameLabel: job.Name, agentLabel: name}}, Spec: job.Spec.Template.Spec}
+		if job.UID != "" {
+			pod.OwnerReferences = []metav1.OwnerReference{*metav1.NewControllerRef(job,
+				batchv1.SchemeGroupVersion.WithKind("Job"))}
+		}
 		Expect(k8sClient.Create(ctx, pod)).To(Succeed())
 		DeferCleanup(func() { Expect(client.IgnoreNotFound(k8sClient.Delete(ctx, pod))).To(Succeed()) })
 		pod.Status.InitContainerStatuses = []corev1.ContainerStatus{{Name: outputContainer,
@@ -532,7 +536,7 @@ wire_api = "responses"
 		side := job.Spec.Template.Spec.InitContainers[0]
 		Expect(side.Name).To(Equal(outputContainer))
 		Expect(side.Image).To(Equal(installerImage))
-		Expect(side.Command).To(Equal([]string{"/output-digest", "--path", outFile}))
+		Expect(side.Command).To(Equal([]string{"/output-digest", "--path", outFile, "--root", outDir}))
 		Expect(*side.RestartPolicy).To(Equal(corev1.ContainerRestartPolicyAlways))
 		Expect(side.VolumeMounts).To(Equal([]corev1.VolumeMount{{Name: outVolume, MountPath: outDir, ReadOnly: true}}))
 
@@ -559,6 +563,33 @@ wire_api = "responses"
 		endJob(batchv1.JobComplete)
 		reconcileOnce(r)
 		Expect(agent().Status.Output).To(Equal(&corev1alpha1.AgentOutputStatus{Path: outFile, Reason: "NoResult"}))
+	})
+
+	It("does not read the digest from a pod that is not from the Job of this run", func() {
+		setOutput(outFile)
+		r := newReconciler()
+		r.InstallerImage = installerImage
+		reconcileOnce(r)
+		job := &batchv1.Job{}
+		Expect(exists(job)).To(BeTrue())
+		// The pod has the labels of the run, but its owner is not the Job of this Agent.
+		stale := job.DeepCopy()
+		stale.UID = ""
+		runPod(stale, `{"sha256":"5891b5b522d5df086d0ff0b110fbd9d21bb4fc7163af34d08286a2e846f6be03","size":6}`)
+		endJob(batchv1.JobComplete)
+		reconcileOnce(r)
+		Expect(agent().Status.Output).To(Equal(&corev1alpha1.AgentOutputStatus{Path: outFile, Reason: "NoResult"}))
+	})
+
+	It("uses a file mount at the output path before a mount of its directory", func() {
+		pod := &corev1.PodSpec{Containers: []corev1.Container{{Name: agentContainer,
+			VolumeMounts: []corev1.VolumeMount{{Name: outVolume, MountPath: outDir},
+				{Name: "file", MountPath: outFile, SubPath: "report.txt"}}}}}
+		Expect(addOutputDigest(pod, outFile, installerImage)).To(BeTrue())
+		side := pod.InitContainers[0]
+		Expect(side.VolumeMounts).To(Equal([]corev1.VolumeMount{
+			{Name: "file", MountPath: outFile, SubPath: "report.txt", ReadOnly: true}}))
+		Expect(side.Command).To(Equal([]string{"/output-digest", "--path", outFile, "--root", outFile}))
 	})
 
 	It("keeps the digest when spec.output is removed after the start of the run", func() {

@@ -621,7 +621,8 @@ func addOutputDigest(pod *corev1.PodSpec, path, image string) bool {
 	for i := range pod.Containers[0].VolumeMounts {
 		m := &pod.Containers[0].VolumeMounts[i]
 		dir := strings.TrimSuffix(m.MountPath, "/") + "/"
-		if strings.HasPrefix(path, dir) && !strings.HasPrefix(m.Name, "koodam-") && m.Name != "harness" &&
+		// A subPath can mount the file itself at the output path.
+		if (strings.HasPrefix(path, dir) || m.MountPath == path) && !strings.HasPrefix(m.Name, "koodam-") && m.Name != "harness" &&
 			(mount == nil || len(m.MountPath) > len(mount.MountPath)) {
 			mount = m
 		}
@@ -636,7 +637,8 @@ func addOutputDigest(pod *corev1.PodSpec, path, image string) bool {
 		return false
 	}
 	pod.InitContainers = append(pod.InitContainers, corev1.Container{
-		Name: outputContainer, Image: image, Command: []string{"/output-digest", "--path", path}, Env: env,
+		Name: outputContainer, Image: image, Env: env,
+		Command: []string{"/output-digest", "--path", path, "--root", mount.MountPath},
 		// An init container with this policy is a sidecar. The kubelet stops it after the agent
 		// container ends, and then the command writes the digest to its termination message.
 		RestartPolicy:   new(corev1.ContainerRestartPolicyAlways),
@@ -687,9 +689,19 @@ func (r *AgentReconciler) readOutput(ctx context.Context, a *corev1alpha1.Agent)
 		client.MatchingLabels{batchv1.JobNameLabel: runName(a), agentLabel: a.Name}); err != nil {
 		return err
 	}
+	// A pod of an earlier Agent with the same name can have the same labels. Only a pod of the Job
+	// of this Agent has the result of this run.
+	job := &batchv1.Job{}
+	owned, err := r.getOwned(ctx, a, job)
+	if err != nil && !errors.Is(err, errNotOwned) {
+		return err
+	}
+	owned = owned && err == nil
 	var newest *corev1.Pod
 	for i := range pods.Items {
-		if p := &pods.Items[i]; newest == nil || newest.CreationTimestamp.Before(&p.CreationTimestamp) {
+		p := &pods.Items[i]
+		if owned && metav1.IsControlledBy(p, job) &&
+			(newest == nil || newest.CreationTimestamp.Before(&p.CreationTimestamp)) {
 			newest = p
 		}
 	}
@@ -698,7 +710,7 @@ func (r *AgentReconciler) readOutput(ctx context.Context, a *corev1alpha1.Agent)
 	out := &corev1alpha1.AgentOutputStatus{Reason: "NoResult"}
 	if newest != nil {
 		for _, c := range newest.Spec.InitContainers {
-			if c.Name == outputContainer && len(c.Command) == 3 {
+			if c.Name == outputContainer && len(c.Command) >= 3 {
 				out.Path = c.Command[2]
 			}
 		}

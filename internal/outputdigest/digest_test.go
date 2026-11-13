@@ -30,19 +30,39 @@ func TestFile(t *testing.T) {
 	}
 	// The digest of "hello\n" from sha256sum.
 	want := Result{SHA256: "5891b5b522d5df086d0ff0b110fbd9d21bb4fc7163af34d08286a2e846f6be03", Size: 6}
-	if got := File(file); got != want {
+	if got := File(dir, file); got != want {
 		t.Fatalf("got %+v, want %+v", got, want)
 	}
 	link := filepath.Join(dir, "link")
 	if err := os.Symlink(file, link); err != nil {
 		t.Fatal(err)
 	}
+	// A file mount: the root is the file.
+	if got := File(file, file); got != want {
+		t.Fatalf("file mount: got %+v, want %+v", got, want)
+	}
+	// A directory link in the path goes out of the volume. A link in the volume is refused too.
+	outside := t.TempDir()
+	if err := os.WriteFile(filepath.Join(outside, "report.txt"), []byte("other\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(filepath.Join(dir, "sub"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	for name, target := range map[string]string{"away": outside, "near": "sub"} {
+		if err := os.Symlink(target, filepath.Join(dir, name)); err != nil {
+			t.Fatal(err)
+		}
+	}
 	for path, reason := range map[string]string{
-		filepath.Join(dir, "none"): ReasonNotFound,
-		dir:                        ReasonNotRegularFile,
-		link:                       ReasonNotRegularFile,
+		filepath.Join(dir, "none"):               ReasonNotFound,
+		filepath.Join(dir, "sub"):                ReasonNotRegularFile,
+		link:                                     ReasonNotRegularFile,
+		filepath.Join(dir, "away", "report.txt"): ReasonNotRegularFile,
+		filepath.Join(dir, "near", "report.txt"): ReasonNotRegularFile,
+		filepath.Join(outside, "report.txt"):     ReasonNotFound,
 	} {
-		if got := File(path); got != (Result{Reason: reason}) {
+		if got := File(dir, path); got != (Result{Reason: reason}) {
 			t.Errorf("%s: got %+v, want the reason %s", path, got, reason)
 		}
 	}
