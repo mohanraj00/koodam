@@ -14,7 +14,7 @@ One Agent is one run. To run the same work again, create a new Agent. The new Ag
 
 ## Output digest
 
-Set `spec.output.path` to the absolute path of one file in the agent container. The file must be in a volume of `spec.podTemplate` that the agent container mounts.
+Set `spec.output.path` to the absolute path of one file in the agent container. The file must be in a volume of `spec.podTemplate` that the agent container mounts. If that mount has a `subPathExpr`, the expression can use only a variable with a literal value or a field of the pod. The digest container gets only those variables.
 
 When the run ends, `status.output` has these fields:
 

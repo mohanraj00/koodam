@@ -495,7 +495,7 @@ wire_api = "responses"
 		Expect(gw.blocked).To(HaveLen(1))
 	})
 
-	const outVolume, outFile = "out", "/out/report.txt"
+	const outVolume, outDir, outFile = "out", "/out", "/out/report.txt"
 	// setOutput gives the Agent an output path and a volume at /out.
 	setOutput := func(path string) {
 		a := agent()
@@ -503,7 +503,7 @@ wire_api = "responses"
 		a.Spec.PodTemplate = &corev1alpha1.PodTemplate{Spec: corev1.PodSpec{
 			Volumes: []corev1.Volume{{Name: outVolume, VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{}}}},
 			Containers: []corev1.Container{{Name: agentContainer,
-				VolumeMounts: []corev1.VolumeMount{{Name: outVolume, MountPath: "/out"}}}}}}
+				VolumeMounts: []corev1.VolumeMount{{Name: outVolume, MountPath: outDir}}}}}}
 		Expect(k8sClient.Update(ctx, a)).To(Succeed())
 	}
 	// runPod makes the pod of the run Job, with the termination message of the output sidecar.
@@ -534,7 +534,7 @@ wire_api = "responses"
 		Expect(side.Image).To(Equal(installerImage))
 		Expect(side.Command).To(Equal([]string{"/output-digest", "--path", outFile}))
 		Expect(*side.RestartPolicy).To(Equal(corev1.ContainerRestartPolicyAlways))
-		Expect(side.VolumeMounts).To(Equal([]corev1.VolumeMount{{Name: outVolume, MountPath: "/out", ReadOnly: true}}))
+		Expect(side.VolumeMounts).To(Equal([]corev1.VolumeMount{{Name: outVolume, MountPath: outDir, ReadOnly: true}}))
 
 		runPod(job, `{"sha256":"`+digest+`","size":6}`)
 		endJob(batchv1.JobComplete)
@@ -559,6 +559,48 @@ wire_api = "responses"
 		endJob(batchv1.JobComplete)
 		reconcileOnce(r)
 		Expect(agent().Status.Output).To(Equal(&corev1alpha1.AgentOutputStatus{Path: outFile, Reason: "NoResult"}))
+	})
+
+	It("keeps the digest when spec.output is removed after the start of the run", func() {
+		const digest = "5891b5b522d5df086d0ff0b110fbd9d21bb4fc7163af34d08286a2e846f6be03"
+		setOutput(outFile)
+		r := newReconciler()
+		r.InstallerImage = installerImage
+		reconcileOnce(r)
+		job := &batchv1.Job{}
+		Expect(exists(job)).To(BeTrue())
+		a := agent()
+		a.Spec.Output = nil
+		Expect(k8sClient.Update(ctx, a)).To(Succeed())
+		runPod(job, `{"sha256":"`+digest+`","size":6}`)
+		endJob(batchv1.JobComplete)
+		reconcileOnce(r)
+		Expect(agent().Status.Output).To(Equal(&corev1alpha1.AgentOutputStatus{Path: outFile, SHA256: digest,
+			Size: new(int64(6))}))
+	})
+
+	It("gives the sidecar only the variables of a subPathExpr of the output mount", func() {
+		field := corev1.EnvVar{Name: "POD", ValueFrom: &corev1.EnvVarSource{
+			FieldRef: &corev1.ObjectFieldSelector{FieldPath: "metadata.name"}}}
+		secret := corev1.EnvVar{Name: "TOKEN", ValueFrom: &corev1.EnvVarSource{
+			SecretKeyRef: &corev1.SecretKeySelector{Key: "token"}}}
+		pod := func(expr string) *corev1.PodSpec {
+			return &corev1.PodSpec{Containers: []corev1.Container{{Name: agentContainer,
+				Env: []corev1.EnvVar{{Name: runIDEnv, Value: "run-1"}, {Name: "OTHER", Value: "x"}, field, secret,
+					{Name: "NESTED", Value: "$(TOKEN)"}},
+				VolumeMounts: []corev1.VolumeMount{{Name: outVolume, MountPath: outDir, SubPathExpr: expr}}}}}
+		}
+		p := pod("$(" + runIDEnv + ")/$(POD)/$(POD)")
+		Expect(addOutputDigest(p, outFile, installerImage)).To(BeTrue())
+		side := p.InitContainers[0]
+		Expect(side.Env).To(Equal([]corev1.EnvVar{{Name: runIDEnv, Value: "run-1"}, field}))
+		Expect(side.VolumeMounts[0].SubPathExpr).To(Equal("$(" + runIDEnv + ")/$(POD)/$(POD)"))
+		// The sidecar gets no variable from a Secret, and no variable that the pod does not have.
+		for _, expr := range []string{"$(TOKEN)", "$(NESTED)", "$(ABSENT)"} {
+			p := pod(expr)
+			Expect(addOutputDigest(p, outFile, installerImage)).To(BeFalse(), expr)
+			Expect(p.InitContainers).To(BeEmpty(), expr)
+		}
 	})
 
 	It("refuses an output path that is not in a volume of the pod template", func() {

@@ -22,6 +22,7 @@ import (
 	"fmt"
 	"net/http"
 	"reflect"
+	"regexp"
 	"slices"
 	"strconv"
 	"strings"
@@ -353,7 +354,7 @@ func (r *AgentReconciler) provision(ctx context.Context, a *corev1alpha1.Agent) 
 		}
 		r.Egress.apply(&job.Spec.Template.Spec, a.Namespace)
 		if msg == "" && a.Spec.Output != nil && !addOutputDigest(&job.Spec.Template.Spec, a.Spec.Output.Path, r.InstallerImage) {
-			msg = "spec.output.path must be a file in a volume of spec.podTemplate that the agent container mounts."
+			msg = msgOutputMount
 		}
 	}
 	if msg != "" {
@@ -601,6 +602,10 @@ func (r *AgentReconciler) noInstaller(a *corev1alpha1.Agent) string {
 	return ""
 }
 
+// msgOutputMount is the message for an output path that the sidecar cannot mount.
+const msgOutputMount = "spec.output.path must be a file in a volume of spec.podTemplate that the agent container " +
+	"mounts. A subPathExpr of that mount can use only a variable with a literal value or a field of the pod."
+
 // outputContainer is the name of the container that computes the digest of spec.output.
 const outputContainer = "koodam-output"
 
@@ -626,8 +631,12 @@ func addOutputDigest(pod *corev1.PodSpec, path, image string) bool {
 	}
 	ro := *mount.DeepCopy()
 	ro.ReadOnly = true
+	env, ok := subPathEnv(mount.SubPathExpr, pod.Containers[0].Env)
+	if !ok {
+		return false
+	}
 	pod.InitContainers = append(pod.InitContainers, corev1.Container{
-		Name: outputContainer, Image: image, Command: []string{"/output-digest", "--path", path},
+		Name: outputContainer, Image: image, Command: []string{"/output-digest", "--path", path}, Env: env,
 		// An init container with this policy is a sidecar. The kubelet stops it after the agent
 		// container ends, and then the command writes the digest to its termination message.
 		RestartPolicy:   new(corev1.ContainerRestartPolicyAlways),
@@ -639,19 +648,43 @@ func addOutputDigest(pod *corev1.PodSpec, path, image string) bool {
 	return true
 }
 
-// readOutput reads the digest of spec.output from the termination message of the sidecar of the
-// newest pod of the run. It sets the status in memory one time. The message comes from a pod, so
+// subPathVar finds each variable of a subPathExpr.
+var subPathVar = regexp.MustCompile(`\$\(([A-Za-z_][A-Za-z0-9_.-]*)\)`)
+
+// subPathEnv gives back the env variables of the agent container that expr uses, so the kubelet
+// gets the same subpath for the sidecar. It copies only a variable with a literal value or a
+// field of the pod. It gives back false for a variable from a Secret, a ConfigMap, a resource
+// or another variable: the sidecar must not get a credential, and it cannot get the same value.
+func subPathEnv(expr string, agent []corev1.EnvVar) ([]corev1.EnvVar, bool) {
+	var env []corev1.EnvVar
+	for _, m := range subPathVar.FindAllStringSubmatch(expr, -1) {
+		i := slices.IndexFunc(agent, func(e corev1.EnvVar) bool { return e.Name == m[1] })
+		if i < 0 {
+			return nil, false
+		}
+		e := agent[i]
+		literal := e.ValueFrom == nil && !strings.Contains(e.Value, "$(")
+		field := e.ValueFrom != nil && e.ValueFrom.FieldRef != nil
+		if !literal && !field {
+			return nil, false
+		}
+		if !slices.ContainsFunc(env, func(c corev1.EnvVar) bool { return c.Name == e.Name }) {
+			env = append(env, *e.DeepCopy())
+		}
+	}
+	return env, true
+}
+
+// readOutput reads the digest of the output file from the termination message of the sidecar of
+// the newest pod of the run. It sets the status in memory one time. The message comes from a pod, so
 // outputdigest.Parse accepts only a digest of the correct form.
 func (r *AgentReconciler) readOutput(ctx context.Context, a *corev1alpha1.Agent) error {
-	if a.Spec.Output == nil || a.Status.Output != nil {
+	if a.Status.Output != nil {
 		return nil
 	}
-	out := &corev1alpha1.AgentOutputStatus{Path: a.Spec.Output.Path, Reason: "NoResult"}
-	a.Status.Output = out
 	pods := &corev1.PodList{}
 	if err := r.APIReader.List(ctx, pods, client.InNamespace(a.Namespace),
 		client.MatchingLabels{batchv1.JobNameLabel: runName(a), agentLabel: a.Name}); err != nil {
-		a.Status.Output = nil
 		return err
 	}
 	var newest *corev1.Pod
@@ -660,14 +693,24 @@ func (r *AgentReconciler) readOutput(ctx context.Context, a *corev1alpha1.Agent)
 			newest = p
 		}
 	}
-	if newest == nil {
+	// The sidecar of the pod says if the run has an output, and gives its path. A change of
+	// spec.output after the start of the run has no effect.
+	out := &corev1alpha1.AgentOutputStatus{Reason: "NoResult"}
+	if newest != nil {
+		for _, c := range newest.Spec.InitContainers {
+			if c.Name == outputContainer && len(c.Command) == 3 {
+				out.Path = c.Command[2]
+			}
+		}
+	} else if a.Spec.Output != nil {
+		out.Path = a.Spec.Output.Path
+	}
+	if out.Path == "" {
 		return nil
 	}
-	// The path of the status is the path that the sidecar got, not a later value of the spec.
-	for _, c := range newest.Spec.InitContainers {
-		if c.Name == outputContainer && len(c.Command) == 3 {
-			out.Path = c.Command[2]
-		}
+	a.Status.Output = out
+	if newest == nil {
+		return nil
 	}
 	for _, s := range newest.Status.InitContainerStatuses {
 		if s.Name != outputContainer || s.State.Terminated == nil {
