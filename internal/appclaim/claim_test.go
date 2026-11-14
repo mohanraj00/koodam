@@ -164,6 +164,7 @@ func TestVerifyRefuses(t *testing.T) {
 		{"empty", "", RefusedSyntax},
 		{"2 parts", parts[0] + "." + parts[1], RefusedSyntax},
 		{"too large", good + strings.Repeat("A", maxToken), RefusedSyntax},
+		{"4 parts", good + ".AAAA", RefusedSyntax},
 		{"header not JSON", "e30x." + parts[1] + "." + parts[2], RefusedSyntax},
 		{"alg none", enc([]byte(`{"alg":"none"}`)) + "." + parts[1] + ".AAAA", RefusedAlgorithm},
 		{"alg HS256", f.sign(t, header("HS256", ""), claims(nil)), RefusedAlgorithm},
@@ -209,7 +210,9 @@ func TestParseKeySetRefuses(t *testing.T) {
 		"not JSON":      "{",
 		"no key":        `{"keys":[]}`,
 		"small RSA key": `{"keys":[{"kty":"RSA","n":"` + enc(small.N.Bytes()) + `","e":"AQAB"}]}`,
-		"even exponent": `{"keys":[{"kty":"RSA","n":"` + enc(make([]byte, 256)) + `","e":"Ag"}]}`,
+		"small RSA key with zero bytes": `{"keys":[{"kty":"RSA","n":"` +
+			enc(append(make([]byte, 128), small.N.Bytes()...)) + `","e":"AQAB"}]}`,
+		"even exponent": `{"keys":[{"kty":"RSA","n":"` + enc(bytes.Repeat([]byte{0xff}, 256)) + `","e":"Ag"}]}`,
 		"point not on the curve": `{"keys":[{"kty":"EC","crv":"P-256","x":"` + enc(bytes.Repeat([]byte{1}, 32)) +
 			`","y":"` + enc(bytes.Repeat([]byte{1}, 32)) + `"}]}`,
 		"other curve": `{"keys":[{"kty":"EC","crv":"P-384","x":"AA","y":"AA"}]}`,
