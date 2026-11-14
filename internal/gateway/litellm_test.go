@@ -24,6 +24,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -199,6 +200,30 @@ func TestCreateKeySendsBudgetModelAndTTL(t *testing.T) {
 	}
 	if m := b["models"].([]any); len(m) != 1 || m[0] != testModel {
 		t.Fatalf("models %v", m)
+	}
+}
+
+// A key with a list of models permits each model one time, with Model first. A renew sends the
+// same list.
+func TestKeyPermitsEachModelOfTheList(t *testing.T) {
+	const large = "model-large"
+	f := newFake()
+	l, stop := client(f)
+	defer stop()
+	s := spec(t)
+	s.Models = []string{large, testModel, "", large}
+	if err := l.CreateKey(context.Background(), s); err != nil {
+		t.Fatal(err)
+	}
+	want := []any{testModel, large}
+	if m := f.keys[HashKey(s.Value)]["models"].([]any); !slices.Equal(m, want) {
+		t.Fatalf("models %v, want %v", m, want)
+	}
+	if err := l.RenewKey(context.Background(), s); err != nil {
+		t.Fatal(err)
+	}
+	if m := f.keys[HashKey(s.Value)]["models"].([]any); !slices.Equal(m, want) {
+		t.Fatalf("models after the renew %v, want %v", m, want)
 	}
 }
 

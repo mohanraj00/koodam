@@ -54,11 +54,17 @@ spec:
 
 The second version `shop-v2` has the same form. The `Gateway` with the name `public` must permit routes from the namespace of the App.
 
+## Models and the gateway key
+
+- `template.model` is one gateway model. `template.models` is a list of gateway models. Use one of the two forms.
+- With a model, the version gets one gateway key with `budgetPerDay`. The key permits only the declared models, and the gateway refuses a call to a different model. The `app` container gets the gateway address in `KOODAM_GATEWAY_URL`, the first model in `KOODAM_GATEWAY_MODEL`, each model in `KOODAM_GATEWAY_MODELS` with a comma between them, and the path of the key file in `KOODAM_GATEWAY_KEY_FILE`.
+- With no model, the version gets no key, no key file and no budget. `budgetPerDay` is not permitted. The version still gets its Role, its Service and its traced egress, and it does not count for `maxLiveVersions`.
+
 ## Admission checks
 
 A `ValidatingAdmissionPolicy` holds the checks of an AppVersion that the CRD cannot hold:
 
-- After the version has a gateway key, `spec.template` cannot change. To change the template, make a new AppVersion. `replicas`, `budgetPerDay` and `lifecycle` can change.
+- After the version has a gateway key, or after the controller started to make its objects (the condition `Started`), `spec.template` cannot change. A later failure does not remove this lock. To change the template, make a new AppVersion. `replicas`, `budgetPerDay` and `lifecycle` can change.
 - The name of the AppVersion is a DNS label with 60 characters or fewer, and `spec.appRef.name` has 63 characters or fewer.
 - Each port of the `app` container has a name and the TCP protocol, with no host port.
 

@@ -50,7 +50,8 @@ import (
 )
 
 const (
-	// appFinalizer keeps the AppVersion until the controller blocks its gateway key.
+	// appFinalizer keeps the AppVersion until the controller blocks its gateway key and deletes
+	// its pods and their access.
 	appFinalizer = "koodam.dev/app-revoke"
 	// appLabel and appVersionLabel are on each object and each pod of an AppVersion. The egress
 	// proxy reads them from the pod to find the App and the AppVersion of a call. They must
@@ -65,6 +66,9 @@ const (
 	appGatewayURLEnv = "KOODAM_GATEWAY_URL"
 	appModelEnv      = "KOODAM_GATEWAY_MODEL"
 	appKeyFileEnv    = "KOODAM_GATEWAY_KEY_FILE"
+	// appModelsEnv has each model that the key permits, with a comma between them. appModelEnv
+	// has the first model.
+	appModelsEnv = "KOODAM_GATEWAY_MODELS"
 	// appVersionEnv has the name of the AppVersion. The app can give it to a client, and the
 	// client sends it in the header corev1alpha1.AppVersionHeader to stay on this version.
 	appVersionEnv = "KOODAM_APP_VERSION"
@@ -73,9 +77,15 @@ const (
 	// reasonIssuing is the reason of the condition GatewayKey from the enrollment until the
 	// gateway confirms the key.
 	reasonIssuing = "Issuing"
+	// reasonNoModel is the reason of the condition GatewayKey of a version with no model.
+	reasonNoModel = "NoModel"
 	// reasonNoEgressPolicy is the reason of the condition TracedEgress while the version has no
 	// NetworkPolicy that enforces the egress path of its pods.
 	reasonNoEgressPolicy = "NoEgressPolicy"
+	// condStarted is True from the first time that the controller starts to make the objects of
+	// the version. It never becomes False, so the admission policy can keep the template
+	// immutable after a later failure.
+	condStarted = "Started"
 	// appLiveWait is the time between 2 checks of a version that waits for a free live slot.
 	appLiveWait = 30 * time.Second
 )
@@ -143,11 +153,12 @@ func (r *AppVersionReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 }
 
 // retire drains a retiring version and then revokes its key. In the drain time the version keeps
-// its key and its pods, and the App controller sends it no new session. A version with no key has
-// no session, so its revoke starts immediately.
+// its key and its pods, and the App controller sends it no new session. A version that waits for
+// its key has no pod and no session, so its revoke starts immediately. A version with no model
+// drains as a version with a key.
 func (r *AppVersionReconciler) retire(ctx context.Context, av *corev1alpha1.AppVersion) (ctrl.Result, error) {
 	const reason = "Retired"
-	if av.Status.KeyHash == "" {
+	if av.Status.KeyHash == "" && len(av.Spec.Template.ModelList()) > 0 {
 		return ctrl.Result{}, r.revoke(ctx, av, reason)
 	}
 	set := func(t string, s metav1.ConditionStatus, why, msg string) {
@@ -211,6 +222,14 @@ func invalidAppVersion(av *corev1alpha1.AppVersion) string {
 	}
 	if len(validation.IsValidLabelValue(av.Spec.AppRef.Name)) > 0 {
 		return "spec.appRef.name must be a label value with 63 characters or fewer."
+	}
+	switch models := av.Spec.Template.ModelList(); {
+	case len(models) > 0 && av.Spec.BudgetPerDay == nil:
+		return "spec.budgetPerDay is necessary with a model."
+	case len(models) == 0 && av.Status.KeyHash != "":
+		return "The version has a gateway key, so the template must keep its models."
+	case slices.ContainsFunc(models, func(m string) bool { return m == "" || strings.Contains(m, ",") }):
+		return "A model name must not be empty and must not have a comma."
 	}
 	if !inCeiling(av.Spec.Template.Rules) {
 		return "A rule is not in the agent-ceiling ClusterRole."
@@ -286,39 +305,24 @@ func (r *AppVersionReconciler) apply(ctx context.Context, av *corev1alpha1.AppVe
 		// the key keeps its renew. template wrote the condition.
 		*old = *av.Status.DeepCopy()
 	}
-	if av.Status.KeyHash == "" {
-		full, err := r.liveFull(ctx, av, app)
-		if err != nil {
-			return ctrl.Result{}, err
-		}
-		if full {
-			return ctrl.Result{RequeueAfter: appLiveWait}, r.wait(ctx, av, old, "LiveVersionsFull",
-				"The App has spec.maxLiveVersions versions with a key. This version waits.")
-		}
-	}
-	key, err := r.enroll(ctx, av, old)
-	if err != nil || key == "" {
-		return ctrl.Result{}, err
-	}
-	model := av.Spec.Template.Model
-	if deploy == nil {
-		// The pods keep the model of the last valid template, so the key keeps it too.
-		if model, err = r.appliedModel(ctx, av); err != nil {
-			return ctrl.Result{}, err
-		}
-	}
-	renewErr, err := r.applyKey(ctx, av, key, model)
-	if errors.Is(err, gateway.ErrKeyNotFound) {
-		// The gateway lost a key that it had. The controller does not make the key again.
-		return ctrl.Result{}, r.revoke(ctx, av, "KeyLost")
-	}
-	if err != nil {
-		return ctrl.Result{}, err
+	renewErr, done, res, err := r.applyVersionKey(ctx, av, app, old, deploy != nil)
+	if done || err != nil {
+		return res, err
 	}
 	// After a renew that failed, the key has the model of the last renew. The objects stay as
 	// they are until the gateway accepts the key settings, so the pods do not get a model that the
 	// key refuses.
 	if deploy != nil && !renewErr {
+		// The record of the start is in the status before the first object exists.
+		if !meta.IsStatusConditionTrue(av.Status.Conditions, condStarted) {
+			meta.SetStatusCondition(&av.Status.Conditions, metav1.Condition{Type: condStarted,
+				Status: metav1.ConditionTrue, Reason: condStarted,
+				Message: "The controller started to make the objects of the version.", ObservedGeneration: av.Generation})
+			if err := r.writeStatus(ctx, av, old); err != nil {
+				return ctrl.Result{}, err
+			}
+			*old = *av.Status.DeepCopy()
+		}
 		reason, err := r.applyObjects(ctx, av, deploy)
 		if err != nil {
 			return ctrl.Result{}, err
@@ -342,7 +346,59 @@ func (r *AppVersionReconciler) apply(ctx context.Context, av *corev1alpha1.AppVe
 	if renewErr {
 		return ctrl.Result{}, errRenewFailed
 	}
-	return ctrl.Result{RequeueAfter: r.untilRenew(av.Status.KeyHash)}, nil
+	// A version with no key has no renew timer. It gets the same period, so the controller makes
+	// a deleted NetworkPolicy again. The controller does not watch the policies.
+	after := r.untilRenew(av.Status.KeyHash)
+	if av.Status.KeyHash == "" {
+		after = r.keyTTL() / 4
+	}
+	return ctrl.Result{RequeueAfter: after}, nil
+}
+
+// applyVersionKey makes or renews the key of a version with a model. A version with no model
+// gets no key. done is true if the reconcile stops here: the version waits or its revoke started.
+// valid is false if the template is not valid and the version keeps its last objects.
+func (r *AppVersionReconciler) applyVersionKey(ctx context.Context, av *corev1alpha1.AppVersion, app *corev1alpha1.App,
+	old *corev1alpha1.AppVersionStatus, valid bool) (renewErr, done bool, res ctrl.Result, err error) {
+	models := av.Spec.Template.ModelList()
+	if len(models) == 0 && av.Status.KeyHash == "" {
+		// A version with no model makes no model call. It gets no key and no Secret. It gets the
+		// finalizer before its first object, so a delete that orphans the objects cannot keep the
+		// pods and their access.
+		if err := r.addFinalizer(ctx, av); err != nil {
+			return false, true, res, err
+		}
+		meta.SetStatusCondition(&av.Status.Conditions, metav1.Condition{Type: condGatewayKey,
+			Status: metav1.ConditionFalse, Reason: reasonNoModel,
+			Message: "The template declares no model, so the version has no gateway key.", ObservedGeneration: av.Generation})
+		return false, false, res, nil
+	}
+	if av.Status.KeyHash == "" {
+		full, err := r.liveFull(ctx, av, app)
+		if err != nil {
+			return false, true, res, err
+		}
+		if full {
+			return false, true, ctrl.Result{RequeueAfter: appLiveWait}, r.wait(ctx, av, old, "LiveVersionsFull",
+				"The App has spec.maxLiveVersions versions with a key. This version waits.")
+		}
+	}
+	key, err := r.enroll(ctx, av, old)
+	if err != nil || key == "" {
+		return false, true, res, err
+	}
+	if !valid || len(models) == 0 {
+		// The pods keep the models of the last valid template, so the key keeps them too.
+		if models, err = r.appliedModels(ctx, av); err != nil {
+			return false, true, res, err
+		}
+	}
+	renewErr, err = r.applyKey(ctx, av, key, models)
+	if errors.Is(err, gateway.ErrKeyNotFound) {
+		// The gateway lost a key that it had. The controller does not make the key again.
+		return false, true, res, r.revoke(ctx, av, "KeyLost")
+	}
+	return renewErr, err != nil, res, err
 }
 
 // egressCondition gives back the condition TracedEgress. It is True only if the pod DNS goes to
@@ -390,18 +446,27 @@ func (r *AppVersionReconciler) template(ctx context.Context, av *corev1alpha1.Ap
 	return nil, r.wait(ctx, av, old, reason, msg)
 }
 
+// addFinalizer adds the finalizer and keeps the status in memory, because Update gives back the
+// status of the API server.
+func (r *AppVersionReconciler) addFinalizer(ctx context.Context, av *corev1alpha1.AppVersion) error {
+	if !controllerutil.AddFinalizer(av, appFinalizer) {
+		return nil
+	}
+	st := av.Status.DeepCopy()
+	if err := r.Update(ctx, av); err != nil {
+		return err
+	}
+	av.Status = *st
+	return nil
+}
+
 // enroll adds the finalizer, makes the key Secret and writes the key hash to the status. It
 // gives back the key value. If the version waits or the controller revokes it, the value is
 // empty. It sets old to the status that the API server has.
 func (r *AppVersionReconciler) enroll(ctx context.Context, av *corev1alpha1.AppVersion,
 	old *corev1alpha1.AppVersionStatus) (string, error) {
-	if controllerutil.AddFinalizer(av, appFinalizer) {
-		// Update gives back the status of the API server, so keep the status in memory.
-		st := av.Status.DeepCopy()
-		if err := r.Update(ctx, av); err != nil {
-			return "", err
-		}
-		av.Status = *st
+	if err := r.addFinalizer(ctx, av); err != nil {
+		return "", err
 	}
 	// The Secret comes first. A retry after a crash finds the key value in it.
 	secret, err := r.readSecret(ctx, av)
@@ -450,7 +515,7 @@ func (r *AppVersionReconciler) enroll(ctx context.Context, av *corev1alpha1.AppV
 // empty reason is success. A different reason is from applyObjects.
 func setProvisioned(av *corev1alpha1.AppVersion, reason string) {
 	c := metav1.Condition{Type: condProvisioned, Status: metav1.ConditionTrue, Reason: "Provisioned",
-		Message: "The key, the Role, the Deployment and the Service are ready.", ObservedGeneration: av.Generation}
+		Message: "The objects of the version are ready.", ObservedGeneration: av.Generation}
 	if reason != "" {
 		c.Status, c.Reason = metav1.ConditionFalse, reason
 		c.Message = "The controller cannot make an object of the version."
@@ -529,29 +594,37 @@ func (r *AppVersionReconciler) getOwned(ctx context.Context, av *corev1alpha1.Ap
 
 // appliedModel is the model in the Deployment of the version. If the version has no Deployment,
 // it is the model of the spec.
-func (r *AppVersionReconciler) appliedModel(ctx context.Context, av *corev1alpha1.AppVersion) (string, error) {
+func (r *AppVersionReconciler) appliedModels(ctx context.Context, av *corev1alpha1.AppVersion) ([]string, error) {
 	d := &appsv1.Deployment{}
 	found, err := r.getOwned(ctx, av, d)
 	if err != nil && !errors.Is(err, errNotOwned) {
-		return "", err
+		return nil, err
 	}
 	if c := appContainer(&d.Spec.Template.Spec); found && err == nil && c != nil {
 		for _, e := range c.Env {
-			if e.Name == appModelEnv {
-				return e.Value, nil
+			if e.Name == appModelsEnv && e.Value != "" {
+				return strings.Split(e.Value, ","), nil
 			}
 		}
 	}
-	return av.Spec.Template.Model, nil
+	if models := av.Spec.Template.ModelList(); len(models) > 0 {
+		return models, nil
+	}
+	// The version has a key, and no object and no template has its models. The gateway keeps
+	// the models of the key at a renew that names no model, so this case cannot make a key.
+	return nil, errors.New("the AppVersion has a key and no model")
 }
 
 // applyKey makes the key at the gateway, or renews it. The condition GatewayKey exists only
 // after a CreateKey without error. Thus a missing key after that is a lost key, and applyKey
 // returns gateway.ErrKeyNotFound. A new budget is in the condition only after the gateway
 // accepted it. renewFailed is true if a renew failed and the key stays valid until its TTL ends.
-func (r *AppVersionReconciler) applyKey(ctx context.Context, av *corev1alpha1.AppVersion, key, model string) (
-	renewFailed bool, err error) {
-	spec := gateway.KeySpec{Value: key, Alias: av.Status.KeyAlias, Model: model,
+func (r *AppVersionReconciler) applyKey(ctx context.Context, av *corev1alpha1.AppVersion, key string,
+	models []string) (renewFailed bool, err error) {
+	if av.Spec.BudgetPerDay == nil {
+		return false, errors.New("the AppVersion has a key and no spec.budgetPerDay")
+	}
+	spec := gateway.KeySpec{Value: key, Alias: av.Status.KeyAlias, Model: models[0], Models: models[1:],
 		Budget: av.Spec.BudgetPerDay.AsApproximateFloat64(), BudgetPeriod: 24 * time.Hour, TTL: r.keyTTL(),
 		Metadata: map[string]string{metaUID: string(av.UID), metaNamespace: av.Namespace,
 			"app": av.Spec.AppRef.Name, "appVersion": av.Name}}
@@ -697,18 +770,23 @@ func (r *AppVersionReconciler) deployment(ctx context.Context, av *corev1alpha1.
 		// The key file has owner root, group appKeyGroup and mode 0440. Each container process gets
 		// this group, so an app that is not root can read the key.
 		SecurityContext: &corev1.PodSecurityContext{FSGroup: new(appKeyGroup)},
-		Volumes: []corev1.Volume{{Name: vol, VolumeSource: corev1.VolumeSource{Secret: &corev1.SecretVolumeSource{
-			SecretName: name, DefaultMode: new(int32(0o440))}}}},
 		Containers: []corev1.Container{{
 			Name: corev1alpha1.AppContainerName,
-			Env: []corev1.EnvVar{
-				{Name: appGatewayURLEnv, Value: r.GatewayURL},
-				{Name: appModelEnv, Value: av.Spec.Template.Model},
-				{Name: appKeyFileEnv, Value: workspaceGatewayDir + "/" + appKeyField},
-				{Name: appVersionEnv, Value: av.Name},
-			},
-			VolumeMounts: []corev1.VolumeMount{{Name: vol, MountPath: workspaceGatewayDir, ReadOnly: true}},
+			Env:  []corev1.EnvVar{{Name: appVersionEnv, Value: av.Name}},
 		}},
+	}
+	// A version with no model has no key, so its pod has no key file and no gateway variable.
+	if models := av.Spec.Template.ModelList(); len(models) > 0 {
+		base.Spec.Volumes = []corev1.Volume{{Name: vol, VolumeSource: corev1.VolumeSource{Secret: &corev1.SecretVolumeSource{
+			SecretName: name, DefaultMode: new(int32(0o440))}}}}
+		c := &base.Spec.Containers[0]
+		c.Env = append([]corev1.EnvVar{
+			{Name: appGatewayURLEnv, Value: r.GatewayURL},
+			{Name: appModelEnv, Value: models[0]},
+			{Name: appModelsEnv, Value: strings.Join(models, ",")},
+			{Name: appKeyFileEnv, Value: workspaceGatewayDir + "/" + appKeyField},
+		}, c.Env...)
+		c.VolumeMounts = []corev1.VolumeMount{{Name: vol, MountPath: workspaceGatewayDir, ReadOnly: true}}
 	}
 	// The shared merge does not accept the ports and the probes in the main container. The app
 	// container needs them, so the controller moves them around the merge. invalidAppVersion
@@ -738,6 +816,9 @@ func (r *AppVersionReconciler) deployment(ctx context.Context, av *corev1alpha1.
 		Replicas: &replicas, Selector: &metav1.LabelSelector{MatchLabels: labels}, Template: tmpl}}, nil
 }
 
+// msgNoKey is the message of the revoke of a version with no key.
+const msgNoKey = "There was no key to revoke."
+
 // revoke blocks the key first, by the hash in the status. Then it deletes the Deployment, the
 // Service and the access, writes Revoked, deletes the Secret and removes the finalizer. Each step
 // can run again. If the block fails, the Secret and the finalizer stay, and Revoked is Unknown.
@@ -748,7 +829,11 @@ func (r *AppVersionReconciler) revoke(ctx context.Context, av *corev1alpha1.AppV
 		if !av.DeletionTimestamp.IsZero() || meta.IsStatusConditionTrue(av.Status.Conditions, corev1alpha1.AppVersionRevoked) {
 			return nil
 		}
-		r.setRevoke(av, reason, metav1.ConditionTrue, "There was no key to revoke.")
+		// A version with no model from an earlier controller has objects, no key and no finalizer.
+		if err := r.deleteObjects(ctx, av); err != nil {
+			return err
+		}
+		r.setRevoke(av, reason, metav1.ConditionTrue, msgNoKey)
 		return r.writeStatus(ctx, av, old)
 	}
 	if meta.FindStatusCondition(av.Status.Conditions, corev1alpha1.AppVersionRevoking) == nil {
@@ -777,14 +862,15 @@ func (r *AppVersionReconciler) revoke(ctx context.Context, av *corev1alpha1.AppV
 		}
 		r.forgetRenewed(hash)
 	}
-	for _, o := range []client.Object{&appsv1.Deployment{}, &corev1.Service{}, &rbacv1.RoleBinding{},
-		&rbacv1.Role{}, &corev1.ServiceAccount{}} {
-		if err := r.deleteOwned(ctx, av, o); err != nil {
-			return err
-		}
+	if err := r.deleteObjects(ctx, av); err != nil {
+		return err
 	}
 	if !meta.IsStatusConditionTrue(av.Status.Conditions, corev1alpha1.AppVersionRevoked) {
-		r.setRevoke(av, reason, metav1.ConditionTrue, "The key is blocked and the objects of the version are deleted.")
+		msg := "The key is blocked and the objects of the version are deleted."
+		if hash == "" {
+			msg = msgNoKey
+		}
+		r.setRevoke(av, reason, metav1.ConditionTrue, msg)
 		if err := r.Status().Update(ctx, av); err != nil {
 			return err
 		}
@@ -802,6 +888,18 @@ func (r *AppVersionReconciler) revoke(ctx context.Context, av *corev1alpha1.AppV
 }
 
 // setRevoke sets the conditions Revoking, Revoked and Provisioned of a version in the revoke.
+// deleteObjects deletes the pods of the version and their access. The NetworkPolicy stays until
+// the garbage collector deletes it with the AppVersion.
+func (r *AppVersionReconciler) deleteObjects(ctx context.Context, av *corev1alpha1.AppVersion) error {
+	for _, o := range []client.Object{&appsv1.Deployment{}, &corev1.Service{}, &rbacv1.RoleBinding{},
+		&rbacv1.Role{}, &corev1.ServiceAccount{}} {
+		if err := r.deleteOwned(ctx, av, o); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 func (r *AppVersionReconciler) setRevoke(av *corev1alpha1.AppVersion, reason string, revoked metav1.ConditionStatus,
 	msg string) {
 	set := func(t string, s metav1.ConditionStatus, m string) {

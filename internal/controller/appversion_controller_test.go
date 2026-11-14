@@ -91,7 +91,7 @@ var _ = Describe("AppVersion controller", func() {
 	newVersion := func(s string, rules ...rbacv1.PolicyRule) {
 		av := &corev1alpha1.AppVersion{ObjectMeta: metav1.ObjectMeta{Name: s, Namespace: ns},
 			Spec: corev1alpha1.AppVersionSpec{
-				AppRef: corev1alpha1.AppReference{Name: appName}, BudgetPerDay: resource.MustParse("5"),
+				AppRef: corev1alpha1.AppReference{Name: appName}, BudgetPerDay: new(resource.MustParse("5")),
 				Template: corev1alpha1.AppVersionTemplate{Model: testGatewayModel, Rules: rules,
 					PodTemplate: corev1alpha1.PodTemplate{Spec: corev1.PodSpec{Containers: []corev1.Container{{
 						Name: corev1alpha1.AppContainerName, Image: "registry.example.com/app:v1",
@@ -353,6 +353,7 @@ var _ = Describe("AppVersion controller", func() {
 		Expect(svc.Spec.Ports).To(HaveLen(2))
 		Expect(svc.Spec.Ports[1].Port).To(Equal(int32(9090)))
 		Expect(cond(name, condProvisioned).Status).To(Equal(metav1.ConditionTrue))
+		Expect(cond(name, condStarted).Status).To(Equal(metav1.ConditionTrue))
 	})
 
 	It("sends the new budget if the spec changed before the status had the key", func() {
@@ -364,7 +365,7 @@ var _ = Describe("AppVersion controller", func() {
 		meta.SetStatusCondition(&av.Status.Conditions, metav1.Condition{Type: condGatewayKey,
 			Status: metav1.ConditionFalse, Reason: reasonIssuing, ObservedGeneration: av.Generation})
 		Expect(k8sClient.Status().Update(ctx, av)).To(Succeed())
-		av.Spec.BudgetPerDay = resource.MustParse("2")
+		av.Spec.BudgetPerDay = new(resource.MustParse("2"))
 		Expect(k8sClient.Update(ctx, av)).To(Succeed())
 
 		mustReconcile()
@@ -391,7 +392,7 @@ var _ = Describe("AppVersion controller", func() {
 		newVersion(name)
 		mustReconcile()
 		av := version(name)
-		av.Spec.BudgetPerDay = resource.MustParse("9")
+		av.Spec.BudgetPerDay = new(resource.MustParse("9"))
 		av.Spec.Replicas = new(int32(3))
 		av.Spec.Template.Model = nextModel
 		Expect(k8sClient.Update(ctx, av)).To(Succeed())
@@ -510,6 +511,112 @@ var _ = Describe("AppVersion controller", func() {
 		// The revoke is terminal.
 		mustReconcile()
 		Expect(gw.order).To(Equal([]string{opCreate, opBlock}))
+	})
+
+	It("makes one key that permits each model of the list", func() {
+		const small, large = "model-small", "model-large"
+		newApp(2)
+		newVersion(name)
+		av := version(name)
+		av.Spec.Template.Model, av.Spec.Template.Models = "", []string{small, large}
+		Expect(k8sClient.Update(ctx, av)).To(Succeed())
+		mustReconcile()
+		Expect(gw.specs).To(HaveLen(1))
+		Expect(gw.specs[0].Model).To(Equal(small))
+		Expect(gw.specs[0].Models).To(Equal([]string{large}))
+		d := &appsv1.Deployment{}
+		Expect(k8sClient.Get(ctx, nn("kd-"+name), d)).To(Succeed())
+		Expect(d.Spec.Template.Spec.Containers[0].Env).To(ContainElements(
+			corev1.EnvVar{Name: appModelEnv, Value: small},
+			corev1.EnvVar{Name: appModelsEnv, Value: small + "," + large}))
+
+		// The API server refuses the 2 forms together, a model with no budget and a budget with no model.
+		for _, change := range []func(*corev1alpha1.AppVersion){
+			func(v *corev1alpha1.AppVersion) { v.Spec.Template.Model = small },
+			func(v *corev1alpha1.AppVersion) { v.Spec.BudgetPerDay = nil },
+			func(v *corev1alpha1.AppVersion) { v.Spec.Template.Models = nil },
+		} {
+			bad := version(name)
+			change(bad)
+			Expect(apierrors.IsInvalid(k8sClient.Update(ctx, bad))).To(BeTrue())
+		}
+	})
+
+	It("makes no key for a version with no model, and drains it before the delete of its pods", func() {
+		newApp(2)
+		app := &corev1alpha1.App{}
+		Expect(k8sClient.Get(ctx, nn(appName), app)).To(Succeed())
+		app.Spec.DrainSeconds = new(int32(600))
+		Expect(k8sClient.Update(ctx, app)).To(Succeed())
+		newVersion(name)
+		av := version(name)
+		av.Spec.Template.Model, av.Spec.BudgetPerDay = "", nil
+		Expect(k8sClient.Update(ctx, av)).To(Succeed())
+		// A version with no key has a periodic reconcile, so a deleted NetworkPolicy comes back.
+		Expect(mustReconcile().RequeueAfter).To(Equal(ttl / 4))
+
+		// No gateway call, no Secret, no alias and no hash. The finalizer keeps the version until
+		// the controller deletes its objects.
+		Expect(gw.order).To(BeEmpty())
+		Expect(gone(&corev1.Secret{}, name)).To(BeTrue())
+		av = version(name)
+		Expect(av.Finalizers).To(Equal([]string{appFinalizer}))
+		Expect(av.Status.KeyAlias).To(BeEmpty())
+		Expect(av.Status.KeyHash).To(BeEmpty())
+		Expect(cond(name, condGatewayKey).Reason).To(Equal(reasonNoModel))
+		Expect(cond(name, condProvisioned).Status).To(Equal(metav1.ConditionTrue))
+		// The pod has no key file and no gateway variable. The Role and the Service are there.
+		d := &appsv1.Deployment{}
+		Expect(k8sClient.Get(ctx, nn("kd-"+name), d)).To(Succeed())
+		Expect(d.Spec.Template.Spec.Volumes).To(BeEmpty())
+		Expect(d.Spec.Template.Spec.Containers[0].Env).To(Equal([]corev1.EnvVar{{Name: appVersionEnv, Value: name}}))
+		Expect(gone(&corev1.Service{}, name)).To(BeFalse())
+		Expect(gone(&rbacv1.Role{}, name)).To(BeFalse())
+
+		// A version with no model does not use a live slot.
+		newVersion(name + "-b")
+		_, err := reconcileName(name + "-b")
+		Expect(err).NotTo(HaveOccurred())
+		newVersion(name + "-c")
+		DeferCleanup(func() { cleanup(name + "-c") })
+		_, err = reconcileName(name + "-c")
+		Expect(err).NotTo(HaveOccurred())
+		Expect(cond(name+"-c", condProvisioned).Status).To(Equal(metav1.ConditionTrue))
+
+		// A delete that orphans the objects does not keep the pods and their access.
+		newVersion(name + "-d")
+		DeferCleanup(func() { cleanup(name + "-d") })
+		d2 := version(name + "-d")
+		d2.Spec.Template.Model, d2.Spec.BudgetPerDay = "", nil
+		Expect(k8sClient.Update(ctx, d2)).To(Succeed())
+		_, err = reconcileName(name + "-d")
+		Expect(err).NotTo(HaveOccurred())
+		Expect(gone(&rbacv1.Role{}, name+"-d")).To(BeFalse())
+		Expect(k8sClient.Delete(ctx, version(name+"-d"),
+			client.PropagationPolicy(metav1.DeletePropagationOrphan))).To(Succeed())
+		_, err = reconcileName(name + "-d")
+		Expect(err).NotTo(HaveOccurred())
+		for _, o := range []client.Object{&appsv1.Deployment{}, &rbacv1.RoleBinding{}, &rbacv1.Role{},
+			&corev1.ServiceAccount{}} {
+			Expect(gone(o, name+"-d")).To(BeTrue())
+		}
+		// envtest has no garbage collector, so the orphan finalizer of the API server can stay.
+		left := &corev1alpha1.AppVersion{}
+		if k8sClient.Get(ctx, nn(name+"-d"), left) == nil {
+			Expect(left.Finalizers).NotTo(ContainElement(appFinalizer))
+		}
+
+		av.Spec.Lifecycle = corev1alpha1.AppVersionRetiring
+		Expect(k8sClient.Update(ctx, av)).To(Succeed())
+		Expect(mustReconcile().RequeueAfter).To(Equal(10 * time.Minute))
+		Expect(gone(&appsv1.Deployment{}, name)).To(BeFalse())
+		now = now.Add(10 * time.Minute)
+		mustReconcile()
+		Expect(cond(name, corev1alpha1.AppVersionRevoked).Status).To(Equal(metav1.ConditionTrue))
+		Expect(gone(&appsv1.Deployment{}, name)).To(BeTrue())
+		Expect(gone(&corev1.Service{}, name)).To(BeTrue())
+		Expect(gw.order).NotTo(ContainElement(opBlock))
+		Expect(version(name).Finalizers).To(BeEmpty())
 	})
 
 	It("drains a retiring version before the revoke", func() {

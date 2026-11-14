@@ -76,7 +76,8 @@ spec:
                 description: |-
                   BudgetPerDay is the maximum spend of the version key in one day, in the currency of the
                   gateway price table. It has no default, and it must be more than zero. You can change it.
-                  The version keeps the same key.
+                  The version keeps the same key. It is necessary if the template declares a model. A
+                  version with no model has no key and no budget.
                 pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
                 x-kubernetes-int-or-string: true
                 x-kubernetes-validations:
@@ -109,10 +110,23 @@ spec:
                   config/apps/admission refuses a template change after the version has a gateway key.
                 properties:
                   model:
-                    description: Model is the gateway model name. The version key
-                      permits only this model.
+                    description: |-
+                      Model is the gateway model name. It is the short form of a models list with 1 item. The
+                      version key permits only this model.
                     minLength: 1
                     type: string
+                  models:
+                    description: |-
+                      Models are the gateway model names that the version key permits. The gateway refuses a
+                      call to a different model. If the template has no model and no models, the version gets
+                      no gateway key.
+                    items:
+                      minLength: 1
+                      type: string
+                    maxItems: 16
+                    minItems: 1
+                    type: array
+                    x-kubernetes-list-type: set
                   podTemplate:
                     description: PodTemplate is the pod of the version.
                     properties:
@@ -9064,13 +9078,14 @@ spec:
                       type: object
                     type: array
                 required:
-                - model
                 - podTemplate
                 type: object
                 x-kubernetes-validations:
                 - message: The pod template must have 1 container with the name app.
                   rule: has(self.podTemplate.spec) && has(self.podTemplate.spec.containers)
                     && self.podTemplate.spec.containers.exists_one(c, c.name == 'app')
+                - message: Use model or models, not the two.
+                  rule: '!(has(self.model) && has(self.models))'
                 - message: The app container must have an image, a readiness probe
                     and 1 or more ports.
                   rule: '!has(self.podTemplate.spec) || !has(self.podTemplate.spec.containers)
@@ -9079,9 +9094,12 @@ spec:
                     has(c.ports) && size(c.ports) > 0))'
             required:
             - appRef
-            - budgetPerDay
             - template
             type: object
+            x-kubernetes-validations:
+            - message: budgetPerDay is necessary with a model, and it is not permitted
+                with no model.
+              rule: (has(self.template.model) || has(self.template.models)) == has(self.budgetPerDay)
           status:
             description: status defines the observed state of AppVersion
             properties:
@@ -9151,8 +9169,9 @@ spec:
                 - type
                 x-kubernetes-list-type: map
               keyAlias:
-                description: KeyAlias identifies the gateway key. The key value is
-                  never in the status.
+                description: |-
+                  KeyAlias identifies the gateway key. The key value is never in the status. A version with
+                  no model has no key and no alias.
                 type: string
               keyHash:
                 description: |-

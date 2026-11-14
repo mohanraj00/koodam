@@ -85,7 +85,7 @@ var _ = Describe("App and AppVersion CRDs", func() {
 			ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: ns},
 			Spec: corev1alpha1.AppVersionSpec{
 				AppRef:       corev1alpha1.AppReference{Name: appName},
-				BudgetPerDay: resource.MustParse(budgetOneUnit),
+				BudgetPerDay: new(resource.MustParse(budgetOneUnit)),
 				Template: corev1alpha1.AppVersionTemplate{
 					Model:       appModel,
 					PodTemplate: corev1alpha1.PodTemplate{Spec: corev1.PodSpec{Containers: containers}},
@@ -146,7 +146,7 @@ var _ = Describe("App and AppVersion CRDs", func() {
 	It("refuses a daily budget that is zero or less", func() {
 		for _, budget := range []string{"0", "-1"} {
 			v := newVersion("v-budget")
-			v.Spec.BudgetPerDay = resource.MustParse(budget)
+			v.Spec.BudgetPerDay = new(resource.MustParse(budget))
 			expectInvalid(create(v), "budgetPerDay must be more than zero")
 		}
 	})
@@ -162,7 +162,7 @@ var _ = Describe("App and AppVersion CRDs", func() {
 		v := newVersion("v-mutable")
 		Expect(create(v)).To(Succeed())
 		Expect(update(v, func(c *corev1alpha1.AppVersion) {
-			c.Spec.BudgetPerDay = resource.MustParse("2.5")
+			c.Spec.BudgetPerDay = new(resource.MustParse("2.5"))
 			c.Spec.Replicas = new(int32(3))
 		})).To(Succeed())
 	})

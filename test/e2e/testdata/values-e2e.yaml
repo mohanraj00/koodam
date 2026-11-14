@@ -13,3 +13,11 @@ gateway:
           api_key: not-used
           input_cost_per_token: "0.000001"
           output_cost_per_token: "0.000002"
+      # A second model name for the same upstream, for a key that permits 2 models (#295).
+      - model_name: fake-responses-b
+        litellm_params:
+          model: openai/fake-responses
+          api_base: http://fake-upstream.koodam-system.svc:8080/v1
+          api_key: not-used
+          input_cost_per_token: "0.000001"
+          output_cost_per_token: "0.000002"

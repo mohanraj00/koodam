@@ -20,12 +20,18 @@ spec:
   # sameTemplate is true for an update that does not change spec.template.
   - name: sameTemplate
     expression: "request.operation == 'UPDATE' && object.spec.template == oldObject.spec.template"
-  # live is true if the version has a gateway key.
+  # live is true if the version has a gateway key, or if the controller started to make its
+  # objects. A version with no model has no key. The condition Started stays True after a
+  # failure, and the condition Provisioned does not.
   - name: live
-    expression: "request.operation == 'UPDATE' && has(oldObject.status) && has(oldObject.status.keyHash) && oldObject.status.keyHash != ''"
+    expression: >-
+      request.operation == 'UPDATE' && has(oldObject.status) &&
+      ((has(oldObject.status.keyHash) && oldObject.status.keyHash != '') ||
+      (has(oldObject.status.conditions) &&
+      oldObject.status.conditions.exists(c, (c.type == 'Started' || c.type == 'Provisioned') && c.status == 'True')))
   validations:
   - expression: "!variables.live || variables.sameTemplate"
-    message: "spec.template is immutable after the version has a gateway key. Make a new AppVersion."
+    message: "spec.template is immutable after the version has a gateway key or its objects. Make a new AppVersion."
     reason: Invalid
   - expression: "request.operation != 'CREATE' || (size(object.metadata.name) <= 60 && object.metadata.name.matches('^[a-z0-9]([-a-z0-9]*[a-z0-9])?$'))"
     message: "The AppVersion name must be a DNS label with 60 characters or fewer."

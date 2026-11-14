@@ -66,8 +66,10 @@ var _ = Describe("Thin App", Ordered, Label("app"), func() {
 		// The pin of Envoy Gateway (Apache-2.0). Its chart has the Gateway API CRDs.
 		egChart, egVersion, egNS = "oci://docker.io/envoyproxy/gateway-helm", "1.10.0", "envoy-gateway-system"
 		gwName, appName, v1, v2  = "public", "shop", "shop-v1", "shop-v2"
-		localURL                 = "http://127.0.0.1:18080/"
-		drainSeconds             = 45
+		// static is a version with no model. It has no gateway key.
+		static       = "shop-static"
+		localURL     = "http://127.0.0.1:18080/"
+		drainSeconds = 45
 	)
 	var fwd *exec.Cmd
 
@@ -82,7 +84,7 @@ var _ = Describe("Thin App", Ordered, Label("app"), func() {
 	version := func(name string) *corev1alpha1.AppVersion {
 		return &corev1alpha1.AppVersion{ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: appNS},
 			Spec: corev1alpha1.AppVersionSpec{
-				AppRef: corev1alpha1.AppReference{Name: appName}, BudgetPerDay: resource.MustParse("1"),
+				AppRef: corev1alpha1.AppReference{Name: appName}, BudgetPerDay: new(resource.MustParse("1")),
 				Template: corev1alpha1.AppVersionTemplate{Model: "fake-responses",
 					PodTemplate: corev1alpha1.PodTemplate{Spec: corev1.PodSpec{Containers: []corev1.Container{{
 						Name: corev1alpha1.AppContainerName, Image: pythonImage,
@@ -151,7 +153,10 @@ var _ = Describe("Thin App", Ordered, Label("app"), func() {
 			"-n", egNS, "--create-namespace", "--wait", "--timeout", "10m"))
 		Expect(err).NotTo(HaveOccurred(), "Failed to install Envoy Gateway: "+out)
 
-		By("making the Gateway, the App and 2 versions")
+		By("making the Gateway, the App and 3 versions")
+		twoModels, noModel := version(v2), version(static)
+		twoModels.Spec.Template.Model, twoModels.Spec.Template.Models = "", []string{"fake-responses", "fake-responses-b"}
+		noModel.Spec.Template.Model, noModel.Spec.BudgetPerDay = "", nil
 		Expect(client.IgnoreAlreadyExists(k8s.Create(ctx, &corev1.Namespace{
 			ObjectMeta: metav1.ObjectMeta{Name: appNS}}))).To(Succeed())
 		for _, o := range []client.Object{
@@ -163,8 +168,8 @@ var _ = Describe("Thin App", Ordered, Label("app"), func() {
 				Spec: corev1alpha1.AppSpec{DrainSeconds: new(int32(drainSeconds)),
 					Endpoints: []corev1alpha1.AppEndpoint{{Name: "web", Port: "http",
 						Gateway:  corev1alpha1.AppGatewayReference{Name: gwName},
-						Versions: []corev1alpha1.AppEndpointVersion{weight(v1, 80), weight(v2, 20)}}}}},
-			version(v1), version(v2),
+						Versions: []corev1alpha1.AppEndpointVersion{weight(v1, 80), weight(v2, 20), weight(static, 0)}}}}},
+			version(v1), twoModels, noModel,
 		} {
 			Expect(k8s.Create(ctx, o)).To(Succeed())
 		}
@@ -190,8 +195,8 @@ var _ = Describe("Thin App", Ordered, Label("app"), func() {
 			Should(Equal(corev1alpha1.AppRouteAccepted))
 		// The route can be Accepted before a version has its key. Then the weight in effect is 0.
 		Eventually(func() []corev1alpha1.AppEndpointVersion { return endpoint().Weights }, 5*time.Minute, 2*time.Second).
-			Should(Equal([]corev1alpha1.AppEndpointVersion{weight(v1, 80), weight(v2, 20)}))
-		for _, v := range []string{v1, v2} {
+			Should(Equal([]corev1alpha1.AppEndpointVersion{weight(v1, 80), weight(v2, 20), weight(static, 0)}))
+		for _, v := range []string{v1, v2, static} {
 			_, err := utils.Run(exec.Command("kubectl", "-n", appNS, "rollout", "status", "deployment/kd-"+v,
 				"--timeout", "5m"))
 			Expect(err).NotTo(HaveOccurred(), "The pods of "+v+" did not start.")
@@ -202,6 +207,15 @@ var _ = Describe("Thin App", Ordered, Label("app"), func() {
 		Expect(k8s.Get(ctx, client.ObjectKey{Namespace: appNS, Name: v2}, live)).To(Succeed())
 		live.Spec.Template.PodTemplate.Spec.Containers[0].Image = "registry.example.com/other:v1"
 		Expect(apierrors.IsInvalid(k8s.Update(ctx, live))).To(BeTrue(), "The admission policy refuses the change.")
+
+		By("reading the 2 models of one key, and no key for the version with no model")
+		Expect(keyInfo(live.Status.KeyHash).Models).To(ConsistOf("fake-responses", "fake-responses-b"))
+		keyless := &corev1alpha1.AppVersion{}
+		Expect(k8s.Get(ctx, client.ObjectKey{Namespace: appNS, Name: static}, keyless)).To(Succeed())
+		Expect(keyless.Status.KeyAlias).To(BeEmpty())
+		Expect(keyless.Status.KeyHash).To(BeEmpty())
+		Expect(apierrors.IsNotFound(k8s.Get(ctx, client.ObjectKey{Namespace: appNS, Name: "kd-" + static},
+			&corev1.Secret{}))).To(BeTrue(), "A version with no model has no key Secret.")
 
 		By("forwarding a local port to the Envoy proxy of the Gateway")
 		var svc string
@@ -238,6 +252,16 @@ var _ = Describe("Thin App", Ordered, Label("app"), func() {
 		By("keeping a session on one version with the header")
 		Expect(call(30, v2)).To(Equal(map[string]int{v2: 30}))
 		Expect(call(30, v1)).To(Equal(map[string]int{v1: 30}))
+		// The version with no model has the weight 0, so a caller cannot select it with the header.
+		Expect(call(10, static)).NotTo(HaveKey(static))
+
+		By("giving a weight to the version with no model")
+		app := &corev1alpha1.App{}
+		Expect(k8s.Get(ctx, client.ObjectKey{Namespace: appNS, Name: appName}, app)).To(Succeed())
+		app.Spec.Endpoints[0].Versions = []corev1alpha1.AppEndpointVersion{weight(v1, 80), weight(v2, 20), weight(static, 1)}
+		Expect(k8s.Update(ctx, app)).To(Succeed())
+		Eventually(func() map[string]int { return call(10, static) }, time.Minute, time.Second).
+			Should(Equal(map[string]int{static: 10}), "The version with no model serves with no gateway key.")
 	})
 
 	It("drains a retiring version and then revokes its key", func() {
@@ -248,9 +272,13 @@ var _ = Describe("Thin App", Ordered, Label("app"), func() {
 
 		By("sending each new session to the other version")
 		Eventually(func() []corev1alpha1.AppEndpointVersion { return endpoint().Weights }, time.Minute, time.Second).
-			Should(Equal([]corev1alpha1.AppEndpointVersion{weight(v1, 0), weight(v2, 20)}))
-		Eventually(func() map[string]int { return call(20, "") }, time.Minute, time.Second).
-			Should(Equal(map[string]int{v2: 20}))
+			Should(Equal([]corev1alpha1.AppEndpointVersion{weight(v1, 0), weight(v2, 20), weight(static, 1)}))
+		// Each answer comes from a version that stays, so an error or a 503 fails the test.
+		rest := func() int {
+			got := call(20, "")
+			return got[v2] + got[static]
+		}
+		Eventually(rest, time.Minute, time.Second).Should(Equal(20))
 
 		By("revoking the key after the drain time")
 		Eventually(func() bool {
@@ -264,7 +292,7 @@ var _ = Describe("Thin App", Ordered, Label("app"), func() {
 			return apierrors.IsNotFound(k8s.Get(ctx, client.ObjectKey{Namespace: appNS, Name: "kd-" + v1},
 				&appsv1.Deployment{}))
 		}, time.Minute, time.Second).Should(BeTrue())
-		// The other version serves all the traffic.
-		Expect(call(20, "")).To(Equal(map[string]int{v2: 20}))
+		// The other versions serve all the traffic.
+		Expect(rest()).To(Equal(20))
 	})
 })

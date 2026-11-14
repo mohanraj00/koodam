@@ -27,6 +27,7 @@ import (
 	. "github.com/onsi/gomega"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/api/meta"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
@@ -46,7 +47,7 @@ var _ = Describe("AppVersion admission policy", Ordered, func() {
 	newVersion := func(name string, change func(*corev1alpha1.AppVersion)) *corev1alpha1.AppVersion {
 		av := &corev1alpha1.AppVersion{ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: ns},
 			Spec: corev1alpha1.AppVersionSpec{
-				AppRef: corev1alpha1.AppReference{Name: "policy-app"}, BudgetPerDay: resource.MustParse("5"),
+				AppRef: corev1alpha1.AppReference{Name: "policy-app"}, BudgetPerDay: new(resource.MustParse("5")),
 				Template: corev1alpha1.AppVersionTemplate{Model: testGatewayModel,
 					PodTemplate: corev1alpha1.PodTemplate{Spec: corev1.PodSpec{Containers: []corev1.Container{{
 						Name: corev1alpha1.AppContainerName, Image: "registry.example.com/policy:v1",
@@ -140,10 +141,23 @@ var _ = Describe("AppVersion admission policy", Ordered, func() {
 		av.Spec.Template.PodTemplate.Spec.Containers[0].Image = "registry.example.com/app:v2"
 		refused(k8sClient.Update(ctx, av), "spec.template is immutable")
 
+		// A version with no model has no key. Its template is immutable after its objects exist.
+		keyless := newVersion("policy-c", func(av *corev1alpha1.AppVersion) {
+			av.Spec.Template.Model, av.Spec.BudgetPerDay = "", nil
+		})
+		Expect(create(keyless)).To(Succeed())
+		// The lock stays after the controller cannot make an object.
+		meta.SetStatusCondition(&keyless.Status.Conditions, metav1.Condition{Type: condStarted,
+			Status: metav1.ConditionTrue, Reason: condStarted})
+		setProvisioned(keyless, reasonRefused)
+		Expect(k8sClient.Status().Update(ctx, keyless)).To(Succeed())
+		keyless.Spec.Template.PodTemplate.Spec.Containers[0].Image = "registry.example.com/policy:v2"
+		refused(k8sClient.Update(ctx, keyless), "spec.template is immutable")
+
 		// The fields outside the template can change, and the controller can write its finalizer.
 		Expect(k8sClient.Get(ctx, types.NamespacedName{Namespace: ns, Name: av.Name}, av)).To(Succeed())
 		av.Spec.Replicas = new(int32(3))
-		av.Spec.BudgetPerDay = resource.MustParse("7")
+		av.Spec.BudgetPerDay = new(resource.MustParse("7"))
 		av.Spec.Lifecycle = corev1alpha1.AppVersionRetiring
 		av.Finalizers = []string{appFinalizer}
 		Expect(k8sClient.Update(ctx, av)).To(Succeed())

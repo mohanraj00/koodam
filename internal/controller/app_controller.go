@@ -217,7 +217,7 @@ func backendRef(service string, port, weight int32) map[string]any {
 }
 
 // servingPort gives back the number of the Service port with the name port of a version that can
-// serve. It gives back 0 if the version is not bound to this App, has no key, has a revoke that
+// serve. It gives back 0 if the version is not bound to this App, waits for its key, has a revoke that
 // started or has no Service with this port. active is false for a version that retires: it can
 // serve the sessions that it has, and it gets no new session.
 func (r *AppReconciler) servingPort(ctx context.Context, app *corev1alpha1.App, versions []corev1alpha1.AppVersion,
@@ -228,7 +228,7 @@ func (r *AppReconciler) servingPort(ctx context.Context, app *corev1alpha1.App, 
 			continue
 		}
 		if av.Spec.AppRef.Name != app.Name || av.Status.BoundAppUID != app.UID || !av.DeletionTimestamp.IsZero() ||
-			av.Status.KeyHash == "" ||
+			(av.Status.KeyHash == "" && len(av.Spec.Template.ModelList()) > 0) ||
 			meta.FindStatusCondition(av.Status.Conditions, corev1alpha1.AppVersionRevoking) != nil {
 			return 0, false, nil
 		}

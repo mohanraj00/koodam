@@ -509,6 +509,7 @@ func canListPods(c context.Context, token string) (bool, error) {
 type gatewayKey struct {
 	Metadata map[string]any `json:"metadata"`
 	Blocked  bool           `json:"blocked"`
+	Models   []string       `json:"models"`
 }
 
 // keyInfo reads the key with keyHash from the gateway with the master key.

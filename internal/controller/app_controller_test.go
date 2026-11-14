@@ -82,7 +82,7 @@ var _ = Describe("App controller", func() {
 	newVersion := func(app *corev1alpha1.App, s string, containerPort int32) *corev1alpha1.AppVersion {
 		av := &corev1alpha1.AppVersion{ObjectMeta: metav1.ObjectMeta{Name: s, Namespace: ns},
 			Spec: corev1alpha1.AppVersionSpec{
-				AppRef: corev1alpha1.AppReference{Name: app.Name}, BudgetPerDay: resource.MustParse("5"),
+				AppRef: corev1alpha1.AppReference{Name: app.Name}, BudgetPerDay: new(resource.MustParse("5")),
 				Template: corev1alpha1.AppVersionTemplate{Model: testGatewayModel,
 					PodTemplate: corev1alpha1.PodTemplate{Spec: corev1.PodSpec{Containers: []corev1.Container{{
 						Name: corev1alpha1.AppContainerName, Image: "registry.example.com/app:v1",
@@ -214,6 +214,18 @@ var _ = Describe("App controller", func() {
 		closed := newVersion(app, appName+"-v5", 8080)
 		closed.Spec.Lifecycle = corev1alpha1.AppVersionRetiring
 		Expect(k8sClient.Update(ctx, closed)).To(Succeed())
+		mustReconcile()
+		// A version with a model and no key waits, so it gets no traffic.
+		waits := &corev1alpha1.AppVersion{}
+		Expect(k8sClient.Get(ctx, nn(appName+"-v4"), waits)).To(Succeed())
+		waits.Status.KeyHash = ""
+		Expect(k8sClient.Status().Update(ctx, waits)).To(Succeed())
+		mustReconcile()
+		Expect(pinned(route("web"))).NotTo(ContainElement("kd-" + appName + "-v4"))
+		// A version with no model has no key, and it can serve.
+		Expect(k8sClient.Get(ctx, nn(appName+"-v4"), waits)).To(Succeed())
+		waits.Spec.Template.Model, waits.Spec.BudgetPerDay = "", nil
+		Expect(k8sClient.Update(ctx, waits)).To(Succeed())
 		mustReconcile()
 
 		Expect(backends(route("web"))).To(Equal([]any{
