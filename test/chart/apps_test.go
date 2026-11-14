@@ -17,6 +17,7 @@ limitations under the License.
 package chart
 
 import (
+	"slices"
 	"strings"
 	"testing"
 )
@@ -75,9 +76,19 @@ func TestAppsWithEgressProxy(t *testing.T) {
 	if strings.Contains(off, "koodam.dev/app\n") {
 		t.Error("the policy of the proxy permits App pods with apps.enabled false")
 	}
-	on, err := helmTemplate(t, "", append(set, "apps.enabled=true", "apps.ingressNamespaces={gateway-system,edge}")...)
+	// The proxy gives an App pod an identity only in a named namespace, so the chart refuses the
+	// Apps with the proxy and no namespace.
+	apps := slices.Concat(set, []string{"apps.enabled=true", "apps.ingressNamespaces={gateway-system,edge}"})
+	if out, err := helmTemplate(t, "", apps...); err == nil ||
+		!strings.Contains(out, "workspace.networkPolicy.namespaces must have each namespace of the Apps") {
+		t.Errorf("the Apps with the proxy and no namespace are accepted: %v", err)
+	}
+	on, err := helmTemplate(t, "", slices.Concat(apps, []string{"workspace.networkPolicy.namespaces={shop}"})...)
 	if err != nil {
 		t.Fatalf("helm template failed: %v\n%s", err, on)
+	}
+	if !strings.Contains(on, `"--namespaces=shop"`) {
+		t.Error("the proxy does not watch the namespace of the Apps")
 	}
 	for _, s := range []string{"--egress-proxy-namespace=koodam-system",
 		"--egress-proxy-pod-labels=app.kubernetes.io/component=egress-proxy,app.kubernetes.io/instance=koodam," +

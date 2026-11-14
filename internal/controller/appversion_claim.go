@@ -18,10 +18,13 @@ package controller
 
 import (
 	"fmt"
+	"slices"
 
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/util/intstr"
+	"k8s.io/apimachinery/pkg/util/validation/field"
 
 	corev1alpha1 "github.com/mohanraj00/koodam/api/v1alpha1"
 )
@@ -36,6 +39,11 @@ const (
 	claimJWKSAnnotation = "koodam.dev/claim-jwks"
 	// claimPortBase is the first port that the check container can use.
 	claimPortBase = 15080
+	// msgClaimName is the message for a template that uses the name of the check container.
+	msgClaimName = "the name is reserved for the claim check container"
+	// reasonClaimNotApplied is the reason of ClaimCheck=False while the objects of the version
+	// stay from an earlier template.
+	reasonClaimNotApplied = "NotApplied"
 	// condClaimCheck shows if the claim check protects the version.
 	condClaimCheck = "ClaimCheck"
 )
@@ -54,14 +62,22 @@ func (c AppClaimCheck) enabled() bool { return c.Issuer != "" }
 
 // listenPorts gives back one port of the check container for each port of the app container,
 // in the same order. If the check is off, it gives back the ports of the app container. A
-// listen port is never a port of the app container.
-func (c AppClaimCheck) listenPorts(app []corev1.ContainerPort) []corev1.ContainerPort {
+// listen port is never a port that a container of the pod declares, because all the containers
+// of a pod share one network namespace.
+func (c AppClaimCheck) listenPorts(app []corev1.ContainerPort, pod *corev1.PodSpec) []corev1.ContainerPort {
 	if !c.enabled() {
 		return app
 	}
 	used := map[int32]bool{}
 	for _, p := range app {
 		used[p.ContainerPort] = true
+	}
+	if pod != nil {
+		for _, ct := range slices.Concat(pod.Containers, pod.InitContainers) {
+			for _, p := range ct.Ports {
+				used[p.ContainerPort] = true
+			}
+		}
 	}
 	out := make([]corev1.ContainerPort, 0, len(app))
 	next := int32(claimPortBase)
@@ -75,13 +91,46 @@ func (c AppClaimCheck) listenPorts(app []corev1.ContainerPort) []corev1.Containe
 	return out
 }
 
-// add puts the check container in the pod template. The container is a sidecar, so it starts
-// before the app container. The Service and the NetworkPolicy of the version use its ports.
-func (c AppClaimCheck) add(tmpl *corev1.PodTemplateSpec, av *corev1alpha1.AppVersion, app []corev1.ContainerPort) {
+// claimPorts gives back the ports of the check container of the pod. If the check is off or the
+// pod has no check container, it gives back the ports of the app container. With the check
+// off, a container of the user can have the name of the check container, and its ports must
+// not control the NetworkPolicy.
+func (c AppClaimCheck) claimPorts(pod *corev1.PodSpec, app []corev1.ContainerPort) []corev1.ContainerPort {
 	if !c.enabled() {
-		return
+		return app
 	}
-	listen := c.listenPorts(app)
+	for i := range pod.InitContainers {
+		if pod.InitContainers[i].Name == claimContainer {
+			return pod.InitContainers[i].Ports
+		}
+	}
+	return app
+}
+
+// add puts the check container in the pod template. The container is the first init container
+// and a sidecar with a startup probe on its last port. Thus it binds all its ports before a
+// container of the user starts, and a container of the user cannot take a port of the check. The Service and the NetworkPolicy of the version use its ports. It
+// refuses a template that has a container or a volume with the name of the check container.
+func (c AppClaimCheck) add(tmpl *corev1.PodTemplateSpec, av *corev1alpha1.AppVersion, app []corev1.ContainerPort) error {
+	if !c.enabled() {
+		return nil
+	}
+	path := field.NewPath("spec", "podTemplate", "spec")
+	var errs field.ErrorList
+	for _, ct := range slices.Concat(tmpl.Spec.Containers, tmpl.Spec.InitContainers) {
+		if ct.Name == claimContainer {
+			errs = append(errs, field.Invalid(path.Child("containers"), ct.Name, msgClaimName))
+		}
+	}
+	for _, v := range tmpl.Spec.Volumes {
+		if v.Name == claimContainer {
+			errs = append(errs, field.Invalid(path.Child("volumes"), v.Name, msgClaimName))
+		}
+	}
+	if len(errs) > 0 {
+		return &invalidTemplateError{errs: errs}
+	}
+	listen := c.listenPorts(app, &tmpl.Spec)
 	args := []string{"--issuer", c.Issuer, "--audience", c.Audience, "--caller-claim", c.CallerClaim,
 		"--tenant-claim", c.TenantClaim, "--jwks-file", claimDir + "/jwks.json",
 		"--app", av.Spec.AppRef.Name, "--version", av.Name}
@@ -92,26 +141,40 @@ func (c AppClaimCheck) add(tmpl *corev1.PodTemplateSpec, av *corev1alpha1.AppVer
 	tmpl.Spec.Volumes = append(tmpl.Spec.Volumes, corev1.Volume{Name: claimContainer, VolumeSource: corev1.VolumeSource{
 		DownwardAPI: &corev1.DownwardAPIVolumeSource{Items: []corev1.DownwardAPIVolumeFile{{Path: "jwks.json",
 			FieldRef: &corev1.ObjectFieldSelector{FieldPath: "metadata.annotations['" + claimJWKSAnnotation + "']"}}}}}})
-	tmpl.Spec.InitContainers = append(tmpl.Spec.InitContainers, corev1.Container{
+	check := corev1.Container{
 		Name: claimContainer, Image: c.Image, Command: []string{"/app-claim-check"}, Args: args, Ports: listen,
 		RestartPolicy:   new(corev1.ContainerRestartPolicyAlways),
 		VolumeMounts:    []corev1.VolumeMount{{Name: claimContainer, MountPath: claimDir, ReadOnly: true}},
 		SecurityContext: helperSecurityContext(),
 		Resources: corev1.ResourceRequirements{Requests: corev1.ResourceList{
 			corev1.ResourceCPU: resource.MustParse("10m"), corev1.ResourceMemory: resource.MustParse("16Mi")}},
-	})
+	}
+	if n := len(listen); n > 0 {
+		// The check binds its ports in order, so the last port shows that it has all of them.
+		check.StartupProbe = &corev1.Probe{PeriodSeconds: 1, FailureThreshold: 60, ProbeHandler: corev1.ProbeHandler{
+			TCPSocket: &corev1.TCPSocketAction{Port: intstr.FromInt32(listen[n-1].ContainerPort)}}}
+	}
+	tmpl.Spec.InitContainers = append([]corev1.Container{check}, tmpl.Spec.InitContainers...)
+	return nil
 }
 
 // condition gives back the condition ClaimCheck. The check protects the version only if the
 // NetworkPolicy of the version exists: with no policy, a pod of the cluster can call the app
-// container directly. policy is the status of the condition TracedEgress.
-func (c AppClaimCheck) condition(policy metav1.ConditionStatus, generation int64) metav1.Condition {
+// container directly. policy is the status of the condition TracedEgress. applied shows that
+// this reconcile made the Deployment, the Service and the NetworkPolicy equal to the template
+// with the check. Objects that stay from an earlier template can send traffic to the app
+// container with no check, so the condition is not true for them.
+func (c AppClaimCheck) condition(policy metav1.ConditionStatus, applied bool, generation int64) metav1.Condition {
 	cond := metav1.Condition{Type: condClaimCheck, Status: metav1.ConditionTrue, Reason: "Enforced",
 		Message:            "Each request to the version needs a signed claim of the issuer.",
 		ObservedGeneration: generation}
-	if policy != metav1.ConditionTrue {
+	switch {
+	case policy != metav1.ConditionTrue:
 		cond.Status, cond.Reason = metav1.ConditionFalse, "NoNetworkPolicy"
 		cond.Message = "The version has no NetworkPolicy, so a pod of the cluster can call the app container with no claim."
+	case !applied:
+		cond.Status, cond.Reason = metav1.ConditionFalse, reasonClaimNotApplied
+		cond.Message = "The controller did not apply the objects of the version, so the objects can be without the claim check."
 	}
 	return cond
 }

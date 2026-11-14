@@ -22,6 +22,7 @@ import (
 	"fmt"
 	"net/http"
 	"reflect"
+	"regexp"
 	"slices"
 	"strconv"
 	"strings"
@@ -353,7 +354,7 @@ func (r *AgentReconciler) provision(ctx context.Context, a *corev1alpha1.Agent) 
 		}
 		r.Egress.apply(&job.Spec.Template.Spec, a.Namespace)
 		if msg == "" && a.Spec.Output != nil && !addOutputDigest(&job.Spec.Template.Spec, a.Spec.Output.Path, r.InstallerImage) {
-			msg = "spec.output.path must be a file in a volume of spec.podTemplate that the agent container mounts."
+			msg = msgOutputMount
 		}
 	}
 	if msg != "" {
@@ -601,6 +602,10 @@ func (r *AgentReconciler) noInstaller(a *corev1alpha1.Agent) string {
 	return ""
 }
 
+// msgOutputMount is the message for an output path that the sidecar cannot mount.
+const msgOutputMount = "spec.output.path must be a file in a volume of spec.podTemplate that the agent container " +
+	"mounts. A subPathExpr of that mount can use only a variable with a literal value or a field of the pod."
+
 // outputContainer is the name of the container that computes the digest of spec.output.
 const outputContainer = "koodam-output"
 
@@ -616,7 +621,8 @@ func addOutputDigest(pod *corev1.PodSpec, path, image string) bool {
 	for i := range pod.Containers[0].VolumeMounts {
 		m := &pod.Containers[0].VolumeMounts[i]
 		dir := strings.TrimSuffix(m.MountPath, "/") + "/"
-		if strings.HasPrefix(path, dir) && !strings.HasPrefix(m.Name, "koodam-") && m.Name != "harness" &&
+		// A subPath can mount the file itself at the output path.
+		if (strings.HasPrefix(path, dir) || m.MountPath == path) && !strings.HasPrefix(m.Name, "koodam-") && m.Name != "harness" &&
 			(mount == nil || len(m.MountPath) > len(mount.MountPath)) {
 			mount = m
 		}
@@ -626,8 +632,13 @@ func addOutputDigest(pod *corev1.PodSpec, path, image string) bool {
 	}
 	ro := *mount.DeepCopy()
 	ro.ReadOnly = true
+	env, ok := subPathEnv(mount.SubPathExpr, pod.Containers[0].Env)
+	if !ok {
+		return false
+	}
 	pod.InitContainers = append(pod.InitContainers, corev1.Container{
-		Name: outputContainer, Image: image, Command: []string{"/output-digest", "--path", path},
+		Name: outputContainer, Image: image, Env: env,
+		Command: []string{"/output-digest", "--path", path, "--root", mount.MountPath},
 		// An init container with this policy is a sidecar. The kubelet stops it after the agent
 		// container ends, and then the command writes the digest to its termination message.
 		RestartPolicy:   new(corev1.ContainerRestartPolicyAlways),
@@ -639,35 +650,101 @@ func addOutputDigest(pod *corev1.PodSpec, path, image string) bool {
 	return true
 }
 
-// readOutput reads the digest of spec.output from the termination message of the sidecar of the
-// newest pod of the run. It sets the status in memory one time. The message comes from a pod, so
+// subPathVar finds each variable of a subPathExpr.
+var subPathVar = regexp.MustCompile(`\$\(([A-Za-z_][A-Za-z0-9_.-]*)\)`)
+
+// subPathEnv gives back the env variables of the agent container that expr uses, so the kubelet
+// gets the same subpath for the sidecar. It copies only a variable with a literal value or a
+// field of the pod. It gives back false for a variable from a Secret, a ConfigMap, a resource
+// or another variable: the sidecar must not get a credential, and it cannot get the same value.
+func subPathEnv(expr string, agent []corev1.EnvVar) ([]corev1.EnvVar, bool) {
+	var env []corev1.EnvVar
+	for _, m := range subPathVar.FindAllStringSubmatch(expr, -1) {
+		i := slices.IndexFunc(agent, func(e corev1.EnvVar) bool { return e.Name == m[1] })
+		if i < 0 {
+			return nil, false
+		}
+		e := agent[i]
+		literal := e.ValueFrom == nil && !strings.Contains(e.Value, "$(")
+		field := e.ValueFrom != nil && e.ValueFrom.FieldRef != nil
+		if !literal && !field {
+			return nil, false
+		}
+		if !slices.ContainsFunc(env, func(c corev1.EnvVar) bool { return c.Name == e.Name }) {
+			env = append(env, *e.DeepCopy())
+		}
+	}
+	return env, true
+}
+
+// reasonNoResult is the reason of an output with no result from the sidecar of the run.
+const reasonNoResult = "NoResult"
+
+// outputSidecar gives back the sidecar that computes the digest, or nil.
+func outputSidecar(cs []corev1.Container) *corev1.Container {
+	for i := range cs {
+		if cs[i].Name == outputContainer && len(cs[i].Command) >= 3 {
+			return &cs[i]
+		}
+	}
+	return nil
+}
+
+// readOutput reads the digest of the output file from the termination message of the sidecar of
+// the newest pod of the run. It sets the status in memory one time. The message comes from a pod, so
 // outputdigest.Parse accepts only a digest of the correct form.
 func (r *AgentReconciler) readOutput(ctx context.Context, a *corev1alpha1.Agent) error {
-	if a.Spec.Output == nil || a.Status.Output != nil {
+	if a.Status.Output != nil {
 		return nil
 	}
-	out := &corev1alpha1.AgentOutputStatus{Path: a.Spec.Output.Path, Reason: "NoResult"}
-	a.Status.Output = out
 	pods := &corev1.PodList{}
 	if err := r.APIReader.List(ctx, pods, client.InNamespace(a.Namespace),
 		client.MatchingLabels{batchv1.JobNameLabel: runName(a), agentLabel: a.Name}); err != nil {
-		a.Status.Output = nil
 		return err
 	}
+	// A pod of an earlier Agent with the same name can have the same labels. Only a pod of the Job
+	// of this Agent has the result of this run.
+	job := &batchv1.Job{}
+	owned, err := r.getOwned(ctx, a, job)
+	if err != nil && !errors.Is(err, errNotOwned) {
+		return err
+	}
+	owned = owned && err == nil
 	var newest *corev1.Pod
 	for i := range pods.Items {
-		if p := &pods.Items[i]; newest == nil || newest.CreationTimestamp.Before(&p.CreationTimestamp) {
+		p := &pods.Items[i]
+		if owned && metav1.IsControlledBy(p, job) &&
+			(newest == nil || newest.CreationTimestamp.Before(&p.CreationTimestamp)) {
 			newest = p
 		}
 	}
-	if newest == nil {
+	// The sidecar of the Job template says if the run has an output, and gives its path. A change
+	// of spec.output after the start of the run has no effect.
+	out := &corev1alpha1.AgentOutputStatus{Reason: reasonNoResult}
+	var side *corev1.Container
+	if owned {
+		side = outputSidecar(job.Spec.Template.Spec.InitContainers)
+	}
+	switch {
+	case side != nil:
+		out.Path = side.Command[2]
+		// The sidecar of the pod must be the sidecar of the Job template: the same image and the
+		// same command. A different container with this name does not give the result.
+		if newest != nil {
+			got := outputSidecar(newest.Spec.InitContainers)
+			if got == nil || got.Image != side.Image || !slices.Equal(got.Command, side.Command) {
+				newest = nil
+			}
+		}
+	case !owned && a.Spec.Output != nil:
+		out.Path, newest = a.Spec.Output.Path, nil
+	}
+	if out.Path == "" {
 		return nil
 	}
-	// The path of the status is the path that the sidecar got, not a later value of the spec.
-	for _, c := range newest.Spec.InitContainers {
-		if c.Name == outputContainer && len(c.Command) == 3 {
-			out.Path = c.Command[2]
-		}
+	a.Status.Output = out
+	if newest == nil {
+		return nil
 	}
 	for _, s := range newest.Status.InitContainerStatuses {
 		if s.Name != outputContainer || s.State.Terminated == nil {

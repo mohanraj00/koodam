@@ -25,6 +25,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"net"
 	"net/http"
 	"os"
 	"os/signal"
@@ -92,14 +93,25 @@ func main() {
 	spans := appclaim.NewSpanWriter(os.Stdout)
 	failed := make(chan error, len(pairs))
 	servers := make([]*http.Server, 0, len(pairs))
+	listeners := make([]net.Listener, 0, len(pairs))
 	for _, p := range pairs {
 		srv := &http.Server{
 			Addr: ":" + strconv.Itoa(p[0]), ReadHeaderTimeout: 10 * time.Second, MaxHeaderBytes: 64 << 10,
 			Handler: &appclaim.Check{Config: cfg, Keys: keys, Next: appclaim.Upstream(p[1]), Spans: spans,
 				App: *app, Version: *version},
 		}
+		// Bind the ports in order before the first request. Then a bound last port shows that the
+		// check owns all its ports, and the startup probe of the container uses that port.
+		ln, err := (&net.ListenConfig{}).Listen(ctx, "tcp", srv.Addr)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "A listener did not start:", err)
+			os.Exit(1)
+		}
 		servers = append(servers, srv)
-		go func() { failed <- srv.ListenAndServe() }()
+		listeners = append(listeners, ln)
+	}
+	for i, srv := range servers {
+		go func() { failed <- srv.Serve(listeners[i]) }()
 	}
 	select {
 	case err := <-failed:

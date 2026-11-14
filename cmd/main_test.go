@@ -24,6 +24,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/mohanraj00/koodam/internal/controller"
@@ -83,6 +84,11 @@ func TestLoadClaim(t *testing.T) {
 	point, _ := key.PublicKey.Bytes()
 	enc := base64.RawURLEncoding.EncodeToString
 	jwks := fmt.Sprintf(`{"keys":[{"kty":"EC","crv":"P-256","x":%q,"y":%q}]}`, enc(point[1:33]), enc(point[33:]))
+	// A document with a private parameter never gets into the pods of the Apps.
+	private := filepath.Join(dir, "private.json")
+	if os.WriteFile(private, []byte(strings.Replace(jwks, `"kty"`, `"d":"AA","kty"`, 1)), 0o600) != nil {
+		t.Fatal("The test files are not writable.")
+	}
 	if os.WriteFile(bad, []byte(`{"keys":[]}`), 0o600) != nil || os.WriteFile(good, []byte(jwks), 0o600) != nil {
 		t.Fatal("The test files are not writable.")
 	}
@@ -100,6 +106,7 @@ func TestLoadClaim(t *testing.T) {
 	for name, err := range map[string]error{
 		"no audience": second(loadClaim(noAudience, good)), "no image": second(loadClaim(noImage, good)),
 		"no file": second(loadClaim(full, "")), "no key": second(loadClaim(full, bad)),
+		"private key": second(loadClaim(full, private)),
 	} {
 		if err == nil {
 			t.Errorf("%s: the configuration is accepted", name)
@@ -108,3 +115,24 @@ func TestLoadClaim(t *testing.T) {
 }
 
 func second(_ controller.AppClaimCheck, err error) error { return err }
+
+// The claim check is permitted only if the controller can make the NetworkPolicy of a version.
+func TestCheckClaimPolicy(t *testing.T) {
+	on := controller.AppClaimCheck{Issuer: "https://issuer.example.com"}
+	proxy := controller.EgressProxy{IP: "10.96.0.50", Namespace: "koodam-system", PodLabels: map[string]string{"a": "b"}}
+	noIP, noNamespace, noLabels := proxy, proxy, proxy
+	noIP.IP, noNamespace.Namespace, noLabels.PodLabels = "", "", nil
+	for name, e := range map[string]controller.EgressProxy{
+		"no IP": noIP, "no namespace": noNamespace, "no labels": noLabels,
+	} {
+		if checkClaimPolicy(on, e) == nil {
+			t.Errorf("%s: the claim check is accepted", name)
+		}
+		if err := checkClaimPolicy(controller.AppClaimCheck{}, e); err != nil {
+			t.Errorf("%s: with no claim check, the configuration is refused: %v", name, err)
+		}
+	}
+	if err := checkClaimPolicy(on, proxy); err != nil {
+		t.Errorf("The claim check with the egress proxy is refused: %v", err)
+	}
+}

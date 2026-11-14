@@ -102,8 +102,32 @@ type publicKey struct {
 	ec  *ecdsa.PublicKey
 }
 
+// privateParams are the JWK parameters of a private key or a symmetric key (RFC 7518).
+var privateParams = []string{"d", "p", "q", "dp", "dq", "qi", "oth", "k"}
+
+// hasPrivateMaterial is true if a key of the JWKS document has a parameter of a private key or
+// a symmetric key. The check covers each key, also a key that ParseKeySet ignores, because the
+// controller copies the full document into the pods of the Apps.
+func hasPrivateMaterial(data []byte) bool {
+	var doc struct {
+		Keys []map[string]json.RawMessage `json:"keys"`
+	}
+	if json.Unmarshal(data, &doc) != nil {
+		return false
+	}
+	for _, k := range doc.Keys {
+		for name := range k {
+			if slices.Contains(privateParams, strings.ToLower(name)) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 // ParseKeySet reads a JWKS document. It keeps the RSA keys and the P-256 keys that are for
-// signatures, and it ignores each other key. It gives back an error if no key stays.
+// signatures, and it ignores each other key. It gives back an error if no key stays, or if a
+// key has private or symmetric key material.
 func ParseKeySet(data []byte) (*KeySet, error) {
 	var doc struct {
 		Keys []struct {
@@ -113,6 +137,9 @@ func ParseKeySet(data []byte) (*KeySet, error) {
 	if err := json.Unmarshal(data, &doc); err != nil {
 		return nil, errors.New("the JWKS is not valid JSON")
 	}
+	if hasPrivateMaterial(data) {
+		return nil, errors.New("the JWKS has private or symmetric key material, and only public keys are permitted")
+	}
 	set := &KeySet{}
 	for _, k := range doc.Keys {
 		if k.Use != "" && k.Use != "sig" {
@@ -121,15 +148,17 @@ func ParseKeySet(data []byte) (*KeySet, error) {
 		pk := publicKey{kid: k.Kid}
 		switch {
 		case k.Kty == "RSA":
-			n, e := decode(k.N), decode(k.E)
-			if len(n)*8 < minRSABits || len(e) == 0 || len(e) > 4 {
+			// The bit length of the number is the size of the key. Zero bytes at the start do not count.
+			mod := new(big.Int).SetBytes(decode(k.N))
+			e := decode(k.E)
+			if mod.BitLen() < minRSABits || len(e) == 0 || len(e) > 4 {
 				continue
 			}
 			exp := int(new(big.Int).SetBytes(e).Int64())
 			if exp < 3 || exp%2 == 0 {
 				continue
 			}
-			pk.rsa = &rsa.PublicKey{N: new(big.Int).SetBytes(n), E: exp}
+			pk.rsa = &rsa.PublicKey{N: mod, E: exp}
 		case k.Kty == "EC" && k.Crv == "P-256":
 			x, y := decode(k.X), decode(k.Y)
 			if len(x) != 32 || len(y) != 32 {
@@ -175,8 +204,11 @@ func (s *KeySet) find(alg, kid string) []publicKey {
 
 // Verify checks the signature and the claims of a token. It accepts RS256 and ES256 only.
 func (c Config) Verify(keys *KeySet, token string, now time.Time) (Identity, error) {
-	parts := strings.Split(token, ".")
-	if len(token) > maxToken || len(parts) != 3 || keys == nil {
+	if len(token) > maxToken || keys == nil {
+		return Identity{}, RefusedSyntax
+	}
+	parts := strings.SplitN(token, ".", 4)
+	if len(parts) != 3 {
 		return Identity{}, RefusedSyntax
 	}
 	var head struct{ Alg, Kid string }

@@ -78,10 +78,11 @@ func newFixture(t *testing.T) *fixture {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// The last 2 keys are not for signatures, so the check ignores them.
+	// The check ignores the last 2 keys: one is not for signatures, and one has a different curve.
+	// A symmetric key is not in the document, because ParseKeySet refuses a document with one.
 	f.jwks = fmt.Appendf(nil, `{"keys":[{"kty":"RSA","kid":"r1","use":"sig","n":%q,"e":%q},`+
 		`{"kty":"EC","kid":"e1","crv":"P-256","x":%q,"y":%q},`+
-		`{"kty":"RSA","kid":"e2","use":"enc","n":%q,"e":"AQAB"},{"kty":"oct","kid":"h1","k":"AAAA"}]}`,
+		`{"kty":"RSA","kid":"e2","use":"enc","n":%q,"e":"AQAB"},{"kty":"EC","kid":"h1","crv":"P-384","x":"AA","y":"AA"}]}`,
 		enc(f.rsa.N.Bytes()), enc(big.NewInt(int64(f.rsa.E)).Bytes()), enc(point[1:33]), enc(point[33:]),
 		enc(f.rsa.N.Bytes()))
 	if f.keys, err = ParseKeySet(f.jwks); err != nil {
@@ -164,6 +165,7 @@ func TestVerifyRefuses(t *testing.T) {
 		{"empty", "", RefusedSyntax},
 		{"2 parts", parts[0] + "." + parts[1], RefusedSyntax},
 		{"too large", good + strings.Repeat("A", maxToken), RefusedSyntax},
+		{"4 parts", good + ".AAAA", RefusedSyntax},
 		{"header not JSON", "e30x." + parts[1] + "." + parts[2], RefusedSyntax},
 		{"alg none", enc([]byte(`{"alg":"none"}`)) + "." + parts[1] + ".AAAA", RefusedAlgorithm},
 		{"alg HS256", f.sign(t, header("HS256", ""), claims(nil)), RefusedAlgorithm},
@@ -209,12 +211,29 @@ func TestParseKeySetRefuses(t *testing.T) {
 		"not JSON":      "{",
 		"no key":        `{"keys":[]}`,
 		"small RSA key": `{"keys":[{"kty":"RSA","n":"` + enc(small.N.Bytes()) + `","e":"AQAB"}]}`,
-		"even exponent": `{"keys":[{"kty":"RSA","n":"` + enc(make([]byte, 256)) + `","e":"Ag"}]}`,
+		"small RSA key with zero bytes": `{"keys":[{"kty":"RSA","n":"` +
+			enc(append(make([]byte, 128), small.N.Bytes()...)) + `","e":"AQAB"}]}`,
+		"even exponent": `{"keys":[{"kty":"RSA","n":"` + enc(bytes.Repeat([]byte{0xff}, 256)) + `","e":"Ag"}]}`,
 		"point not on the curve": `{"keys":[{"kty":"EC","crv":"P-256","x":"` + enc(bytes.Repeat([]byte{1}, 32)) +
 			`","y":"` + enc(bytes.Repeat([]byte{1}, 32)) + `"}]}`,
 		"other curve": `{"keys":[{"kty":"EC","crv":"P-384","x":"AA","y":"AA"}]}`,
 	} {
 		if _, err := ParseKeySet([]byte(doc)); err == nil {
+			t.Errorf("%s: the key set is accepted", name)
+		}
+	}
+	// A valid public key does not make a document with private or symmetric material valid.
+	pub := `{"kty":"RSA","n":"` + enc(bytes.Repeat([]byte{0xff}, 256)) + `","e":"AQAB"}`
+	if _, err := ParseKeySet([]byte(`{"keys":[` + pub + `]}`)); err != nil {
+		t.Errorf("The public key is refused: %v", err)
+	}
+	for name, key := range map[string]string{
+		"private RSA key":   `{"kty":"RSA","n":"` + enc(bytes.Repeat([]byte{0xff}, 256)) + `","e":"AQAB","d":"AA"}`,
+		"CRT parameter":     `{"kty":"RSA","use":"enc","n":"AA","e":"AQAB","QI":"AA"}`,
+		"symmetric key":     `{"kty":"oct","k":"AA"}`,
+		"other prime infos": `{"kty":"RSA","oth":[]}`,
+	} {
+		if _, err := ParseKeySet([]byte(`{"keys":[` + pub + `,` + key + `]}`)); err == nil {
 			t.Errorf("%s: the key set is accepted", name)
 		}
 	}
