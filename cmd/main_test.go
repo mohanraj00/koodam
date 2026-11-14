@@ -24,6 +24,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/mohanraj00/koodam/internal/controller"
@@ -83,6 +84,11 @@ func TestLoadClaim(t *testing.T) {
 	point, _ := key.PublicKey.Bytes()
 	enc := base64.RawURLEncoding.EncodeToString
 	jwks := fmt.Sprintf(`{"keys":[{"kty":"EC","crv":"P-256","x":%q,"y":%q}]}`, enc(point[1:33]), enc(point[33:]))
+	// A document with a private parameter never gets into the pods of the Apps.
+	private := filepath.Join(dir, "private.json")
+	if os.WriteFile(private, []byte(strings.Replace(jwks, `"kty"`, `"d":"AA","kty"`, 1)), 0o600) != nil {
+		t.Fatal("The test files are not writable.")
+	}
 	if os.WriteFile(bad, []byte(`{"keys":[]}`), 0o600) != nil || os.WriteFile(good, []byte(jwks), 0o600) != nil {
 		t.Fatal("The test files are not writable.")
 	}
@@ -100,6 +106,7 @@ func TestLoadClaim(t *testing.T) {
 	for name, err := range map[string]error{
 		"no audience": second(loadClaim(noAudience, good)), "no image": second(loadClaim(noImage, good)),
 		"no file": second(loadClaim(full, "")), "no key": second(loadClaim(full, bad)),
+		"private key": second(loadClaim(full, private)),
 	} {
 		if err == nil {
 			t.Errorf("%s: the configuration is accepted", name)

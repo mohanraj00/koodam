@@ -392,6 +392,20 @@ var _ = Describe("AppVersion controller", func() {
 		Expect(np.Spec.Ingress[0].Ports[0].Port.IntValue()).To(Equal(claimPortBase))
 		Expect(cond(name, condClaimCheck).Status).To(Equal(metav1.ConditionTrue))
 
+		// With a template that is not valid, the objects stay as they are. The controller did not
+		// apply them, so it does not report that the check protects the version.
+		av := version(name)
+		av.Spec.Template.Rules = []rbacv1.PolicyRule{outsideCeiling}
+		Expect(k8sClient.Update(ctx, av)).To(Succeed())
+		mustReconcile()
+		Expect(cond(name, condClaimCheck).Status).To(Equal(metav1.ConditionFalse))
+		Expect(cond(name, condClaimCheck).Reason).To(Equal(reasonClaimNotApplied))
+		av = version(name)
+		av.Spec.Template.Rules = nil
+		Expect(k8sClient.Update(ctx, av)).To(Succeed())
+		mustReconcile()
+		Expect(cond(name, condClaimCheck).Status).To(Equal(metav1.ConditionTrue))
+
 		// With no issuer, the pod has no check container and the status has no condition.
 		rec.Claim = AppClaimCheck{}
 		_, err := reconcileName(name)

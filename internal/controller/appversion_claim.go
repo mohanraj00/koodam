@@ -41,6 +41,9 @@ const (
 	claimPortBase = 15080
 	// msgClaimName is the message for a template that uses the name of the check container.
 	msgClaimName = "the name is reserved for the claim check container"
+	// reasonClaimNotApplied is the reason of ClaimCheck=False while the objects of the version
+	// stay from an earlier template.
+	reasonClaimNotApplied = "NotApplied"
 	// condClaimCheck shows if the claim check protects the version.
 	condClaimCheck = "ClaimCheck"
 )
@@ -157,14 +160,21 @@ func (c AppClaimCheck) add(tmpl *corev1.PodTemplateSpec, av *corev1alpha1.AppVer
 
 // condition gives back the condition ClaimCheck. The check protects the version only if the
 // NetworkPolicy of the version exists: with no policy, a pod of the cluster can call the app
-// container directly. policy is the status of the condition TracedEgress.
-func (c AppClaimCheck) condition(policy metav1.ConditionStatus, generation int64) metav1.Condition {
+// container directly. policy is the status of the condition TracedEgress. applied shows that
+// this reconcile made the Deployment, the Service and the NetworkPolicy equal to the template
+// with the check. Objects that stay from an earlier template can send traffic to the app
+// container with no check, so the condition is not true for them.
+func (c AppClaimCheck) condition(policy metav1.ConditionStatus, applied bool, generation int64) metav1.Condition {
 	cond := metav1.Condition{Type: condClaimCheck, Status: metav1.ConditionTrue, Reason: "Enforced",
 		Message:            "Each request to the version needs a signed claim of the issuer.",
 		ObservedGeneration: generation}
-	if policy != metav1.ConditionTrue {
+	switch {
+	case policy != metav1.ConditionTrue:
 		cond.Status, cond.Reason = metav1.ConditionFalse, "NoNetworkPolicy"
 		cond.Message = "The version has no NetworkPolicy, so a pod of the cluster can call the app container with no claim."
+	case !applied:
+		cond.Status, cond.Reason = metav1.ConditionFalse, reasonClaimNotApplied
+		cond.Message = "The controller did not apply the objects of the version, so the objects can be without the claim check."
 	}
 	return cond
 }

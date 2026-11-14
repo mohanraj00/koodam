@@ -314,6 +314,9 @@ func (r *AppVersionReconciler) apply(ctx context.Context, av *corev1alpha1.AppVe
 	// After a renew that failed, the key has the model of the last renew. The objects stay as
 	// they are until the gateway accepts the key settings, so the pods do not get a model that the
 	// key refuses.
+	// applied shows that this reconcile made the objects equal to the template. Objects that stay
+	// from an earlier template can be without the claim check.
+	applied := false
 	if deploy != nil && !renewErr {
 		// The record of the start is in the status before the first object exists.
 		if !meta.IsStatusConditionTrue(av.Status.Conditions, condStarted) {
@@ -331,6 +334,7 @@ func (r *AppVersionReconciler) apply(ctx context.Context, av *corev1alpha1.AppVe
 		}
 		// A version that waits for an object keeps the renew of its key.
 		setProvisioned(av, reason)
+		applied = reason == ""
 	}
 	if av.Spec.Lifecycle != corev1alpha1.AppVersionRetiring {
 		meta.SetStatusCondition(&av.Status.Conditions, metav1.Condition{Type: corev1alpha1.AppVersionTrafficAllowed,
@@ -343,7 +347,7 @@ func (r *AppVersionReconciler) apply(ctx context.Context, av *corev1alpha1.AppVe
 	}
 	meta.SetStatusCondition(&av.Status.Conditions, egress)
 	if r.Claim.enabled() {
-		meta.SetStatusCondition(&av.Status.Conditions, r.Claim.condition(egress.Status, av.Generation))
+		meta.SetStatusCondition(&av.Status.Conditions, r.Claim.condition(egress.Status, applied, av.Generation))
 	} else {
 		meta.RemoveStatusCondition(&av.Status.Conditions, condClaimCheck)
 	}

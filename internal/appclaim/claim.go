@@ -102,8 +102,32 @@ type publicKey struct {
 	ec  *ecdsa.PublicKey
 }
 
+// privateParams are the JWK parameters of a private key or a symmetric key (RFC 7518).
+var privateParams = []string{"d", "p", "q", "dp", "dq", "qi", "oth", "k"}
+
+// hasPrivateMaterial is true if a key of the JWKS document has a parameter of a private key or
+// a symmetric key. The check covers each key, also a key that ParseKeySet ignores, because the
+// controller copies the full document into the pods of the Apps.
+func hasPrivateMaterial(data []byte) bool {
+	var doc struct {
+		Keys []map[string]json.RawMessage `json:"keys"`
+	}
+	if json.Unmarshal(data, &doc) != nil {
+		return false
+	}
+	for _, k := range doc.Keys {
+		for name := range k {
+			if slices.Contains(privateParams, strings.ToLower(name)) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 // ParseKeySet reads a JWKS document. It keeps the RSA keys and the P-256 keys that are for
-// signatures, and it ignores each other key. It gives back an error if no key stays.
+// signatures, and it ignores each other key. It gives back an error if no key stays, or if a
+// key has private or symmetric key material.
 func ParseKeySet(data []byte) (*KeySet, error) {
 	var doc struct {
 		Keys []struct {
@@ -112,6 +136,9 @@ func ParseKeySet(data []byte) (*KeySet, error) {
 	}
 	if err := json.Unmarshal(data, &doc); err != nil {
 		return nil, errors.New("the JWKS is not valid JSON")
+	}
+	if hasPrivateMaterial(data) {
+		return nil, errors.New("the JWKS has private or symmetric key material, and only public keys are permitted")
 	}
 	set := &KeySet{}
 	for _, k := range doc.Keys {
