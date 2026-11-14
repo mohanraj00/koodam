@@ -26,6 +26,7 @@ RUN CGO_ENABLED=0 GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH} go build -a -o ha
 RUN CGO_ENABLED=0 GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH} go build -a -o egress-proxy ./cmd/egress-proxy
 RUN CGO_ENABLED=0 GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH} go build -a -o agent-admission ./cmd/agent-admission
 RUN CGO_ENABLED=0 GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH} go build -a -o output-digest ./cmd/output-digest
+RUN CGO_ENABLED=0 GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH} go build -a -o app-claim-check ./cmd/app-claim-check
 
 # Use distroless as minimal base image to package the manager binary
 # Refer to https://github.com/GoogleContainerTools/distroless for more details
@@ -36,6 +37,7 @@ COPY --from=builder /workspace/harness-install .
 COPY --from=builder /workspace/egress-proxy .
 COPY --from=builder /workspace/agent-admission .
 COPY --from=builder /workspace/output-digest .
+COPY --from=builder /workspace/app-claim-check .
 USER 65532:65532
 
 ENTRYPOINT ["/manager"]
