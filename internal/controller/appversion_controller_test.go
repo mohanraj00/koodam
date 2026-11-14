@@ -356,6 +356,53 @@ var _ = Describe("AppVersion controller", func() {
 		Expect(cond(name, condStarted).Status).To(Equal(metav1.ConditionTrue))
 	})
 
+	It("puts the claim check in front of the app container when the operator configures an issuer", func() {
+		rec.Claim = AppClaimCheck{Issuer: "https://issuer.example.com", Audience: "shop", CallerClaim: "sub",
+			JWKS: `{"keys":[]}`, Image: "registry.example.com/koodam:test"}
+		newApp(2)
+		newVersion(name)
+		mustReconcile()
+
+		d := &appsv1.Deployment{}
+		Expect(k8sClient.Get(ctx, nn("kd-"+name), d)).To(Succeed())
+		pod := d.Spec.Template
+		Expect(pod.Spec.InitContainers).To(HaveLen(1))
+		check := pod.Spec.InitContainers[0]
+		Expect(check.Name).To(Equal(claimContainer))
+		Expect(*check.RestartPolicy).To(Equal(corev1.ContainerRestartPolicyAlways))
+		Expect(check.Args).To(ContainElements("--issuer", rec.Claim.Issuer, "--route", "15080=8080", "--version", name))
+		Expect(*check.SecurityContext.ReadOnlyRootFilesystem).To(BeTrue())
+		Expect(pod.Annotations).To(HaveKeyWithValue(claimJWKSAnnotation, rec.Claim.JWKS))
+		// The Service sends the traffic to the check container, not to the app container.
+		svc := &corev1.Service{}
+		Expect(k8sClient.Get(ctx, nn("kd-"+name), svc)).To(Succeed())
+		Expect(svc.Spec.Ports).To(HaveLen(1))
+		Expect(svc.Spec.Ports[0].Port).To(Equal(int32(8080)))
+		Expect(svc.Spec.Ports[0].TargetPort).To(Equal(intstr.FromInt32(claimPortBase)))
+		// With no NetworkPolicy, a pod of the cluster can call the app container directly.
+		Expect(cond(name, condClaimCheck).Reason).To(Equal("NoNetworkPolicy"))
+
+		rec.Egress.Namespace, rec.Egress.PodLabels = "proxy-ns", map[string]string{"app": "egress-proxy"}
+		rec.IngressNamespaces = []string{"gateway-ns"}
+		mustReconcile()
+		np := &networkingv1.NetworkPolicy{}
+		Expect(k8sClient.Get(ctx, nn("kd-"+name), np)).To(Succeed())
+		Expect(np.Spec.Ingress).To(HaveLen(1))
+		Expect(np.Spec.Ingress[0].Ports).To(HaveLen(1))
+		Expect(np.Spec.Ingress[0].Ports[0].Port.IntValue()).To(Equal(claimPortBase))
+		Expect(cond(name, condClaimCheck).Status).To(Equal(metav1.ConditionTrue))
+
+		// With no issuer, the pod has no check container and the status has no condition.
+		rec.Claim = AppClaimCheck{}
+		_, err := reconcileName(name)
+		Expect(err).To(HaveOccurred())
+		mustReconcile()
+		Expect(k8sClient.Get(ctx, nn("kd-"+name), d)).To(Succeed())
+		Expect(d.Spec.Template.Spec.InitContainers).To(BeEmpty())
+		Expect(d.Spec.Template.Annotations).NotTo(HaveKey(claimJWKSAnnotation))
+		Expect(cond(name, condClaimCheck)).To(BeNil())
+	})
+
 	It("sends the new budget if the spec changed before the status had the key", func() {
 		newApp(2)
 		newVersion(name)
