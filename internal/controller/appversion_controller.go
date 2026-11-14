@@ -50,7 +50,8 @@ import (
 )
 
 const (
-	// appFinalizer keeps the AppVersion until the controller blocks its gateway key.
+	// appFinalizer keeps the AppVersion until the controller blocks its gateway key and deletes
+	// its pods and their access.
 	appFinalizer = "koodam.dev/app-revoke"
 	// appLabel and appVersionLabel are on each object and each pod of an AppVersion. The egress
 	// proxy reads them from the pod to find the App and the AppVersion of a call. They must
@@ -345,7 +346,13 @@ func (r *AppVersionReconciler) apply(ctx context.Context, av *corev1alpha1.AppVe
 	if renewErr {
 		return ctrl.Result{}, errRenewFailed
 	}
-	return ctrl.Result{RequeueAfter: r.untilRenew(av.Status.KeyHash)}, nil
+	// A version with no key has no renew timer. It gets the same period, so the controller makes
+	// a deleted NetworkPolicy again. The controller does not watch the policies.
+	after := r.untilRenew(av.Status.KeyHash)
+	if av.Status.KeyHash == "" {
+		after = r.keyTTL() / 4
+	}
+	return ctrl.Result{RequeueAfter: after}, nil
 }
 
 // applyVersionKey makes or renews the key of a version with a model. A version with no model
@@ -355,7 +362,12 @@ func (r *AppVersionReconciler) applyVersionKey(ctx context.Context, av *corev1al
 	old *corev1alpha1.AppVersionStatus, valid bool) (renewErr, done bool, res ctrl.Result, err error) {
 	models := av.Spec.Template.ModelList()
 	if len(models) == 0 && av.Status.KeyHash == "" {
-		// A version with no model makes no model call. It gets no key, no Secret and no finalizer.
+		// A version with no model makes no model call. It gets no key and no Secret. It gets the
+		// finalizer before its first object, so a delete that orphans the objects cannot keep the
+		// pods and their access.
+		if err := r.addFinalizer(ctx, av); err != nil {
+			return false, true, res, err
+		}
 		meta.SetStatusCondition(&av.Status.Conditions, metav1.Condition{Type: condGatewayKey,
 			Status: metav1.ConditionFalse, Reason: reasonNoModel,
 			Message: "The template declares no model, so the version has no gateway key.", ObservedGeneration: av.Generation})
@@ -434,18 +446,27 @@ func (r *AppVersionReconciler) template(ctx context.Context, av *corev1alpha1.Ap
 	return nil, r.wait(ctx, av, old, reason, msg)
 }
 
+// addFinalizer adds the finalizer and keeps the status in memory, because Update gives back the
+// status of the API server.
+func (r *AppVersionReconciler) addFinalizer(ctx context.Context, av *corev1alpha1.AppVersion) error {
+	if !controllerutil.AddFinalizer(av, appFinalizer) {
+		return nil
+	}
+	st := av.Status.DeepCopy()
+	if err := r.Update(ctx, av); err != nil {
+		return err
+	}
+	av.Status = *st
+	return nil
+}
+
 // enroll adds the finalizer, makes the key Secret and writes the key hash to the status. It
 // gives back the key value. If the version waits or the controller revokes it, the value is
 // empty. It sets old to the status that the API server has.
 func (r *AppVersionReconciler) enroll(ctx context.Context, av *corev1alpha1.AppVersion,
 	old *corev1alpha1.AppVersionStatus) (string, error) {
-	if controllerutil.AddFinalizer(av, appFinalizer) {
-		// Update gives back the status of the API server, so keep the status in memory.
-		st := av.Status.DeepCopy()
-		if err := r.Update(ctx, av); err != nil {
-			return "", err
-		}
-		av.Status = *st
+	if err := r.addFinalizer(ctx, av); err != nil {
+		return "", err
 	}
 	// The Secret comes first. A retry after a crash finds the key value in it.
 	secret, err := r.readSecret(ctx, av)
@@ -795,6 +816,9 @@ func (r *AppVersionReconciler) deployment(ctx context.Context, av *corev1alpha1.
 		Replicas: &replicas, Selector: &metav1.LabelSelector{MatchLabels: labels}, Template: tmpl}}, nil
 }
 
+// msgNoKey is the message of the revoke of a version with no key.
+const msgNoKey = "There was no key to revoke."
+
 // revoke blocks the key first, by the hash in the status. Then it deletes the Deployment, the
 // Service and the access, writes Revoked, deletes the Secret and removes the finalizer. Each step
 // can run again. If the block fails, the Secret and the finalizer stay, and Revoked is Unknown.
@@ -805,11 +829,11 @@ func (r *AppVersionReconciler) revoke(ctx context.Context, av *corev1alpha1.AppV
 		if !av.DeletionTimestamp.IsZero() || meta.IsStatusConditionTrue(av.Status.Conditions, corev1alpha1.AppVersionRevoked) {
 			return nil
 		}
-		// A version with no model has objects and no key.
+		// A version with no model from an earlier controller has objects, no key and no finalizer.
 		if err := r.deleteObjects(ctx, av); err != nil {
 			return err
 		}
-		r.setRevoke(av, reason, metav1.ConditionTrue, "There was no key to revoke.")
+		r.setRevoke(av, reason, metav1.ConditionTrue, msgNoKey)
 		return r.writeStatus(ctx, av, old)
 	}
 	if meta.FindStatusCondition(av.Status.Conditions, corev1alpha1.AppVersionRevoking) == nil {
@@ -842,7 +866,11 @@ func (r *AppVersionReconciler) revoke(ctx context.Context, av *corev1alpha1.AppV
 		return err
 	}
 	if !meta.IsStatusConditionTrue(av.Status.Conditions, corev1alpha1.AppVersionRevoked) {
-		r.setRevoke(av, reason, metav1.ConditionTrue, "The key is blocked and the objects of the version are deleted.")
+		msg := "The key is blocked and the objects of the version are deleted."
+		if hash == "" {
+			msg = msgNoKey
+		}
+		r.setRevoke(av, reason, metav1.ConditionTrue, msg)
 		if err := r.Status().Update(ctx, av); err != nil {
 			return err
 		}
