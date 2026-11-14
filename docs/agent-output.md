@@ -14,7 +14,7 @@ One Agent is one run. To run the same work again, create a new Agent. The new Ag
 
 ## Output digest
 
-Set `spec.output.path` to the absolute path of one file in the agent container. The file must be in a volume of `spec.podTemplate` that the agent container mounts.
+Set `spec.output.path` to the absolute path of one file in the agent container. The file must be in a volume of `spec.podTemplate` that the agent container mounts. If that mount has a `subPathExpr`, the expression can use only a variable with a literal value or a field of the pod. The digest container gets only those variables.
 
 When the run ends, `status.output` has these fields:
 
@@ -24,6 +24,8 @@ When the run ends, `status.output` has these fields:
 | `sha256` | The SHA-256 digest of the file, as 64 lower-case hex characters. |
 | `size` | The size of the file in bytes. |
 | `reason` | Why there is no digest: `NotFound`, `NotRegularFile`, `ReadError` or `NoResult`. |
+
+The digest container reads the file only in the output volume. If a part of the path in the volume is a link, the reason is `NotRegularFile`. A mount can also be the file itself, with a `subPath`.
 
 The controller never reads the file. A sidecar container of the run pod, from the Koodam image, computes the digest after the agent container ends. It has a read-only mount of the output volume only, and it writes only the digest and the size to its termination message. The controller reads this message after it blocks the key of the run.
 

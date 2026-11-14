@@ -32,16 +32,17 @@ import (
 
 func main() {
 	path := flag.String("path", "", "The absolute path of the output file.")
+	root := flag.String("root", "", "The mount path of the output volume. The read stays in it.")
 	result := flag.String("result", "/dev/termination-log", "The file that gets the result.")
 	flag.Parse()
-	if *path == "" {
-		fmt.Fprintln(os.Stderr, "--path is necessary")
+	if *path == "" || *root == "" {
+		fmt.Fprintln(os.Stderr, "--path and --root are necessary")
 		os.Exit(2)
 	}
 	stop := make(chan os.Signal, 1)
 	signal.Notify(stop, syscall.SIGTERM, syscall.SIGINT)
 	<-stop
-	if err := os.WriteFile(*result, outputdigest.File(*path).Encode(), 0o600); err != nil {
+	if err := os.WriteFile(*result, outputdigest.File(*root, *path).Encode(), 0o600); err != nil {
 		fmt.Fprintln(os.Stderr, "The result file is not writable.")
 		os.Exit(1)
 	}
