@@ -197,6 +197,12 @@ var _ = Describe("Thin App", Ordered, Label("app"), func() {
 			Expect(err).NotTo(HaveOccurred(), "The pods of "+v+" did not start.")
 		}
 
+		By("refusing a template change on a version with a key")
+		live := &corev1alpha1.AppVersion{}
+		Expect(k8s.Get(ctx, client.ObjectKey{Namespace: appNS, Name: v2}, live)).To(Succeed())
+		live.Spec.Template.PodTemplate.Spec.Containers[0].Image = "registry.example.com/other:v1"
+		Expect(apierrors.IsInvalid(k8s.Update(ctx, live))).To(BeTrue(), "The admission policy refuses the change.")
+
 		By("forwarding a local port to the Envoy proxy of the Gateway")
 		var svc string
 		Eventually(func() int {

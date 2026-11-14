@@ -105,8 +105,8 @@ spec:
               template:
                 description: |-
                   Template is the pod and the gateway model of this version. Koodam does not change a
-                  template. To change it, make a new AppVersion. The API server does not refuse a template
-                  change at this time. A later admission check refuses it.
+                  template. To change it, make a new AppVersion. The ValidatingAdmissionPolicy of
+                  config/apps/admission refuses a template change after the version has a gateway key.
                 properties:
                   model:
                     description: Model is the gateway model name. The version key

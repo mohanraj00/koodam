@@ -66,8 +66,8 @@ type AppVersionSpec struct {
 	AppRef AppReference `json:"appRef"`
 
 	// Template is the pod and the gateway model of this version. Koodam does not change a
-	// template. To change it, make a new AppVersion. The API server does not refuse a template
-	// change at this time. A later admission check refuses it.
+	// template. To change it, make a new AppVersion. The ValidatingAdmissionPolicy of
+	// config/apps/admission refuses a template change after the version has a gateway key.
 	// +required
 	Template AppVersionTemplate `json:"template"`
 
@@ -104,8 +104,9 @@ type AppReference struct {
 // AppVersionTemplate is the part of an AppVersion that does not change. The pod template has 1
 // main container with the name "app". This container has the image, the command, the
 // environment, the ports and the probes of the version. The shared PodTemplate rules apply. The
-// API server does not check the port names, because that CEL rule is too costly. A later
-// admission check refuses a port with no name or a port that is not TCP.
+// CRD does not check the port names, because that CEL rule is too costly. The
+// ValidatingAdmissionPolicy of config/apps/admission refuses a port with no name, a port that is
+// not TCP and a host port.
 // +kubebuilder:validation:XValidation:rule="has(self.podTemplate.spec) && has(self.podTemplate.spec.containers) && self.podTemplate.spec.containers.exists_one(c, c.name == 'app')",message="The pod template must have 1 container with the name app."
 // +kubebuilder:validation:XValidation:rule="!has(self.podTemplate.spec) || !has(self.podTemplate.spec.containers) || self.podTemplate.spec.containers.all(c, c.name != 'app' || (has(c.image) && size(c.image) > 0 && has(c.readinessProbe) && has(c.ports) && size(c.ports) > 0))",message="The app container must have an image, a readiness probe and 1 or more ports."
 type AppVersionTemplate struct {
