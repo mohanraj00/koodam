@@ -44,7 +44,8 @@ var (
 	claimFile string
 )
 
-// claimValues gives back a Helm values file that sets the claim check of the Apps.
+// claimValues gives back a Helm values file that sets the claim check of the Apps. The chart
+// accepts it only with the egress proxy.
 func claimValues() string {
 	claimOnce.Do(func() {
 		var err error

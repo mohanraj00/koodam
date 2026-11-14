@@ -110,7 +110,9 @@ Then each AppVersion pod gets the container `koodam-claim` in front of the `app`
 
 `jwks` has the public keys of the issuer. A change of `jwks` starts the manager again, and then each AppVersion gets new pods. A JWKS URL is not in this step.
 
-The check protects a version only if the version has its NetworkPolicy, thus only with `egressProxy.enabled`. The policy permits ingress to the port of the check container only. With no policy, a pod of the cluster can call the port of the `app` container directly. The condition `ClaimCheck` of the AppVersion shows the state: `True` with the reason `Enforced`, or `False` with the reason `NoNetworkPolicy`.
+The check protects a version only if the version has its NetworkPolicy. The policy permits ingress to the port of the check container only. Thus the claim check needs `egressProxy.enabled`: the chart refuses an issuer with no egress proxy, and the manager does not start with the claim flags and no egress proxy flags. The condition `ClaimCheck` of the AppVersion shows the state: `True` with the reason `Enforced`, `False` with the reason `NoNetworkPolicy` if the policy does not exist, or `False` with the reason `NotApplied` if the objects of the version stay from an earlier template.
+
+The JWKS has public keys only. The manager refuses a JWKS with private or symmetric key material, because it copies the document into an annotation of each App pod.
 
 The kubelet sends the probes of the `app` container directly to that container, with no claim.
 

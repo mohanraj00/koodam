@@ -5,6 +5,9 @@
 {{- fail "jobTTLSeconds must be from 60 to 2147483647." }}
 {{- end }}
 {{- $claim := and .Values.apps.enabled .Values.apps.claimCheck.issuer }}
+{{- if and $claim (not .Values.egressProxy.enabled) }}
+{{- fail "apps.claimCheck needs egressProxy.enabled, because only the NetworkPolicy of a version blocks a call with no claim." }}
+{{- end }}
 apiVersion: apps/v1
 kind: Deployment
 metadata:

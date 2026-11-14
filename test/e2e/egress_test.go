@@ -41,6 +41,35 @@ import (
 	"github.com/mohanraj00/koodam/test/utils"
 )
 
+// proxyIP is a fixed ClusterIP in the Service range of kind (10.96.0.0/16).
+const proxyIP = "10.96.100.100"
+
+// egressProxyValues gives back the Helm values that turn on the egress proxy in kind. The
+// NetworkPolicy of the proxy permits the endpoint of the API server.
+func egressProxyValues() string {
+	By("finding the API server endpoint for the proxy NetworkPolicy")
+	eps := &discoveryv1.EndpointSliceList{}
+	Expect(k8s.List(ctx, eps, client.InNamespace("default"),
+		client.MatchingLabels{"kubernetes.io/service-name": "kubernetes"})).To(Succeed())
+	Expect(eps.Items).NotTo(BeEmpty())
+	ep := eps.Items[0]
+	Expect(ep.Endpoints).NotTo(BeEmpty())
+	Expect(ep.Ports).NotTo(BeEmpty())
+	return fmt.Sprintf(`egressProxy:
+  enabled: true
+  clusterIP: %s
+  replicas: 1
+  networkPolicy:
+    apiServer:
+    - to:
+      - ipBlock:
+          cidr: %s/32
+      ports:
+      - protocol: TCP
+        port: %d
+`, proxyIP, ep.Endpoints[0].Addresses[0], *ep.Ports[0].Port)
+}
+
 // The traced egress spec upgrades the chart with the egress proxy for the namespace egNS. An Agent
 // pod and a Workspace pod make planted calls, and each call must have 1 span with the identity of
 // the pod. The bypass attempts must fail. At the end, the spec installs the chart of the suite
@@ -50,9 +79,7 @@ var _ = Describe("Traced egress", Ordered, Label("egress"), func() {
 		egNS, egProfile = "koodam-e2e-egress", "koodam-e2e-egress"
 		agentName       = "egress-run"
 		wsTraceName     = "egress-ws"
-		// proxyIP is a fixed ClusterIP in the Service range of kind (10.96.0.0/16).
-		proxyIP   = "10.96.100.100"
-		proxyAddr = proxyIP + ":3128"
+		proxyAddr       = proxyIP + ":3128"
 		// upstream is the fake upstream Service. The values give it to extraEgress.
 		upstream = fakeUpstream + "." + systemNS + ".svc.cluster.local"
 	)
@@ -114,27 +141,7 @@ var _ = Describe("Traced egress", Ordered, Label("egress"), func() {
 		_, err := utils.Run(exec.Command("go", "build", "-o", koodam, "./cmd/koodam"))
 		Expect(err).NotTo(HaveOccurred())
 
-		By("finding the API server endpoint for the proxy NetworkPolicy")
-		eps := &discoveryv1.EndpointSliceList{}
-		Expect(k8s.List(ctx, eps, client.InNamespace("default"),
-			client.MatchingLabels{"kubernetes.io/service-name": "kubernetes"})).To(Succeed())
-		Expect(eps.Items).NotTo(BeEmpty())
-		ep := eps.Items[0]
-		Expect(ep.Endpoints).NotTo(BeEmpty())
-		Expect(ep.Ports).NotTo(BeEmpty())
-		values := fmt.Sprintf(`egressProxy:
-  enabled: true
-  clusterIP: %s
-  replicas: 1
-  networkPolicy:
-    apiServer:
-    - to:
-      - ipBlock:
-          cidr: %s/32
-      ports:
-      - protocol: TCP
-        port: %d
-workspace:
+		values := egressProxyValues() + fmt.Sprintf(`workspace:
   networkPolicy:
     namespaces: [%s]
     extraEgress:
@@ -148,7 +155,7 @@ workspace:
       ports:
       - protocol: TCP
         port: 8080
-`, proxyIP, ep.Endpoints[0].Addresses[0], *ep.Ports[0].Port, egNS, systemNS, fakeUpstream)
+`, egNS, systemNS, fakeUpstream)
 		file := filepath.Join(GinkgoT().TempDir(), "values-egress.yaml")
 		Expect(os.WriteFile(file, []byte(values), 0o600)).To(Succeed())
 

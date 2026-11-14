@@ -106,6 +106,9 @@ func TestAppClaimCheck(t *testing.T) {
 	const flag, jwks = "--app-claim-issuer", `{"keys":[{"kty":"EC"}]}`
 	set := []string{"apps.enabled=true", "apps.claimCheck.issuer=https://issuer.example.com",
 		"apps.claimCheck.audience=shop", "apps.claimCheck.tenantClaim=tenant"}
+	// The claim check needs the egress proxy.
+	const proxy = "egressProxy: {enabled: true, clusterIP: 10.96.0.50, networkPolicy: {enabled: false}}\n" +
+		"workspace: {networkPolicy: {namespaces: [shop]}}\n"
 	off, err := helmTemplate(t, "", "apps.enabled=true")
 	if err != nil || strings.Contains(off, flag) || strings.Contains(off, "app-claim-jwks") {
 		t.Fatalf("the install with no issuer has the claim check: %v", err)
@@ -114,14 +117,22 @@ func TestAppClaimCheck(t *testing.T) {
 	if out, err := helmTemplate(t, "", set[1:]...); err != nil || strings.Contains(out, flag) {
 		t.Errorf("the install with no Apps has the claim check: %v", err)
 	}
-	if out, err := helmTemplate(t, "", set...); err == nil || !strings.Contains(out, "apps.claimCheck.jwks is necessary") {
+	if out, err := helmTemplate(t, proxy, set...); err == nil ||
+		!strings.Contains(out, "apps.claimCheck.jwks is necessary") {
 		t.Errorf("an issuer with no JWKS is accepted: %v", err)
 	}
-	if out, err := helmTemplate(t, "", set[0], set[1], "apps.claimCheck.jwks=x"); err == nil ||
+	if out, err := helmTemplate(t, proxy, set[0], set[1], "apps.claimCheck.jwks=x"); err == nil ||
 		!strings.Contains(out, "apps.claimCheck.audience is necessary") {
 		t.Errorf("an issuer with no audience is accepted: %v", err)
 	}
-	on, err := helmTemplate(t, "apps:\n  claimCheck:\n    jwks: '"+jwks+"'\n", set...)
+	values := "apps:\n  claimCheck:\n    jwks: '" + jwks + "'\n"
+	// With no egress proxy, a version has no NetworkPolicy, and a pod of the cluster can call the
+	// app container with no claim. The chart refuses the issuer.
+	if out, err := helmTemplate(t, values, set...); err == nil ||
+		!strings.Contains(out, "apps.claimCheck needs egressProxy.enabled") {
+		t.Errorf("an issuer with no egress proxy is accepted: %v", err)
+	}
+	on, err := helmTemplate(t, proxy+values, set...)
 	if err != nil {
 		t.Fatalf("helm template failed: %v\n%s", err, on)
 	}

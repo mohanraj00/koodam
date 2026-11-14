@@ -233,8 +233,9 @@ apps:
   ingressNamespaces: []
   # The signed claim check at the ingress of each App. With an issuer, each AppVersion pod gets a
   # check container, and a request with no valid JWT of the issuer gets the status 401. The check
-  # accepts RS256 and ES256. It protects a version only with egressProxy.enabled, because only
-  # then a NetworkPolicy stops a direct call to the app container.
+  # accepts RS256 and ES256. An issuer needs egressProxy.enabled, because only then a
+  # NetworkPolicy stops a direct call to the app container. With no egress proxy, the chart
+  # refuses the issuer.
   claimCheck:
     # The necessary value of the claim iss. If it is empty, the Apps have no claim check.
     issuer: ""
@@ -245,8 +246,9 @@ apps:
     # The claim with the tenant label. The app container gets it in the header Koodam-Tenant. If
     # it is empty, the check reads no tenant label.
     tenantClaim: ""
-    # The JWKS document of the issuer, as text. It has public keys only. A change of this value
-    # starts the manager again, and then each AppVersion gets new pods.
+    # The JWKS document of the issuer, as text. It has public keys only: the manager refuses a
+    # document with private or symmetric key material. A change of this value starts the manager
+    # again, and then each AppVersion gets new pods.
     jwks: ""
 
 # The metrics endpoint (HTTPS). If true, the chart adds the metrics Service and the
