@@ -25,6 +25,12 @@ rules:
 - apiGroups:
   - ""
   resources:
+  - pods
+  verbs:
+  - list
+- apiGroups:
+  - ""
+  resources:
   - secrets
   - serviceaccounts
   verbs:
