@@ -102,9 +102,9 @@ func TestCheckHandler(t *testing.T) {
 }
 
 func TestUpstreamAndStatus(t *testing.T) {
-	var host, forwarded string
+	var host, forwarded, caller string
 	app := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		host, forwarded = r.Host, r.Header.Get("X-Forwarded-For")
+		host, forwarded, caller = r.Host, r.Header.Get("X-Forwarded-For"), r.Header.Get(CallerHeader)
 		w.WriteHeader(http.StatusTeapot)
 		_, _ = w.Write([]byte("tea"))
 	}))
@@ -113,11 +113,49 @@ func TestUpstreamAndStatus(t *testing.T) {
 	n, _ := strconv.Atoi(port)
 	r := httptest.NewRequest(http.MethodGet, "http://shop.example.com/", nil)
 	r.Header.Set("X-Forwarded-For", "203.0.113.7")
+	// A Connection header that names the label does not remove the label.
+	r.Header.Set("Connection", CallerHeader)
+	r.Header.Set(CallerHeader, "alice")
 	rec := httptest.NewRecorder()
 	w := &statusWriter{ResponseWriter: rec, status: http.StatusOK}
 	Upstream(n).ServeHTTP(w, r)
 	if w.status != http.StatusTeapot || rec.Body.String() != "tea" || host != "shop.example.com" ||
-		!strings.HasPrefix(forwarded, "203.0.113.7, ") || w.Unwrap() != rec {
-		t.Errorf("status %d, body %q, host %q, forwarded %q", w.status, rec.Body.String(), host, forwarded)
+		!strings.HasPrefix(forwarded, "203.0.113.7, ") || w.Unwrap() != rec || caller != "alice" {
+		t.Errorf("status %d, body %q, host %q, forwarded %q, caller %q", w.status, rec.Body.String(), host,
+			forwarded, caller)
+	}
+
+	// With no app, the answer has a fixed text and no detail of the error.
+	app.Close()
+	rec = httptest.NewRecorder()
+	Upstream(n).ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "http://shop.example.com/", nil))
+	if rec.Code != http.StatusBadGateway || rec.Body.String() != "The app did not answer.\n" {
+		t.Errorf("status %d, body %q", rec.Code, rec.Body.String())
+	}
+}
+
+// An aborted answer stops the handler with a panic. The request still has a span.
+func TestCheckWritesSpanOnAbort(t *testing.T) {
+	f := newFixture(t)
+	keys := &Keys{}
+	keys.set.Store(f.keys)
+	spans := &bytes.Buffer{}
+	check := &Check{Config: testCfg, Keys: keys, Spans: NewSpanWriter(spans),
+		Next: http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			w.WriteHeader(http.StatusPartialContent)
+			panic(http.ErrAbortHandler)
+		})}
+	r := httptest.NewRequest(http.MethodGet, "/", nil)
+	r.Header.Set("Authorization", "Bearer "+f.sign(t, header(algES256, "e1"), claims(nil)))
+	func() {
+		defer func() {
+			if recover() != http.ErrAbortHandler { //nolint:errorlint // The panic value is the sentinel itself.
+				t.Error("The abort did not go to the server.")
+			}
+		}()
+		check.ServeHTTP(httptest.NewRecorder(), r)
+	}()
+	if !strings.Contains(spans.String(), `"status":206,"outcome":"ok"`) {
+		t.Errorf("The span of an aborted answer is not correct: %q", spans.String())
 	}
 }

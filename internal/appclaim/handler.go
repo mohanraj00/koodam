@@ -20,6 +20,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"log"
 	"net"
 	"net/http"
 	"net/http/httputil"
@@ -124,6 +125,17 @@ func (c *Check) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if methods[r.Method] {
 		span.Method = r.Method
 	}
+	// A defer writes the span, because the proxy stops an aborted answer with a panic.
+	var rec *statusWriter
+	defer func() {
+		if rec != nil {
+			span.Status = rec.status
+		}
+		span.DurationMs = float64(now().Sub(start).Microseconds()) / 1000
+		if c.Spans != nil {
+			c.Spans.Write(span)
+		}
+	}()
 	id, err := c.Config.Verify(c.Keys.set.Load(), bearer(r), start)
 	// The app gets the labels of the claim only. A caller cannot set them, and the app does not
 	// get the token.
@@ -144,26 +156,35 @@ func (c *Check) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		if id.Tenant != "" {
 			r.Header.Set(TenantHeader, id.Tenant)
 		}
-		rec := &statusWriter{ResponseWriter: w, status: http.StatusOK}
+		rec = &statusWriter{ResponseWriter: w, status: http.StatusOK}
 		c.Next.ServeHTTP(rec, r)
-		span.Status = rec.status
-	}
-	span.DurationMs = float64(now().Sub(start).Microseconds()) / 1000
-	if c.Spans != nil {
-		c.Spans.Write(span)
 	}
 }
 
 // Upstream gives back a handler that sends each request to a port of the loopback address. The
-// app container gets the host name of the request and the address of the client.
+// app container gets the host name of the request and the address of the client. The handler
+// writes no proxy error to a log, because an error can have a header value of the request.
 func Upstream(port int) http.Handler {
 	target := &url.URL{Scheme: "http", Host: net.JoinHostPort("127.0.0.1", strconv.Itoa(port))}
-	return &httputil.ReverseProxy{Rewrite: func(pr *httputil.ProxyRequest) {
-		pr.SetURL(target)
-		pr.Out.Host = pr.In.Host
-		pr.Out.Header["X-Forwarded-For"] = pr.In.Header["X-Forwarded-For"]
-		pr.SetXForwarded()
-	}}
+	return &httputil.ReverseProxy{
+		Rewrite: func(pr *httputil.ProxyRequest) {
+			pr.SetURL(target)
+			pr.Out.Host = pr.In.Host
+			pr.Out.Header["X-Forwarded-For"] = pr.In.Header["X-Forwarded-For"]
+			pr.SetXForwarded()
+			// A Connection header of the caller can name the labels of the claim, and the proxy then
+			// removes them. Set them again from the request that Check made.
+			for _, h := range []string{CallerHeader, TenantHeader} {
+				if v := pr.In.Header.Get(h); v != "" {
+					pr.Out.Header.Set(h, v)
+				}
+			}
+		},
+		ErrorLog: log.New(io.Discard, "", 0),
+		ErrorHandler: func(w http.ResponseWriter, _ *http.Request, _ error) {
+			http.Error(w, "The app did not answer.", http.StatusBadGateway)
+		},
+	}
 }
 
 // bearer gives back the token of the Authorization header, or an empty string.
