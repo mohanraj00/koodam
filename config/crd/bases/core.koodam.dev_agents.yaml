@@ -148,10 +148,27 @@ spec:
                 minimum: 1
                 type: integer
               model:
-                description: Model is the gateway model name. The key permits only
-                  this model.
+                description: |-
+                  Model is the gateway model name. It is the short form of a models list with 1 item. The
+                  key permits only this model.
                 minLength: 1
                 type: string
+              models:
+                description: |-
+                  Models are the gateway model names that the key permits. The gateway refuses a call to a
+                  different model. The first model is the model of the harness. Set model or models, and
+                  not the two. The list is atomic, so an apply replaces it and keeps its order.
+                items:
+                  maxLength: 253
+                  minLength: 1
+                  type: string
+                maxItems: 16
+                minItems: 1
+                type: array
+                x-kubernetes-list-type: atomic
+                x-kubernetes-validations:
+                - message: models must not have a model two times
+                  rule: self.all(m, self.exists_one(n, n == m))
               podTemplate:
                 description: |-
                   PodTemplate changes the run pod, for example its resources, runtime class or node selector.
@@ -9049,7 +9066,6 @@ spec:
             - budget
             - command
             - image
-            - model
             type: object
             x-kubernetes-validations:
             - message: Set the image and the command in spec.image and spec.command,
@@ -9068,6 +9084,8 @@ spec:
                 && has(self.podTemplate.spec.volumes) && self.podTemplate.spec.volumes.exists(v,
                 v.name == ''nookku-tests'' && has(v.persistentVolumeClaim) && size(v.persistentVolumeClaim.claimName)
                 > 0))'
+            - message: Set model or models, and not the two.
+              rule: has(self.model) != has(self.models)
             - message: spec.ingressPort is disabled. The traced ingress feature is
                 not installed in this cluster.
               rule: '!has(self.ingressPort)'

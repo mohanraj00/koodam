@@ -281,6 +281,33 @@ var _ = Describe("Agent Controller", func() {
 		Expect(k8sClient.Update(ctx, a)).To(Succeed())
 	}
 
+	It("makes one key that permits each model of spec.models", func() {
+		const first, second = "model-first", "model-second"
+		a := agent()
+		a.Spec.Model, a.Spec.Models = "", []string{first, second}
+		Expect(k8sClient.Update(ctx, a)).To(Succeed())
+		reconcileOnce(newReconciler())
+
+		Expect(gw.created).To(HaveLen(1))
+		Expect(gw.created[0].Model).To(Equal(first))
+		Expect(gw.created[0].Models).To(Equal([]string{second}))
+		// The first model is the model of the harness.
+		sec := &corev1.Secret{}
+		Expect(exists(sec)).To(BeTrue())
+		Expect(string(sec.Data[modelField])).To(Equal(first))
+
+		// The API server refuses the 2 forms together, an Agent with no model and a model two times.
+		for _, change := range []func(*corev1alpha1.Agent){
+			func(b *corev1alpha1.Agent) { b.Spec.Model = first },
+			func(b *corev1alpha1.Agent) { b.Spec.Models = nil },
+			func(b *corev1alpha1.Agent) { b.Spec.Models = []string{first, second, first} },
+		} {
+			bad := agent()
+			change(bad)
+			Expect(apierrors.IsInvalid(k8sClient.Update(ctx, bad))).To(BeTrue())
+		}
+	})
+
 	It("adds an init container that installs the harness", func() {
 		setHarness(&corev1alpha1.HarnessSpec{Name: claudeName, Version: "2.1.3"}, nil)
 		r := newReconciler()

@@ -100,6 +100,11 @@ func (in *AgentSpec) DeepCopyInto(out *AgentSpec) {
 			(*out)[key] = val
 		}
 	}
+	if in.Models != nil {
+		in, out := &in.Models, &out.Models
+		*out = make([]string, len(*in))
+		copy(*out, *in)
+	}
 	out.Budget = in.Budget.DeepCopy()
 	if in.Rules != nil {
 		in, out := &in.Rules, &out.Rules

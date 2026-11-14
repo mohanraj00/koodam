@@ -253,6 +253,10 @@ func invalid(a *corev1alpha1.Agent) string {
 	if !inCeiling(a.Spec.Rules) {
 		return "A rule is not in the agent-ceiling ClusterRole."
 	}
+	// The CRD has this rule. The controller reads the first model, so it does the check again.
+	if (a.Spec.Model == "") == (len(a.Spec.Models) == 0) || slices.Contains(a.Spec.Models, "") {
+		return "Set spec.model or spec.models, and not the two."
+	}
 	if _, set := a.Spec.Env[nookkuTestsEnv]; set && hasNookku(a.Spec.Harness) {
 		return "spec.env cannot set " + nookkuTestsEnv + " if the harness has the nookku plugin. Koodam sets it."
 	}
@@ -388,13 +392,14 @@ func (r *AgentReconciler) provision(ctx context.Context, a *corev1alpha1.Agent) 
 			return err
 		}
 	}
+	models := a.Spec.ModelList()
 	md := map[string]string{metaUID: string(a.UID), metaNamespace: a.Namespace, "agent": a.Name, "user": a.Spec.User}
 	if a.Spec.Harness != nil {
 		// The gateway can then group the spend by harness.
 		md["harness"] = a.Spec.Harness.Name
 	}
 	err = r.Gateway.CreateKey(ctx, gateway.KeySpec{
-		Value: key, Alias: alias, Model: a.Spec.Model, Budget: a.Spec.Budget.AsApproximateFloat64(),
+		Value: key, Alias: alias, Model: models[0], Models: models[1:], Budget: a.Spec.Budget.AsApproximateFloat64(),
 		TTL: time.Duration(a.Spec.DeadlineSeconds)*time.Second + r.Grace, Metadata: md,
 	})
 	if err != nil {
@@ -448,7 +453,7 @@ func (r *AgentReconciler) provision(ctx context.Context, a *corev1alpha1.Agent) 
 // secret has the env for the harnesses.
 func (r *AgentReconciler) secret(a *corev1alpha1.Agent, key string) *corev1.Secret {
 	return &corev1.Secret{ObjectMeta: runMeta(a), Immutable: new(true),
-		StringData: gatewayEnv(r.GatewayURL, a.Spec.Model, key)}
+		StringData: gatewayEnv(r.GatewayURL, a.Spec.ModelList()[0], key)}
 }
 
 // gatewayEnv is the env of the harnesses for a gateway key. Stage 2 found that a missing model
@@ -495,7 +500,7 @@ func runJob(a *corev1alpha1.Agent, installerImage, gatewayURL string) *batchv1.J
 			addAgentNookku(&pod)
 		}
 		if h.Name == harness.Codex {
-			tmpl.Annotations = map[string]string{codexConfigAnnotation: codexConfig(gatewayURL, a.Spec.Model)}
+			tmpl.Annotations = map[string]string{codexConfigAnnotation: codexConfig(gatewayURL, a.Spec.ModelList()[0])}
 			addCodexConfig(&pod)
 		}
 	}
