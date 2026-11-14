@@ -18,6 +18,7 @@ package main
 
 import (
 	"crypto/tls"
+	"errors"
 	"flag"
 	"fmt"
 	"math"
@@ -50,6 +51,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/webhook"
 
 	corev1alpha1 "github.com/mohanraj00/koodam/api/v1alpha1"
+	"github.com/mohanraj00/koodam/internal/appclaim"
 	"github.com/mohanraj00/koodam/internal/controller"
 	"github.com/mohanraj00/koodam/internal/gateway"
 	// +kubebuilder:scaffold:imports
@@ -109,6 +111,40 @@ func workspaceCache() cache.Options {
 }
 
 // nolint:gocyclo
+// loadClaim reads the JWKS file of the App claim check and examines the configuration. With no
+// issuer, the check is off and the other values have no effect.
+func loadClaim(c controller.AppClaimCheck, jwksFile string) (controller.AppClaimCheck, error) {
+	if c.Issuer == "" {
+		return controller.AppClaimCheck{}, nil
+	}
+	cfg := appclaim.Config{Issuer: c.Issuer, Audience: c.Audience, CallerClaim: c.CallerClaim, TenantClaim: c.TenantClaim}
+	if err := cfg.Valid(); err != nil {
+		return c, err
+	}
+	if c.Image == "" {
+		return c, errors.New("--installer-image is necessary for the App claim check")
+	}
+	data, err := os.ReadFile(jwksFile) //nolint:gosec // The operator configures the path.
+	if err != nil {
+		return c, errors.New("--app-claim-jwks-file is not readable")
+	}
+	if _, err := appclaim.ParseKeySet(data); err != nil {
+		return c, err
+	}
+	c.JWKS = string(data)
+	return c, nil
+}
+
+// checkClaimPolicy refuses the App claim check if the controller cannot make the NetworkPolicy
+// of a version. With no policy, a pod of the cluster can call the app container with no claim.
+func checkClaimPolicy(c controller.AppClaimCheck, e controller.EgressProxy) error {
+	if c.Issuer != "" && (e.IP == "" || e.Namespace == "" || len(e.PodLabels) == 0) {
+		return errors.New("the App claim check needs --egress-proxy-ip, --egress-proxy-namespace and " +
+			"--egress-proxy-pod-labels, because only the NetworkPolicy of a version blocks a call with no claim")
+	}
+	return nil
+}
+
 // checkEgress refuses an egress proxy IP that is not an IPv4 address, and a port or a cluster
 // domain that is not valid. The pods use the IP as their DNS server.
 func checkEgress(e controller.EgressProxy) error {
@@ -144,7 +180,8 @@ func main() {
 	var testKeyRevokeWait time.Duration
 	var keyGrace time.Duration
 	var egress controller.EgressProxy
-	var egressPodLabels, appIngressNamespaces string
+	var egressPodLabels, appIngressNamespaces, claimJWKSFile string
+	var claim controller.AppClaimCheck
 	var jobTTLSeconds int
 	var agentIngressEnabled, appsEnabled bool
 	var tlsOpts []func(*tls.Config)
@@ -186,6 +223,15 @@ func main() {
 	flag.StringVar(&appIngressNamespaces, "app-ingress-namespaces", "",
 		"The namespaces whose pods can send traffic to the App pods, with a comma between them. Use the "+
 			"namespace of the Gateway data plane. If it is empty, the NetworkPolicy of an AppVersion permits no ingress.")
+	flag.StringVar(&claim.Issuer, "app-claim-issuer", "",
+		"The issuer of the signed claim that each request to an App must have. If it is empty, the Apps have no claim check.")
+	flag.StringVar(&claim.Audience, "app-claim-audience", "",
+		"A value that the claim aud of a request to an App must have.")
+	flag.StringVar(&claim.CallerClaim, "app-claim-caller-claim", "sub", "The claim with the caller label.")
+	flag.StringVar(&claim.TenantClaim, "app-claim-tenant-claim", "",
+		"The claim with the tenant label. If it is empty, the check reads no tenant label.")
+	flag.StringVar(&claimJWKSFile, "app-claim-jwks-file", "",
+		"The file with the JWKS of the issuer. The manager reads it at its start.")
 	flag.StringVar(&egress.ClusterDomain, "cluster-domain", "cluster.local", "The DNS domain of the cluster.")
 	flag.DurationVar(&keyGrace, "key-grace", time.Minute, "The time that is added to deadlineSeconds for the key TTL.")
 	flag.IntVar(&jobTTLSeconds, "job-ttl-seconds", controller.DefaultJobTTLSeconds,
@@ -336,6 +382,15 @@ func main() {
 		}
 		ingressNamespaces = append(ingressNamespaces, ns)
 	}
+	claim.Image = installerImage
+	if claim, err = loadClaim(claim, claimJWKSFile); err != nil {
+		setupLog.Error(err, "The App claim check flags are not valid")
+		os.Exit(1)
+	}
+	if err := checkClaimPolicy(claim, egress); err != nil {
+		setupLog.Error(err, "The App claim check flags are not valid")
+		os.Exit(1)
+	}
 	if err := checkEgress(egress); err != nil {
 		setupLog.Error(err, "The egress proxy flags are not valid")
 		os.Exit(1)
@@ -397,6 +452,7 @@ func main() {
 			GatewayURL:        strings.TrimRight(agentGatewayURL, "/"),
 			Egress:            egress,
 			IngressNamespaces: ingressNamespaces,
+			Claim:             claim,
 		}).SetupWithManager(mgr); err != nil {
 			setupLog.Error(err, "Failed to create controller", "controller", "appversion")
 			os.Exit(1)
