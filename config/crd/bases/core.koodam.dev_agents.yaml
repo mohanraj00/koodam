@@ -157,14 +157,18 @@ spec:
                 description: |-
                   Models are the gateway model names that the key permits. The gateway refuses a call to a
                   different model. The first model is the model of the harness. Set model or models, and
-                  not the two.
+                  not the two. The list is atomic, so an apply replaces it and keeps its order.
                 items:
+                  maxLength: 253
                   minLength: 1
                   type: string
                 maxItems: 16
                 minItems: 1
                 type: array
-                x-kubernetes-list-type: set
+                x-kubernetes-list-type: atomic
+                x-kubernetes-validations:
+                - message: models must not have a model two times
+                  rule: self.all(m, self.exists_one(n, n == m))
               output:
                 description: |-
                   Output is the one output file of the run. When the run ends, the status shows the

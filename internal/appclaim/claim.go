@@ -121,15 +121,17 @@ func ParseKeySet(data []byte) (*KeySet, error) {
 		pk := publicKey{kid: k.Kid}
 		switch {
 		case k.Kty == "RSA":
-			n, e := decode(k.N), decode(k.E)
-			if len(n)*8 < minRSABits || len(e) == 0 || len(e) > 4 {
+			// The bit length of the number is the size of the key. Zero bytes at the start do not count.
+			mod := new(big.Int).SetBytes(decode(k.N))
+			e := decode(k.E)
+			if mod.BitLen() < minRSABits || len(e) == 0 || len(e) > 4 {
 				continue
 			}
 			exp := int(new(big.Int).SetBytes(e).Int64())
 			if exp < 3 || exp%2 == 0 {
 				continue
 			}
-			pk.rsa = &rsa.PublicKey{N: new(big.Int).SetBytes(n), E: exp}
+			pk.rsa = &rsa.PublicKey{N: mod, E: exp}
 		case k.Kty == "EC" && k.Crv == "P-256":
 			x, y := decode(k.X), decode(k.Y)
 			if len(x) != 32 || len(y) != 32 {
@@ -175,8 +177,11 @@ func (s *KeySet) find(alg, kid string) []publicKey {
 
 // Verify checks the signature and the claims of a token. It accepts RS256 and ES256 only.
 func (c Config) Verify(keys *KeySet, token string, now time.Time) (Identity, error) {
-	parts := strings.Split(token, ".")
-	if len(token) > maxToken || len(parts) != 3 || keys == nil {
+	if len(token) > maxToken || keys == nil {
+		return Identity{}, RefusedSyntax
+	}
+	parts := strings.SplitN(token, ".", 4)
+	if len(parts) != 3 {
 		return Identity{}, RefusedSyntax
 	}
 	var head struct{ Alg, Kid string }
