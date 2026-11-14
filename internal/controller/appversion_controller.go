@@ -680,8 +680,9 @@ func (r *AppVersionReconciler) applyObjects(ctx context.Context, av *corev1alpha
 	name := appVersionName(av)
 	ports := appContainer(&deploy.Spec.Template.Spec).Ports
 	// With the claim check, the Service and the NetworkPolicy use the ports of the check
-	// container. Then no request gets to the app container with no check.
-	listen := r.Claim.listenPorts(ports)
+	// container. Then no request gets to the app container with no check. The ports come from the
+	// pod template, so the Service, the policy and the check container agree.
+	listen := claimPorts(&deploy.Spec.Template.Spec, ports)
 	svcPorts := make([]corev1.ServicePort, 0, len(ports))
 	for i, p := range ports {
 		target := intstr.FromString(p.Name)
@@ -815,7 +816,9 @@ func (r *AppVersionReconciler) deployment(ctx context.Context, av *corev1alpha1.
 	}
 	c := appContainer(&tmpl.Spec)
 	c.Ports, c.ReadinessProbe, c.LivenessProbe, c.StartupProbe = ports, ready, live, start
-	r.Claim.add(&tmpl, av, ports)
+	if err := r.Claim.add(&tmpl, av, ports); err != nil {
+		return nil, err
+	}
 	r.Egress.apply(&tmpl.Spec, av.Namespace)
 	hash, err := templateHash(tmpl)
 	if err != nil {

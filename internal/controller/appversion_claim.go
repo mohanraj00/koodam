@@ -18,10 +18,12 @@ package controller
 
 import (
 	"fmt"
+	"slices"
 
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/util/validation/field"
 
 	corev1alpha1 "github.com/mohanraj00/koodam/api/v1alpha1"
 )
@@ -36,6 +38,8 @@ const (
 	claimJWKSAnnotation = "koodam.dev/claim-jwks"
 	// claimPortBase is the first port that the check container can use.
 	claimPortBase = 15080
+	// msgClaimName is the message for a template that uses the name of the check container.
+	msgClaimName = "the name is reserved for the claim check container"
 	// condClaimCheck shows if the claim check protects the version.
 	condClaimCheck = "ClaimCheck"
 )
@@ -54,14 +58,22 @@ func (c AppClaimCheck) enabled() bool { return c.Issuer != "" }
 
 // listenPorts gives back one port of the check container for each port of the app container,
 // in the same order. If the check is off, it gives back the ports of the app container. A
-// listen port is never a port of the app container.
-func (c AppClaimCheck) listenPorts(app []corev1.ContainerPort) []corev1.ContainerPort {
+// listen port is never a port that a container of the pod declares, because all the containers
+// of a pod share one network namespace.
+func (c AppClaimCheck) listenPorts(app []corev1.ContainerPort, pod *corev1.PodSpec) []corev1.ContainerPort {
 	if !c.enabled() {
 		return app
 	}
 	used := map[int32]bool{}
 	for _, p := range app {
 		used[p.ContainerPort] = true
+	}
+	if pod != nil {
+		for _, ct := range slices.Concat(pod.Containers, pod.InitContainers) {
+			for _, p := range ct.Ports {
+				used[p.ContainerPort] = true
+			}
+		}
 	}
 	out := make([]corev1.ContainerPort, 0, len(app))
 	next := int32(claimPortBase)
@@ -75,13 +87,40 @@ func (c AppClaimCheck) listenPorts(app []corev1.ContainerPort) []corev1.Containe
 	return out
 }
 
-// add puts the check container in the pod template. The container is a sidecar, so it starts
-// before the app container. The Service and the NetworkPolicy of the version use its ports.
-func (c AppClaimCheck) add(tmpl *corev1.PodTemplateSpec, av *corev1alpha1.AppVersion, app []corev1.ContainerPort) {
-	if !c.enabled() {
-		return
+// claimPorts gives back the ports of the check container of the pod. If the pod has no check
+// container, it gives back the ports of the app container.
+func claimPorts(pod *corev1.PodSpec, app []corev1.ContainerPort) []corev1.ContainerPort {
+	for i := range pod.InitContainers {
+		if pod.InitContainers[i].Name == claimContainer {
+			return pod.InitContainers[i].Ports
+		}
 	}
-	listen := c.listenPorts(app)
+	return app
+}
+
+// add puts the check container in the pod template. The container is a sidecar, so it starts
+// before the app container. The Service and the NetworkPolicy of the version use its ports. It
+// refuses a template that has a container or a volume with the name of the check container.
+func (c AppClaimCheck) add(tmpl *corev1.PodTemplateSpec, av *corev1alpha1.AppVersion, app []corev1.ContainerPort) error {
+	if !c.enabled() {
+		return nil
+	}
+	path := field.NewPath("spec", "podTemplate", "spec")
+	var errs field.ErrorList
+	for _, ct := range slices.Concat(tmpl.Spec.Containers, tmpl.Spec.InitContainers) {
+		if ct.Name == claimContainer {
+			errs = append(errs, field.Invalid(path.Child("containers"), ct.Name, msgClaimName))
+		}
+	}
+	for _, v := range tmpl.Spec.Volumes {
+		if v.Name == claimContainer {
+			errs = append(errs, field.Invalid(path.Child("volumes"), v.Name, msgClaimName))
+		}
+	}
+	if len(errs) > 0 {
+		return &invalidTemplateError{errs: errs}
+	}
+	listen := c.listenPorts(app, &tmpl.Spec)
 	args := []string{"--issuer", c.Issuer, "--audience", c.Audience, "--caller-claim", c.CallerClaim,
 		"--tenant-claim", c.TenantClaim, "--jwks-file", claimDir + "/jwks.json",
 		"--app", av.Spec.AppRef.Name, "--version", av.Name}
@@ -100,6 +139,7 @@ func (c AppClaimCheck) add(tmpl *corev1.PodTemplateSpec, av *corev1alpha1.AppVer
 		Resources: corev1.ResourceRequirements{Requests: corev1.ResourceList{
 			corev1.ResourceCPU: resource.MustParse("10m"), corev1.ResourceMemory: resource.MustParse("16Mi")}},
 	})
+	return nil
 }
 
 // condition gives back the condition ClaimCheck. The check protects the version only if the
