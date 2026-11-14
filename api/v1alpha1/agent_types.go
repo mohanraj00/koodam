@@ -52,12 +52,14 @@ type AgentSpec struct {
 
 	// Models are the gateway model names that the key permits. The gateway refuses a call to a
 	// different model. The first model is the model of the harness. Set model or models, and
-	// not the two.
+	// not the two. The list is atomic, so an apply replaces it and keeps its order.
 	// +optional
-	// +listType=set
+	// +listType=atomic
+	// +kubebuilder:validation:XValidation:rule="self.all(m, self.exists_one(n, n == m))",message="models must not have a model two times"
 	// +kubebuilder:validation:MinItems=1
 	// +kubebuilder:validation:MaxItems=16
 	// +kubebuilder:validation:items:MinLength=1
+	// +kubebuilder:validation:items:MaxLength=253
 	Models []string `json:"models,omitempty"`
 
 	// Budget is the maximum spend of the run, in the currency of the gateway price table.

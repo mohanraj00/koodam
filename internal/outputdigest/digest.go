@@ -27,7 +27,9 @@ import (
 	"io"
 	"io/fs"
 	"os"
+	"path/filepath"
 	"regexp"
+	"strings"
 	"syscall"
 )
 
@@ -54,10 +56,41 @@ type Result struct {
 
 var hexDigest = regexp.MustCompile(`^[0-9a-f]{64}$`)
 
-// File computes the digest of the regular file at path. It does not follow a link at the last
-// part of the path, so a link cannot make the container read a different file.
-func File(path string) Result {
-	f, err := os.OpenFile(path, os.O_RDONLY|syscall.O_NOFOLLOW|syscall.O_NONBLOCK, 0)
+// File computes the digest of the regular file at path. root is the mount path of the output
+// volume. The read stays in root, and no part of the path below root can be a link. Thus a link
+// cannot make the container read a file that is not the file of the agent container. If root is
+// path, the volume mount is the file itself.
+func File(root, path string) Result {
+	const flags = os.O_RDONLY | syscall.O_NOFOLLOW | syscall.O_NONBLOCK
+	var f *os.File
+	var err error
+	rel, relErr := filepath.Rel(root, path)
+	switch {
+	case root == path:
+		f, err = os.OpenFile(path, flags, 0)
+	case relErr != nil || !filepath.IsLocal(rel):
+		return Result{Reason: ReasonNotFound}
+	default:
+		dir, derr := os.OpenRoot(root)
+		if derr != nil {
+			return Result{Reason: ReasonReadError}
+		}
+		defer func() { _ = dir.Close() }()
+		parts := strings.Split(rel, string(filepath.Separator))
+		for i := range parts {
+			info, lerr := dir.Lstat(filepath.Join(parts[:i+1]...))
+			switch {
+			case errors.Is(lerr, fs.ErrNotExist):
+				return Result{Reason: ReasonNotFound}
+			case lerr != nil:
+				return Result{Reason: ReasonReadError}
+			case info.Mode()&fs.ModeSymlink != 0:
+				return Result{Reason: ReasonNotRegularFile}
+			}
+		}
+		// The open through the root refuses a link that a different process adds after the check.
+		f, err = dir.OpenFile(rel, flags, 0)
+	}
 	switch {
 	case errors.Is(err, fs.ErrNotExist):
 		return Result{Reason: ReasonNotFound}
