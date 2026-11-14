@@ -23,6 +23,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/util/intstr"
 	"k8s.io/apimachinery/pkg/util/validation/field"
 
 	corev1alpha1 "github.com/mohanraj00/koodam/api/v1alpha1"
@@ -87,9 +88,14 @@ func (c AppClaimCheck) listenPorts(app []corev1.ContainerPort, pod *corev1.PodSp
 	return out
 }
 
-// claimPorts gives back the ports of the check container of the pod. If the pod has no check
-// container, it gives back the ports of the app container.
-func claimPorts(pod *corev1.PodSpec, app []corev1.ContainerPort) []corev1.ContainerPort {
+// claimPorts gives back the ports of the check container of the pod. If the check is off or the
+// pod has no check container, it gives back the ports of the app container. With the check
+// off, a container of the user can have the name of the check container, and its ports must
+// not control the NetworkPolicy.
+func (c AppClaimCheck) claimPorts(pod *corev1.PodSpec, app []corev1.ContainerPort) []corev1.ContainerPort {
+	if !c.enabled() {
+		return app
+	}
 	for i := range pod.InitContainers {
 		if pod.InitContainers[i].Name == claimContainer {
 			return pod.InitContainers[i].Ports
@@ -98,8 +104,9 @@ func claimPorts(pod *corev1.PodSpec, app []corev1.ContainerPort) []corev1.Contai
 	return app
 }
 
-// add puts the check container in the pod template. The container is a sidecar, so it starts
-// before the app container. The Service and the NetworkPolicy of the version use its ports. It
+// add puts the check container in the pod template. The container is the first init container
+// and a sidecar with a startup probe on its last port. Thus it binds all its ports before a
+// container of the user starts, and a container of the user cannot take a port of the check. The Service and the NetworkPolicy of the version use its ports. It
 // refuses a template that has a container or a volume with the name of the check container.
 func (c AppClaimCheck) add(tmpl *corev1.PodTemplateSpec, av *corev1alpha1.AppVersion, app []corev1.ContainerPort) error {
 	if !c.enabled() {
@@ -131,14 +138,20 @@ func (c AppClaimCheck) add(tmpl *corev1.PodTemplateSpec, av *corev1alpha1.AppVer
 	tmpl.Spec.Volumes = append(tmpl.Spec.Volumes, corev1.Volume{Name: claimContainer, VolumeSource: corev1.VolumeSource{
 		DownwardAPI: &corev1.DownwardAPIVolumeSource{Items: []corev1.DownwardAPIVolumeFile{{Path: "jwks.json",
 			FieldRef: &corev1.ObjectFieldSelector{FieldPath: "metadata.annotations['" + claimJWKSAnnotation + "']"}}}}}})
-	tmpl.Spec.InitContainers = append(tmpl.Spec.InitContainers, corev1.Container{
+	check := corev1.Container{
 		Name: claimContainer, Image: c.Image, Command: []string{"/app-claim-check"}, Args: args, Ports: listen,
 		RestartPolicy:   new(corev1.ContainerRestartPolicyAlways),
 		VolumeMounts:    []corev1.VolumeMount{{Name: claimContainer, MountPath: claimDir, ReadOnly: true}},
 		SecurityContext: helperSecurityContext(),
 		Resources: corev1.ResourceRequirements{Requests: corev1.ResourceList{
 			corev1.ResourceCPU: resource.MustParse("10m"), corev1.ResourceMemory: resource.MustParse("16Mi")}},
-	})
+	}
+	if n := len(listen); n > 0 {
+		// The check binds its ports in order, so the last port shows that it has all of them.
+		check.StartupProbe = &corev1.Probe{PeriodSeconds: 1, FailureThreshold: 60, ProbeHandler: corev1.ProbeHandler{
+			TCPSocket: &corev1.TCPSocketAction{Port: intstr.FromInt32(listen[n-1].ContainerPort)}}}
+	}
+	tmpl.Spec.InitContainers = append([]corev1.Container{check}, tmpl.Spec.InitContainers...)
 	return nil
 }
 

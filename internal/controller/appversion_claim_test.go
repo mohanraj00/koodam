@@ -57,15 +57,29 @@ func TestClaimAdd(t *testing.T) {
 			t.Errorf("%s: the template with the reserved name is accepted: %v", name, err)
 		}
 	}
-	tmpl := &corev1.PodTemplateSpec{Spec: corev1.PodSpec{Containers: []corev1.Container{{Name: pauseTestSide,
-		Ports: []corev1.ContainerPort{{ContainerPort: claimPortBase}}}}}}
+	tmpl := &corev1.PodTemplateSpec{Spec: corev1.PodSpec{
+		Containers: []corev1.Container{{Name: pauseTestSide,
+			Ports: []corev1.ContainerPort{{ContainerPort: claimPortBase}}}},
+		InitContainers: []corev1.Container{{Name: "init"}}}}
 	if err := c.add(tmpl, &corev1alpha1.AppVersion{}, app); err != nil {
 		t.Fatal(err)
 	}
-	if got := claimPorts(&tmpl.Spec, app); len(got) != 1 || got[0].ContainerPort != claimPortBase+1 {
+	if got := c.claimPorts(&tmpl.Spec, app); len(got) != 1 || got[0].ContainerPort != claimPortBase+1 {
 		t.Errorf("The ports of the check container are %v.", got)
 	}
-	if got := claimPorts(&corev1.PodSpec{}, app); len(got) != 1 || got[0].Name != jobIngHTTPPortName {
+	// The check container starts first and its probe waits for its last port. Then an init
+	// container of the user cannot bind a port of the check before the check.
+	first := tmpl.Spec.InitContainers[0]
+	if first.Name != claimContainer || first.StartupProbe == nil ||
+		first.StartupProbe.TCPSocket.Port.IntVal != claimPortBase+1 {
+		t.Errorf("The first init container is %q with the startup probe %v.", first.Name, first.StartupProbe)
+	}
+	if got := c.claimPorts(&corev1.PodSpec{}, app); len(got) != 1 || got[0].Name != jobIngHTTPPortName {
 		t.Errorf("With no check container, the ports are %v.", got)
+	}
+	// With the check off, an init container of the user with the reserved name has no effect.
+	user := &corev1.PodSpec{InitContainers: []corev1.Container{{Name: claimContainer}}}
+	if got := (AppClaimCheck{}).claimPorts(user, app); len(got) != 1 || got[0].Name != jobIngHTTPPortName {
+		t.Errorf("With the check off, the ports are %v.", got)
 	}
 }

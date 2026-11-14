@@ -682,7 +682,7 @@ func (r *AppVersionReconciler) applyObjects(ctx context.Context, av *corev1alpha
 	// With the claim check, the Service and the NetworkPolicy use the ports of the check
 	// container. Then no request gets to the app container with no check. The ports come from the
 	// pod template, so the Service, the policy and the check container agree.
-	listen := claimPorts(&deploy.Spec.Template.Spec, ports)
+	listen := r.Claim.claimPorts(&deploy.Spec.Template.Spec, ports)
 	svcPorts := make([]corev1.ServicePort, 0, len(ports))
 	for i, p := range ports {
 		target := intstr.FromString(p.Name)
