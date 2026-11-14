@@ -108,3 +108,24 @@ func TestLoadClaim(t *testing.T) {
 }
 
 func second(_ controller.AppClaimCheck, err error) error { return err }
+
+// The claim check is permitted only if the controller can make the NetworkPolicy of a version.
+func TestCheckClaimPolicy(t *testing.T) {
+	on := controller.AppClaimCheck{Issuer: "https://issuer.example.com"}
+	proxy := controller.EgressProxy{IP: "10.96.0.50", Namespace: "koodam-system", PodLabels: map[string]string{"a": "b"}}
+	noIP, noNamespace, noLabels := proxy, proxy, proxy
+	noIP.IP, noNamespace.Namespace, noLabels.PodLabels = "", "", nil
+	for name, e := range map[string]controller.EgressProxy{
+		"no IP": noIP, "no namespace": noNamespace, "no labels": noLabels,
+	} {
+		if checkClaimPolicy(on, e) == nil {
+			t.Errorf("%s: the claim check is accepted", name)
+		}
+		if err := checkClaimPolicy(controller.AppClaimCheck{}, e); err != nil {
+			t.Errorf("%s: with no claim check, the configuration is refused: %v", name, err)
+		}
+	}
+	if err := checkClaimPolicy(on, proxy); err != nil {
+		t.Errorf("The claim check with the egress proxy is refused: %v", err)
+	}
+}

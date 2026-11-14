@@ -135,6 +135,16 @@ func loadClaim(c controller.AppClaimCheck, jwksFile string) (controller.AppClaim
 	return c, nil
 }
 
+// checkClaimPolicy refuses the App claim check if the controller cannot make the NetworkPolicy
+// of a version. With no policy, a pod of the cluster can call the app container with no claim.
+func checkClaimPolicy(c controller.AppClaimCheck, e controller.EgressProxy) error {
+	if c.Issuer != "" && (e.IP == "" || e.Namespace == "" || len(e.PodLabels) == 0) {
+		return errors.New("the App claim check needs --egress-proxy-ip, --egress-proxy-namespace and " +
+			"--egress-proxy-pod-labels, because only the NetworkPolicy of a version blocks a call with no claim")
+	}
+	return nil
+}
+
 // checkEgress refuses an egress proxy IP that is not an IPv4 address, and a port or a cluster
 // domain that is not valid. The pods use the IP as their DNS server.
 func checkEgress(e controller.EgressProxy) error {
@@ -374,6 +384,10 @@ func main() {
 	}
 	claim.Image = installerImage
 	if claim, err = loadClaim(claim, claimJWKSFile); err != nil {
+		setupLog.Error(err, "The App claim check flags are not valid")
+		os.Exit(1)
+	}
+	if err := checkClaimPolicy(claim, egress); err != nil {
 		setupLog.Error(err, "The App claim check flags are not valid")
 		os.Exit(1)
 	}
