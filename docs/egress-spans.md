@@ -122,3 +122,29 @@ koodam trace dev --json --since 2026-10-23T09:00:00Z --until 2026-10-23T10:00:00
 ```
 
 A span is in the window if `since <= time < until`.
+
+## Release samples
+
+Each release has 2 sample files as assets. A consumer, for example Nookku, can test its reader on real lines with no cluster.
+
+| File | Content | Format |
+|---|---|---|
+| `egress-spans.jsonl` | The spans of one Agent and one Workspace, from `koodam trace <target> --json`. | This contract. Each line has `v` (version 2 for this contract). |
+| `gateway-log.jsonl` | The spend logs of the key of the same Agent, from `GET /spend/logs?api_key=<key hash>` of the gateway. | 1 log object on each line, in the format of the bundled LiteLLM image of the chart. |
+
+The release workflow makes the files. Its job `samples` runs the egress e2e tests on kind with the tagged commit. A person does not write the files. Before the e2e test writes a file, it checks the file:
+
+- Each line is a JSON object.
+- No line holds the master key, a word with the key prefix `sk-` or a bearer token. If a check fails, the test writes no file, and the release stops.
+- `api_key` in a gateway log is the SHA-256 hash of the key, not the key.
+
+The spans have the source IP addresses, the pod names and the namespaces of the kind run. The gateway logs have the key alias of the run.
+
+`checksums.txt` of the release has the SHA-256 of each sample. To download and check the samples of a release, set `TAG` to the release tag, then run:
+
+```sh
+gh release download "$TAG" --repo mohanraj00/koodam --pattern '*.jsonl' --pattern checksums.txt
+sha256sum --check --ignore-missing checksums.txt
+```
+
+A release before the samples job has no sample files.

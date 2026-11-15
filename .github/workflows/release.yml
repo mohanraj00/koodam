@@ -1,6 +1,6 @@
 name: Release
 
-# A release tag vX.Y.Z publishes the koodam CLI and the Helm chart. Only a maintainer pushes the tag.
+# A release tag vX.Y.Z publishes the koodam CLI, the release samples and the Helm chart. Only a maintainer pushes the tag.
 # image.yml publishes the controller image for the same tag.
 # A manual run (workflow_dispatch) or a PR that changes the release files is a dry run. It publishes nothing.
 on:
@@ -13,6 +13,9 @@ on:
       - .goreleaser.yaml
       - .github/workflows/release.yml
       - charts/**
+      # The samples job runs this code.
+      - test/e2e/egress_test.go
+      - test/utils/samples.go
 
 permissions: {}
 
@@ -21,8 +24,71 @@ env:
   CHART_REPO: oci://ghcr.io/mohanraj00/charts
 
 jobs:
+  # A kind run of the commit makes the release samples: the egress spans and the gateway logs.
+  # docs/egress-spans.md names the files. The e2e test checks that they hold no credential.
+  samples:
+    permissions:
+      contents: read
+    name: Make the release samples on kind
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    # The kind pin is the same as in ci.yml. docs/kind-pin.md says how to update it.
+    env:
+      KIND_VERSION: v0.33.0
+      KIND_NODE_IMAGE: kindest/node:v1.37.0@sha256:a1ed56cfb0e7b93589bdf97c8cd566405a265939e3620fc4f5de89adff580ae5
+    steps:
+      # A PR from a fork fails here until the maintainer adds the label ok-to-test, as in ci.yml.
+      - name: Check the label ok-to-test
+        if: >-
+          github.event_name == 'pull_request' &&
+          github.event.pull_request.head.repo.full_name != github.repository &&
+          !contains(github.event.pull_request.labels.*.name, 'ok-to-test')
+        run: |
+          echo "::error::A PR from a fork needs the label ok-to-test. After the maintainer adds it, push a commit or close and reopen the PR."
+          exit 1
+
+      - name: Clone the code
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      - name: Setup Go
+        uses: actions/setup-go@4b73464bb391d4059bd26b0524d20df3927bd417 # v6.3.0
+        with:
+          go-version-file: go.mod
+
+      - name: Install the pinned version of kind
+        run: |
+          base="https://github.com/kubernetes-sigs/kind/releases/download/${KIND_VERSION}"
+          file="kind-linux-$(go env GOARCH)"
+          curl -fsSLO "${base}/${file}"
+          curl -fsSLO "${base}/${file}.sha256sum"
+          sha256sum --check "${file}.sha256sum"
+          chmod +x "${file}"
+          sudo mv "${file}" /usr/local/bin/kind
+
+      - name: Setup Helm
+        uses: azure/setup-helm@9bc31f4ebc9c6b171d7bfbaa5d006ae7abdb4310 # v5.0.1
+        with:
+          version: v4.2.3
+
+      # Only the egress tests run. The last egress test writes the samples to samples/.
+      - name: Run the egress e2e tests
+        run: |
+          go mod tidy
+          make test-e2e E2E_ARGS='-ginkgo.label-filter=egress' KOODAM_E2E_SAMPLES="$PWD/samples"
+
+      - name: Keep the samples
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: release-samples
+          path: samples/*.jsonl
+          if-no-files-found: error
+          retention-days: 7
+
   # The dry run also runs on a tag. The publish jobs start only when it passes.
   dry-run:
+    needs: samples
     permissions:
       contents: read
     name: Dry run (no publish)
@@ -39,6 +105,12 @@ jobs:
         with:
           go-version-file: go.mod
 
+      - name: Get the release samples
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: release-samples
+          path: samples
+
       - name: Check the GoReleaser config
         uses: goreleaser/goreleaser-action@f06c13b6b1a9625abc9e6e439d9c05a8f2190e94 # v7.2.3
         with:
@@ -54,8 +126,12 @@ jobs:
           version: v2.18.2
           args: release --snapshot --clean
 
+      # checksums.txt must have the SHA-256 of each sample.
       - name: Show the checksums
-        run: cat dist/checksums.txt
+        run: |
+          cat dist/checksums.txt
+          grep -Eq ' egress-spans\.jsonl$' dist/checksums.txt
+          grep -Eq ' gateway-log\.jsonl$' dist/checksums.txt
 
       # The binary must show the snapshot version, not "dev". This shows that the ldflags set it.
       - name: Check the CLI version
@@ -89,6 +165,7 @@ jobs:
             dist/*.tar.gz
             dist/checksums.txt
             dist/chart/*.tgz
+            samples/*.jsonl
           retention-days: 7
 
   cli:
@@ -110,6 +187,13 @@ jobs:
         uses: actions/setup-go@4b73464bb391d4059bd26b0524d20df3927bd417 # v6.3.0
         with:
           go-version-file: go.mod
+
+      # GoReleaser uploads the samples and puts their SHA-256 in checksums.txt.
+      - name: Get the release samples
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: release-samples
+          path: samples
 
       - name: Publish the release
         uses: goreleaser/goreleaser-action@f06c13b6b1a9625abc9e6e439d9c05a8f2190e94 # v7.2.3

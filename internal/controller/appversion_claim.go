@@ -109,7 +109,7 @@ func (c AppClaimCheck) claimPorts(pod *corev1.PodSpec, app []corev1.ContainerPor
 
 // add puts the check container in the pod template. The container is the first init container
 // and a sidecar with a startup probe on its last port. Thus it binds all its ports before a
-// container of the user starts, and a container of the user cannot take a port of the check. The Service and the NetworkPolicy of the version use its ports. It
+// container of the user starts. The Service and the NetworkPolicy of the version use its ports. It
 // refuses a template that has a container or a volume with the name of the check container.
 func (c AppClaimCheck) add(tmpl *corev1.PodTemplateSpec, av *corev1alpha1.AppVersion, app []corev1.ContainerPort) error {
 	if !c.enabled() {

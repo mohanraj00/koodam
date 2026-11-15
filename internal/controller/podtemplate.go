@@ -161,3 +161,6 @@ func koodamOwned(refs []metav1.OwnerReference) bool {
 	}
 	return false
 }
+
+// capabilityAll is the capability name that drops each Linux capability of a container.
+const capabilityAll corev1.Capability = "ALL"
