@@ -276,6 +276,7 @@ type keyInfo struct {
 		Status  string   `json:"status"`
 		Spend   *float64 `json:"spend"`
 		Blocked *bool    `json:"blocked"`
+		Models  []string `json:"models"`
 	} `json:"info"`
 }
 
@@ -284,6 +285,10 @@ type spendLog struct {
 	PromptTokens     int64   `json:"prompt_tokens"`
 	CompletionTokens int64   `json:"completion_tokens"`
 	Spend            float64 `json:"spend"`
+	// ModelGroup is the model name of the call, as the key permits it. Model is the name that
+	// the gateway sends to the provider.
+	ModelGroup string `json:"model_group"`
+	Model      string `json:"model"`
 }
 
 // Usage implements Gateway.
@@ -291,6 +296,7 @@ func (l *LiteLLM) Usage(ctx context.Context, key string) (Usage, error) {
 	q := url.QueryEscape(hashOf(key))
 	var last *float64
 	blocked := false
+	var models []string
 	// need is the count of equal reads after the first read that cover SpendSettle.
 	need := max(1, int((l.SpendSettle+l.SpendPoll-1)/max(l.SpendPoll, 1)))
 	stable, settled := 0, true
@@ -305,6 +311,7 @@ func (l *LiteLLM) Usage(ctx context.Context, key string) (Usage, error) {
 			return Usage{}, err
 		}
 		blocked = ki.Info.Blocked != nil && *ki.Info.Blocked
+		models = ki.Info.Models
 		s := ki.Info.Spend
 		if s != nil && last != nil && *s == *last {
 			stable++
@@ -333,14 +340,39 @@ func (l *LiteLLM) Usage(ctx context.Context, key string) (Usage, error) {
 	if last != nil {
 		u.Spend = *last
 	}
+	byModel := make(map[string]*ModelUsage, len(models))
+	for _, m := range models {
+		byModel[m] = &ModelUsage{Model: m}
+	}
 	for _, x := range logs {
+		name := x.ModelGroup
+		if name == "" {
+			name = x.Model
+		}
+		// m is nil for a model that the key does not permit.
+		m := byModel[name]
 		if x.Status != "success" {
 			u.FailedCalls++
+			if m != nil {
+				m.FailedCalls++
+			}
 			continue
 		}
 		u.Calls++
 		u.InputTokens += x.PromptTokens
 		u.OutputTokens += x.CompletionTokens
+		if m != nil {
+			m.Calls++
+			m.Spend += x.Spend
+			m.InputTokens += x.PromptTokens
+			m.OutputTokens += x.CompletionTokens
+		}
+	}
+	for _, name := range models {
+		if m := byModel[name]; m.Calls+m.FailedCalls > 0 {
+			u.Models = append(u.Models, *m)
+			m.Calls, m.FailedCalls = 0, 0 // A name that is in the key list 2 times gets one item.
+		}
 	}
 	if !settled {
 		return u, ErrSpendNotSettled

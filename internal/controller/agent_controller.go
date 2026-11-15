@@ -24,7 +24,6 @@ import (
 	"reflect"
 	"regexp"
 	"slices"
-	"strconv"
 	"strings"
 	"time"
 
@@ -851,10 +850,7 @@ func (r *AgentReconciler) writeUsage(ctx context.Context, a *corev1alpha1.Agent,
 			if err != nil {
 				msg += spendNotSettledNote
 			}
-			a.Status.Usage = &corev1alpha1.AgentUsage{
-				Spend: strconv.FormatFloat(u.Spend, 'f', -1, 64), Calls: u.Calls, FailedCalls: u.FailedCalls,
-				InputTokens: u.InputTokens, OutputTokens: u.OutputTokens,
-			}
+			a.Status.Usage = usageStatus(u)
 		default:
 			return err
 		}

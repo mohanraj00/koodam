@@ -84,7 +84,8 @@ func (g *tkGateway) Usage(context.Context, string) (gateway.Usage, error) {
 	defer g.mu.Unlock()
 	blocked := !g.late
 	g.late = false
-	return gateway.Usage{Spend: 0.25, Calls: 3, InputTokens: 12, OutputTokens: 4, Blocked: blocked}, nil
+	return gateway.Usage{Spend: 0.25, Calls: 3, InputTokens: 12, OutputTokens: 4, Blocked: blocked,
+		Models: []gateway.ModelUsage{{Model: testGatewayModel, Spend: 0.2, Calls: 3, InputTokens: 12, OutputTokens: 4}}}, nil
 }
 
 func (g *tkGateway) ops() []string {
@@ -412,7 +413,8 @@ var _ = Describe("TestKey lifecycle", func() {
 		Expect(reason(k)).To(Equal(reasonTKRevoked))
 		Expect(got.Status.RevokedAt).NotTo(BeNil())
 		Expect(got.Status.Usage).To(Equal(&corev1alpha1.AgentUsage{Spend: "0.25", Calls: 3,
-			InputTokens: 12, OutputTokens: 4}))
+			InputTokens: 12, OutputTokens: 4, Models: []corev1alpha1.ModelUsage{
+				{Model: testGatewayModel, Spend: "0.2", Calls: 3, InputTokens: 12, OutputTokens: 4}}}))
 		Expect(controllerutil.ContainsFinalizer(got, testKeyFinalizer)).To(BeFalse())
 
 		// A Revoked TestKey gets no second key.

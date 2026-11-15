@@ -172,6 +172,29 @@ type AgentUsage struct {
 	// InputTokens and OutputTokens are the sums over the successful calls.
 	InputTokens  int64 `json:"inputTokens,omitempty"`
 	OutputTokens int64 `json:"outputTokens,omitempty"`
+	// Models is the count for each model of the key that has a call. A call to a model that
+	// the key does not permit is only in FailedCalls.
+	// +optional
+	// +listType=map
+	// +listMapKey=model
+	Models []ModelUsage `json:"models,omitempty"`
+}
+
+// ModelUsage is the count of one model of a gateway key.
+type ModelUsage struct {
+	// Model is the model name, as the key permits it.
+	// +required
+	Model string `json:"model"`
+	// Spend is the sum of the spend of the calls, as a decimal string. The sum over the models
+	// can be different from the total spend, because the gateway counts the two separately.
+	Spend string `json:"spend,omitempty"`
+	// Calls is the count of successful calls.
+	Calls int64 `json:"calls,omitempty"`
+	// FailedCalls is the count of refused or failed calls.
+	FailedCalls int64 `json:"failedCalls,omitempty"`
+	// InputTokens and OutputTokens are the sums over the successful calls.
+	InputTokens  int64 `json:"inputTokens,omitempty"`
+	OutputTokens int64 `json:"outputTokens,omitempty"`
 }
 
 // ModelList gives back the models that the key permits. The first model is the model of the

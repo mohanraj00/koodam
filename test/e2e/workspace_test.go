@@ -328,6 +328,9 @@ var _ = Describe("Workspaces", Ordered, Label("workspace"), func() {
 		Expect(keyInfo(hash).Blocked).To(BeTrue(), "The gateway did not block the test key.")
 		Expect(tk.Status.Usage).NotTo(BeNil(), "The TestKey has no usage after the revoke.")
 		Expect(tk.Status.Usage.Calls).To(BeNumerically(">=", 1), "The usage does not count the call of the test.")
+		Expect(tk.Status.Usage.Models).To(HaveLen(1), "The usage has an item only for the model with a call.")
+		Expect(tk.Status.Usage.Models[0].Model).To(Equal(mockModel))
+		Expect(tk.Status.Usage.Models[0].Calls).To(BeNumerically(">=", 1), "The usage does not count the call of the model.")
 		Eventually(func() bool {
 			err := k8s.Get(ctx, client.ObjectKey{Namespace: wsNS, Name: "kt-" + wsName + "-testkey"}, &corev1.Secret{})
 			return apierrors.IsNotFound(err)

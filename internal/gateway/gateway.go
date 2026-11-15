@@ -59,6 +59,21 @@ type Usage struct {
 	OutputTokens int64
 	// Blocked is true if the gateway row of the key is blocked.
 	Blocked bool
+	// Models has the count for each model that the key permits and that has a call, in the
+	// order of the key. A call to a different model is only in FailedCalls, because a caller
+	// selects that name.
+	Models []ModelUsage
+}
+
+// ModelUsage is the count of one model of a key. Spend is the sum of the calls in the spend
+// log, so the sum over the models can be different from the Spend of the key.
+type ModelUsage struct {
+	Model        string
+	Spend        float64
+	Calls        int64
+	FailedCalls  int64
+	InputTokens  int64
+	OutputTokens int64
 }
 
 // Gateway is a model gateway with keys for each run.

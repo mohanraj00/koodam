@@ -43,7 +43,7 @@ The status never holds the key value.
 - `keyHash`: the SHA-256 hash of the key, 64 hexadecimal characters. The gateway refuses the hash for model calls.
 - `expiresAt`: the time when the key stops. It is the issue time plus `ttl`.
 - `revokedAt`: the time of the revoke.
-- `usage`: the gateway spend, calls, failed calls and tokens. The controller reads it after the revoke.
+- `usage`: the gateway spend, calls, failed calls and tokens. The controller reads it after the revoke. `usage.models` has the same counts for each model of the key that has a call. A call to a model that the key does not permit is only in `failedCalls`.
 - `conditions`: the condition `Active`. A message holds no key value and no upstream error text.
 
 ## The alias

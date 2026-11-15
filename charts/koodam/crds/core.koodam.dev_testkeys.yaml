@@ -231,6 +231,47 @@ spec:
                       successful calls.
                     format: int64
                     type: integer
+                  models:
+                    description: |-
+                      Models is the count for each model of the key that has a call. A call to a model that
+                      the key does not permit is only in FailedCalls.
+                    items:
+                      description: ModelUsage is the count of one model of a gateway
+                        key.
+                      properties:
+                        calls:
+                          description: Calls is the count of successful calls.
+                          format: int64
+                          type: integer
+                        failedCalls:
+                          description: FailedCalls is the count of refused or failed
+                            calls.
+                          format: int64
+                          type: integer
+                        inputTokens:
+                          description: InputTokens and OutputTokens are the sums over
+                            the successful calls.
+                          format: int64
+                          type: integer
+                        model:
+                          description: Model is the model name, as the key permits
+                            it.
+                          type: string
+                        outputTokens:
+                          format: int64
+                          type: integer
+                        spend:
+                          description: |-
+                            Spend is the sum of the spend of the calls, as a decimal string. The sum over the models
+                            can be different from the total spend, because the gateway counts the two separately.
+                          type: string
+                      required:
+                      - model
+                      type: object
+                    type: array
+                    x-kubernetes-list-map-keys:
+                    - model
+                    x-kubernetes-list-type: map
                   outputTokens:
                     format: int64
                     type: integer
