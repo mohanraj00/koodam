@@ -186,7 +186,7 @@ func (r *TestKeyReconciler) refusal(key *corev1alpha1.TestKey, workspace *corev1
 		return reasonNoWorkspace, "The Workspace does not exist."
 	case !r.SingleInstanceGateway:
 		return reasonShape, "Test keys need a gateway with one replica and one worker."
-	case workspace.Spec.Gateway == nil:
+	case !hasGateway(workspace):
 		return reasonNoGateway, "The Workspace has no gateway."
 	case !controllerutil.ContainsFinalizer(workspace, workspaceFinalizer):
 		// Without the finalizer, a Workspace delete removes the pod at once, before the
@@ -266,7 +266,7 @@ func (r *TestKeyReconciler) issue(ctx context.Context, key *corev1alpha1.TestKey
 	if gateway.HashKey(value) != key.Status.KeyHash || remaining < time.Second ||
 		string(slot.Data[testKeyAliasField]) != key.Status.KeyAlias ||
 		string(slot.Data[testKeyURLField]) != r.GatewayURL ||
-		string(slot.Data[testKeyModelField]) != workspace.Spec.Gateway.Model {
+		string(slot.Data[testKeyModelField]) != workspace.Spec.Gateway.ModelList()[0] {
 		return r.revoke(ctx, key)
 	}
 	// A suspend, an unbind or a delete can start after the first Workspace read. From the hash
@@ -279,7 +279,7 @@ func (r *TestKeyReconciler) issue(ctx context.Context, key *corev1alpha1.TestKey
 		return r.revoke(ctx, key)
 	}
 	err = r.Gateway.CreateKey(ctx, gateway.KeySpec{
-		Value: value, Alias: key.Status.KeyAlias, Model: workspace.Spec.Gateway.Model,
+		Value: value, Alias: key.Status.KeyAlias, Model: workspace.Spec.Gateway.ModelList()[0],
 		Budget: key.Spec.Budget.AsApproximateFloat64(), TTL: remaining,
 		Metadata: map[string]string{"koodam_test_id": key.Spec.TestID, "koodam_testkey": key.Name},
 	})
@@ -309,7 +309,7 @@ func (r *TestKeyReconciler) createSlot(ctx context.Context, key *corev1alpha1.Te
 		ObjectMeta: metav1.ObjectMeta{Name: testKeySecretName(workspace.Name), Namespace: key.Namespace,
 			Labels: map[string]string{"app.kubernetes.io/managed-by": "koodam"}},
 		StringData: map[string]string{testKeyValueField: value, testKeyAliasField: testKeyAlias(key),
-			testKeyURLField: r.GatewayURL, testKeyModelField: workspace.Spec.Gateway.Model},
+			testKeyURLField: r.GatewayURL, testKeyModelField: workspace.Spec.Gateway.ModelList()[0]},
 	}
 	if err := controllerutil.SetControllerReference(key, slot, r.Scheme()); err != nil {
 		return nil, err

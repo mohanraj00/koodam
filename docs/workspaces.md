@@ -75,6 +75,7 @@ These fields are optional:
 | `storage` | The size of the home PVC. The default is `20Gi`. |
 | `suspend` | If `true`, the controller blocks the gateway key and stops the pod. The PVC stays. |
 | `gateway.model`, `gateway.budgetPerDay` | A gateway key for the pod, for 1 model, with a budget for each day. Without `gateway`, the harnesses use the subscription login only. |
+| `gateway.models` | A list of gateway models, in the place of `gateway.model`. The key permits each model of the list, and the first model is the model of the harnesses. Use one of the two forms. If the list changes, the controller blocks the key and makes a new key. |
 | `harnesses` | The harnesses in the pod (`claude-code`, `codex`), each with an optional `version` and `libc` (`glibc` or `musl`, default `glibc`). See [The harnesses](#the-harnesses). |
 
 1. Apply the Workspace:

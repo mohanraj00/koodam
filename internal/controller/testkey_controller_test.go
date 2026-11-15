@@ -40,6 +40,9 @@ const testKeyNamePrefix = "testkey-request-"
 // testGatewayModel is the gateway model in the controller tests.
 const testGatewayModel = "local-model"
 
+// otherModel is a second gateway model name.
+const otherModel = "other-model"
+
 var _ = Describe("TestKey controller", func() {
 	DescribeTable("refuses a key before it reaches the gateway",
 		func(change func(*corev1alpha1.Workspace, *corev1alpha1.TestKey), reason string) {
