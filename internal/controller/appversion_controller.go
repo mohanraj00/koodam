@@ -385,6 +385,16 @@ func (r *AppVersionReconciler) applyVersionKey(ctx context.Context, av *corev1al
 		return false, false, res, nil
 	}
 	if av.Status.KeyHash == "" {
+		msg, err := costGroupMessage(ctx, r.APIReader, av.Namespace, app.Labels[corev1alpha1.CostGroupLabel])
+		if err != nil {
+			return false, true, res, err
+		}
+		if msg != "" {
+			meta.SetStatusCondition(&av.Status.Conditions, metav1.Condition{Type: condGatewayKey,
+				Status: metav1.ConditionFalse, Reason: reasonCostGroupNotAllowed,
+				Message: msg, ObservedGeneration: av.Generation})
+			return false, true, ctrl.Result{RequeueAfter: appLiveWait}, r.writeStatus(ctx, av, old)
+		}
 		full, err := r.liveFull(ctx, av, app)
 		if err != nil {
 			return false, true, res, err
@@ -394,7 +404,7 @@ func (r *AppVersionReconciler) applyVersionKey(ctx context.Context, av *corev1al
 				"The App has spec.maxLiveVersions versions with a key. This version waits.")
 		}
 	}
-	key, err := r.enroll(ctx, av, old)
+	key, err := r.enroll(ctx, av, old, app.Labels[corev1alpha1.CostGroupLabel])
 	if err != nil || key == "" {
 		return false, true, res, err
 	}
@@ -475,7 +485,7 @@ func (r *AppVersionReconciler) addFinalizer(ctx context.Context, av *corev1alpha
 // gives back the key value. If the version waits or the controller revokes it, the value is
 // empty. It sets old to the status that the API server has.
 func (r *AppVersionReconciler) enroll(ctx context.Context, av *corev1alpha1.AppVersion,
-	old *corev1alpha1.AppVersionStatus) (string, error) {
+	old *corev1alpha1.AppVersionStatus, costGroup string) (string, error) {
 	if err := r.addFinalizer(ctx, av); err != nil {
 		return "", err
 	}
@@ -510,6 +520,7 @@ func (r *AppVersionReconciler) enroll(ctx context.Context, av *corev1alpha1.AppV
 		// Write the hash before the key exists, so that a revoke can always find the key.
 		av.Status.KeyAlias = "kdapp-" + string(av.UID)
 		av.Status.KeyHash = gateway.HashKey(key)
+		av.Status.CostGroup = costGroup
 		// The condition records the generation of the first key request. See applyKey.
 		meta.SetStatusCondition(&av.Status.Conditions, metav1.Condition{Type: condGatewayKey,
 			Status: metav1.ConditionFalse, Reason: reasonIssuing,
@@ -639,6 +650,9 @@ func (r *AppVersionReconciler) applyKey(ctx context.Context, av *corev1alpha1.Ap
 		Budget: av.Spec.BudgetPerDay.AsApproximateFloat64(), BudgetPeriod: 24 * time.Hour, TTL: r.keyTTL(),
 		Metadata: map[string]string{metaUID: string(av.UID), metaNamespace: av.Namespace,
 			"app": av.Spec.AppRef.Name, "appVersion": av.Name}}
+	if av.Status.CostGroup != "" {
+		spec.Metadata["costGroup"] = av.Status.CostGroup
+	}
 	c := meta.FindStatusCondition(av.Status.Conditions, condGatewayKey)
 	switch {
 	case c == nil || c.Reason == reasonIssuing:
