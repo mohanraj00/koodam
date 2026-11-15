@@ -23,13 +23,16 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"time"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
+	networkingv1 "k8s.io/api/networking/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
 	"k8s.io/apimachinery/pkg/api/resource"
@@ -58,7 +61,8 @@ http.server.ThreadingHTTPServer(("", 8080), H).serve_forever()
 `
 
 // The thin App spec is the M2 exit test: an App serves 2 versions with a split, from the Helm
-// install of the suite. That install has apps.enabled and no site input for the App. Envoy
+// install of the suite. That install has apps.enabled and no site input for the App. The spec
+// adds the egress proxy and the claim check, and it gives back the chart of the suite at its end. Envoy
 // Gateway is the Gateway API implementation of the test. Koodam does not depend on it.
 var _ = Describe("Thin App", Ordered, Label("app"), func() {
 	const (
@@ -72,6 +76,8 @@ var _ = Describe("Thin App", Ordered, Label("app"), func() {
 		drainSeconds = 45
 	)
 	var fwd *exec.Cmd
+	// token is the signed claim of each request of call. With no token, call sends no claim.
+	var token string
 
 	gatewayObject := func(kind, namespace, name string, spec map[string]any) *unstructured.Unstructured {
 		u := &unstructured.Unstructured{Object: map[string]any{"spec": spec}}
@@ -116,6 +122,9 @@ var _ = Describe("Thin App", Ordered, Label("app"), func() {
 			if pin != "" {
 				req.Header.Set(corev1alpha1.AppVersionHeader, pin)
 			}
+			if token != "" {
+				req.Header.Set("Authorization", "Bearer "+token)
+			}
 			resp, err := httpClient.Do(req)
 			if err != nil {
 				got["error"]++
@@ -133,6 +142,23 @@ var _ = Describe("Thin App", Ordered, Label("app"), func() {
 	}
 
 	BeforeAll(func() {
+		token = claimToken("e2e-client")
+		// The claim check needs the egress proxy: then each version has a NetworkPolicy that
+		// permits ingress from the namespace of the Envoy proxy to the check container only. The
+		// cleanups run in the reverse order, so the chart of the suite comes back last.
+		DeferCleanup(func() {
+			By("installing the chart of the suite again")
+			installChart()
+		})
+		// The chart makes a Role of the proxy in the namespace of the App, so the namespace is first.
+		Expect(client.IgnoreAlreadyExists(k8s.Create(ctx, &corev1.Namespace{
+			ObjectMeta: metav1.ObjectMeta{Name: appNS}}))).To(Succeed())
+		proxy := filepath.Join(GinkgoT().TempDir(), "values-app-proxy.yaml")
+		Expect(os.WriteFile(proxy, []byte(egressProxyValues()+fmt.Sprintf(
+			"workspace:\n  networkPolicy:\n    namespaces: [%s]\napps:\n  ingressNamespaces: [%s]\n", appNS, egNS)),
+			0o600)).To(Succeed())
+		By("upgrading the chart with the egress proxy and the claim check")
+		installChart("-f", proxy, "-f", claimValues())
 		DeferCleanup(func() {
 			if fwd != nil && fwd.Process != nil {
 				_ = fwd.Process.Kill()
@@ -248,6 +274,27 @@ var _ = Describe("Thin App", Ordered, Label("app"), func() {
 		// The weights are 80 and 20. The limits are wide, so that the test is stable.
 		Expect(got[v2]).To(BeNumerically(">=", 10), "v2 gets a part of the traffic: %v", got)
 		Expect(got[v1]).To(BeNumerically(">", got[v2]), "v1 gets the larger part: %v", got)
+
+		By("refusing a request with no signed claim or with a claim of a different key")
+		valid := token
+		for _, bad := range []string{"", valid[:len(valid)-4] + "AAAA"} {
+			token = bad
+			Expect(call(5, "")).To(Equal(map[string]int{"401": 5}))
+		}
+		token = valid
+		// The version has its NetworkPolicy, so the status says that the check protects it.
+		Eventually(func() string {
+			av := &corev1alpha1.AppVersion{}
+			if err := k8s.Get(ctx, client.ObjectKey{Namespace: appNS, Name: v1}, av); err != nil {
+				return err.Error()
+			}
+			if check := meta.FindStatusCondition(av.Status.Conditions, "ClaimCheck"); check != nil {
+				return check.Reason
+			}
+			return ""
+		}, time.Minute, 2*time.Second).Should(Equal("Enforced"))
+		Expect(k8s.Get(ctx, client.ObjectKey{Namespace: appNS, Name: "kd-" + v1},
+			&networkingv1.NetworkPolicy{})).To(Succeed())
 
 		By("keeping a session on one version with the header")
 		Expect(call(30, v2)).To(Equal(map[string]int{v2: 30}))

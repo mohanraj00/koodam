@@ -99,3 +99,48 @@ func TestAppsWithEgressProxy(t *testing.T) {
 		}
 	}
 }
+
+// The claim check of the Apps is off by default. With an issuer, the manager gets the claim flags
+// and the JWKS file, and a new JWKS starts the manager again.
+func TestAppClaimCheck(t *testing.T) {
+	const flag, jwks = "--app-claim-issuer", `{"keys":[{"kty":"EC"}]}`
+	set := []string{"apps.enabled=true", "apps.claimCheck.issuer=https://issuer.example.com",
+		"apps.claimCheck.audience=shop", "apps.claimCheck.tenantClaim=tenant"}
+	// The claim check needs the egress proxy.
+	const proxy = "egressProxy: {enabled: true, clusterIP: 10.96.0.50, networkPolicy: {enabled: false}}\n" +
+		"workspace: {networkPolicy: {namespaces: [shop]}}\n"
+	off, err := helmTemplate(t, "", "apps.enabled=true")
+	if err != nil || strings.Contains(off, flag) || strings.Contains(off, "app-claim-jwks") {
+		t.Fatalf("the install with no issuer has the claim check: %v", err)
+	}
+	// The issuer has no effect while the Apps are off.
+	if out, err := helmTemplate(t, "", set[1:]...); err != nil || strings.Contains(out, flag) {
+		t.Errorf("the install with no Apps has the claim check: %v", err)
+	}
+	if out, err := helmTemplate(t, proxy, set...); err == nil ||
+		!strings.Contains(out, "apps.claimCheck.jwks is necessary") {
+		t.Errorf("an issuer with no JWKS is accepted: %v", err)
+	}
+	if out, err := helmTemplate(t, proxy, set[0], set[1], "apps.claimCheck.jwks=x"); err == nil ||
+		!strings.Contains(out, "apps.claimCheck.audience is necessary") {
+		t.Errorf("an issuer with no audience is accepted: %v", err)
+	}
+	values := "apps:\n  claimCheck:\n    jwks: '" + jwks + "'\n"
+	// With no egress proxy, a version has no NetworkPolicy, and a pod of the cluster can call the
+	// app container with no claim. The chart refuses the issuer.
+	if out, err := helmTemplate(t, values, set...); err == nil ||
+		!strings.Contains(out, "apps.claimCheck needs egressProxy.enabled") {
+		t.Errorf("an issuer with no egress proxy is accepted: %v", err)
+	}
+	on, err := helmTemplate(t, proxy+values, set...)
+	if err != nil {
+		t.Fatalf("helm template failed: %v\n%s", err, on)
+	}
+	for _, s := range []string{`"--app-claim-issuer=https://issuer.example.com"`, `"--app-claim-audience=shop"`,
+		`"--app-claim-caller-claim=sub"`, `"--app-claim-tenant-claim=tenant"`,
+		"--app-claim-jwks-file=/etc/koodam/app-claim/jwks.json", "checksum/app-claim-jwks:", "kty"} {
+		if !strings.Contains(on, s) {
+			t.Errorf("the install with an issuer does not have %q", s)
+		}
+	}
+}

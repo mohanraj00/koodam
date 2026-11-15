@@ -34,4 +34,20 @@ roleRef:
   name: {{ $fullname }}-app-manager-role
 subjects:
 {{ include "koodam.subject" . }}
+{{- with .Values.apps.claimCheck }}
+{{- if .issuer }}
+---
+# The JWKS of the issuer of the App claim check. The manager reads it and gives it to the check
+# container of each AppVersion pod. It has public keys only.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ $fullname }}-app-claim-jwks
+  namespace: {{ $.Release.Namespace }}
+  labels:
+    {{- include "koodam.labels" $ | nindent 4 }}
+data:
+  jwks.json: {{ required "apps.claimCheck.jwks is necessary with an issuer." .jwks | quote }}
+{{- end }}
+{{- end }}
 {{- end }}
