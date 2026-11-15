@@ -24,11 +24,18 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"slices"
 	"strings"
 	"sync"
 	"testing"
 	"time"
+)
+
+// The status values of a spend log.
+const (
+	logSuccess = "success"
+	logFailure = "failure"
 )
 
 // fake is a small LiteLLM: keys by hash, a spend that settles after some reads, and call logs.
@@ -161,7 +168,8 @@ func (f *fake) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			s = f.spend[i]
 		}
 		f.reads++
-		_ = json.NewEncoder(w).Encode(map[string]any{"info": map[string]any{"spend": s, "blocked": f.blocked[h]}})
+		_ = json.NewEncoder(w).Encode(map[string]any{"info": map[string]any{
+			"spend": s, "blocked": f.blocked[h], "models": f.keys[h]["models"]}})
 	case "/spend/logs":
 		_ = json.NewEncoder(w).Encode(f.logs)
 	default:
@@ -477,9 +485,9 @@ func TestUsageWaitsForStableSpendAndCountsSuccessOnly(t *testing.T) {
 	f := newFake()
 	f.spend = []float64{0.01, 0.02, 0.03, 0.03}
 	f.logs = []spendLog{
-		{Status: "success", PromptTokens: 100, CompletionTokens: 10},
-		{Status: "success", PromptTokens: 200, CompletionTokens: 20},
-		{Status: "failure"},
+		{Status: logSuccess, PromptTokens: 100, CompletionTokens: 10},
+		{Status: logSuccess, PromptTokens: 200, CompletionTokens: 20},
+		{Status: logFailure},
 	}
 	l, stop := client(f)
 	defer stop()
@@ -492,8 +500,44 @@ func TestUsageWaitsForStableSpendAndCountsSuccessOnly(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// The logs name no model, so the count has no model items.
 	want := Usage{Spend: 0.03, Calls: 2, FailedCalls: 1, InputTokens: 300, OutputTokens: 30}
-	if u != want {
+	if !reflect.DeepEqual(u, want) {
+		t.Fatalf("got %+v, want %+v", u, want)
+	}
+}
+
+// The count has one item for each model of the key that has a call, in the order of the key.
+// A caller selects the model name of a refused call, so a name outside the key gets no item.
+func TestUsageCountsEachModelOfTheKey(t *testing.T) {
+	const second, unused = "model-b", "model-c"
+	f := newFake()
+	f.spend = []float64{0.07, 0.07}
+	f.logs = []spendLog{
+		{Status: logSuccess, ModelGroup: second, Model: "provider/b", PromptTokens: 5, CompletionTokens: 1, Spend: 0.02},
+		{Status: logSuccess, ModelGroup: testModel, PromptTokens: 100, CompletionTokens: 10, Spend: 0.04},
+		// A log with no model group has the name in the model field.
+		{Status: logSuccess, Model: second, PromptTokens: 7, CompletionTokens: 2, Spend: 0.01},
+		{Status: logFailure, ModelGroup: second},
+		{Status: logFailure, Model: "model-outside"},
+	}
+	l, stop := client(f)
+	defer stop()
+	s := spec(t)
+	s.Models = []string{second, unused}
+	ctx := context.Background()
+	if err := l.CreateKey(ctx, s); err != nil {
+		t.Fatal(err)
+	}
+	u, err := l.Usage(ctx, s.Value)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := Usage{Spend: 0.07, Calls: 3, FailedCalls: 2, InputTokens: 112, OutputTokens: 13, Models: []ModelUsage{
+		{Model: testModel, Spend: 0.04, Calls: 1, InputTokens: 100, OutputTokens: 10},
+		{Model: second, Spend: 0.03, Calls: 2, FailedCalls: 1, InputTokens: 12, OutputTokens: 3},
+	}}
+	if !reflect.DeepEqual(u, want) {
 		t.Fatalf("got %+v, want %+v", u, want)
 	}
 }

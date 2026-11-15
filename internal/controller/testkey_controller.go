@@ -416,8 +416,7 @@ func (r *TestKeyReconciler) revoke(ctx context.Context, key *corev1alpha1.TestKe
 		if err != nil {
 			message += spendNotSettledNote
 		}
-		key.Status.Usage = &corev1alpha1.AgentUsage{Spend: strconv.FormatFloat(u.Spend, 'f', -1, 64),
-			Calls: u.Calls, FailedCalls: u.FailedCalls, InputTokens: u.InputTokens, OutputTokens: u.OutputTokens}
+		key.Status.Usage = usageStatus(u)
 	default:
 		return ctrl.Result{}, err
 	}
@@ -517,4 +516,16 @@ func (r *TestKeyReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		Watches(&corev1alpha1.Workspace{}, handler.EnqueueRequestsFromMapFunc(r.testKeysFor)).
 		Named("testkey").
 		Complete(r)
+}
+
+// usageStatus makes the status form of a gateway count.
+func usageStatus(u gateway.Usage) *corev1alpha1.AgentUsage {
+	spend := func(v float64) string { return strconv.FormatFloat(v, 'f', -1, 64) }
+	out := &corev1alpha1.AgentUsage{Spend: spend(u.Spend), Calls: u.Calls, FailedCalls: u.FailedCalls,
+		InputTokens: u.InputTokens, OutputTokens: u.OutputTokens}
+	for _, m := range u.Models {
+		out.Models = append(out.Models, corev1alpha1.ModelUsage{Model: m.Model, Spend: spend(m.Spend),
+			Calls: m.Calls, FailedCalls: m.FailedCalls, InputTokens: m.InputTokens, OutputTokens: m.OutputTokens})
+	}
+	return out
 }
