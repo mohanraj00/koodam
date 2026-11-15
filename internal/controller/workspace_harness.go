@@ -85,7 +85,7 @@ func helperSecurityContext() *corev1.SecurityContext {
 	return &corev1.SecurityContext{
 		RunAsNonRoot: new(true), RunAsUser: new(int64(65532)), AllowPrivilegeEscalation: new(false),
 		ReadOnlyRootFilesystem: new(true),
-		Capabilities:           &corev1.Capabilities{Drop: []corev1.Capability{"ALL"}},
+		Capabilities:           &corev1.Capabilities{Drop: []corev1.Capability{capabilityAll}},
 		SeccompProfile:         &corev1.SeccompProfile{Type: corev1.SeccompProfileTypeRuntimeDefault},
 	}
 }

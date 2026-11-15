@@ -41,6 +41,10 @@ archives:
 checksum:
   name_template: checksums.txt
   algorithm: sha256
+  # The release samples (docs/egress-spans.md). The samples job of release.yml writes them from a
+  # kind run of the tagged commit, and the release jobs download them to samples/.
+  extra_files:
+    - glob: ./samples/*.jsonl
 
 snapshot:
   version_template: "{{ incpatch .Version }}-snapshot"
@@ -55,3 +59,6 @@ release:
     name: koodam
   # A tag with a suffix (for example v0.1.0-rc.1) makes a prerelease.
   prerelease: auto
+  # Each sample is a release asset, with its SHA-256 in checksums.txt.
+  extra_files:
+    - glob: ./samples/*.jsonl

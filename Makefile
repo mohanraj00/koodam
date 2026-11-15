@@ -87,6 +87,8 @@ check: test test-tools ## Run the local checks before a push.
 # and install charts/koodam with the bundled gateway. Then they run Agents and probe the
 # credentials of each run after the run ends.
 KIND_CLUSTER ?= koodam-test-e2e
+# E2E_ARGS are more flags for go test, for example -ginkgo.label-filter=egress.
+E2E_ARGS ?=
 
 .PHONY: setup-test-e2e
 setup-test-e2e: ## Set up a Kind cluster for e2e tests if it does not exist
@@ -105,7 +107,7 @@ setup-test-e2e: ## Set up a Kind cluster for e2e tests if it does not exist
 
 .PHONY: test-e2e
 test-e2e: setup-test-e2e manifests generate fmt vet ## Run the e2e tests. Expected an isolated environment using Kind.
-	KIND=$(KIND) KIND_CLUSTER=$(KIND_CLUSTER) go test -tags=e2e ./test/e2e/ -v -ginkgo.v -timeout 40m
+	KIND=$(KIND) KIND_CLUSTER=$(KIND_CLUSTER) go test -tags=e2e ./test/e2e/ -v -ginkgo.v -timeout 40m $(E2E_ARGS)
 	$(MAKE) cleanup-test-e2e
 
 .PHONY: cleanup-test-e2e
