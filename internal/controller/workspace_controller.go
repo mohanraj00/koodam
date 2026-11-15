@@ -540,7 +540,7 @@ func (r *WorkspaceReconciler) statefulSet(ws *corev1alpha1.Workspace, user strin
 		SecurityContext: &corev1.SecurityContext{
 			RunAsNonRoot: new(true), RunAsUser: new(workspaceUser), RunAsGroup: new(workspaceUser),
 			AllowPrivilegeEscalation: new(false),
-			Capabilities:             &corev1.Capabilities{Drop: []corev1.Capability{"ALL"}},
+			Capabilities:             &corev1.Capabilities{Drop: []corev1.Capability{capabilityAll}},
 			SeccompProfile:           &corev1.SeccompProfile{Type: corev1.SeccompProfileTypeRuntimeDefault},
 		},
 	}
