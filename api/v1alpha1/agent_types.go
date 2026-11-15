@@ -263,6 +263,11 @@ type AgentStatus struct {
 	// +optional
 	KeyAlias string `json:"keyAlias,omitempty"`
 
+	// CostGroup is the cost group of the key, from the label koodam.dev/cost-group when the
+	// controller made the key.
+	// +optional
+	CostGroup string `json:"costGroup,omitempty"`
+
 	// KeyHash is the SHA-256 hash of the key. The controller writes it before it makes the key,
 	// and uses it to block the key and to read the usage. The gateway refuses the hash for
 	// model calls, so it is not a credential.

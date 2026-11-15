@@ -356,6 +356,17 @@ func (r *AgentReconciler) provision(ctx context.Context, a *corev1alpha1.Agent) 
 			msg = msgOutputMount
 		}
 	}
+	costGroup := a.Labels[corev1alpha1.CostGroupLabel]
+	if msg == "" && a.Status.KeyHash == "" {
+		var err error
+		msg, err = costGroupMessage(ctx, r.APIReader, a.Namespace, costGroup)
+		if err != nil {
+			return err
+		}
+		if msg != "" {
+			reason = reasonCostGroupNotAllowed
+		}
+	}
 	if msg != "" {
 		log.Info("The Agent is not valid", "reason", msg)
 		meta.SetStatusCondition(&a.Status.Conditions, metav1.Condition{
@@ -394,12 +405,16 @@ func (r *AgentReconciler) provision(ctx context.Context, a *corev1alpha1.Agent) 
 		a.Status.RunID = string(a.UID)
 		a.Status.KeyAlias = alias
 		a.Status.KeyHash = gateway.HashKey(key)
+		a.Status.CostGroup = costGroup
 		if err := r.Status().Update(ctx, a); err != nil {
 			return err
 		}
 	}
 	models := a.Spec.ModelList()
 	md := map[string]string{metaUID: string(a.UID), metaNamespace: a.Namespace, "agent": a.Name, "user": a.Spec.User}
+	if a.Status.CostGroup != "" {
+		md["costGroup"] = a.Status.CostGroup
+	}
 	if a.Spec.Harness != nil {
 		// The gateway can then group the spend by harness.
 		md["harness"] = a.Spec.Harness.Name

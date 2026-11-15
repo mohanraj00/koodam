@@ -49,6 +49,22 @@ The controller writes the bound namespaces to `status.boundNamespaces`. `kubectl
 
 The controller runs a Workspace only in a bound namespace. If you remove the label or the list item, the controller blocks the gateway key of the Workspace first. Then it stops the pod. The home PVC stays.
 
+## Cost groups
+
+An admin can set `spec.costGroups` on a Profile:
+
+```yaml
+spec:
+  namespaces: [dev-sample]
+  costGroups: [project-a, ops]
+```
+
+The list is a set of at most 32 values. Each value has 1 to 63 characters: lowercase letters, digits and hyphens. The first and last characters must be letters or digits.
+
+An Agent declares a cost group with the label `koodam.dev/cost-group`. Before it makes a key, the controller checks that the namespace has a bound Profile and that `spec.costGroups` permits the value. If not, the Agent fails with `Provisioned=False` and the reason `CostGroupNotAllowed`. It gets no key Secret or Job. An empty label value is the same as no label and needs no Profile.
+
+The controller saves the value in `status.costGroup` before it makes the key. The gateway key metadata has the same value in `costGroup`. A later change to the label or the Profile does not change the saved value or the key.
+
 ## The Workspace network
 
 The chart can make a NetworkPolicy for the Workspace pods in each Profile namespace. The chart does not read the Profiles. Thus, add each Profile namespace to the chart values, and run `helm upgrade` after each change. The namespace must exist before the upgrade.
