@@ -60,6 +60,14 @@ The second version `shop-v2` has the same form. The `Gateway` with the name `pub
 - With a model, the version gets one gateway key with `budgetPerDay`. The key permits only the declared models, and the gateway refuses a call to a different model. The `app` container gets the gateway address in `KOODAM_GATEWAY_URL`, the first model in `KOODAM_GATEWAY_MODEL`, each model in `KOODAM_GATEWAY_MODELS` with a comma between them, and the path of the key file in `KOODAM_GATEWAY_KEY_FILE`.
 - With no model, the version gets no key, no key file and no budget. `budgetPerDay` is not permitted. The version still gets its Role, its Service and its traced egress, and it does not count for `maxLiveVersions`.
 
+## Cost groups
+
+Set the label `koodam.dev/cost-group` in `metadata.labels` of the App. Each new AppVersion uses this value for its gateway key. A label on the AppVersion does not set the cost group. An empty value is the same as no label.
+
+The value must be in `spec.costGroups` of the Profile bound to the namespace. Before the controller makes a key, it checks the value. If the value is not permitted, the AppVersion has `GatewayKey=False` with the reason `CostGroupNotAllowed`. It gets no key Secret and no Deployment. The controller checks again. Fix the App label or the Profile to let the version start.
+
+The controller saves the value in `status.costGroup` before it makes the key, and adds `costGroup` to the gateway key metadata if the value is not empty. A later change of the App label or the Profile does not change the saved group or the group of the key. A version with no model has no key and no cost group.
+
 ## Admission checks
 
 A `ValidatingAdmissionPolicy` holds the checks of an AppVersion that the CRD cannot hold:
