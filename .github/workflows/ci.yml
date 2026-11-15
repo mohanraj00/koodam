@@ -144,6 +144,8 @@ jobs:
       - uses: azure/setup-helm@9bc31f4ebc9c6b171d7bfbaa5d006ae7abdb4310 # v5.0.1
         with:
           version: v4.2.3
+      # The check fails if a generated file is not the same as the output of make manifests generate helm-sync.
+      - run: make generated-check
       # The check fails if the chart CRD or the chart RBAC is not the same as config/.
       - run: make helm-check
   # The required check. Each project job is in needs. A skipped job passes. A failed or cancelled job fails.
