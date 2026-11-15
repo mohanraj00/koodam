@@ -38,6 +38,12 @@ import (
 	"github.com/mohanraj00/koodam/internal/gateway"
 )
 
+// The cost groups of the tests. The Profile of a test permits only the first one.
+const (
+	testCostGroupAllowed = "project-a"
+	testCostGroupDenied  = "ops"
+)
+
 // costGroupGateway checks the saved status at CreateKey. It keeps no key value.
 type costGroupGateway struct {
 	*countGateway
@@ -66,7 +72,7 @@ var _ = Describe("Agent cost group", func() {
 		Expect(k8sClient.Create(ctx, ns)).To(Succeed())
 		DeferCleanup(func() { Expect(k8sClient.Delete(ctx, ns)).To(Succeed()) })
 		p := &corev1alpha1.Profile{ObjectMeta: metav1.ObjectMeta{Name: ns.Name},
-			Spec: corev1alpha1.ProfileSpec{Namespaces: []string{ns.Name}, CostGroups: []string{"project-a"}}}
+			Spec: corev1alpha1.ProfileSpec{Namespaces: []string{ns.Name}, CostGroups: []string{testCostGroupAllowed}}}
 		if bound {
 			Expect(k8sClient.Create(ctx, p)).To(Succeed())
 			DeferCleanup(func() { Expect(k8sClient.Delete(ctx, p)).To(Succeed()) })
@@ -117,7 +123,7 @@ var _ = Describe("Agent cost group", func() {
 			Expect(gw.metadata).NotTo(HaveKey("costGroup"))
 		} else {
 			Expect(gw.metadata).To(HaveKeyWithValue("costGroup", gw.group))
-			a.Labels[corev1alpha1.CostGroupLabel] = "ops"
+			a.Labels[corev1alpha1.CostGroupLabel] = testCostGroupDenied
 			Expect(k8sClient.Update(ctx, a)).To(Succeed())
 			p.Spec.CostGroups = nil
 			Expect(k8sClient.Update(ctx, p)).To(Succeed())
@@ -131,23 +137,23 @@ var _ = Describe("Agent cost group", func() {
 	},
 		Entry("no label", (*string)(nil), false, ""),
 		Entry("empty label", new(""), false, ""),
-		Entry("allowed label", new("project-a"), true, ""),
-		Entry("value not permitted", new("ops"), true,
+		Entry("allowed label", new(testCostGroupAllowed), true, ""),
+		Entry("value not permitted", new(testCostGroupDenied), true,
 			`the label koodam.dev/cost-group has the value "ops", and Profile <namespace> does not permit it in spec.costGroups`),
-		Entry("no bound Profile", new("ops"), false,
+		Entry("no bound Profile", new(testCostGroupDenied), false,
 			"the label koodam.dev/cost-group needs a Profile bound to namespace <namespace>, with the value in spec.costGroups"),
 	)
 })
 
 func TestCostGroupRetryKeepsSavedValue(t *testing.T) {
-	for _, group := range []string{"", "project-a"} {
+	for _, group := range []string{"", testCostGroupAllowed} {
 		t.Run(group, func(t *testing.T) {
 			a := ingAgent()
 			a.Labels = map[string]string{corev1alpha1.CostGroupLabel: group}
 			ns := &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: a.Namespace,
 				Labels: map[string]string{corev1alpha1.ProfileLabel: "cost-profile"}}}
 			p := &corev1alpha1.Profile{ObjectMeta: metav1.ObjectMeta{Name: "cost-profile"},
-				Spec: corev1alpha1.ProfileSpec{Namespaces: []string{ns.Name}, CostGroups: []string{"project-a"}}}
+				Spec: corev1alpha1.ProfileSpec{Namespaces: []string{ns.Name}, CostGroups: []string{testCostGroupAllowed}}}
 			c := ingWorld(t, a, ns, p)
 			gw := &costGroupGateway{countGateway: &countGateway{}, reader: c, agent: ingKey,
 				group: group, err: errors.New("try again")}
@@ -158,7 +164,7 @@ func TestCostGroupRetryKeepsSavedValue(t *testing.T) {
 			if err := c.Get(t.Context(), ingKey, a); err != nil {
 				t.Fatal("the test could not read the Agent")
 			}
-			a.Labels[corev1alpha1.CostGroupLabel] = "ops"
+			a.Labels[corev1alpha1.CostGroupLabel] = testCostGroupDenied
 			if c.Update(t.Context(), a) != nil || c.Delete(t.Context(), p) != nil {
 				t.Fatal("the test could not change the label and remove the Profile")
 			}

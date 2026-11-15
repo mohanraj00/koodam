@@ -45,7 +45,7 @@ var _ = Describe("Profile costGroups CRD", func() {
 			Expect(err.Error()).To(ContainSubstring("spec.costGroups"))
 		}
 	},
-		Entry("permits valid values", []string{"ops", "project-a", "0", strings.Repeat("a", 63)}, true),
+		Entry("permits valid values", []string{testCostGroupDenied, testCostGroupAllowed, "0", strings.Repeat("a", 63)}, true),
 		Entry("refuses a value outside the pattern", []string{"Project_A"}, false),
 		Entry("refuses an empty value", []string{""}, false),
 		Entry("refuses a long value", []string{strings.Repeat("a", 64)}, false),

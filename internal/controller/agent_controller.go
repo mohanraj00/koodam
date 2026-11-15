@@ -334,6 +334,20 @@ func (r *AgentReconciler) sameRun(ctx context.Context, a *corev1alpha1.Agent, wa
 	return true, nil
 }
 
+// costGroupCheck checks the cost group one time, before the key exists. It gives the message and
+// the reason of a value that is not allowed, or an empty message.
+func (r *AgentReconciler) costGroupCheck(ctx context.Context, a *corev1alpha1.Agent, value, reason string) (
+	string, string, error) {
+	if a.Status.KeyHash != "" {
+		return "", reason, nil
+	}
+	msg, err := costGroupMessage(ctx, r.APIReader, a.Namespace, value)
+	if err != nil || msg == "" {
+		return "", reason, err
+	}
+	return msg, reasonCostGroupNotAllowed, nil
+}
+
 func (r *AgentReconciler) provision(ctx context.Context, a *corev1alpha1.Agent) error {
 	log := logf.FromContext(ctx)
 	msg, reason := invalid(a), reasonInvalid
@@ -357,14 +371,10 @@ func (r *AgentReconciler) provision(ctx context.Context, a *corev1alpha1.Agent) 
 		}
 	}
 	costGroup := a.Labels[corev1alpha1.CostGroupLabel]
-	if msg == "" && a.Status.KeyHash == "" {
+	if msg == "" {
 		var err error
-		msg, err = costGroupMessage(ctx, r.APIReader, a.Namespace, costGroup)
-		if err != nil {
+		if msg, reason, err = r.costGroupCheck(ctx, a, costGroup, reason); err != nil {
 			return err
-		}
-		if msg != "" {
-			reason = reasonCostGroupNotAllowed
 		}
 	}
 	if msg != "" {

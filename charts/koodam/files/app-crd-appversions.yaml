@@ -9168,11 +9168,6 @@ spec:
                 x-kubernetes-list-map-keys:
                 - type
                 x-kubernetes-list-type: map
-              costGroup:
-                description: |-
-                  CostGroup is the cost group of the key, from the label koodam.dev/cost-group when the
-                  controller made the key.
-                type: string
               keyAlias:
                 description: |-
                   KeyAlias identifies the gateway key. The key value is never in the status. A version with
