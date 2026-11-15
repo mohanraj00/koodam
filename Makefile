@@ -213,6 +213,20 @@ prices: ## Make the LiteLLM price subset of koodam usage again from LITELLM_COMM
 	mv "$(LOCALBIN)/litellm.json.tmp" "$(PRICES_DIR)/litellm.json"
 	mv "$(LOCALBIN)/litellm-LICENSE" "$(PRICES_DIR)/LICENSE"
 
+# GENERATED_YEAR is the year in the committed deepcopy header. Thus a new calendar year does not fail the check.
+# The check leaves out the price files, because make prices needs the network and LITELLM_COMMIT.
+GENERATED_YEAR = $(shell sed -n 's/^Copyright \([0-9]\{4\}\) .*/\1/p' api/v1alpha1/zz_generated.deepcopy.go | head -n 1)
+GENERATED_EXCLUDE = ':(exclude)$(PRICES_DIR)/*.json'
+
+.PHONY: generated-check
+generated-check: ## Fail if a generated file is not the same as the generator output.
+	@test -n "$(GENERATED_YEAR)" || { echo "The deepcopy header has no year."; exit 1; }
+	$(MAKE) manifests generate helm-sync YEAR=$(GENERATED_YEAR)
+	@git diff --exit-code -- . $(GENERATED_EXCLUDE) || \
+		{ echo "A generated file is not up to date. Run 'make manifests generate helm-sync' and commit the result."; exit 1; }
+	@new="$$(git ls-files --others --exclude-standard -- . $(GENERATED_EXCLUDE))"; \
+		test -z "$$new" || { echo "$$new"; echo "The generators made new files. Add them."; exit 1; }
+
 # HELM_GATEWAY_URL is a gateway address for the render checks of the existing mode.
 HELM_GATEWAY_URL ?= http://litellm.example.svc:4000
 
