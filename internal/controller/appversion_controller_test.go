@@ -62,7 +62,7 @@ var _ = Describe("AppVersion controller", func() {
 	)
 	nn := func(s string) types.NamespacedName { return types.NamespacedName{Namespace: ns, Name: s} }
 	// outsideCeiling is a rule that the agent-ceiling ClusterRole does not have.
-	outsideCeiling := rbacv1.PolicyRule{APIGroups: []string{""}, Resources: []string{"secrets"}, Verbs: []string{"get"}}
+	outsideCeiling := rbacv1.PolicyRule{APIGroups: []string{""}, Resources: []string{"secrets"}, Verbs: []string{verbGet}}
 	reconcileName := func(s string) (ctrl.Result, error) {
 		return rec.Reconcile(ctx, reconcile.Request{NamespacedName: nn(s)})
 	}
@@ -193,7 +193,7 @@ var _ = Describe("AppVersion controller", func() {
 
 	It("makes the key, the Role, the Deployment and the Service, and writes only the alias and the hash", func() {
 		newApp(2)
-		newVersion(name, rbacv1.PolicyRule{APIGroups: []string{""}, Resources: []string{"configmaps"}, Verbs: []string{"get"}})
+		newVersion(name, rbacv1.PolicyRule{APIGroups: []string{""}, Resources: []string{"configmaps"}, Verbs: []string{verbGet}})
 		res := mustReconcile()
 		Expect(res.RequeueAfter).To(Equal(ttl / 4))
 

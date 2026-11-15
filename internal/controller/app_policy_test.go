@@ -125,7 +125,7 @@ var _ = Describe("AppVersion admission policy", Ordered, func() {
 
 	It("refuses template rules on a create and on a template change", func() {
 		const rulesText = "spec.template.rules is not permitted"
-		rules := []rbacv1.PolicyRule{{APIGroups: []string{""}, Resources: []string{"configmaps"}, Verbs: []string{"get"}}}
+		rules := []rbacv1.PolicyRule{{APIGroups: []string{""}, Resources: []string{"configmaps"}, Verbs: []string{verbGet}}}
 		refused(create(newVersion("policy-d", func(av *corev1alpha1.AppVersion) { av.Spec.Template.Rules = rules })), rulesText)
 
 		av := newVersion("policy-d", nil)
