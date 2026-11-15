@@ -31,6 +31,10 @@ This file records the changes for each Koodam version. The newest version is fir
 - `make manifests` writes the App grants to `config/apps/rbac/role.yaml`. The default role and the chart get no App grant.
 - Add the signed claim check at the ingress of each App. With `apps.claimCheck.issuer` in the chart, each AppVersion pod gets the container `koodam-claim` in front of the `app` container. It accepts a JWT of the issuer with RS256 or ES256, and it checks `iss`, `aud`, `exp` and `nbf` with the keys of `apps.claimCheck.jwks`. A request with no valid claim gets the status 401. The `app` container gets the caller label and the tenant label in the headers `Koodam-Caller` and `Koodam-Tenant`, and it does not get the token. The claim check needs `egressProxy.enabled`, because only the NetworkPolicy of a version blocks a call with no claim. The condition `ClaimCheck` of the AppVersion is `True` only if the NetworkPolicy of the version exists and the controller applied the objects of the version ([#316](https://github.com/mohanraj00/koodam/pull/316), [#317](https://github.com/mohanraj00/koodam/pull/317), [#318](https://github.com/mohanraj00/koodam/pull/318), [#319](https://github.com/mohanraj00/koodam/pull/319)).
 
+### Release
+
+- Each release has 2 sample files as assets: `egress-spans.jsonl` and `gateway-log.jsonl`. A kind run of the tagged commit makes them, and `checksums.txt` has the SHA-256 of each file. The e2e test refuses a sample with the master key, a word with the key prefix `sk-` or a bearer token. [docs/egress-spans.md](docs/egress-spans.md) names the files and says how to download them ([#331](https://github.com/mohanraj00/koodam/issues/331)).
+
 ## v0.4.0-alpha.1 (pre-release, 2026-11-12)
 
 This is a pre-release, not the v0.4 release. The API is `v1alpha1` and can change between tags. Some parts are in the tag but are not active yet. The sections below mark those parts.

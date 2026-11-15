@@ -334,4 +334,48 @@ var _ = Describe("Traced egress", Ordered, Label("egress"), func() {
 			`-x http://`+proxyAddr+` https://example.com:22/ 2>/dev/null || true`)
 		Expect(strings.TrimSpace(out)).To(Equal("403"), "The proxy does not refuse a CONNECT to port 22.")
 	})
+
+	// The release workflow sets utils.SamplesEnv. The samples are the spans of the calls above,
+	// as the proxy wrote them, and the gateway spend logs of the key of the Agent.
+	It("writes the release samples of the spans and the gateway logs", func() {
+		dir := os.Getenv(utils.SamplesEnv)
+		if dir == "" {
+			Skip(utils.SamplesEnv + " is not set")
+		}
+		By("reading the spans of the Agent and the Workspace with koodam trace")
+		var lines []byte
+		for _, target := range []string{"agent/" + agentName, "workspace/" + wsTraceName} {
+			// Only stdout: koodam trace --json writes each span line as the proxy wrote it.
+			out, err := exec.Command(koodam, "-n", egNS, "trace", target, "--json",
+				"--proxy-namespace", systemNS).Output()
+			Expect(err).NotTo(HaveOccurred())
+			lines = append(lines, out...)
+		}
+		kinds := map[string]bool{}
+		for line := range strings.Lines(string(lines)) {
+			var sp egress.Span
+			Expect(json.Unmarshal([]byte(line), &sp)).To(Succeed(), line)
+			Expect(sp.V).To(Equal(egress.SpanVersion), "A span has no contract version: %s", line)
+			kinds[sp.Kind+"/"+sp.Result] = true
+		}
+		Expect(kinds).To(HaveKey(egress.KindLLM+"/"+egress.ResultOK), "The spans have no model call.")
+		Expect(kinds).To(HaveKey(egress.KindConnect+"/"+egress.ResultDenied), "The spans have no denied call.")
+
+		By("reading the gateway spend logs of the key of the Agent")
+		a := &corev1alpha1.Agent{}
+		Expect(k8s.Get(ctx, client.ObjectKey{Namespace: egNS, Name: agentName}, a)).To(Succeed())
+		Expect(a.Status.KeyHash).NotTo(BeEmpty())
+		var logs []byte
+		// The gateway writes the spend logs in batches, so the log of the call can come later.
+		Eventually(func(g Gomega) {
+			var err error
+			logs, err = utils.JSONLines(spendLogs(g, a.Status.KeyHash))
+			g.Expect(err).NotTo(HaveOccurred())
+			g.Expect(logs).NotTo(BeEmpty(), "The gateway has no spend log of the Agent call.")
+		}, 3*time.Minute, 5*time.Second).Should(Succeed())
+
+		By("checking the samples for credentials and writing them")
+		Expect(utils.WriteSamples(dir, map[string][]byte{utils.SpanSample: lines, utils.GatewaySample: logs},
+			masterKey)).To(Succeed())
+	})
 })

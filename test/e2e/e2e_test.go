@@ -528,6 +528,21 @@ func keyInfo(keyHash string) gatewayKey {
 	return ki.Info
 }
 
+// spendLogs returns the body of the gateway spend logs of the key with keyHash, as the gateway
+// gave it.
+func spendLogs(g Gomega, keyHash string) []byte {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, gatewayURL+"/spend/logs?api_key="+keyHash, nil)
+	g.Expect(err).NotTo(HaveOccurred())
+	req.Header.Set("Authorization", "Bearer "+masterKey)
+	resp, err := httpClient.Do(req)
+	g.Expect(err).NotTo(HaveOccurred(), "The gateway did not answer.")
+	defer func() { _ = resp.Body.Close() }()
+	g.Expect(resp.StatusCode).To(Equal(http.StatusOK))
+	body, err := io.ReadAll(resp.Body)
+	g.Expect(err).NotTo(HaveOccurred())
+	return body
+}
+
 // largestCall returns the largest spend of one call with the key, from the gateway spend logs.
 func largestCall(keyHash string) float64 {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, gatewayURL+"/spend/logs?api_key="+keyHash, nil)
