@@ -17,6 +17,7 @@
 | `koodam run -f AGENT.yaml` | Create an Agent. |
 | `koodam get [NAME]` | Show the phase, the model, the harness, the budget, the spend, the start and end time, and the key alias. |
 | `koodam spend [NAME]` | Show the budget and the gateway usage: the spend, the calls, the failed calls and the tokens. |
+| `koodam usage --by cost-group` | Show the Agent gateway usage for each cost group in the namespace. |
 | `koodam logs NAME` | Show the pod log of the Job of the Agent. |
 | `koodam delete NAME` | Delete an Agent. The controller revokes the key before it deletes the Agent. |
 
@@ -96,13 +97,27 @@ koodam spend fix-tests -n dev-sample
 kubectl get agents -n dev-sample
 ```
 
+To add the Agent gateway usage for each cost group:
+
+```sh
+koodam usage --by cost-group -n dev-sample
+```
+
+With `--by`, give no WORKSPACE argument. The only permitted value of `--by` is `cost-group`. The command lists Agents with your kubeconfig and needs `list` on Agents in the namespace. It uses `-n`, or the namespace of the current context, and uses no SSH.
+
+The columns are `COST-GROUP`, `RUNS`, `CALLS`, `FAILED`, `INPUT`, `OUTPUT`, `SPEND` and `SOURCE`. Groups are in name order, with `(none)` last, then a total line. Each row says `source: gateway`. `SPEND` is the sum of the spend of each key, in USD with four decimal places. It is not the sum of the model entries.
+
+The group comes from `status.costGroup`, which the controller saved when it made the key. A later change of the Agent label does not move the spend. An empty group shows as `(none)`. An Agent with no `status.usage`, or with a spend that is not a number, is not in the table. A note on stderr gives each count. If no Agent has valid usage, the command shows `No gateway usage in the Agents of namespace <namespace>.`
+
+The table has only Agent usage. It has no AppVersion, TestKey or Workspace spend.
+
 For a Workspace with a gateway key, read the gateway usage in the status:
 
 ```sh
 kubectl get workspace main -n dev-sample -o jsonpath='{.status.usage}'
 ```
 
-**The projected cost is not a bill.** A Workspace with a subscription login has no gateway spend. `koodam usage` shows the API price of the tokens of its sessions:
+**The projected cost is not a bill.** A Workspace with a subscription login has no gateway spend. `koodam usage WORKSPACE` shows the API price of the tokens of its sessions:
 
 ```sh
 koodam usage main -n dev-sample
