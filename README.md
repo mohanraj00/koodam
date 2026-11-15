@@ -51,6 +51,7 @@ A Workspace is a pod with a home on a PVC. I connect to it over SSH and run the 
 - [Test keys](docs/test-keys.md): the TestKey resource, the key slot in the Workspace pod and the revoke.
 - [Nookku](docs/nookku.md): the Workspace setup for Nookku, the span contract and the test folder.
 - [Nookku preset](docs/nookku-preset.md): the `nookku` plugin field and the Nookku test folder.
+- [Evidence gate](docs/evidence-gate.md): the design of a rollout gate on a sealed Nookku result. It is not built.
 - [Release checklist](docs/release-checklist.md): the steps before a tag.
 - [Traced egress](docs/traced-egress.md): the egress proxy, the spans and `koodam trace`.
 - [Architecture](docs/architecture.md): the controller, the gateway, the Workspace pod, the PVC home and the tunnel.
