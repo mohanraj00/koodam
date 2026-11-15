@@ -166,6 +166,11 @@ type AppVersionStatus struct {
 	// +optional
 	KeyHash string `json:"keyHash,omitempty"`
 
+	// CostGroup is the cost group of the key, from the label koodam.dev/cost-group when the
+	// controller made the key.
+	// +optional
+	CostGroup string `json:"costGroup,omitempty"`
+
 	// Conditions are the conditions of the AppVersion.
 	// +listType=map
 	// +listMapKey=type
