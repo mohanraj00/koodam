@@ -18,7 +18,9 @@ package controller
 
 import (
 	"context"
+	"fmt"
 	"maps"
+	"slices"
 
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -43,22 +45,52 @@ const (
 // the namespace, the label or the Profile does not exist. The Profile name is also the value of
 // a namespace label, thus it is a valid label value.
 func boundProfile(ctx context.Context, c client.Reader, namespace string) (string, error) {
+	p, err := boundProfileObject(ctx, c, namespace)
+	if p == nil || err != nil {
+		return "", err
+	}
+	return p.Name, nil
+}
+
+// boundProfileObject returns the bound Profile, or nil if no Profile binds the namespace.
+func boundProfileObject(ctx context.Context, c client.Reader, namespace string) (*corev1alpha1.Profile, error) {
 	ns := &corev1.Namespace{}
 	if err := c.Get(ctx, types.NamespacedName{Name: namespace}, ns); err != nil {
-		return "", client.IgnoreNotFound(err)
+		return nil, client.IgnoreNotFound(err)
 	}
 	name := ns.Labels[corev1alpha1.ProfileLabel]
 	if name == "" {
-		return "", nil
+		return nil, nil
 	}
 	p := &corev1alpha1.Profile{}
 	if err := c.Get(ctx, types.NamespacedName{Name: name}, p); err != nil {
-		return "", client.IgnoreNotFound(err)
+		return nil, client.IgnoreNotFound(err)
 	}
 	if !namespaceBound(p, ns) {
+		return nil, nil
+	}
+	return p, nil
+}
+
+const reasonCostGroupNotAllowed = "CostGroupNotAllowed"
+
+// costGroupMessage checks the cost group against the Profile of the namespace.
+// An empty message permits the value. A read error must be retried.
+func costGroupMessage(ctx context.Context, c client.Reader, namespace, value string) (string, error) {
+	if value == "" {
 		return "", nil
 	}
-	return name, nil
+	p, err := boundProfileObject(ctx, c, namespace)
+	if err != nil {
+		return "", err
+	}
+	if p == nil {
+		return fmt.Sprintf("the label koodam.dev/cost-group needs a Profile bound to namespace %s, with the value in spec.costGroups", namespace), nil
+	}
+	if !slices.Contains(p.Spec.CostGroups, value) {
+		return fmt.Sprintf("the label koodam.dev/cost-group has the value %q, and Profile %s does not permit it in spec.costGroups", value, p.Name), nil
+	}
+	return "", nil
 }
 
 // addIdentity adds the run and the user labels to the pod metadata m. It does not add an empty
