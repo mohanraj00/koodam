@@ -544,7 +544,7 @@ func (r *WorkspaceReconciler) statefulSet(ws *corev1alpha1.Workspace, user strin
 			SeccompProfile:           &corev1.SeccompProfile{Type: corev1.SeccompProfileTypeRuntimeDefault},
 		},
 	}
-	if ws.Spec.Gateway != nil {
+	if hasGateway(ws) {
 		// The gateway key is a file, not an env: sshd does not give its env to the SSH sessions.
 		// The image exports the files in a login shell. The kubelet updates the files after a
 		// key change, so a new login gets the new key.
@@ -578,7 +578,7 @@ func (r *WorkspaceReconciler) statefulSet(ws *corev1alpha1.Workspace, user strin
 	addWorkspaceHarnesses(&tmpl.Spec, ws.Spec.Harnesses, r.InstallerImage)
 	addWorkspaceNookku(&tmpl.Spec, ws.Spec.Harnesses)
 	addIdentity(&tmpl.ObjectMeta, "", user)
-	r.Egress.annotate(&tmpl.ObjectMeta, ws.Spec.Gateway != nil, r.GatewayURL)
+	r.Egress.annotate(&tmpl.ObjectMeta, hasGateway(ws), r.GatewayURL)
 	sts := &appsv1.StatefulSet{ObjectMeta: workspaceMeta(ws, ws.Name), Spec: appsv1.StatefulSetSpec{
 		Replicas: &replicas,
 		Selector: &metav1.LabelSelector{MatchLabels: labels},

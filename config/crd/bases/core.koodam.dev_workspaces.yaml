@@ -69,14 +69,34 @@ spec:
                     pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
                     x-kubernetes-int-or-string: true
                   model:
-                    description: Model is the gateway model name. The key permits
-                      only this model.
+                    description: |-
+                      Model is the gateway model name. It is the short form of a models list with 1 item. The
+                      key permits only this model.
                     minLength: 1
                     type: string
+                  models:
+                    description: |-
+                      Models are the gateway model names that the key permits. The gateway refuses a call to a
+                      different model. The first model is the model of the harnesses. A TestKey of the Workspace
+                      can permit only models of this list. Set model or models, and not the two. The list is
+                      atomic, so an apply replaces it and keeps its order.
+                    items:
+                      maxLength: 253
+                      minLength: 1
+                      type: string
+                    maxItems: 16
+                    minItems: 1
+                    type: array
+                    x-kubernetes-list-type: atomic
+                    x-kubernetes-validations:
+                    - message: models must not have a model two times
+                      rule: self.all(m, self.exists_one(n, n == m))
                 required:
                 - budgetPerDay
-                - model
                 type: object
+                x-kubernetes-validations:
+                - message: Set model or models, and not the two.
+                  rule: has(self.model) != has(self.models)
               harnesses:
                 description: Harnesses are the coding harnesses in the pod. Each name
                   occurs one time only.

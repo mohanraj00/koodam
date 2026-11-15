@@ -482,12 +482,62 @@ var _ = Describe("Workspace gateway key", func() {
 	It("makes a new key when the model changes", func() {
 		mustReconcile()
 		old := secretKey()
-		edit(func(ws *corev1alpha1.Workspace) { ws.Spec.Gateway.Model = "other-model" })
+		edit(func(ws *corev1alpha1.Workspace) { ws.Spec.Gateway.Model = otherModel })
 		mustReconcile()
 		Expect(gw.order).To(Equal([]string{opCreate, opBlock, opUsage, opCreate}))
 		Expect(secretKey()).NotTo(Equal(old))
 		s := &corev1.Secret{}
 		Expect(k8sClient.Get(ctx, nn(name+"-gateway"), s)).To(Succeed())
-		Expect(string(s.Data[modelField])).To(Equal("other-model"))
+		Expect(string(s.Data[modelField])).To(Equal(otherModel))
+	})
+
+	It("makes one key that permits each model of gateway.models, and a new key when the list changes", func() {
+		edit(func(ws *corev1alpha1.Workspace) {
+			ws.Spec.Gateway.Model, ws.Spec.Gateway.Models = "", []string{testGatewayModel, otherModel}
+		})
+		mustReconcile()
+		Expect(gw.order).To(Equal([]string{opCreate}))
+		Expect(gw.specs[0].Model).To(Equal(testGatewayModel))
+		Expect(gw.specs[0].Models).To(Equal([]string{otherModel}))
+		s := &corev1.Secret{}
+		Expect(k8sClient.Get(ctx, nn(name+"-gateway"), s)).To(Succeed())
+		// The first model is the model of the harnesses.
+		Expect(string(s.Data[modelField])).To(Equal(testGatewayModel))
+		Expect(s.Annotations).To(HaveKeyWithValue(modelsAnnotation, `["`+testGatewayModel+`","`+otherModel+`"]`))
+
+		By("keeping the key while the list does not change")
+		old := secretKey()
+		mustReconcile()
+		Expect(secretKey()).To(Equal(old))
+		Expect(gw.order).To(Equal([]string{opCreate}))
+
+		By("blocking the key before the new key, when a model goes out of the list")
+		edit(func(ws *corev1alpha1.Workspace) { ws.Spec.Gateway.Models = []string{testGatewayModel} })
+		mustReconcile()
+		Expect(gw.order).To(Equal([]string{opCreate, opBlock, opUsage, opCreate}))
+		Expect(secretKey()).NotTo(Equal(old))
+		Expect(gw.specs[len(gw.specs)-1].Models).To(BeEmpty())
+	})
+
+	It("keeps the key of a Secret with no models annotation, and refuses a gateway with no model", func() {
+		mustReconcile()
+		old := secretKey()
+		// A Secret from before the list has no annotation. Its key permits the one model.
+		s := &corev1.Secret{}
+		Expect(k8sClient.Get(ctx, nn(name+"-gateway"), s)).To(Succeed())
+		Expect(keyModels(&corev1.Secret{Data: s.Data})).To(Equal([]string{testGatewayModel}))
+		mustReconcile()
+		Expect(secretKey()).To(Equal(old))
+
+		ws := &corev1alpha1.Workspace{}
+		Expect(k8sClient.Get(ctx, nn(name), ws)).To(Succeed())
+		for _, g := range []corev1alpha1.WorkspaceGateway{
+			{BudgetPerDay: resource.MustParse("5")},
+			{Model: "a", Models: []string{"b"}, BudgetPerDay: resource.MustParse("5")},
+			{Models: []string{"a", "a"}, BudgetPerDay: resource.MustParse("5")},
+		} {
+			ws.Spec.Gateway = &g
+			Expect(apierrors.IsInvalid(k8sClient.Update(ctx, ws))).To(BeTrue(), "%v", g)
+		}
 	})
 })

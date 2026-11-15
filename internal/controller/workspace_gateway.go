@@ -18,8 +18,10 @@ package controller
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
 	"strconv"
 	"time"
 
@@ -62,7 +64,29 @@ const (
 
 // wantKey is true if the pod must have a gateway key now.
 func wantKey(ws *corev1alpha1.Workspace) bool {
-	return ws.Spec.Gateway != nil && !ws.Spec.Suspend && ws.DeletionTimestamp.IsZero()
+	return hasGateway(ws) && !ws.Spec.Suspend && ws.DeletionTimestamp.IsZero()
+}
+
+// hasGateway is true if the Workspace has a gateway with a model. The CRD refuses a gateway
+// with no model. The controller reads the first model, so it does the check again.
+func hasGateway(ws *corev1alpha1.Workspace) bool {
+	return ws.Spec.Gateway != nil && len(ws.Spec.Gateway.ModelList()) > 0 &&
+		!slices.Contains(ws.Spec.Gateway.ModelList(), "")
+}
+
+// modelsAnnotation is the models list of the key on the gateway Secret, as JSON. A model name
+// is not a credential. The Secret is immutable, so a changed list gets a new key and a new
+// Secret, as a changed model does.
+const modelsAnnotation = "koodam.dev/gateway-models"
+
+// keyModels gives back the models of the key of the Secret. A Secret from before the list has
+// no annotation, and its key permits the one model of the Secret.
+func keyModels(secret *corev1.Secret) []string {
+	var models []string
+	if json.Unmarshal([]byte(secret.Annotations[modelsAnnotation]), &models) == nil && len(models) > 0 {
+		return models
+	}
+	return []string{string(secret.Data[modelField])}
 }
 
 func (r *WorkspaceReconciler) keyTTL() time.Duration {
@@ -101,15 +125,16 @@ func (r *WorkspaceReconciler) applyKey(ctx context.Context, ws *corev1alpha1.Wor
 	if owned && err != nil {
 		return err
 	}
-	key, model := "", ""
+	key := ""
+	var models []string
 	if secret != nil {
-		key, model = string(secret.Data[keyField]), string(secret.Data[modelField])
+		key, models = string(secret.Data[keyField]), keyModels(secret)
 	}
 	c := meta.FindStatusCondition(ws.Status.Conditions, condGatewayKey)
 	revoking := c != nil && c.Reason == reasonRevoking
 	g := ws.Spec.Gateway
 	stale := revoking || (ws.Status.KeyHash != "" && gateway.HashKey(key) != ws.Status.KeyHash) ||
-		(g != nil && key != "" && model != g.Model)
+		(hasGateway(ws) && key != "" && !slices.Equal(models, g.ModelList()))
 	if !wantKey(ws) || stale {
 		if err := r.revokeKey(ctx, ws, secret); err != nil {
 			return err
@@ -164,8 +189,14 @@ func (r *WorkspaceReconciler) writeKeySecret(ctx context.Context, ws *corev1alph
 			return "", err
 		}
 	}
+	models := ws.Spec.Gateway.ModelList()
+	list, err := json.Marshal(models)
+	if err != nil {
+		return "", err
+	}
 	s := &corev1.Secret{ObjectMeta: workspaceMeta(ws, gatewaySecretName(ws)), Immutable: new(true),
-		StringData: gatewayEnv(r.GatewayURL, ws.Spec.Gateway.Model, key)}
+		StringData: gatewayEnv(r.GatewayURL, models[0], key)}
+	metav1.SetMetaDataAnnotation(&s.ObjectMeta, modelsAnnotation, string(list))
 	return key, r.Create(ctx, s)
 }
 
@@ -174,7 +205,8 @@ func (r *WorkspaceReconciler) writeKeySecret(ctx context.Context, ws *corev1alph
 // pod apply continues.
 func (r *WorkspaceReconciler) renewKey(ctx context.Context, ws *corev1alpha1.Workspace, key string) {
 	g := ws.Spec.Gateway
-	spec := gateway.KeySpec{Value: key, Alias: ws.Status.KeyAlias, Model: g.Model,
+	models := g.ModelList()
+	spec := gateway.KeySpec{Value: key, Alias: ws.Status.KeyAlias, Model: models[0], Models: models[1:],
 		Budget: g.BudgetPerDay.AsApproximateFloat64(), BudgetPeriod: 24 * time.Hour, TTL: r.keyTTL(),
 		Metadata: map[string]string{metaUID: string(ws.UID), metaNamespace: ws.Namespace, "workspace": ws.Name}}
 	if r.untilRenew(ws.Status.KeyHash) > 0 {
@@ -302,7 +334,7 @@ func (r *WorkspaceReconciler) revokeKey(ctx context.Context, ws *corev1alpha1.Wo
 // releaseKey removes the finalizer after a Workspace delete or a gateway removal. The Workspace
 // stays until each of its TestKeys is revoked (#192).
 func (r *WorkspaceReconciler) releaseKey(ctx context.Context, ws *corev1alpha1.Workspace) error {
-	if ws.Spec.Gateway != nil && ws.DeletionTimestamp.IsZero() {
+	if hasGateway(ws) && ws.DeletionTimestamp.IsZero() {
 		return nil
 	}
 	pending, err := r.testKeysPending(ctx, ws, testKeyRevoked)

@@ -90,11 +90,26 @@ type WorkspaceTestKeys struct {
 }
 
 // WorkspaceGateway is the gateway key of a Workspace.
+// +kubebuilder:validation:XValidation:rule="has(self.model) != has(self.models)",message="Set model or models, and not the two."
 type WorkspaceGateway struct {
-	// Model is the gateway model name. The key permits only this model.
-	// +required
+	// Model is the gateway model name. It is the short form of a models list with 1 item. The
+	// key permits only this model.
+	// +optional
 	// +kubebuilder:validation:MinLength=1
-	Model string `json:"model"`
+	Model string `json:"model,omitempty"`
+
+	// Models are the gateway model names that the key permits. The gateway refuses a call to a
+	// different model. The first model is the model of the harnesses. A TestKey of the Workspace
+	// can permit only models of this list. Set model or models, and not the two. The list is
+	// atomic, so an apply replaces it and keeps its order.
+	// +optional
+	// +listType=atomic
+	// +kubebuilder:validation:XValidation:rule="self.all(m, self.exists_one(n, n == m))",message="models must not have a model two times"
+	// +kubebuilder:validation:MinItems=1
+	// +kubebuilder:validation:MaxItems=16
+	// +kubebuilder:validation:items:MinLength=1
+	// +kubebuilder:validation:items:MaxLength=253
+	Models []string `json:"models,omitempty"`
 
 	// BudgetPerDay is the maximum spend in one day, in the currency of the gateway price
 	// table. The gateway refuses calls after the budget.
@@ -217,4 +232,13 @@ func init() {
 		s.AddKnownTypes(SchemeGroupVersion, &Workspace{}, &WorkspaceList{})
 		return nil
 	})
+}
+
+// ModelList gives back the models that the key permits. The first model is the model of the
+// harnesses.
+func (g *WorkspaceGateway) ModelList() []string {
+	if g.Model != "" {
+		return []string{g.Model}
+	}
+	return g.Models
 }
