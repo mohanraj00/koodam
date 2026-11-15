@@ -1,6 +1,6 @@
 # Pin of kind in CI
 
-The e2e job `E2E on kind` in `.github/workflows/ci.yml` uses one pinned `kind` version and one pinned node image. The job sets both in its `env` block:
+The e2e job `E2E on kind` in `.github/workflows/ci.yml` uses one pinned `kind` version and one pinned node image. The job `samples` in `.github/workflows/release.yml` uses the same pins. Each job sets both in its `env` block:
 
 - `KIND_VERSION`: the `kind` release tag, for example `v0.33.0`.
 - `KIND_NODE_IMAGE`: the node image with its digest, for example `kindest/node:v1.37.0@sha256:...`.
@@ -10,8 +10,8 @@ The job checks the `kind` binary against the `.sha256sum` file of the release. `
 ## Update the pin
 
 1. Open the release notes of the new `kind` release.
-2. Copy the release tag to `KIND_VERSION`.
-3. Copy the node image with its `@sha256` digest from the release notes to `KIND_NODE_IMAGE`. Always keep the digest. The release notes say that only the digest guarantees the correct image.
-4. Open a PR. The `E2E on kind` job must pass.
+2. Copy the release tag to `KIND_VERSION` in each of the 2 jobs.
+3. Copy the node image with its `@sha256` digest from the release notes to `KIND_NODE_IMAGE` in each of the 2 jobs. Always keep the digest. The release notes say that only the digest guarantees the correct image.
+4. Open a PR. The `E2E on kind` job and the release dry run must pass. A test in `tests/` checks that the pins of the 2 jobs are the same.
 
 The change is a level 1 change, because it changes `.github/`.
