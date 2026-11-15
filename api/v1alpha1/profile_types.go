@@ -25,8 +25,11 @@ import (
 // Profile name.
 const ProfileLabel = "koodam.dev/profile"
 
-// ProfileSpec names the namespaces that the Profile permits. An admin writes it. The Profile holds
-// no key, no login and no file.
+// CostGroupLabel is the label that declares the cost group of a key.
+const CostGroupLabel = "koodam.dev/cost-group"
+
+// ProfileSpec lists the namespaces and the cost groups that the Profile permits. An admin writes
+// it. The Profile holds no key, no login and no file.
 type ProfileSpec struct {
 	// Namespaces are the namespaces that this Profile permits. A namespace is bound only if this
 	// list has it and the namespace has the label koodam.dev/profile=<Profile name>.
@@ -37,6 +40,15 @@ type ProfileSpec struct {
 	// +kubebuilder:validation:items:MaxLength=63
 	// +kubebuilder:validation:items:Pattern=`^[a-z0-9]([-a-z0-9]*[a-z0-9])?$`
 	Namespaces []string `json:"namespaces,omitempty"`
+
+	// CostGroups are the cost groups that this Profile permits for its bound namespaces.
+	// +optional
+	// +listType=set
+	// +kubebuilder:validation:MaxItems=32
+	// +kubebuilder:validation:items:MinLength=1
+	// +kubebuilder:validation:items:MaxLength=63
+	// +kubebuilder:validation:items:Pattern=`^[a-z0-9]([-a-z0-9]*[a-z0-9])?$`
+	CostGroups []string `json:"costGroups,omitempty"`
 }
 
 // ProfileStatus is the binding that the controller found.

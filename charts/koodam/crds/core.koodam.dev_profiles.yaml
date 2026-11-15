@@ -54,6 +54,17 @@ spec:
           spec:
             description: spec defines the desired state of Profile
             properties:
+              costGroups:
+                description: CostGroups are the cost groups that this Profile permits
+                  for its bound namespaces.
+                items:
+                  maxLength: 63
+                  minLength: 1
+                  pattern: ^[a-z0-9]([-a-z0-9]*[a-z0-9])?$
+                  type: string
+                maxItems: 32
+                type: array
+                x-kubernetes-list-type: set
               namespaces:
                 description: |-
                   Namespaces are the namespaces that this Profile permits. A namespace is bound only if this
