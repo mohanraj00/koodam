@@ -171,7 +171,7 @@ This traffic goes direct, so it has no span. The Nookku HTTP tap records it.
 
 These parts are in `main` and are not in v0.3.0.
 
-- **Test key.** A TestKey (see [test-keys.md](test-keys.md)) gives the Workspace pod a read-only slot at `/etc/koodam/test-gateway`. The files are `key`, `alias`, `base-url` and `model`. The pod has no files there when no TestKey is active. The Workspace needs `spec.gateway` and `spec.testKeys`.
+- **Test key.** A TestKey (see [test-keys.md](test-keys.md)) gives the Workspace pod a read-only slot at `/etc/koodam/test-gateway`. The files are `key`, `alias`, `base-url`, `model` and `models`. The pod has no files there when no TestKey is active. The Workspace needs `spec.gateway` and `spec.testKeys`.
 - **Revoke first.** At the end, the controller blocks the key, waits, reads the spend, then deletes the slot. The status of the TestKey has the spend.
 - **Test folder in a Workspace.** If a harness has the plugin `nookku`, the pod gets the empty folder `/etc/koodam/nookku`. The image makes `/home/dev/nookku-tests` on the home PVC, and a login shell exports `NOOKKU_TESTS_DIR`. The older steps in Contract 4 still work.
 - **Test folder in an Agent.** The Agent declares the PVC volume `nookku-tests`. The pod mounts it at `/koodam/nookku-tests` and sets `NOOKKU_TESTS_DIR`.

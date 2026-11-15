@@ -175,6 +175,20 @@ var _ = Describe("TestKey CRD", func() {
 		Entry("TTL that is not a duration", "soon", "ttl"),
 	)
 
+	It("accepts a models list, and refuses a model that is in the list 2 times", func() {
+		tk := newTestKey("tk-models")
+		tk.Spec.Models = []string{testGatewayModel, otherModel}
+		Expect(create(tk)).To(Succeed())
+		tk.Spec.Models = []string{otherModel, testGatewayModel}
+		err := k8sClient.Update(ctx, tk)
+		expectInvalid(err)
+		Expect(err.Error()).To(ContainSubstring("spec is immutable"), "a different order is a change")
+
+		twice := newTestKey("tk-models-twice")
+		twice.Spec.Models = []string{otherModel, otherModel}
+		expectInvalid(create(twice))
+	})
+
 	DescribeTable("refuses a change to the spec",
 		func(change func(*corev1alpha1.TestKeySpec)) {
 			tk := newTestKey("tk-immutable")
@@ -191,6 +205,7 @@ var _ = Describe("TestKey CRD", func() {
 		Entry("ttl", func(s *corev1alpha1.TestKeySpec) { s.TTL = metav1.Duration{Duration: time.Hour} }),
 		Entry("budget by 1m", func(s *corev1alpha1.TestKeySpec) { s.Budget = resource.MustParse("501m") }),
 		Entry("ttl by 1s", func(s *corev1alpha1.TestKeySpec) { s.TTL.Duration += time.Second }),
+		Entry("models", func(s *corev1alpha1.TestKeySpec) { s.Models = []string{otherModel} }),
 	)
 
 	// The API server checks the result of the full patch. A remove and an add in one patch, or a

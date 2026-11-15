@@ -20,7 +20,7 @@ A Workspace without `spec.testKeys` permits no TestKey. If you set `spec.testKey
 
 ## The TestKey spec
 
-All the spec fields are necessary. The API server refuses a change to the spec after the create.
+All the spec fields but `models` are necessary. The API server refuses a change to the spec after the create.
 
 | Field | Rule |
 |---|---|
@@ -29,10 +29,11 @@ All the spec fields are necessary. The API server refuses a change to the spec a
 | `testID` | A letter or a digit, then letters, digits, `_` or `-`. |
 | `budget` | A quantity more than zero. It must not exceed `maxBudget`. |
 | `ttl` | A duration more than zero. It must not exceed `maxTTL`. |
+| `models` | Optional. A list of 1 to 16 models, each one only one time. Each model must be in the gateway of the Workspace (`gateway.model` or `gateway.models`). With no list, the key permits only the first model of the Workspace. |
 
 [config/samples/core_v1alpha1_testkey.yaml](../config/samples/core_v1alpha1_testkey.yaml) is an example.
 
-The controller refuses a key, and writes the reason to the condition `Active`, in these cases: the Workspace does not exist, the UID differs, the Workspace is suspended or in delete, no Profile binds the namespace, the Workspace has no gateway or no `testKeys`, or the budget or TTL exceeds the limit.
+The controller refuses a key, and writes the reason to the condition `Active`, in these cases: the Workspace does not exist, the UID differs, the Workspace is suspended or in delete, no Profile binds the namespace, the Workspace has no gateway or no `testKeys`, the budget or TTL exceeds the limit, or a model of the TestKey is not in the gateway of the Workspace (the reason `ModelNotPermitted`).
 
 ## The status
 
@@ -58,9 +59,10 @@ The controller makes 1 Secret for each Workspace as the slot. The Workspace pod 
 | `key` | The gateway key value. |
 | `alias` | The key alias. |
 | `base-url` | The gateway URL. |
-| `model` | The model of the Workspace gateway. |
+| `model` | The first model that the key permits. |
+| `models` | The models that the key permits, as a JSON list. |
 
-If a second TestKey finds the slot busy, it waits and shows the reason `SlotBusy`. A change to a slot file, or a missing slot, starts a revoke.
+If a second TestKey finds the slot busy, it waits and shows the reason `SlotBusy`. A change to a slot file, or a missing slot, starts a revoke. A change to the models of the Workspace that removes a model of the key also starts a revoke.
 
 ## Revoke first
 

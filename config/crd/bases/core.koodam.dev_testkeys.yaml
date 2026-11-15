@@ -70,6 +70,20 @@ spec:
                 x-kubernetes-validations:
                 - message: budget must be more than zero
                   rule: quantity(string(self)).isGreaterThan(quantity('0'))
+              models:
+                description: |-
+                  Models are the models that the key permits. Each model must be in the gateway of the
+                  Workspace. If the list is empty, the key permits only the first model of the Workspace.
+                items:
+                  maxLength: 253
+                  minLength: 1
+                  type: string
+                maxItems: 16
+                type: array
+                x-kubernetes-list-type: atomic
+                x-kubernetes-validations:
+                - message: Each model must be in the list only one time.
+                  rule: self.all(m, self.exists_one(n, n == m))
               testID:
                 description: |-
                   TestID is the Nookku test ID. It has the same rule as the Nookku TEST_ID: a letter or a
@@ -113,9 +127,10 @@ spec:
             type: object
             x-kubernetes-validations:
             - message: spec is immutable
-              rule: self.workspaceRef == oldSelf.workspaceRef && self.testID == oldSelf.testID
+              rule: 'self.workspaceRef == oldSelf.workspaceRef && self.testID == oldSelf.testID
                 && quantity(string(self.budget)).compareTo(quantity(string(oldSelf.budget)))
-                == 0 && duration(self.ttl) == duration(oldSelf.ttl)
+                == 0 && duration(self.ttl) == duration(oldSelf.ttl) && (has(self.models)
+                ? self.models : []) == (has(oldSelf.models) ? oldSelf.models : [])'
           status:
             description: status defines the observed state of TestKey
             properties:

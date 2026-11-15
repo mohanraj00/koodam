@@ -665,7 +665,7 @@ func (r *WorkspaceReconciler) SetupWithManager(mgr ctrl.Manager) error {
 // testKeyItems are the only fields of the slot Secret in the pod. A Secret with a different
 // shape gives no other field to the pod.
 func testKeyItems() []corev1.KeyToPath {
-	fields := []string{testKeyValueField, testKeyAliasField, testKeyURLField, testKeyModelField}
+	fields := []string{testKeyValueField, testKeyAliasField, testKeyURLField, testKeyModelField, testKeyModelsField}
 	items := make([]corev1.KeyToPath, 0, len(fields))
 	for _, f := range fields {
 		items = append(items, corev1.KeyToPath{Key: f, Path: f})
