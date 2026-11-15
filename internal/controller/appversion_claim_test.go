@@ -17,12 +17,75 @@ limitations under the License.
 package controller
 
 import (
+	"context"
+	"reflect"
 	"testing"
 
 	corev1 "k8s.io/api/core/v1"
 
 	corev1alpha1 "github.com/mohanraj00/koodam/api/v1alpha1"
 )
+
+func TestAppUserContainerSecurityContext(t *testing.T) {
+	for _, issuer := range []string{"", "https://issuer.example.com"} {
+		t.Run("issuer="+issuer, func(t *testing.T) {
+			av := &corev1alpha1.AppVersion{Spec: corev1alpha1.AppVersionSpec{
+				Template: corev1alpha1.AppVersionTemplate{PodTemplate: corev1alpha1.PodTemplate{
+					Spec: corev1.PodSpec{
+						Containers: []corev1.Container{
+							{Name: corev1alpha1.AppContainerName, Image: "registry.example.com/app:test",
+								Ports: []corev1.ContainerPort{{ContainerPort: 8080}}},
+							{Name: pauseTestSide, Image: "registry.example.com/side:test"},
+						},
+						InitContainers: []corev1.Container{
+							{Name: "init-user", Image: "registry.example.com/init:test"},
+							{Name: "init-side", Image: "registry.example.com/side:test",
+								RestartPolicy: new(corev1.ContainerRestartPolicyAlways)},
+						},
+					},
+				}},
+			}}
+			before := av.DeepCopy()
+			r := &AppVersionReconciler{Claim: AppClaimCheck{Issuer: issuer, Image: "registry.example.com/koodam:test"}}
+			d, err := r.deployment(context.Background(), av, "")
+			if err != nil {
+				t.Fatal(err)
+			}
+			pod := d.Spec.Template.Spec
+			init := pod.InitContainers
+			if issuer != "" {
+				if len(init) != 3 || init[0].Name != claimContainer {
+					t.Fatal("The claim check must be the first init container.")
+				}
+				if !reflect.DeepEqual(init[0].SecurityContext, helperSecurityContext()) {
+					t.Error("The claim check must keep the helper security context.")
+				}
+				init = init[1:]
+			}
+			if len(pod.Containers) != 2 || len(init) != 2 {
+				t.Fatal("The pod must keep each user container and init container.")
+			}
+			for _, containers := range [][]corev1.Container{pod.Containers, init} {
+				for _, c := range containers {
+					sc := c.SecurityContext
+					if sc == nil || sc.Capabilities == nil {
+						t.Errorf("Container %s must have a capability drop.", c.Name)
+						continue
+					}
+					if !reflect.DeepEqual(sc.Capabilities.Drop, []corev1.Capability{capabilityAll}) || len(sc.Capabilities.Add) != 0 {
+						t.Errorf("Container %s must drop all capabilities and add none.", c.Name)
+					}
+					if sc.AllowPrivilegeEscalation == nil || *sc.AllowPrivilegeEscalation {
+						t.Errorf("Container %s must not permit privilege escalation.", c.Name)
+					}
+				}
+			}
+			if !reflect.DeepEqual(av, before) {
+				t.Error("The pod builder must not change the user template.")
+			}
+		})
+	}
+}
 
 func TestClaimListenPorts(t *testing.T) {
 	app := []corev1.ContainerPort{{Name: "a", ContainerPort: claimPortBase}, {Name: "b", ContainerPort: 8080},
