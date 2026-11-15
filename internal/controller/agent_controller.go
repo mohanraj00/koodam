@@ -421,17 +421,9 @@ func (r *AgentReconciler) provision(ctx context.Context, a *corev1alpha1.Agent) 
 		}
 	}
 	models := a.Spec.ModelList()
-	md := map[string]string{metaUID: string(a.UID), metaNamespace: a.Namespace, "agent": a.Name, "user": a.Spec.User}
-	if a.Status.CostGroup != "" {
-		md["costGroup"] = a.Status.CostGroup
-	}
-	if a.Spec.Harness != nil {
-		// The gateway can then group the spend by harness.
-		md["harness"] = a.Spec.Harness.Name
-	}
 	err = r.Gateway.CreateKey(ctx, gateway.KeySpec{
 		Value: key, Alias: alias, Model: models[0], Models: models[1:], Budget: a.Spec.Budget.AsApproximateFloat64(),
-		TTL: time.Duration(a.Spec.DeadlineSeconds)*time.Second + r.Grace, Metadata: md,
+		TTL: time.Duration(a.Spec.DeadlineSeconds)*time.Second + r.Grace, Metadata: keyMetadata(a),
 	})
 	if err != nil {
 		return err
@@ -479,6 +471,19 @@ func (r *AgentReconciler) provision(ctx context.Context, a *corev1alpha1.Agent) 
 	meta.SetStatusCondition(&a.Status.Conditions, r.Egress.condition(a.Generation))
 	log.Info("Provisioned the run", "keyAlias", alias)
 	return r.Status().Update(ctx, a)
+}
+
+// keyMetadata is the metadata of the gateway key of a run. The gateway can then group the spend
+// by harness and by cost group.
+func keyMetadata(a *corev1alpha1.Agent) map[string]string {
+	md := map[string]string{metaUID: string(a.UID), metaNamespace: a.Namespace, "agent": a.Name, "user": a.Spec.User}
+	if a.Status.CostGroup != "" {
+		md["costGroup"] = a.Status.CostGroup
+	}
+	if a.Spec.Harness != nil {
+		md["harness"] = a.Spec.Harness.Name
+	}
+	return md
 }
 
 // secret has the env for the harnesses.
