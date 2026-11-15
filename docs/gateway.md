@@ -139,7 +139,7 @@ kubectl get agents                # the spend column
 
 The gateway key has the harness and the `user` of the Agent in its metadata. Thus you can group the spend in LiteLLM by harness or by user.
 
-To add the Agent gateway usage for each cost group in a namespace:
+To show the Agent gateway usage for each cost group in a namespace:
 
 ```sh
 koodam usage --by cost-group -n dev-sample

@@ -305,9 +305,9 @@ func TestUsageByCostGroup(t *testing.T) {
 	if !slices.Equal(lines, want) {
 		t.Errorf("table:\n%s\nwant:\n%s", out, strings.Join(want, "\n"))
 	}
-	if wantNote := "note: 1 Agents have no gateway usage yet: a run that did not end, " +
+	if wantNote := "note: Agents with no gateway usage yet: 1. The cause is a run that did not end, " +
 		"or a gateway that gave no usage. They are not in the table.\n" +
-		"note: 1 Agents have a spend that is not a number. They are not in the table.\n"; errOut != wantNote {
+		"note: Agents with a spend that is not a number: 1. They are not in the table.\n"; errOut != wantNote {
 		t.Errorf("stderr: got %q, want %q", errOut, wantNote)
 	}
 }
@@ -325,7 +325,7 @@ func TestUsageByCostGroupWithNoValidSpend(t *testing.T) {
 			if want := "No gateway usage in the Agents of namespace " + testNS + ".\n"; out != want {
 				t.Errorf("stdout: got %q, want %q", out, want)
 			}
-			if want := "note: 1 Agents have a spend that is not a number. They are not in the table.\n"; errOut != want {
+			if want := "note: Agents with a spend that is not a number: 1. They are not in the table.\n"; errOut != want {
 				t.Errorf("stderr: got %q, want %q", errOut, want)
 			}
 		})
@@ -358,7 +358,7 @@ func TestUsageByCostGroupWithNoUsage(t *testing.T) {
 			t.Errorf("got stdout %q, error %v", out, err)
 		}
 		if len(objects) == 0 && errOut != "" ||
-			len(objects) != 0 && !strings.Contains(errOut, "1 Agents have no gateway usage yet") {
+			len(objects) != 0 && !strings.Contains(errOut, "Agents with no gateway usage yet: 1") {
 			t.Errorf("got stderr %q", errOut)
 		}
 	}

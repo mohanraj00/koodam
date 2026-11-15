@@ -97,7 +97,7 @@ koodam spend fix-tests -n dev-sample
 kubectl get agents -n dev-sample
 ```
 
-To add the Agent gateway usage for each cost group:
+To show the Agent gateway usage for each cost group:
 
 ```sh
 koodam usage --by cost-group -n dev-sample
