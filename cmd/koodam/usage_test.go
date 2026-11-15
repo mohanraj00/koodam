@@ -35,6 +35,12 @@ import (
 	"github.com/mohanraj00/koodam/internal/usage"
 )
 
+// testTeam and otherName are test names that more than one test uses.
+const (
+	testTeam  = "team"
+	otherName = "other"
+)
+
 // usageContext is the kube context of the usage tests.
 const usageContext = "kind-test"
 
@@ -136,12 +142,12 @@ func projected(c float64) string { return fmt.Sprintf("projected %.4f USD", c) }
 
 func TestUsageUsesTheNamespace(t *testing.T) {
 	ws := testWorkspace(hostKey, corev1alpha1.WorkspaceRunning)
-	ws.Namespace = "team"
+	ws.Namespace = testTeam
 	calls, run := setupUsage(t, ws)
 	if out, _, err := run("usage", wsName); err != nil {
 		t.Fatalf("usage: %v\n%s", err, out)
 	}
-	want := []string{sshProgram, "-T", hostAlias("team", wsName), "sh", "-s"}
+	want := []string{sshProgram, "-T", hostAlias(testTeam, wsName), "sh", "-s"}
 	if len(*calls) != 1 || !slices.Equal((*calls)[0], want) {
 		t.Errorf("calls: got %q, want %q", *calls, want)
 	}
@@ -202,7 +208,7 @@ func TestUsageErrors(t *testing.T) {
 	if _, _, err := run("usage", wsName); err == nil || strings.Contains(err.Error(), "FIXTURE") {
 		t.Errorf("bad output: got %v", err)
 	}
-	if _, _, err := run("usage", "other"); err == nil || !strings.Contains(err.Error(), "does not exist") {
+	if _, _, err := run("usage", otherName); err == nil || !strings.Contains(err.Error(), "does not exist") {
 		t.Errorf("missing Workspace: got %v", err)
 	}
 }
@@ -265,8 +271,8 @@ func TestUsageByCostGroup(t *testing.T) {
 	}
 	first := costGroupAgent("first", "project-a", u("0.0200", 4, 1, 2400, 400))
 	first.Labels = map[string]string{corev1alpha1.CostGroupLabel: "changed"}
-	other := costGroupAgent("other-namespace", "other", u("1", 100, 100, 100, 100))
-	other.Namespace = "other"
+	other := costGroupAgent("other-namespace", otherName, u("1", 100, 100, 100, 100))
+	other.Namespace = otherName
 	kube := newKube(t, nil, first,
 		costGroupAgent("second", "project-a", u("0.0250", 5, 0, 3000, 500)),
 		costGroupAgent("ops", "ops", u("0.0100", 4, 0, 1200, 300)),
@@ -328,16 +334,16 @@ func TestUsageByCostGroupWithNoValidSpend(t *testing.T) {
 
 func TestUsageByCostGroupUsesTheNamespace(t *testing.T) {
 	a := costGroupAgent("team-run", "ops", &corev1alpha1.AgentUsage{Spend: "0"})
-	a.Namespace = "team"
-	kube := newKube(t, nil, a, costGroupAgent("other-run", "other", &corev1alpha1.AgentUsage{Spend: "1"}))
+	a.Namespace = testTeam
+	kube := newKube(t, nil, a, costGroupAgent("other-run", otherName, &corev1alpha1.AgentUsage{Spend: "1"}))
 	out, errOut, err := runUsageBy(func() (*env, error) {
-		return &env{kube: kube, namespace: "team"}, nil
-	}, "--by", "cost-group", "-n", "team")
+		return &env{kube: kube, namespace: testTeam}, nil
+	}, "--by", "cost-group", "-n", testTeam)
 	if err != nil || errOut != "" {
 		t.Fatalf("got stderr %q, error %v", errOut, err)
 	}
 	wantAll(t, strings.Join(strings.Fields(out), " "), "ops 1 0 0 0 0 0.0000 USD", "total 1 0 0 0 0 0.0000 USD")
-	if strings.Contains(out, "other") || strings.Contains(out, "(none)") {
+	if strings.Contains(out, otherName) || strings.Contains(out, "(none)") {
 		t.Errorf("got stdout %q", out)
 	}
 }

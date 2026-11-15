@@ -121,7 +121,7 @@ func TestCodexLoginRejectsInputWithoutDisclosure(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "--stdin") {
 		t.Fatal("Codex login must require --stdin")
 	}
-	kube := newKube(t, nil, loginSecret(nil, map[string][]byte{"other": []byte(otherValue)}))
+	kube := newKube(t, nil, loginSecret(nil, map[string][]byte{otherName: []byte(otherValue)}))
 	for _, args := range [][]string{{"--stdin"}, {"--remove"}} {
 		_, err = runCodexTest(t, kube, data, token, args...)
 		if err == nil || !strings.Contains(err.Error(), "koodam did not make it") {
