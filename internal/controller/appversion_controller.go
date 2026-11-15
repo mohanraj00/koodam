@@ -820,6 +820,16 @@ func (r *AppVersionReconciler) deployment(ctx context.Context, av *corev1alpha1.
 	}
 	c := appContainer(&tmpl.Spec)
 	c.Ports, c.ReadinessProbe, c.LivenessProbe, c.StartupProbe = ports, ready, live, start
+	// User containers share the network namespace of the claim check. Drop all capabilities
+	// to block raw packet access, and do not permit privilege escalation.
+	for _, containers := range [][]corev1.Container{tmpl.Spec.Containers, tmpl.Spec.InitContainers} {
+		for i := range containers {
+			containers[i].SecurityContext = &corev1.SecurityContext{
+				AllowPrivilegeEscalation: new(false),
+				Capabilities:             &corev1.Capabilities{Drop: []corev1.Capability{"ALL"}},
+			}
+		}
+	}
 	if err := r.Claim.add(&tmpl, av, ports); err != nil {
 		return nil, err
 	}
