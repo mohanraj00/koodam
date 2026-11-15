@@ -333,7 +333,8 @@ var _ = Describe("Workspace gateway key", func() {
 			Secret: &corev1.SecretVolumeSource{SecretName: "kt-" + name + "-testkey", Optional: new(true),
 				DefaultMode: new(int32(0o440)), Items: []corev1.KeyToPath{{Key: testKeyValueField, Path: "key"},
 					{Key: testKeyAliasField, Path: "alias"}, {Key: testKeyURLField, Path: "base-url"},
-					{Key: testKeyModelField, Path: testKeyModelField}}}}}))
+					{Key: testKeyModelField, Path: testKeyModelField},
+					{Key: testKeyModelsField, Path: testKeyModelsField}}}}}))
 		Expect(pod.Containers[0].VolumeMounts).To(ContainElement(corev1.VolumeMount{Name: "test-gateway",
 			MountPath: "/etc/koodam/test-gateway", ReadOnly: true}))
 

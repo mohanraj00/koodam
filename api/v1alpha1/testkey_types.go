@@ -23,7 +23,7 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 )
 
-// TestKeySpec asks for one gateway key for one Nookku test in a Workspace. All the fields are
+// TestKeySpec asks for one gateway key for one Nookku test in a Workspace. All the fields but models are
 // necessary. The API server refuses a change to a spec value after the create.
 // No controller uses this type at this time. The API server does not do a check on the
 // Workspace UID, the limits of the Workspace or the count of active keys.
@@ -51,6 +51,16 @@ type TestKeySpec struct {
 	// +kubebuilder:validation:MaxLength=32
 	// +kubebuilder:validation:XValidation:rule="duration(self) > duration('0s')",message="ttl must be more than zero"
 	TTL metav1.Duration `json:"ttl"`
+
+	// Models are the models that the key permits. Each model must be in the gateway of the
+	// Workspace. If the list is empty, the key permits only the first model of the Workspace.
+	// +optional
+	// +listType=atomic
+	// +kubebuilder:validation:MaxItems=16
+	// +kubebuilder:validation:items:MinLength=1
+	// +kubebuilder:validation:items:MaxLength=253
+	// +kubebuilder:validation:XValidation:rule="self.all(m, self.exists_one(n, n == m))",message="Each model must be in the list only one time."
+	Models []string `json:"models,omitempty"`
 }
 
 // TestKeyWorkspaceRef identifies one Workspace in the namespace of the TestKey.
@@ -122,7 +132,7 @@ type TestKey struct {
 	// spec defines the desired state of TestKey. It is immutable. The API server compares the
 	// budget and the TTL by value, thus "0.50" and "500m" are the same budget.
 	// +required
-	// +kubebuilder:validation:XValidation:rule="self.workspaceRef == oldSelf.workspaceRef && self.testID == oldSelf.testID && quantity(string(self.budget)).compareTo(quantity(string(oldSelf.budget))) == 0 && duration(self.ttl) == duration(oldSelf.ttl)",message="spec is immutable"
+	// +kubebuilder:validation:XValidation:rule="self.workspaceRef == oldSelf.workspaceRef && self.testID == oldSelf.testID && quantity(string(self.budget)).compareTo(quantity(string(oldSelf.budget))) == 0 && duration(self.ttl) == duration(oldSelf.ttl) && (has(self.models) ? self.models : []) == (has(oldSelf.models) ? oldSelf.models : [])",message="spec is immutable"
 	Spec TestKeySpec `json:"spec"`
 
 	// status defines the observed state of TestKey

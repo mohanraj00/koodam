@@ -18,7 +18,9 @@ package controller
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"slices"
 	"strconv"
 	"time"
 
@@ -48,6 +50,8 @@ const (
 	testKeyAliasField = "alias"
 	testKeyURLField   = "base-url"
 	testKeyModelField = "model"
+	// testKeyModelsField has the permitted models as a JSON list. The model field has the first one.
+	testKeyModelsField = "models"
 
 	// DefaultTestKeyRevokeWait is the LiteLLM auth cache TTL (60s) plus a margin. It is a
 	// second limit after the block. The fence is the single-instance gateway (#192).
@@ -218,7 +222,35 @@ func testKeyRefusal(key *corev1alpha1.TestKey, workspace *corev1alpha1.Workspace
 	case key.Spec.TTL.Duration > policy.MaxTTL.Duration:
 		return "TTLLimitExceeded", "The test key TTL exceeds the Workspace limit."
 	}
+	for _, m := range key.Spec.Models {
+		if workspace.Spec.Gateway == nil || !slices.Contains(workspace.Spec.Gateway.ModelList(), m) {
+			return "ModelNotPermitted", "A model of the test key is not in the gateway of the Workspace."
+		}
+	}
 	return "", ""
+}
+
+// testKeyModels gives the models that the key permits. The caller makes sure that the
+// Workspace has a gateway. A TestKey with no list gets only the first model of the Workspace.
+func testKeyModels(key *corev1alpha1.TestKey, workspace *corev1alpha1.Workspace) []string {
+	if len(key.Spec.Models) > 0 {
+		return key.Spec.Models
+	}
+	return workspace.Spec.Gateway.ModelList()[:1]
+}
+
+// slotModels gives the models of the slot. A slot from before the models field has only the
+// model field.
+func slotModels(slot *corev1.Secret) []string {
+	raw, ok := slot.Data[testKeyModelsField]
+	if !ok {
+		return []string{string(slot.Data[testKeyModelField])}
+	}
+	var models []string
+	if err := json.Unmarshal(raw, &models); err != nil {
+		return nil
+	}
+	return models
 }
 
 // issue follows the approved create order: the finalizer, the slot, the status hash, the
@@ -261,12 +293,13 @@ func (r *TestKeyReconciler) issue(ctx context.Context, key *corev1alpha1.TestKey
 		}
 	}
 	remaining := key.Status.ExpiresAt.Sub(r.now()).Truncate(time.Second)
+	models := testKeyModels(key, workspace)
 	// The slot is not immutable. A changed field, such as a base-url to another host, gets a
 	// revoke, as a changed key value does.
 	if gateway.HashKey(value) != key.Status.KeyHash || remaining < time.Second ||
 		string(slot.Data[testKeyAliasField]) != key.Status.KeyAlias ||
 		string(slot.Data[testKeyURLField]) != r.GatewayURL ||
-		string(slot.Data[testKeyModelField]) != workspace.Spec.Gateway.ModelList()[0] {
+		string(slot.Data[testKeyModelField]) != models[0] || !slices.Equal(slotModels(slot), models) {
 		return r.revoke(ctx, key)
 	}
 	// A suspend, an unbind or a delete can start after the first Workspace read. From the hash
@@ -278,8 +311,11 @@ func (r *TestKeyReconciler) issue(ctx context.Context, key *corev1alpha1.TestKey
 	if reason, _ := r.refusal(key, workspace); reason != "" {
 		return r.revoke(ctx, key)
 	}
+	if models = testKeyModels(key, workspace); !slices.Equal(slotModels(slot), models) {
+		return r.revoke(ctx, key)
+	}
 	err = r.Gateway.CreateKey(ctx, gateway.KeySpec{
-		Value: value, Alias: key.Status.KeyAlias, Model: workspace.Spec.Gateway.ModelList()[0],
+		Value: value, Alias: key.Status.KeyAlias, Model: models[0], Models: models[1:],
 		Budget: key.Spec.Budget.AsApproximateFloat64(), TTL: remaining,
 		Metadata: map[string]string{"koodam_test_id": key.Spec.TestID, "koodam_testkey": key.Name},
 	})
@@ -305,11 +341,16 @@ func (r *TestKeyReconciler) createSlot(ctx context.Context, key *corev1alpha1.Te
 	if err != nil {
 		return nil, err
 	}
+	models := testKeyModels(key, workspace)
+	list, err := json.Marshal(models)
+	if err != nil {
+		return nil, err
+	}
 	slot := &corev1.Secret{
 		ObjectMeta: metav1.ObjectMeta{Name: testKeySecretName(workspace.Name), Namespace: key.Namespace,
 			Labels: map[string]string{"app.kubernetes.io/managed-by": "koodam"}},
 		StringData: map[string]string{testKeyValueField: value, testKeyAliasField: testKeyAlias(key),
-			testKeyURLField: r.GatewayURL, testKeyModelField: workspace.Spec.Gateway.ModelList()[0]},
+			testKeyURLField: r.GatewayURL, testKeyModelField: models[0], testKeyModelsField: string(list)},
 	}
 	if err := controllerutil.SetControllerReference(key, slot, r.Scheme()); err != nil {
 		return nil, err

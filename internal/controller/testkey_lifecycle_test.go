@@ -119,12 +119,13 @@ var _ = Describe("TestKey lifecycle", func() {
 		workspace *corev1alpha1.Workspace
 	)
 
-	newKey := func(testID string) *corev1alpha1.TestKey {
+	newKey := func(testID string, models ...string) *corev1alpha1.TestKey {
 		k := &corev1alpha1.TestKey{
 			ObjectMeta: metav1.ObjectMeta{GenerateName: "tk-life-", Namespace: workspace.Namespace},
 			Spec: corev1alpha1.TestKeySpec{
 				WorkspaceRef: corev1alpha1.TestKeyWorkspaceRef{Name: workspace.Name, UID: workspace.UID},
 				TestID:       testID, Budget: resource.MustParse("0.5"), TTL: metav1.Duration{Duration: ttl},
+				Models: models,
 			},
 		}
 		Expect(k8sClient.Create(ctx, k)).To(Succeed())
@@ -221,6 +222,74 @@ var _ = Describe("TestKey lifecycle", func() {
 		Expect(gw.ops()).NotTo(ContainElement(opCreate))
 	})
 
+	Context("with a models list in the Workspace gateway", func() {
+		setModels := func(models ...string) {
+			ws := &corev1alpha1.Workspace{}
+			Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(workspace), ws)).To(Succeed())
+			ws.Spec.Gateway.Model, ws.Spec.Gateway.Models = "", models
+			Expect(k8sClient.Update(ctx, ws)).To(Succeed())
+		}
+		BeforeEach(func() { setModels(testGatewayModel, otherModel) })
+
+		It("permits only the first model of the Workspace if the TestKey has no list", func() {
+			reconcileKey(newKey("first-model"))
+			Expect(gw.specs).To(HaveLen(1))
+			Expect(gw.specs[0].Model).To(Equal(testGatewayModel))
+			Expect(gw.specs[0].Models).To(BeEmpty())
+			s, err := slot()
+			Expect(err).NotTo(HaveOccurred())
+			Expect(string(s.Data[testKeyModelsField])).To(Equal(`["` + testGatewayModel + `"]`))
+		})
+
+		It("permits the models of the TestKey, and revokes the key if one goes out of the Workspace", func() {
+			k := newKey("two-models", otherModel, testGatewayModel)
+			reconcileKey(k)
+			Expect(reason(k)).To(Equal(reasonIssued))
+			Expect(gw.specs).To(HaveLen(1))
+			Expect(gw.specs[0].Model).To(Equal(otherModel))
+			Expect(gw.specs[0].Models).To(Equal([]string{testGatewayModel}))
+			s, err := slot()
+			Expect(err).NotTo(HaveOccurred())
+			Expect(string(s.Data[testKeyModelField])).To(Equal(otherModel))
+			Expect(string(s.Data[testKeyModelsField])).To(Equal(`["` + otherModel + `","` + testGatewayModel + `"]`))
+
+			setModels(testGatewayModel)
+			reconcileKey(k)
+			Expect(gw.ops()).To(Equal([]string{opCreate, opBlock}), "the block comes with no second create")
+		})
+
+		It("refuses a TestKey with a model that is not in the Workspace", func() {
+			k := newKey("not-permitted", testGatewayModel, "model-outside")
+			reconcileKey(k)
+			Expect(reason(k)).To(Equal("ModelNotPermitted"))
+			Expect(gw.ops()).To(BeEmpty())
+			_, err := slot()
+			Expect(apierrors.IsNotFound(err)).To(BeTrue())
+		})
+
+		It("revokes the key if the models of the slot change", func() {
+			k := newKey("tamper-models", testGatewayModel)
+			reconcileKey(k)
+			s, err := slot()
+			Expect(err).NotTo(HaveOccurred())
+			s.Data[testKeyModelsField] = []byte(`["` + testGatewayModel + `","` + otherModel + `"]`)
+			Expect(k8sClient.Update(ctx, s)).To(Succeed())
+			reconcileKey(k)
+			Expect(gw.ops()).To(Equal([]string{opCreate, opBlock}))
+		})
+
+		It("keeps a key with a slot from before the models field", func() {
+			k := newKey("old-slot")
+			reconcileKey(k)
+			s, err := slot()
+			Expect(err).NotTo(HaveOccurred())
+			delete(s.Data, testKeyModelsField)
+			Expect(k8sClient.Update(ctx, s)).To(Succeed())
+			reconcileKey(k)
+			Expect(gw.ops()).NotTo(ContainElement(opBlock))
+		})
+	})
+
 	It("revokes the key if a slot field changes", func() {
 		k := newKey("tamper")
 		reconcileKey(k)
@@ -268,7 +337,7 @@ var _ = Describe("TestKey lifecycle", func() {
 		Expect(reason(k)).To(Equal(reasonIssued))
 		Expect(gw.specs).To(HaveLen(1))
 		Expect(gw.specs[0]).To(Equal(gateway.KeySpec{Value: value, Alias: got.Status.KeyAlias,
-			Model: testGatewayModel, Budget: 0.5, TTL: ttl,
+			Model: testGatewayModel, Models: []string{}, Budget: 0.5, TTL: ttl,
 			Metadata: map[string]string{"koodam_test_id": testKeyTestID, "koodam_testkey": got.Name}}))
 
 		// No key value in the status.

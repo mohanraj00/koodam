@@ -267,6 +267,9 @@ var _ = Describe("Workspaces", Ordered, Label("workspace"), func() {
 			MaxTTL: metav1.Duration{Duration: 10 * time.Minute}}
 		ws.Spec.Harnesses = []corev1alpha1.HarnessSpec{{Name: "claude-code"},
 			{Name: "codex", Plugins: []corev1alpha1.HarnessPlugin{corev1alpha1.HarnessPluginNookku}}}
+		// The Workspace permits 2 models, so the TestKey can permit the 2 models (#295).
+		models := []string{mockModel, "fake-responses-b"}
+		ws.Spec.Gateway.Model, ws.Spec.Gateway.Models = "", models
 		Expect(k8s.Patch(ctx, ws, patch)).To(Succeed())
 		// Only the new pod has the marker. The old pod stays Running during the roll.
 		Eventually(func() error { _, err := ssh("test -d /etc/koodam/nookku"); return err },
@@ -283,7 +286,7 @@ var _ = Describe("Workspaces", Ordered, Label("workspace"), func() {
 			Spec: corev1alpha1.TestKeySpec{
 				WorkspaceRef: corev1alpha1.TestKeyWorkspaceRef{Name: ws.Name, UID: ws.UID},
 				TestID:       testID, Budget: resource.MustParse("0.5"),
-				TTL: metav1.Duration{Duration: 3 * time.Minute}}}
+				TTL: metav1.Duration{Duration: 3 * time.Minute}, Models: models}}
 		Expect(k8s.Create(ctx, tk)).To(Succeed())
 		Eventually(func(g Gomega) {
 			g.Expect(k8s.Get(ctx, client.ObjectKeyFromObject(tk), tk)).To(Succeed())
@@ -294,6 +297,7 @@ var _ = Describe("Workspaces", Ordered, Label("workspace"), func() {
 		hash := tk.Status.KeyHash
 		Expect(keyInfo(hash).Metadata).To(HaveKeyWithValue("koodam_test_id", testID),
 			"The gateway key does not name the test.")
+		Expect(keyInfo(hash).Models).To(ConsistOf(models), "The gateway key does not permit the 2 models.")
 
 		By("calling the gateway from the pod with the key of the test")
 		// The Workspace image has no curl, so the login shell of dev (bash) uses /dev/tcp. The key
@@ -312,6 +316,9 @@ var _ = Describe("Workspaces", Ordered, Label("workspace"), func() {
 			g.Expect(err).NotTo(HaveOccurred())
 			g.Expect(strings.TrimSpace(out)).To(MatchRegexp(`^HTTP/1\.[01] 200 `))
 		}, 2*time.Minute, 5*time.Second).Should(Succeed(), "The test key did not work from the pod.")
+		out, err = ssh("cat /etc/koodam/test-gateway/models")
+		Expect(err).NotTo(HaveOccurred(), "The slot has no models file.")
+		Expect(strings.TrimSpace(out)).To(Equal(`["` + mockModel + `","fake-responses-b"]`))
 
 		By("waiting for the revoke after the TTL")
 		Eventually(func(g Gomega) {
