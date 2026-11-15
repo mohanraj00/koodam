@@ -85,7 +85,7 @@ func versionCostGroupObjects(namespace string, label *string) (
 					Name: corev1alpha1.AppContainerName, Image: testAgentImage,
 					Ports: []corev1.ContainerPort{{Name: "http", ContainerPort: 8080}},
 					ReadinessProbe: &corev1.Probe{ProbeHandler: corev1.ProbeHandler{
-						HTTPGet: &corev1.HTTPGetAction{Path: "/healthz", Port: intstr.FromString("http")}}},
+						HTTPGet: &corev1.HTTPGetAction{Path: "/readyz", Port: intstr.FromString("http")}}},
 				}}}}}}}
 	p := &corev1alpha1.Profile{ObjectMeta: metav1.ObjectMeta{Name: namespace},
 		Spec: corev1alpha1.ProfileSpec{Namespaces: []string{namespace}, CostGroups: []string{testCostGroupAllowed}}}
