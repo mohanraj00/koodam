@@ -9026,8 +9026,10 @@ spec:
                         || has(self.spec.restartPolicy) || has(self.spec.activeDeadlineSeconds)
                         || has(self.spec.ephemeralContainers))'
                   rules:
-                    description: Rules are the RBAC rules of the version Role, in
-                      the namespace of the AppVersion only.
+                    description: |-
+                      Rules are the RBAC rules of the version Role, in the namespace of the AppVersion only. The
+                      admission policy in config/apps/admission refuses rules, because an App pod has no path to
+                      the API server yet.
                     items:
                       description: |-
                         PolicyRule holds information that describes a policy rule, but does not contain information

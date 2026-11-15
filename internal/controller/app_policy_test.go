@@ -26,6 +26,7 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	corev1 "k8s.io/api/core/v1"
+	rbacv1 "k8s.io/api/rbac/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
 	"k8s.io/apimachinery/pkg/api/resource"
@@ -120,6 +121,17 @@ var _ = Describe("AppVersion admission policy", Ordered, func() {
 			av.Spec.AppRef.Name = string(bytes.Repeat([]byte("a"), 64))
 		})), "spec.appRef.name")
 		Expect(create(newVersion("policy-a", nil))).To(Succeed())
+	})
+
+	It("refuses template rules on a create and on a template change", func() {
+		const rulesText = "spec.template.rules is not permitted"
+		rules := []rbacv1.PolicyRule{{APIGroups: []string{""}, Resources: []string{"configmaps"}, Verbs: []string{"get"}}}
+		refused(create(newVersion("policy-d", func(av *corev1alpha1.AppVersion) { av.Spec.Template.Rules = rules })), rulesText)
+
+		av := newVersion("policy-d", nil)
+		Expect(create(av)).To(Succeed())
+		av.Spec.Template.Rules = rules
+		refused(k8sClient.Update(ctx, av), rulesText)
 	})
 
 	It("accepts a template change before the key, and refuses it after the key", func() {
