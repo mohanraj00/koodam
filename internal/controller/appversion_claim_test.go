@@ -35,10 +35,10 @@ func TestAppUserContainerSecurityContext(t *testing.T) {
 						Containers: []corev1.Container{
 							{Name: corev1alpha1.AppContainerName, Image: "registry.example.com/app:test",
 								Ports: []corev1.ContainerPort{{ContainerPort: 8080}}},
-							{Name: "side", Image: "registry.example.com/side:test"},
+							{Name: pauseTestSide, Image: "registry.example.com/side:test"},
 						},
 						InitContainers: []corev1.Container{
-							{Name: "init", Image: "registry.example.com/init:test"},
+							{Name: "init-user", Image: "registry.example.com/init:test"},
 							{Name: "init-side", Image: "registry.example.com/side:test",
 								RestartPolicy: new(corev1.ContainerRestartPolicyAlways)},
 						},
@@ -72,7 +72,7 @@ func TestAppUserContainerSecurityContext(t *testing.T) {
 						t.Errorf("Container %s must have a capability drop.", c.Name)
 						continue
 					}
-					if !reflect.DeepEqual(sc.Capabilities.Drop, []corev1.Capability{"ALL"}) || len(sc.Capabilities.Add) != 0 {
+					if !reflect.DeepEqual(sc.Capabilities.Drop, []corev1.Capability{capabilityAll}) || len(sc.Capabilities.Add) != 0 {
 						t.Errorf("Container %s must drop all capabilities and add none.", c.Name)
 					}
 					if sc.AllowPrivilegeEscalation == nil || *sc.AllowPrivilegeEscalation {

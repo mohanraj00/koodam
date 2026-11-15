@@ -820,13 +820,15 @@ func (r *AppVersionReconciler) deployment(ctx context.Context, av *corev1alpha1.
 	}
 	c := appContainer(&tmpl.Spec)
 	c.Ports, c.ReadinessProbe, c.LivenessProbe, c.StartupProbe = ports, ready, live, start
-	// User containers share the network namespace of the claim check. Drop all capabilities
-	// to block raw packet access, and do not permit privilege escalation.
+	// Drop all capabilities of each user container, and do not permit privilege escalation.
+	// With a claim check, the user containers share its network namespace, and NET_RAW can
+	// read a request before the check removes the bearer token. The pod template cannot set
+	// a container securityContext, so Koodam owns this field.
 	for _, containers := range [][]corev1.Container{tmpl.Spec.Containers, tmpl.Spec.InitContainers} {
 		for i := range containers {
 			containers[i].SecurityContext = &corev1.SecurityContext{
 				AllowPrivilegeEscalation: new(false),
-				Capabilities:             &corev1.Capabilities{Drop: []corev1.Capability{"ALL"}},
+				Capabilities:             &corev1.Capabilities{Drop: []corev1.Capability{capabilityAll}},
 			}
 		}
 	}
