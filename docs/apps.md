@@ -75,6 +75,7 @@ A `ValidatingAdmissionPolicy` holds the checks of an AppVersion that the CRD can
 - After the version has a gateway key, or after the controller started to make its objects (the condition `Started`), `spec.template` cannot change. A later failure does not remove this lock. To change the template, make a new AppVersion. `replicas`, `budgetPerDay` and `lifecycle` can change.
 - The name of the AppVersion is a DNS label with 60 characters or fewer, and `spec.appRef.name` has 63 characters or fewer.
 - Each port of the `app` container has a name and the TCP protocol, with no host port.
+- `template.rules` is not permitted. The NetworkPolicy of an App pod has no path to the API server, so a version Role has no effect. [#340](https://github.com/mohanraj00/koodam/issues/340) adds this path. An AppVersion from before this check keeps its rules, and it can still lose its finalizer.
 
 ## Endpoints and weights
 
@@ -138,4 +139,4 @@ Koodam cannot see a session, so the end of the drain time is the end of the sess
 
 With the egress proxy of the chart, name each namespace of the Apps in `workspace.networkPolicy.namespaces`. The proxy gives an App pod an identity only in a named namespace, and it refuses each call of a pod with no identity. The chart refuses `apps.enabled` with `egressProxy.enabled` and an empty list.
 
-With the egress proxy, each AppVersion gets a NetworkPolicy. The pods get egress only to the egress proxy. The policy permits no ingress by default. Set `apps.ingressNamespaces` to the namespace of the Gateway data plane, and then the pods of that namespace can send traffic to the ports of the `app` container. Then the condition `TracedEgress` of the AppVersion is `True`. With this policy, an App pod has no path to the API server.
+With the egress proxy, each AppVersion gets a NetworkPolicy. The pods get egress only to the egress proxy. The policy permits no ingress by default. Set `apps.ingressNamespaces` to the namespace of the Gateway data plane, and then the pods of that namespace can send traffic to the ports of the `app` container. Then the condition `TracedEgress` of the AppVersion is `True`. With this policy, an App pod has no path to the API server. Thus the admission policy refuses `template.rules`.

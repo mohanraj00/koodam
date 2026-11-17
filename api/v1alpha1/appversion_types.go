@@ -130,7 +130,9 @@ type AppVersionTemplate struct {
 	// +kubebuilder:validation:items:MinLength=1
 	Models []string `json:"models,omitempty"`
 
-	// Rules are the RBAC rules of the version Role, in the namespace of the AppVersion only.
+	// Rules are the RBAC rules of the version Role, in the namespace of the AppVersion only. The
+	// admission policy in config/apps/admission refuses rules, because an App pod has no path to
+	// the API server yet.
 	// +optional
 	Rules []rbacv1.PolicyRule `json:"rules,omitempty"`
 

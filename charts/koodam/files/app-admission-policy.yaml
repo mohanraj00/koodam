@@ -1,9 +1,10 @@
 # The checks of an AppVersion that the CRD cannot hold. The CRD cannot compare the template with
-# the status, and the rule for the ports is too costly for a CRD.
+# the status, and the rule for the ports is too costly for a CRD. The policy also refuses
+# template.rules, because the controller cannot give an App pod a path to the API server yet.
 #
 # The policy does not match the status subresource, so the status writes of the controller do not
-# pass through it. The checks of the name and the ports apply to a create and to a template
-# change only. Thus an AppVersion from before this policy can still lose its finalizer.
+# pass through it. The checks of the name, the ports and the rules apply to a create and to a
+# template change only. Thus an AppVersion from before this policy can still lose its finalizer.
 apiVersion: admissionregistration.k8s.io/v1
 kind: ValidatingAdmissionPolicy
 metadata:
@@ -46,6 +47,13 @@ spec:
       (!has(p.protocol) || p.protocol == 'TCP') &&
       (!has(p.hostPort) || p.hostPort == 0) && (!has(p.hostIP) || p.hostIP == '')))
     message: "Each port of the app container must have a name and the TCP protocol, with no host port."
+    reason: Invalid
+  # The NetworkPolicy of an App pod permits egress to the egress proxy only, so the pod cannot
+  # connect to the API server and a version Role has no effect. Refuse the rules until the
+  # controller can add a path to the API server (#340). Like the port check, this check applies
+  # to a create and to a template change only.
+  - expression: "variables.sameTemplate || !has(object.spec.template.rules) || size(object.spec.template.rules) == 0"
+    message: "spec.template.rules is not permitted. An App pod has no path to the API server, so a version Role has no effect."
     reason: Invalid
 ---
 apiVersion: admissionregistration.k8s.io/v1
