@@ -175,7 +175,8 @@ func printCostGroupUsage(out, errOut io.Writer, agents []corev1alpha1.Agent, nam
 			"or a gateway that gave no usage. They are not in the table.\n", missing)
 	}
 	if invalid > 0 {
-		_, _ = fmt.Fprintf(errOut, "note: Agents with a spend that is not a number: %d. They are not in the table.\n", invalid)
+		_, _ = fmt.Fprintf(errOut, "note: Agents with a spend that is not a number: %d. "+
+			"They are not in the table.\n", invalid)
 	}
 	if len(groups) == 0 {
 		_, err := fmt.Fprintf(out, "No gateway usage in the Agents of namespace %s.\n", namespace)
