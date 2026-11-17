@@ -6,6 +6,7 @@ This file records the changes for each Koodam version. The newest version is fir
 
 ### Agents
 
+- Add `koodam usage --by cost-group` to show the Agent gateway usage for each saved cost group in a namespace, with a total and notes for Agents with no valid usage ([#337](https://github.com/mohanraj00/koodam/pull/337)).
 - Add `spec.costGroups` to the Profile and the Agent label `koodam.dev/cost-group`. The controller checks the value before it makes a key, then saves it in `status.costGroup` and the gateway key metadata. A later label change does not change the group ([#335](https://github.com/mohanraj00/koodam/pull/335)).
 - Add `status.runID` to the Agent. It is the UID of the Agent, so it does not change after a controller restart. The agent container has it in `KOODAM_RUN_ID` ([#315](https://github.com/mohanraj00/koodam/pull/315)).
 - Add `spec.output.path` to the Agent. When the run ends, `status.output` has the SHA-256 digest and the size of this file. A sidecar container of the run pod computes the digest, and the controller never reads the file. [docs/agent-output.md](docs/agent-output.md) has the guide for durable output ([#315](https://github.com/mohanraj00/koodam/pull/315)).
