@@ -88,7 +88,7 @@ func TestLoginCreatesThenUpdatesTheSecret(t *testing.T) {
 	}
 
 	// An update keeps the keys of the other harnesses.
-	s.Data["other"] = []byte(otherValue)
+	s.Data[otherName] = []byte(otherValue)
 	if err := kube.Update(context.Background(), s); err != nil {
 		t.Fatal(err)
 	}
@@ -99,7 +99,7 @@ func TestLoginCreatesThenUpdatesTheSecret(t *testing.T) {
 	}
 	wantAll(t, out, "secret/koodam-login updated")
 	s, _ = getLogin(t, kube)
-	if string(s.Data[harnessClaude]) != second || string(s.Data["other"]) != otherValue {
+	if string(s.Data[harnessClaude]) != second || string(s.Data[otherName]) != otherValue {
 		t.Error("the update did not replace the token or did not keep the other key")
 	}
 }
@@ -159,7 +159,7 @@ func TestLoginRefusesABadToken(t *testing.T) {
 func TestLoginRemoveKeepsTheOtherKeys(t *testing.T) {
 	token := fakeToken("x")
 	kube := newKube(t, nil, loginSecret(map[string]string{managedByLabel: managedBy},
-		map[string][]byte{harnessClaude: []byte(token), "other": []byte(otherValue)}))
+		map[string][]byte{harnessClaude: []byte(token), otherName: []byte(otherValue)}))
 	out, err := runLogin(t, kube, "", token, loginCommand, "--remove", "claude-code")
 	if err != nil {
 		t.Fatalf("remove: %v\n%s", err, out)
@@ -169,7 +169,7 @@ func TestLoginRemoveKeepsTheOtherKeys(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, ok := s.Data[harnessClaude]; ok || string(s.Data["other"]) != otherValue {
+	if _, ok := s.Data[harnessClaude]; ok || string(s.Data[otherName]) != otherValue {
 		t.Error("the remove did not delete only the claude-code key")
 	}
 }

@@ -407,7 +407,7 @@ func TestSSHRemoveRemovesTheEntryTheHostKeyAndTheKey(t *testing.T) {
 	if out, err := runSSH(kube, "", "ssh", "setup", wsName, "--yes"); err != nil {
 		t.Fatalf("setup: %v\n%s", err, out)
 	}
-	if err := setKnownHost(p.knownHosts(), "other", hostKey); err != nil {
+	if err := setKnownHost(p.knownHosts(), otherName, hostKey); err != nil {
 		t.Fatal(err)
 	}
 	if out, err := runSSH(kube, "", "ssh", "remove", wsName, "--key"); err != nil {

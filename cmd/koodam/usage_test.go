@@ -28,9 +28,17 @@ import (
 	"github.com/spf13/cobra"
 	"k8s.io/apimachinery/pkg/api/resource"
 	kubefake "k8s.io/client-go/kubernetes/fake"
+	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
 
 	corev1alpha1 "github.com/mohanraj00/koodam/api/v1alpha1"
 	"github.com/mohanraj00/koodam/internal/usage"
+)
+
+// testTeam and otherName are test names that more than one test uses.
+const (
+	testTeam  = "team"
+	otherName = "other"
 )
 
 // usageContext is the kube context of the usage tests.
@@ -134,12 +142,12 @@ func projected(c float64) string { return fmt.Sprintf("projected %.4f USD", c) }
 
 func TestUsageUsesTheNamespace(t *testing.T) {
 	ws := testWorkspace(hostKey, corev1alpha1.WorkspaceRunning)
-	ws.Namespace = "team"
+	ws.Namespace = testTeam
 	calls, run := setupUsage(t, ws)
 	if out, _, err := run("usage", wsName); err != nil {
 		t.Fatalf("usage: %v\n%s", err, out)
 	}
-	want := []string{sshProgram, "-T", hostAlias("team", wsName), "sh", "-s"}
+	want := []string{sshProgram, "-T", hostAlias(testTeam, wsName), "sh", "-s"}
 	if len(*calls) != 1 || !slices.Equal((*calls)[0], want) {
 		t.Errorf("calls: got %q, want %q", *calls, want)
 	}
@@ -200,7 +208,7 @@ func TestUsageErrors(t *testing.T) {
 	if _, _, err := run("usage", wsName); err == nil || strings.Contains(err.Error(), "FIXTURE") {
 		t.Errorf("bad output: got %v", err)
 	}
-	if _, _, err := run("usage", "other"); err == nil || !strings.Contains(err.Error(), "does not exist") {
+	if _, _, err := run("usage", otherName); err == nil || !strings.Contains(err.Error(), "does not exist") {
 		t.Errorf("missing Workspace: got %v", err)
 	}
 }
@@ -234,5 +242,163 @@ func TestOutputProgramDropsTheStderr(t *testing.T) {
 	out, err := outputProgram(cmd, "in", "sh", "-c", "cat; echo FIXTURE-REMOTE-ERROR >&2")
 	if err != nil || string(out) != "in" || errOut.Len() != 0 {
 		t.Errorf("got out %q, stderr %q, error %v", out, errOut.String(), err)
+	}
+}
+
+func costGroupAgent(name, group string, u *corev1alpha1.AgentUsage) *corev1alpha1.Agent {
+	a := testAgent(corev1alpha1.AgentSucceeded, u)
+	a.Name = name
+	a.Status.CostGroup = group
+	return a
+}
+
+func runUsageBy(conn connect, args ...string) (string, string, error) {
+	root := newRoot(conn)
+	out, errOut := &bytes.Buffer{}, &bytes.Buffer{}
+	root.SetOut(out)
+	root.SetErr(errOut)
+	root.SetArgs(append([]string{"usage"}, args...))
+	root.SetContext(context.Background())
+	err := root.Execute()
+	return out.String(), errOut.String(), err
+}
+
+func TestUsageByCostGroup(t *testing.T) {
+	u := func(spend string, calls, failed, input, output int64) *corev1alpha1.AgentUsage {
+		return &corev1alpha1.AgentUsage{Spend: spend, Calls: calls, FailedCalls: failed,
+			InputTokens: input, OutputTokens: output,
+			Models: []corev1alpha1.ModelUsage{{Model: "fixture-model", Spend: "99"}}}
+	}
+	first := costGroupAgent("first", "project-a", u("0.0200", 4, 1, 2400, 400))
+	first.Labels = map[string]string{corev1alpha1.CostGroupLabel: "changed"}
+	other := costGroupAgent("other-namespace", otherName, u("1", 100, 100, 100, 100))
+	other.Namespace = otherName
+	kube := newKube(t, nil, first,
+		costGroupAgent("second", "project-a", u("0.0250", 5, 0, 3000, 500)),
+		costGroupAgent("ops", "ops", u("0.0100", 4, 0, 1200, 300)),
+		costGroupAgent("no-group", "", u("0.0050", 2, 0, 600, 100)),
+		costGroupAgent("no-usage", "pending", nil),
+		costGroupAgent("bad-spend", "ops", u("invalid", 100, 100, 100, 100)), other)
+	old := outputProgram
+	t.Cleanup(func() { outputProgram = old })
+	outputProgram = func(*cobra.Command, string, string, ...string) ([]byte, error) {
+		t.Fatal("gateway usage must not use SSH")
+		return nil, nil
+	}
+	out, errOut, err := runUsageBy(func() (*env, error) {
+		return &env{kube: kube, namespace: testNS}, nil
+	}, "--by", "cost-group")
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{
+		"COST-GROUP RUNS CALLS FAILED INPUT OUTPUT SPEND SOURCE",
+		"ops 1 4 0 1200 300 0.0100 USD source: gateway",
+		"project-a 2 9 1 5400 900 0.0450 USD source: gateway",
+		"(none) 1 2 0 600 100 0.0050 USD source: gateway",
+		"total 4 15 1 7200 1300 0.0600 USD source: gateway",
+	}
+	lines := strings.Split(strings.TrimSpace(out), "\n")
+	for i := range lines {
+		lines[i] = strings.Join(strings.Fields(lines[i]), " ")
+	}
+	if !slices.Equal(lines, want) {
+		t.Errorf("table:\n%s\nwant:\n%s", out, strings.Join(want, "\n"))
+	}
+	if wantNote := "note: Agents with no gateway usage yet: 1. The cause is a run that did not end, " +
+		"or a gateway that gave no usage. They are not in the table.\n" +
+		"note: Agents with a spend that is not a number: 1. They are not in the table.\n"; errOut != wantNote {
+		t.Errorf("stderr: got %q, want %q", errOut, wantNote)
+	}
+}
+
+func TestUsageByCostGroupWithNoValidSpend(t *testing.T) {
+	for _, spend := range []string{"not-a-number", "", "NaN", "+Inf", "1e999"} {
+		t.Run(spend, func(t *testing.T) {
+			kube := newKube(t, nil, costGroupAgent("bad-spend", "ops", &corev1alpha1.AgentUsage{Spend: spend}))
+			out, errOut, err := runUsageBy(func() (*env, error) {
+				return &env{kube: kube, namespace: testNS}, nil
+			}, "--by", "cost-group")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if want := "No gateway usage in the Agents of namespace " + testNS + ".\n"; out != want {
+				t.Errorf("stdout: got %q, want %q", out, want)
+			}
+			if want := "note: Agents with a spend that is not a number: 1. They are not in the table.\n"; errOut != want {
+				t.Errorf("stderr: got %q, want %q", errOut, want)
+			}
+		})
+	}
+}
+
+func TestUsageByCostGroupUsesTheNamespace(t *testing.T) {
+	a := costGroupAgent("team-run", "ops", &corev1alpha1.AgentUsage{Spend: "0"})
+	a.Namespace = testTeam
+	kube := newKube(t, nil, a, costGroupAgent("other-run", otherName, &corev1alpha1.AgentUsage{Spend: "1"}))
+	out, errOut, err := runUsageBy(func() (*env, error) {
+		return &env{kube: kube, namespace: testTeam}, nil
+	}, "--by", "cost-group", "-n", testTeam)
+	if err != nil || errOut != "" {
+		t.Fatalf("got stderr %q, error %v", errOut, err)
+	}
+	wantAll(t, strings.Join(strings.Fields(out), " "), "ops 1 0 0 0 0 0.0000 USD", "total 1 0 0 0 0 0.0000 USD")
+	if strings.Contains(out, otherName) || strings.Contains(out, "(none)") {
+		t.Errorf("got stdout %q", out)
+	}
+}
+
+func TestUsageByCostGroupWithNoUsage(t *testing.T) {
+	for _, objects := range [][]client.Object{nil, {costGroupAgent("pending", "ops", nil)}} {
+		kube := newKube(t, nil, objects...)
+		out, errOut, err := runUsageBy(func() (*env, error) {
+			return &env{kube: kube, namespace: testNS}, nil
+		}, "--by", "cost-group")
+		if err != nil || out != "No gateway usage in the Agents of namespace "+testNS+".\n" {
+			t.Errorf("got stdout %q, error %v", out, err)
+		}
+		if len(objects) == 0 && errOut != "" ||
+			len(objects) != 0 && !strings.Contains(errOut, "Agents with no gateway usage yet: 1") {
+			t.Errorf("got stderr %q", errOut)
+		}
+	}
+}
+
+func TestUsageByArguments(t *testing.T) {
+	for _, tc := range []struct {
+		args []string
+		want string
+	}{
+		{[]string{"--by", "user"}, `--by "user" is not known: the only key is cost-group`},
+		{[]string{"--by="}, `--by "" is not known: the only key is cost-group`},
+		{[]string{"--by", "cost-group", wsName}, "koodam usage --by takes no WORKSPACE argument"},
+		{nil, "accepts 1 arg(s), received 0"},
+		{[]string{wsName, "extra"}, "accepts 1 arg(s), received 2"},
+	} {
+		_, _, err := runUsageBy(func() (*env, error) {
+			t.Fatal("invalid arguments must not connect to the cluster")
+			return nil, nil
+		}, tc.args...)
+		if err == nil || err.Error() != tc.want {
+			t.Errorf("args %q: got %v, want %q", tc.args, err, tc.want)
+		}
+	}
+}
+
+func TestUsageByCostGroupConnectionErrors(t *testing.T) {
+	_, _, err := runUsageBy(func() (*env, error) { return nil, errors.New("connection failed") }, "--by", "cost-group")
+	if err == nil || err.Error() != "connection failed" {
+		t.Errorf("got %v", err)
+	}
+	kube := newKube(t, &interceptor.Funcs{
+		List: func(context.Context, client.WithWatch, client.ObjectList, ...client.ListOption) error {
+			return errors.New("list failed")
+		},
+	})
+	out, _, err := runUsageBy(func() (*env, error) {
+		return &env{kube: kube, namespace: testNS}, nil
+	}, "--by", "cost-group")
+	if err == nil || err.Error() != "list failed" || out != "" {
+		t.Errorf("got stdout %q, error %v", out, err)
 	}
 }

@@ -138,3 +138,13 @@ kubectl get agents                # the spend column
 ```
 
 The gateway key has the harness and the `user` of the Agent in its metadata. Thus you can group the spend in LiteLLM by harness or by user.
+
+To show the Agent gateway usage for each cost group in a namespace:
+
+```sh
+koodam usage --by cost-group -n dev-sample
+```
+
+The command lists Agents with your kubeconfig. With no `-n`, it uses the namespace of the current context. It takes no WORKSPACE argument and uses no SSH. The group is `status.costGroup`, saved when the controller made the key from the label `koodam.dev/cost-group`. A later label change does not change the group. [profiles.md](profiles.md) has the permitted cost groups of a Profile.
+
+Each group shows the runs, calls, failed calls, input tokens, output tokens and spend, with `source: gateway`. The spend is the sum of the key spend in `status.usage.spend`, not the sum of the model entries. Groups are in name order, with `(none)` for an empty group last, then a total line. Agents with no usage or with a spend that is not a number are not in the table. Notes on stderr give these counts. The table has no AppVersion, TestKey or Workspace spend. An AppVersion has no usage status.

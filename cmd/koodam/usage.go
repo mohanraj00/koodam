@@ -21,8 +21,10 @@ import (
 	"fmt"
 	"io"
 	"maps"
+	"math"
 	"os/exec"
 	"slices"
+	"strconv"
 	"strings"
 	"text/tabwriter"
 
@@ -52,9 +54,10 @@ const usageGatewayNote = "note: this Workspace has a gateway key. The gateway sp
 	"through the gateway."
 
 func usageCmd(conn connect) *cobra.Command {
-	return &cobra.Command{
-		Use:   "usage WORKSPACE",
-		Short: "Show the projected API cost of the harness sessions in a Workspace",
+	var by string
+	cmd := &cobra.Command{
+		Use:   "usage [WORKSPACE] [--by cost-group]",
+		Short: "Show the projected Workspace cost or the Agent gateway spend by cost group",
 		Long: "Show the tokens and the projected API cost of the Claude Code and Codex sessions in a Workspace.\n" +
 			"koodam connects with SSH, as koodam ssh test does, and runs a fixed script in the pod. The\n" +
 			"script reads ~/.claude/projects and ~/.codex/sessions and prints only the model names and the\n" +
@@ -62,9 +65,33 @@ func usageCmd(conn connect) *cobra.Command {
 			"The cost is projected: it is the API price of the tokens, not the bill of a subscription plan.\n" +
 			"Limits: the cache write price is the 5-minute price, and the price tiers above 200k tokens\n" +
 			"are not used. If a Codex session file has more than 1 model, all its tokens go to the last model.\n\n" +
-			"Run koodam ssh setup WORKSPACE first.",
-		Args: cobra.ExactArgs(1),
+			"Run koodam ssh setup WORKSPACE first.\n\n" +
+			"With --by cost-group, take no WORKSPACE argument. Read the Agent gateway usage in the\n" +
+			"namespace from the Kubernetes API and group it by status.costGroup. This mode uses no SSH.",
+		Args: func(cmd *cobra.Command, args []string) error {
+			if !cmd.Flags().Changed("by") {
+				return cobra.ExactArgs(1)(cmd, args)
+			}
+			if by != "cost-group" {
+				return fmt.Errorf("--by %q is not known: the only key is cost-group", by)
+			}
+			if len(args) != 0 {
+				return fmt.Errorf("koodam usage --by takes no WORKSPACE argument")
+			}
+			return nil
+		},
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if by == "cost-group" {
+				e, err := conn()
+				if err != nil {
+					return err
+				}
+				agents := &corev1alpha1.AgentList{}
+				if err := e.kube.List(cmd.Context(), agents, client.InNamespace(e.namespace)); err != nil {
+					return apiError("list the Agents", err)
+				}
+				return printCostGroupUsage(cmd.OutOrStdout(), cmd.ErrOrStderr(), agents.Items, e.namespace)
+			}
 			e, ns, ws, err := sshTarget(conn, args[0])
 			if err != nil {
 				return err
@@ -103,6 +130,77 @@ func usageCmd(conn connect) *cobra.Command {
 			return printUsage(cmd.OutOrStdout(), rows, prices)
 		},
 	}
+	cmd.Flags().StringVar(&by, "by", "", "group the Agent gateway usage by cost-group")
+	return cmd
+}
+
+// costGroupUsage has the sums of the gateway usage for a group.
+type costGroupUsage struct {
+	runs, calls, failed, input, output int64
+	spend                              float64
+}
+
+func printCostGroupUsage(out, errOut io.Writer, agents []corev1alpha1.Agent, namespace string) error {
+	groups := map[string]costGroupUsage{}
+	var total costGroupUsage
+	var missing, invalid int
+	for _, a := range agents {
+		u := a.Status.Usage
+		if u == nil {
+			missing++
+			continue
+		}
+		spend, err := strconv.ParseFloat(u.Spend, 64)
+		if err != nil || math.IsNaN(spend) || math.IsInf(spend, 0) {
+			invalid++
+			continue
+		}
+		g := groups[a.Status.CostGroup]
+		g.runs++
+		g.calls += u.Calls
+		g.failed += u.FailedCalls
+		g.input += u.InputTokens
+		g.output += u.OutputTokens
+		g.spend += spend
+		groups[a.Status.CostGroup] = g
+		total.runs++
+		total.calls += u.Calls
+		total.failed += u.FailedCalls
+		total.input += u.InputTokens
+		total.output += u.OutputTokens
+		total.spend += spend
+	}
+	if missing > 0 {
+		_, _ = fmt.Fprintf(errOut, "note: Agents with no gateway usage yet: %d. The cause is a run that did not end, "+
+			"or a gateway that gave no usage. They are not in the table.\n", missing)
+	}
+	if invalid > 0 {
+		_, _ = fmt.Fprintf(errOut, "note: Agents with a spend that is not a number: %d. "+
+			"They are not in the table.\n", invalid)
+	}
+	if len(groups) == 0 {
+		_, err := fmt.Fprintf(out, "No gateway usage in the Agents of namespace %s.\n", namespace)
+		return err
+	}
+	names := slices.Sorted(maps.Keys(groups))
+	if _, ok := groups[""]; ok {
+		names = append(slices.Delete(names, 0, 1), "")
+	}
+	w := tabwriter.NewWriter(out, 0, 4, 2, ' ', 0)
+	_, _ = fmt.Fprintln(w, "COST-GROUP\tRUNS\tCALLS\tFAILED\tINPUT\tOUTPUT\tSPEND\tSOURCE")
+	row := func(name string, g costGroupUsage) {
+		_, _ = fmt.Fprintf(w, "%s\t%d\t%d\t%d\t%d\t%d\t%.4f USD\tsource: gateway\n",
+			name, g.runs, g.calls, g.failed, g.input, g.output, g.spend)
+	}
+	for _, name := range names {
+		label := name
+		if label == "" {
+			label = "(none)"
+		}
+		row(label, groups[name])
+	}
+	row("total", total)
+	return w.Flush()
 }
 
 // printUsage writes 1 line for each harness and model, and 1 total line. Each line says that
