@@ -18,8 +18,9 @@ const windowFrom, windowUntil = "2026-11-01", "2027-01-01"
 
 var inWindow = time.Date(2026, 11, 15, 12, 0, 0, 0, time.UTC)
 
-// TestVerifyVectors checks the scope, the function, the subject and the window of each valid
-// decision of the vectors.
+// TestVerifyVectors checks the scope, the function and the subject of each valid decision of the
+// vectors. The decisions of the vectors have no field kind, so they count for no kind and Verify
+// refuses them after the other checks.
 func TestVerifyVectors(t *testing.T) {
 	const subject = "sha256:16a0eeb0791b6c92451fd284dd9f599e0a7dbe7f6ebea6e2d2d06c7f74aec112"
 	keySets, cases := loadVectors(t)
@@ -41,9 +42,8 @@ func TestVerifyVectors(t *testing.T) {
 				}
 				return
 			}
-			evidence := Record{"approval", "signature", subject, "pass", want.RecordRef, want.RecordRef}
-			if err != nil || result != (Result{evidence, want.KeyStatus}) {
-				t.Fatal("wrong evidence for accepted decision")
+			if err != (Refusal{codeNotHuman, ""}) || result != (Result{}) {
+				t.Fatal("expected a refusal for a decision without kind")
 			}
 			for _, other := range []struct {
 				expected Expected
@@ -58,27 +58,20 @@ func TestVerifyVectors(t *testing.T) {
 					t.Fatalf("got %v, want %s", err, other.code)
 				}
 			}
-			// The window is half-open: from 2026-11-01 to 2027-01-01, in UTC dates.
-			for _, w := range []struct {
-				now  time.Time
-				want error
-			}{
-				{time.Date(2026, 10, 31, 23, 59, 59, 0, time.UTC), Refusal{codeNotYetValid, ""}},
-				{time.Date(2026, 11, 1, 0, 0, 0, 0, time.UTC), nil},
-				{time.Date(2026, 12, 31, 23, 59, 59, 0, time.UTC), nil},
-				{time.Date(2027, 1, 1, 0, 0, 0, 0, time.UTC), Refusal{codeExpired, ""}},
-				// 2026-12-31 at 20:00 in UTC-5 is 2027-01-01 in UTC.
-				{time.Date(2026, 12, 31, 20, 0, 0, 0, time.FixedZone("UTC-5", -5*3600)), Refusal{codeExpired, ""}},
-			} {
-				if _, err := Verify(c.Signed, keys, expected, w.now); err != w.want {
-					t.Fatalf("at %s: got %v, want %v", w.now, err, w.want)
-				}
-			}
 		})
 	}
 }
 
-func TestVerifyRejectAndKeepBytesPrivate(t *testing.T) {
+// testSigner signs decisions for the scope "gate" and the function "pause" with a fixed test key.
+type testSigner struct {
+	private        ed25519.PrivateKey
+	publicText, id string
+	subject        string
+	keys           []byte
+	gate           Expected
+}
+
+func newTestSigner() testSigner {
 	private := ed25519.NewKeyFromSeed(make([]byte, ed25519.SeedSize))
 	public := private.Public().(ed25519.PublicKey)
 	publicText := base64.StdEncoding.EncodeToString(public)
@@ -86,27 +79,78 @@ func TestVerifyRejectAndKeepBytesPrivate(t *testing.T) {
 	subject := fmt.Sprintf("sha256:%x", sha256.Sum256([]byte("subject")))
 	keys := fmt.Appendf(nil, `{"format":"entelos.keyset/1","signer":%q,"keys":[{"algorithm":"ed25519",
 		"key_id":%q,"public_key":%q,"status":"active"}]}`, publicText, id, publicText)
-	const domain = "entelos.signature/1\x00"
-	// sign gives a signed decision with the window from "from" to "until", and its reference.
-	sign := func(from, until string) (signed []byte, ref string, signature []byte) {
-		body := fmt.Appendf(nil, `{ "snapshot_ref":%q,"disposition":"reject","scope":"gate","function":"pause",
-			"format":"entelos.record/1","from":%q,"until":%q,"reason":%q }`, subject, from, until, publicText)
-		envelope := append([]byte("application/vnd.cel-lifecycle.decision+json\x00"), body...)
-		ref = fmt.Sprintf("sha256:%x", sha256.Sum256(envelope))
-		signature = ed25519.Sign(private, append([]byte(domain), envelope...))
-		signed = fmt.Appendf(nil, `{"format":"entelos.record/1","record_kind":"decision","scope":"gate",
-			"function":"pause","record_ref":%q,"record":%q,"algorithm":"ed25519","key_id":%q,"signature":%q}`,
-			ref, base64.StdEncoding.EncodeToString(body), id, base64.StdEncoding.EncodeToString(signature))
-		return signed, ref, signature
+	return testSigner{private, publicText, id, subject, keys, Expected{"gate", "pause", subject}}
+}
+
+// sign gives a signed decision with the kind, the disposition and the window from "from" to
+// "until", its reference and its signature. If kind is empty, the decision has no field kind.
+func (s testSigner) sign(kind, disposition, from, until string) (signed []byte, ref string, signature []byte) {
+	kindField := ""
+	if kind != "" {
+		kindField = fmt.Sprintf(`"kind":%q,`, kind)
 	}
-	gate := Expected{Scope: "gate", Function: "pause", Subject: subject}
-	signed, ref, signature := sign(windowFrom, windowUntil)
+	body := fmt.Appendf(nil, `{ %s"snapshot_ref":%q,"disposition":%q,"scope":"gate","function":"pause",
+		"format":"entelos.record/1","from":%q,"until":%q,"reason":%q }`,
+		kindField, s.subject, disposition, from, until, s.publicText)
+	envelope := append([]byte("application/vnd.cel-lifecycle.decision+json\x00"), body...)
+	ref = fmt.Sprintf("sha256:%x", sha256.Sum256(envelope))
+	signature = ed25519.Sign(s.private, append([]byte("entelos.signature/1\x00"), envelope...))
+	signed = fmt.Appendf(nil, `{"format":"entelos.record/1","record_kind":"decision","scope":"gate",
+		"function":"pause","record_ref":%q,"record":%q,"algorithm":"ed25519","key_id":%q,"signature":%q}`,
+		ref, base64.StdEncoding.EncodeToString(body), s.id, base64.StdEncoding.EncodeToString(signature))
+	return signed, ref, signature
+}
+
+// TestVerifyHumanAccept checks the evidence of a human accept and the half-open window.
+func TestVerifyHumanAccept(t *testing.T) {
+	s := newTestSigner()
+	signed, ref, _ := s.sign("human", "accept", windowFrom, windowUntil)
+	result, err := Verify(signed, s.keys, s.gate, inWindow)
+	if err != nil || result != (Result{Record{"approval", "signature", s.subject, "pass", ref, ref}, "active"}) {
+		t.Fatal("wrong evidence for accepted decision")
+	}
+	// The window is half-open: from 2026-11-01 to 2027-01-01, in UTC dates.
+	for _, w := range []struct {
+		now  time.Time
+		want error
+	}{
+		{time.Date(2026, 10, 31, 23, 59, 59, 0, time.UTC), Refusal{codeNotYetValid, ""}},
+		{time.Date(2026, 11, 1, 0, 0, 0, 0, time.UTC), nil},
+		{time.Date(2026, 12, 31, 23, 59, 59, 0, time.UTC), nil},
+		{time.Date(2027, 1, 1, 0, 0, 0, 0, time.UTC), Refusal{codeExpired, ""}},
+		// 2026-12-31 at 20:00 in UTC-5 is 2027-01-01 in UTC.
+		{time.Date(2026, 12, 31, 20, 0, 0, 0, time.FixedZone("UTC-5", -5*3600)), Refusal{codeExpired, ""}},
+	} {
+		if _, err := Verify(signed, s.keys, s.gate, w.now); err != w.want {
+			t.Fatalf("at %s: got %v, want %v", w.now, err, w.want)
+		}
+	}
+}
+
+// TestVerifyRefuseOtherKind checks that a model or policy verdict, or a verdict without kind, never
+// counts as a human verdict (Entelos KINDS.md, rule 3).
+func TestVerifyRefuseOtherKind(t *testing.T) {
+	s := newTestSigner()
+	for _, kind := range []string{"model", "policy", "", "Human"} {
+		for _, disposition := range []string{"accept", "reject"} {
+			signed, _, _ := s.sign(kind, disposition, windowFrom, windowUntil)
+			if result, err := Verify(signed, s.keys, s.gate, inWindow); err != (Refusal{codeNotHuman, ""}) ||
+				result != (Result{}) {
+				t.Fatalf("kind %q, %s: got %v", kind, disposition, err)
+			}
+		}
+	}
+}
+
+func TestVerifyRejectAndKeepBytesPrivate(t *testing.T) {
+	s := newTestSigner()
+	signed, ref, signature := s.sign("human", "reject", windowFrom, windowUntil)
 	signatureText := base64.StdEncoding.EncodeToString(signature)
 	// A window with a date that is not real, with no date or with from not before until is refused.
 	for _, w := range [][2]string{{"2026-02-30", windowUntil}, {"", windowUntil}, {windowFrom, windowFrom},
 		{windowFrom, "2027-1-1"}} {
-		bad, _, _ := sign(w[0], w[1])
-		if _, err := Verify(bad, keys, gate, inWindow); err != (Refusal{codeInvalidWindow, ""}) {
+		bad, _, _ := s.sign("human", "reject", w[0], w[1])
+		if _, err := Verify(bad, s.keys, s.gate, inWindow); err != (Refusal{codeInvalidWindow, ""}) {
 			t.Fatalf("window %v: got %v", w, err)
 		}
 	}
@@ -115,20 +159,21 @@ func TestVerifyRejectAndKeepBytesPrivate(t *testing.T) {
 	writer := log.Writer()
 	t.Cleanup(func() { log.SetOutput(writer) })
 	log.SetOutput(&logs)
-	result, err := Verify(signed, keys, gate, inWindow)
-	if err != nil || result != (Result{Record{"approval", "signature", subject, "fail", ref, ref}, "active"}) {
+	result, err := Verify(signed, s.keys, s.gate, inWindow)
+	if err != nil || result != (Result{Record{"approval", "signature", s.subject, "fail", ref, ref}, "active"}) {
 		t.Fatal("wrong evidence for rejected decision")
 	}
 	badSigned := bytes.Replace(signed, []byte(`"signature":`), []byte(fmt.Sprintf(`"%s":`, signatureText)), 1)
-	badKeys := bytes.Replace(keys, []byte(`"public_key":`), []byte(fmt.Sprintf(`"%s":`, publicText)), 1)
-	badRecord, signedErr := Verify(badSigned, keys, gate, inWindow)
-	badKeySet, keyErr := Verify(signed, badKeys, gate, inWindow)
+	badKeys := bytes.Replace(s.keys, []byte(`"public_key":`), []byte(fmt.Sprintf(`"%s":`, s.publicText)), 1)
+	badRecord, signedErr := Verify(badSigned, s.keys, s.gate, inWindow)
+	badKeySet, keyErr := Verify(signed, badKeys, s.gate, inWindow)
 	if signedErr != (Refusal{"invalid_signed_record", "schema"}) || keyErr != (Refusal{"invalid_keyset", "schema"}) ||
 		badRecord != (Result{}) || badKeySet != (Result{}) {
 		t.Fatal("expected a refusal for each unknown field")
 	}
+	public := s.private.Public().(ed25519.PublicKey)
 	output := fmt.Appendf(logs.Bytes(), "%+v %v %v", result, signedErr, keyErr)
-	for _, secret := range [][]byte{public, signature, []byte(publicText), []byte(signatureText)} {
+	for _, secret := range [][]byte{public, signature, []byte(s.publicText), []byte(signatureText)} {
 		if bytes.Contains(output, secret) {
 			t.Fatal("verification output holds key or signature bytes")
 		}

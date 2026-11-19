@@ -189,9 +189,11 @@ The approval seam uses the signed record protocol and vectors of Entelos tag
 `v0.5.0`. The caller gives the expected `scope`, `function` and subject, and the
 time of the check. The verifier refuses a decision with a different `scope`,
 `function` or `snapshot_ref`. It also refuses a decision when the UTC date of
-the check is before `from`, or at or after `until`. A disposition of `accept`
-gives `pass`. A disposition of `reject` gives `fail`. The signed decision's
-`record_ref` gives both the evidence ID and digest.
+the check is before `from`, or at or after `until`. The decision must have the
+`kind` `human`. A `model` or `policy` verdict, or a verdict without `kind`, is
+refused (Entelos `KINDS.md`, rule 3). A disposition of `accept` gives `pass`. A
+disposition of `reject` gives `fail`. The signed decision's `record_ref` gives
+both the evidence ID and digest.
 
 ## Open questions
 

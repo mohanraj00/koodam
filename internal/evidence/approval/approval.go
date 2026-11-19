@@ -35,11 +35,14 @@ const (
 	codeInvalidWindow   = "invalid_window"
 	codeNotYetValid     = "not_yet_valid"
 	codeExpired         = "expired"
+	codeNotHuman        = "not_human_verdict"
 )
 
 // Verify checks a signed decision against a trusted key set from the caller. The decision must
 // have the expected scope, function and subject, and the UTC date of now must be in its
-// half-open window from "from" to "until".
+// half-open window from "from" to "until". Only a decision with the kind "human" gives evidence:
+// a model or policy verdict, or a verdict without kind, never counts as a human verdict (Entelos
+// KINDS.md, rule 3).
 func Verify(signed, keySet []byte, want Expected, now time.Time) (Result, error) {
 	record, err := verifySigned(signed, keySet)
 	if err != nil {
@@ -66,6 +69,9 @@ func Verify(signed, keySet []byte, want Expected, now time.Time) (Result, error)
 	}
 	if !today.Before(until) {
 		return Result{}, Refusal{codeExpired, ""}
+	}
+	if record.Body.text("kind") != "human" {
+		return Result{}, Refusal{codeNotHuman, ""}
 	}
 	var verdict string
 	switch record.Body.text("disposition") {
