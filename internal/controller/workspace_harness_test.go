@@ -26,7 +26,7 @@ import (
 )
 
 var _ = Describe("Workspace harnesses", func() {
-	const installer, muslLibc = "example.com/koodam:1", "musl"
+	const muslLibc = "musl"
 	ws := func(h ...corev1alpha1.HarnessSpec) *corev1alpha1.Workspace {
 		return &corev1alpha1.Workspace{ObjectMeta: metav1.ObjectMeta{Name: "h", Namespace: "n"},
 			Spec: corev1alpha1.WorkspaceSpec{Harnesses: h}}

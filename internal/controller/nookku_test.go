@@ -149,7 +149,7 @@ func TestAgentNookkuRefusesUserValues(t *testing.T) {
 func TestWorkspaceNookkuMarker(t *testing.T) {
 	ws := func(h ...corev1alpha1.HarnessSpec) *corev1alpha1.Workspace {
 		w := &corev1alpha1.Workspace{Spec: corev1alpha1.WorkspaceSpec{Harnesses: h}}
-		w.Name, w.Namespace = "n", "team"
+		w.Name, w.Namespace = "n", testTeam
 		return w
 	}
 	on := corev1alpha1.HarnessSpec{Name: codexName, Plugins: []corev1alpha1.HarnessPlugin{nookkuTestPlugin}}
@@ -170,7 +170,7 @@ func TestWorkspaceNookkuMarker(t *testing.T) {
 		return vols, mounts, ok
 	}
 	// The marker does not need an installer image: it is the folder, not the install.
-	for _, image := range []string{"", "example.com/koodam:1"} {
+	for _, image := range []string{"", installer} {
 		r := &WorkspaceReconciler{Image: testWorkspaceImage, InstallerImage: image}
 		for name, c := range map[string]struct {
 			w    *corev1alpha1.Workspace
@@ -260,8 +260,8 @@ func TestAgentNookkuPythonCheck(t *testing.T) {
 func TestWorkspaceNookkuPythonCheck(t *testing.T) {
 	w := &corev1alpha1.Workspace{Spec: corev1alpha1.WorkspaceSpec{Harnesses: []corev1alpha1.HarnessSpec{
 		{Name: claudeName}, {Name: codexName, Plugins: []corev1alpha1.HarnessPlugin{nookkuTestPlugin}}}}}
-	w.Name, w.Namespace = "n", "team"
-	r := &WorkspaceReconciler{Image: testWorkspaceImage, InstallerImage: "example.com/koodam:1"}
+	w.Name, w.Namespace = "n", testTeam
+	r := &WorkspaceReconciler{Image: testWorkspaceImage, InstallerImage: installer}
 	checkNookkuCheck(t, "on", r.statefulSet(w, testProfile).Spec.Template.Spec)
 	w.Spec.Harnesses = w.Spec.Harnesses[:1]
 	if len(nookkuCheck(r.statefulSet(w, testProfile).Spec.Template.Spec)) != 0 {
@@ -338,6 +338,8 @@ const (
 	nookkuTestFilesVol = "nookku-files"
 	nookkuTestDir      = "/koodam/nookku"
 	nookkuTestTitle    = "CLAUDE_CODE_DISABLE_TERMINAL_TITLE"
+	// installer is the installer image that the Workspace tests use.
+	installer = "example.com/koodam:1"
 )
 
 // checkNookkuFiles examines the copy of the pinned Nookku files: the data image, a fixed command,
@@ -414,15 +416,15 @@ func TestAgentNookkuFiles(t *testing.T) {
 func TestWorkspaceNookkuFiles(t *testing.T) {
 	w := &corev1alpha1.Workspace{Spec: corev1alpha1.WorkspaceSpec{Harnesses: []corev1alpha1.HarnessSpec{
 		{Name: claudeName}, {Name: codexName, Plugins: []corev1alpha1.HarnessPlugin{nookkuTestPlugin}}}}}
-	w.Name, w.Namespace = "n", "team"
-	r := &WorkspaceReconciler{Image: testWorkspaceImage, InstallerImage: "example.com/koodam:1", NookkuImage: jobIngNookku}
+	w.Name, w.Namespace = "n", testTeam
+	r := &WorkspaceReconciler{Image: testWorkspaceImage, InstallerImage: installer, NookkuImage: jobIngNookku}
 	spec := r.statefulSet(w, testProfile).Spec.Template.Spec
 	checkNookkuFiles(t, "on", jobIngNookku, spec)
 	if slices.ContainsFunc(spec.Containers[0].Env, func(e corev1.EnvVar) bool { return e.Name == nookkuTestTitle }) {
 		t.Error("a Workspace container gets the title env")
 	}
 	// With no Nookku image or no installer image, the pod has no copy.
-	for _, r := range []*WorkspaceReconciler{{Image: testWorkspaceImage, InstallerImage: "example.com/koodam:1"},
+	for _, r := range []*WorkspaceReconciler{{Image: testWorkspaceImage, InstallerImage: installer},
 		{Image: testWorkspaceImage, NookkuImage: jobIngNookku}} {
 		if spec := r.statefulSet(w, testProfile).Spec.Template.Spec; slices.ContainsFunc(spec.InitContainers,
 			func(c corev1.Container) bool { return c.Name == nookkuTestFiles }) {

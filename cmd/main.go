@@ -169,6 +169,22 @@ func checkEgress(e controller.EgressProxy) error {
 // digestImage matches an image reference with a sha256 digest. The digest pins the Nookku files.
 var digestImage = regexp.MustCompile(`^[^@\s]+@sha256:[0-9a-f]{64}$`)
 
+// splitNamespaces splits a comma-separated list of namespaces. It ignores an empty item, and it
+// refuses a name that is not a DNS-1123 label.
+func splitNamespaces(list string) ([]string, error) {
+	var namespaces []string
+	for ns := range strings.SplitSeq(list, ",") {
+		if ns == "" {
+			continue
+		}
+		if errs := validation.IsDNS1123Label(ns); len(errs) > 0 {
+			return nil, fmt.Errorf("the namespace %q is not valid: %s", ns, strings.Join(errs, "; "))
+		}
+		namespaces = append(namespaces, ns)
+	}
+	return namespaces, nil
+}
+
 func main() {
 	var metricsAddr string
 	var metricsCertPath, metricsCertName, metricsCertKey string
@@ -381,16 +397,10 @@ func main() {
 		setupLog.Error(err, "--egress-proxy-pod-labels is not valid")
 		os.Exit(1)
 	}
-	var ingressNamespaces []string
-	for ns := range strings.SplitSeq(appIngressNamespaces, ",") {
-		if ns == "" {
-			continue
-		}
-		if errs := validation.IsDNS1123Label(ns); len(errs) > 0 {
-			setupLog.Error(nil, "--app-ingress-namespaces has a namespace that is not valid", "namespace", ns)
-			os.Exit(1)
-		}
-		ingressNamespaces = append(ingressNamespaces, ns)
+	ingressNamespaces, err := splitNamespaces(appIngressNamespaces)
+	if err != nil {
+		setupLog.Error(err, "--app-ingress-namespaces has a namespace that is not valid")
+		os.Exit(1)
 	}
 	claim.Image = installerImage
 	if claim, err = loadClaim(claim, claimJWKSFile); err != nil {

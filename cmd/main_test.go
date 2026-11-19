@@ -24,6 +24,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -44,6 +45,19 @@ func TestDigestImage(t *testing.T) {
 		if digestImage.MatchString(ref) != want {
 			t.Errorf("%q: got %v, want %v", ref, !want, want)
 		}
+	}
+}
+
+func TestSplitNamespaces(t *testing.T) {
+	got, err := splitNamespaces("a,,b-1,")
+	if err != nil || !slices.Equal(got, []string{"a", "b-1"}) {
+		t.Errorf("got %q and %v, want [a b-1]", got, err)
+	}
+	if got, err := splitNamespaces(""); err != nil || got != nil {
+		t.Errorf("an empty list: got %q and %v", got, err)
+	}
+	if _, err := splitNamespaces("a,B_c"); err == nil {
+		t.Error("the split accepted a namespace that is not valid")
 	}
 }
 
