@@ -26,6 +26,7 @@ import (
 	"time"
 
 	appsv1 "k8s.io/api/apps/v1"
+	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
 	networkingv1 "k8s.io/api/networking/v1"
 	rbacv1 "k8s.io/api/rbac/v1"
@@ -350,6 +351,12 @@ func (r *AppVersionReconciler) apply(ctx context.Context, av *corev1alpha1.AppVe
 		meta.SetStatusCondition(&av.Status.Conditions, r.Claim.condition(egress.Status, applied, av.Generation))
 	} else {
 		meta.RemoveStatusCondition(&av.Status.Conditions, condClaimCheck)
+	}
+	if !applied {
+		deploy = nil
+	}
+	if err := r.applyGate(ctx, av, deploy); err != nil {
+		return ctrl.Result{}, err
 	}
 	if err := r.writeStatus(ctx, av, old); err != nil {
 		return ctrl.Result{}, err
@@ -1041,6 +1048,7 @@ func (r *AppVersionReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		For(&corev1alpha1.AppVersion{}).
 		Owns(&appsv1.Deployment{}).
 		Owns(&corev1.Service{}).
+		Owns(&batchv1.Job{}).
 		Watches(&corev1alpha1.App{}, handler.EnqueueRequestsFromMapFunc(r.versionsOfApp)).
 		Named("appversion").
 		Complete(r)
