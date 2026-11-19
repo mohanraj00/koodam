@@ -1,6 +1,7 @@
 # Nookku preset (#83)
 
-Status: the API validation and the test folder. Koodam installs no Nookku file at this stage.
+Status: the API validation, the test folder and the Python check. Koodam installs no Nookku file at
+this stage.
 
 ## The field
 
@@ -60,7 +61,37 @@ so that the tests stay after the pod stops.
 If you remove `nookku` from a Workspace, the folder and its tests stay on the home PVC. A new
 login shell does not export `NOOKKU_TESTS_DIR`.
 
+## Python
+
+Nookku needs Python 3.10 or later. Koodam adds no Python to an image. The image of the harness
+container must have `python3` 3.10 or later on its `PATH`:
+
+- **Agent.** The image is `spec.image`.
+- **Workspace.** The image is `spec.image`, or the image of the `workspace` container in
+  `spec.podTemplate`. The default Workspace image of the chart has no Python. Thus a Workspace that
+  selects `nookku` needs an image with Python.
+
+If a harness selects `nookku`, the controller adds the init container `koodam-nookku-python`. It
+uses the image, the literal `PATH`, the user and the group of the harness container. Thus it finds
+the `python3` that the harness finds. It runs in the folder `/`, because the working folder of the
+harness can be on a volume that the check does not mount. It gets no privilege and no capability,
+and its root file system is read-only. It runs
+`python3 -c 'import sys; sys.exit(sys.version_info < (3, 10))'`. If `python3` is not on the `PATH`,
+or its version is earlier than 3.10, the container fails with this message:
+
+```text
+The nookku plugin needs python3 3.10 or later on the PATH of the image. The harness did not start.
+```
+
+The harness then does not start. An Agent run fails. A Workspace pod stays in its init step. To
+correct a Workspace, change its image or remove `nookku`, then delete the pod. A StatefulSet does
+not replace a pod that never became Ready. The check needs `sh` in the image. It gets no credential, no mount and no other env. It runs no Nookku
+code.
+
+This check prevents a fail-open hook. In Claude Code, a hook command that fails with an exit code
+other than 2 does not block the harness. A hook that cannot start Nookku fails in this way.
+
 ## Later work
 
-These parts are not approved: the Python and Nookku dependencies, the images, the plugin pin or
-artifact, the install, and the Codex trust writes.
+These parts are approved, but not built: the pinned plugin files and the install (#83, D4 and D5),
+and the Codex trust writes.

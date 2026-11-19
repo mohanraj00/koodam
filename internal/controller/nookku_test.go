@@ -17,6 +17,11 @@ limitations under the License.
 package controller
 
 import (
+	"bytes"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"reflect"
 	"slices"
 	"testing"
 
@@ -178,6 +183,151 @@ func TestWorkspaceNookkuMarker(t *testing.T) {
 				t.Errorf("image %q, %s: %d mounts and %d volumes of the marker (read-only emptyDir %v), want %d",
 					image, name, mounts, vols, ok, c.want)
 			}
+		}
+	}
+}
+
+// nookkuTestCheck is the name of the init container that checks the Python of the image.
+const nookkuTestCheck = "koodam-nookku-python"
+
+// nookkuCheck gives the Python check init containers of the pod.
+func nookkuCheck(p corev1.PodSpec) []corev1.Container {
+	var out []corev1.Container
+	for _, c := range p.InitContainers {
+		if c.Name == nookkuTestCheck {
+			out = append(out, c)
+		}
+	}
+	return out
+}
+
+// checkNookkuCheck examines one Python check: the image and the PATH of the main container, a
+// fixed command, and no credential, mount or privilege.
+func checkNookkuCheck(t *testing.T, name string, p corev1.PodSpec) {
+	t.Helper()
+	checks, main := nookkuCheck(p), p.Containers[0]
+	if len(checks) != 1 {
+		t.Fatalf("%s: the pod has %d Python checks, want 1", name, len(checks))
+	}
+	c := checks[0]
+	if c.Image != main.Image || c.ImagePullPolicy != main.ImagePullPolicy || len(c.Command) != 3 || c.Command[0] != "sh" || c.Command[1] != "-c" ||
+		len(c.Args) != 0 || c.TerminationMessagePolicy != corev1.TerminationMessageFallbackToLogsOnError {
+		t.Errorf("%s: the Python check is %+v", name, c)
+	}
+	if len(c.EnvFrom) != 0 || len(c.VolumeMounts) != 0 || len(c.Ports) != 0 {
+		t.Errorf("%s: the Python check has an env source, a mount or a port", name)
+	}
+	var wantEnv []corev1.EnvVar
+	for _, e := range main.Env {
+		if e.Name == pathEnv {
+			wantEnv = []corev1.EnvVar{e}
+		}
+	}
+	if !slices.Equal(c.Env, wantEnv) {
+		t.Errorf("%s: the env of the Python check is %+v, want %+v", name, c.Env, wantEnv)
+	}
+	if s := c.SecurityContext; s == nil || s.AllowPrivilegeEscalation == nil || *s.AllowPrivilegeEscalation ||
+		s.Capabilities == nil || len(s.Capabilities.Drop) != 1 || s.Privileged != nil && *s.Privileged ||
+		s.ReadOnlyRootFilesystem == nil || !*s.ReadOnlyRootFilesystem {
+		t.Errorf("%s: the security context of the Python check is %+v", name, s)
+	}
+	// The check runs as the user of the main container, so it finds the same python3.
+	var want corev1.SecurityContext
+	if m := main.SecurityContext; m != nil {
+		want = corev1.SecurityContext{RunAsNonRoot: m.RunAsNonRoot, RunAsUser: m.RunAsUser, RunAsGroup: m.RunAsGroup}
+	}
+	if s := c.SecurityContext; s != nil && (!reflect.DeepEqual(s.RunAsUser, want.RunAsUser) ||
+		!reflect.DeepEqual(s.RunAsGroup, want.RunAsGroup) || !reflect.DeepEqual(s.RunAsNonRoot, want.RunAsNonRoot)) ||
+		c.WorkingDir != "/" {
+		t.Errorf("%s: the Python check does not run as the main container", name)
+	}
+}
+
+func TestAgentNookkuPythonCheck(t *testing.T) {
+	for _, h := range []string{claudeName, codexName} {
+		_, out, err := jobIngMerge(t, nookkuAgent(h, true))
+		if err != nil {
+			t.Fatalf("%s: the merge failed: %v", h, err)
+		}
+		checkNookkuCheck(t, h, out.Spec)
+		off := runJob(nookkuAgent(h, false), jobIngInstaller, jobIngGatewayURL).Spec.Template.Spec
+		if len(nookkuCheck(off)) != 0 {
+			t.Errorf("%s: an Agent with no nookku plugin has a Python check", h)
+		}
+	}
+}
+
+func TestWorkspaceNookkuPythonCheck(t *testing.T) {
+	w := &corev1alpha1.Workspace{Spec: corev1alpha1.WorkspaceSpec{Harnesses: []corev1alpha1.HarnessSpec{
+		{Name: claudeName}, {Name: codexName, Plugins: []corev1alpha1.HarnessPlugin{nookkuTestPlugin}}}}}
+	w.Name, w.Namespace = "n", "team"
+	r := &WorkspaceReconciler{Image: testWorkspaceImage, InstallerImage: "example.com/koodam:1"}
+	checkNookkuCheck(t, "on", r.statefulSet(w, testProfile).Spec.Template.Spec)
+	w.Spec.Harnesses = w.Spec.Harnesses[:1]
+	if len(nookkuCheck(r.statefulSet(w, testProfile).Spec.Template.Spec)) != 0 {
+		t.Error("a Workspace with no nookku plugin has a Python check")
+	}
+}
+
+// TestNookkuPythonCheckFollowsMerge checks that the Python check gets the image and the PATH of the
+// main container after spec.podTemplate changes them. A literal PATH is copied, and a PATH from a
+// source is not.
+func TestNookkuPythonCheckFollowsMerge(t *testing.T) {
+	pod := corev1.PodSpec{Containers: []corev1.Container{{Name: "main", Image: "example.com/a:1",
+		Env: []corev1.EnvVar{{Name: pathEnv, Value: "/a"}}}}}
+	addNookkuPythonCheck(&pod)
+	pod.Containers[0].Image = "example.com/b:1"
+	pod.Containers[0].Env = []corev1.EnvVar{{Name: pathEnv, Value: "/b"}, {Name: "OTHER", Value: "x"}}
+	pod.Containers[0].WorkingDir, pod.Containers[0].ImagePullPolicy = "/work", corev1.PullNever
+	pod.Containers[0].SecurityContext = &corev1.SecurityContext{RunAsUser: new(int64(0)),
+		RunAsGroup: new(int64(10)), Privileged: new(true), Capabilities: &corev1.Capabilities{
+			Add: []corev1.Capability{"NET_ADMIN"}}}
+	syncNookkuPythonCheck(&pod, "main")
+	if c := nookkuCheck(pod)[0]; c.Image != "example.com/b:1" || !slices.Equal(c.Env, []corev1.EnvVar{{Name: pathEnv, Value: "/b"}}) {
+		t.Errorf("the Python check is %+v after the merge", c)
+	}
+	// The check gets the user and the group, but no privilege or capability of the main container.
+	checkNookkuCheck(t, "merged", pod)
+	if s := nookkuCheck(pod)[0].SecurityContext; s.Privileged != nil || len(s.Capabilities.Add) != 0 {
+		t.Errorf("the Python check gets a privilege of the main container: %+v", s)
+	}
+	if pod.Containers[0].SecurityContext.RunAsUser == nookkuCheck(pod)[0].SecurityContext.RunAsUser {
+		t.Error("the Python check shares the security context of the main container")
+	}
+	pod.Containers[0].Env = []corev1.EnvVar{{Name: pathEnv, ValueFrom: &corev1.EnvVarSource{
+		ConfigMapKeyRef: &corev1.ConfigMapKeySelector{Key: "path"}}}}
+	syncNookkuPythonCheck(&pod, "main")
+	if c := nookkuCheck(pod)[0]; len(c.Env) != 0 {
+		t.Errorf("the Python check copies a PATH from a source: %+v", c.Env)
+	}
+}
+
+// TestNookkuPythonScript runs the script of the Python check with a fake python3. The fake gives the
+// exit code of the version test.
+func TestNookkuPythonScript(t *testing.T) {
+	const want = "The nookku plugin needs python3 3.10 or later on the PATH of the image. The harness did not start.\n"
+	for name, c := range map[string]struct {
+		fake string
+		ok   bool
+	}{
+		"new": {"exit 0", true}, "old": {"exit 1", false}, "broken": {"exit 2", false}, "absent": {"", false},
+	} {
+		dir := t.TempDir()
+		if c.fake != "" {
+			if err := os.WriteFile(filepath.Join(dir, "python3"), []byte("#!/bin/sh\n"+c.fake+"\n"), 0o755); err != nil {
+				t.Fatal(err)
+			}
+		}
+		cmd := exec.Command("/bin/sh", "-c", nookkuPythonScript)
+		cmd.Env = []string{"PATH=" + dir}
+		var stderr bytes.Buffer
+		cmd.Stderr = &stderr
+		err := cmd.Run()
+		if c.ok && (err != nil || stderr.Len() != 0) {
+			t.Errorf("%s: the check failed: %v %q", name, err, stderr.String())
+		}
+		if !c.ok && (err == nil || stderr.String() != want) {
+			t.Errorf("%s: got %v and %q, want a failure with the fixed message", name, err, stderr.String())
 		}
 	}
 }

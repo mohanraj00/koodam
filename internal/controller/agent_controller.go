@@ -612,8 +612,8 @@ func addHarness(pod *corev1.PodSpec, h *corev1alpha1.HarnessSpec, image string) 
 	pod.InitContainers = append(pod.InitContainers, installerContainer(vol, vol, h.Name, h.Version, h.Libc, image))
 	c := &pod.Containers[0]
 	c.VolumeMounts = append(c.VolumeMounts, corev1.VolumeMount{Name: vol, MountPath: harnessDir, ReadOnly: true})
-	if !slices.ContainsFunc(c.Env, func(e corev1.EnvVar) bool { return e.Name == "PATH" }) {
-		c.Env = append(c.Env, corev1.EnvVar{Name: "PATH", Value: harnessPath})
+	if !slices.ContainsFunc(c.Env, func(e corev1.EnvVar) bool { return e.Name == pathEnv }) {
+		c.Env = append(c.Env, corev1.EnvVar{Name: pathEnv, Value: harnessPath})
 	}
 }
 
