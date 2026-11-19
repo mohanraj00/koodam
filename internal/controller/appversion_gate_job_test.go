@@ -17,11 +17,14 @@ limitations under the License.
 package controller
 
 import (
+	"strings"
+
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/util/validation"
 
 	corev1alpha1 "github.com/mohanraj00/koodam/api/v1alpha1"
 	"github.com/mohanraj00/koodam/internal/evidence"
@@ -55,6 +58,21 @@ var _ = Describe("AppVersion gate Job", func() {
 			Containers: []corev1.Container{{Name: "proxy"}, {Name: corev1alpha1.AppContainerName,
 				Ports: []corev1.ContainerPort{{ContainerPort: 8080}, {ContainerPort: 9090}}}}}}}}
 		Expect(gateTarget(newVersion(), deploy)).To(Equal(target))
+	})
+
+	It("keeps the Job name in 63 characters for each valid version name", func() {
+		av := newVersion()
+		Expect(gateName(av)).To(Equal("kd-v2-gate"))
+		long := strings.Repeat("a", 59)
+		av.Name = long + "b"
+		first := gateName(av)
+		Expect(first).To(HaveLen(validation.DNS1123LabelMaxLength))
+		Expect(validation.IsDNS1123Label(first)).To(BeEmpty())
+		Expect(first).To(HaveSuffix("-gate"))
+		av.Name = long + "c"
+		Expect(gateName(av)).NotTo(Equal(first), "two long names with the same start get different Job names")
+		av.Name = strings.Repeat("a", 55)
+		Expect(gateName(av)).To(Equal("kd-" + av.Name + "-gate"))
 	})
 
 	It("makes a Job with no token, no Secret, a fixed argv and read-only mounts in the verify container", func() {

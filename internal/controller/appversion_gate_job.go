@@ -17,6 +17,7 @@ limitations under the License.
 package controller
 
 import (
+	"crypto/sha256"
 	"fmt"
 	"slices"
 
@@ -24,6 +25,7 @@ import (
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/util/validation"
 
 	corev1alpha1 "github.com/mohanraj00/koodam/api/v1alpha1"
 	"github.com/mohanraj00/koodam/internal/evidence"
@@ -56,7 +58,18 @@ const (
 	gateDeadlineSeconds = 1800
 )
 
-func gateName(av *corev1alpha1.AppVersion) string { return appVersionName(av) + "-gate" }
+// gateName is the name of the gate Job. The pods of a Job have its name as a label value, so the
+// name has 63 characters or fewer. A long version name gets a short form with a hash of the name.
+func gateName(av *corev1alpha1.AppVersion) string {
+	const suffix, hashLen = "-gate", 8
+	name := appVersionName(av)
+	if len(name)+len(suffix) <= validation.DNS1123LabelMaxLength {
+		return name + suffix
+	}
+	sum := sha256.Sum256([]byte(av.Name))
+	keep := validation.DNS1123LabelMaxLength - len(suffix) - hashLen - 1
+	return fmt.Sprintf("%s-%x%s", name[:keep], sum[:hashLen/2], suffix)
+}
 
 // gateTarget is the address of the Service of the version for the entries of the gate project.
 func gateTarget(av *corev1alpha1.AppVersion, deploy *appsv1.Deployment) string {
