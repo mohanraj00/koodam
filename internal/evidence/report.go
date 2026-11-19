@@ -86,8 +86,8 @@ func ParseReport(msg string) (Report, error) {
 		!strings.HasPrefix(strings.TrimSpace(msg), "{") {
 		return r, ErrNotJSON
 	}
-	if !exactKeys(msg) {
-		return r, ErrKeys
+	if err := exactKeys(msg); err != nil {
+		return r, err
 	}
 	dec := json.NewDecoder(strings.NewReader(msg))
 	dec.DisallowUnknownFields()
@@ -111,11 +111,13 @@ func ParseReport(msg string) (Report, error) {
 	return r, nil
 }
 
-// exactKeys is true if the JSON object msg has each known key one time and no other key.
-func exactKeys(msg string) bool {
+// exactKeys gives ErrKeys if the JSON object msg does not have each known key one time, or has a
+// different key. It gives ErrFieldForm for a null value: the decoder keeps the zero value of a
+// field for a null, and the zero value of the exit code is the exit code of a pass.
+func exactKeys(msg string) error {
 	dec := json.NewDecoder(strings.NewReader(msg))
 	if t, err := dec.Token(); err != nil || t != json.Delim('{') {
-		return false
+		return ErrKeys
 	}
 	seen := map[string]bool{}
 	for dec.More() {
@@ -123,16 +125,22 @@ func exactKeys(msg string) bool {
 		key, ok := t.(string)
 		var value json.RawMessage
 		if err != nil || !ok || seen[key] || dec.Decode(&value) != nil {
-			return false
+			return ErrKeys
+		}
+		if string(value) == "null" {
+			return ErrFieldForm
 		}
 		seen[key] = true
 	}
 	for _, k := range reportKeys {
 		if !seen[k] {
-			return false
+			return ErrKeys
 		}
 	}
-	return len(seen) == len(reportKeys)
+	if len(seen) != len(reportKeys) {
+		return ErrKeys
+	}
+	return nil
 }
 
 func validSubject(s string) bool {

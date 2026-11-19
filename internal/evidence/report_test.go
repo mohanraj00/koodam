@@ -77,6 +77,8 @@ func TestParseReportAndCheck(t *testing.T) {
 		{name: "exit code 3", msg: report("3", "pass"), err: ErrExitCode},
 		{name: "a result format that is not known", msg: report("0", "pass", "format", "2"), err: ErrFormat},
 		{name: "an exit code that is text", msg: report(`"0"`, "pass"), err: ErrFieldForm},
+		{name: "an exit code that is null", msg: report("null", "pass"), err: ErrFieldForm},
+		{name: "a null value with exit code 2", msg: report("2", "", "gate", "null"), err: ErrFieldForm},
 		{name: "a gate id of a different form", msg: report("0", "pass", "gate", `"gate-case"`), err: ErrFieldForm},
 		{name: "a subject with a control character", msg: report("0", "pass", "subject", `"a\nb"`), err: ErrFieldForm},
 		{name: "a subject that is too long", msg: report("0", "pass", "subject", `"`+strings.Repeat("s", 513)+`"`),
