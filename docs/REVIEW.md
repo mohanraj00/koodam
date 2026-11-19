@@ -18,8 +18,8 @@ The branch prefix or the `agent:` label names the harness that wrote the change.
 Follow these rules for each request:
 
 1. Ask when CI is green and the PR is ready.
-2. For a Codex code review request, write `Head: <sha>` on the next line of the comment, with the short SHA of the PR head commit. Do not add this line to a Claude request. The Claude review starts only for the exact text in the table, and its comment names the head that it reviewed.
-3. Write a security review request as the exact text in the table, with no other text in the comment. If the comment has other text, for example a `Head:` line, Codex does a code review and no security review. The Codex result names the commit that it reviewed.
+2. For a Codex code review request, write `Head: <sha>` on the next line of the comment, with the short SHA of the PR head commit. Do the same for a Claude request. The Claude workflow reads only the first line, and its comment names the head that it reviewed.
+3. Write a Codex security review request as the exact text in the table, with no other text in the comment. If the comment has other text, for example a `Head:` line, Codex does a code review and no security review. The Codex result names the commit that it reviewed.
 4. Before you ask, read the PR comments. If a request names the current head, or comes after the last push, do not ask again.
 5. If you push fixes after a review, ask again for the new head.
 

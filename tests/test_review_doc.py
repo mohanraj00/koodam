@@ -15,7 +15,9 @@ class ReviewDocTest(unittest.TestCase):
         workflow = (ROOT / '.github/workflows/claude-review.yml').read_text()
         requests = set(re.findall(r'`(@claude [^`]+)`', rules))
         self.assertEqual(requests, set(claude_review.REQUESTS.values()))
-        self.assertEqual(set(re.findall(r"body == '([^']+)'", workflow)), requests)
+        # The workflow starts for each comment that names @claude. The gate job reads the first line.
+        self.assertIn("contains(github.event.comment.body, '@claude')", workflow)
+        self.assertNotIn("body == '", workflow)
 
 
 class ApprovalRecordTest(unittest.TestCase):
