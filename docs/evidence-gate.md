@@ -1,6 +1,6 @@
-# Evidence gate (design)
+# Evidence gate
 
-Status: the gate of an AppVersion is built (#342), with Nookku 0.5.9. [apps.md](apps.md) has the use. The seam test with the pinned release and the kind test are #343. The approval source of a paused run is #190, #246 and #344. Of that source, only the offline verifier (#344) is in `main`. The API part needs owner approval, because it changes `/api/`.
+Status: the gate of an AppVersion is built (#342), with Nookku 0.5.9. [apps.md](apps.md) has the use. The seam test with the pinned release and the kind test are in `main` (#343). The approval source of a paused run is #190, #246 and #344. Of that source, only the offline verifier (#344) is in `main`. No controller calls the verifier, and no resource carries an approval record.
 
 An evidence gate holds a rollout, or a paused run, until the controller gets a valid evidence record. One gate design serves 2 sources:
 
@@ -194,6 +194,11 @@ the check is before `from`, or at or after `until`. The decision must have the
 refused (Entelos `KINDS.md`, rule 3). A disposition of `accept` gives `pass`. A
 disposition of `reject` gives `fail`. The signed decision's `record_ref` gives
 both the evidence ID and digest.
+
+A valid record does not show that it is the current selection. A later reject,
+a suspension or a new snapshot can replace it, and only the Host answers that.
+The Entelos signed record format states this limit in its section "Use by an
+outside consumer" ([#364](https://github.com/mohanraj00/koodam/issues/364)).
 
 ## Open questions
 

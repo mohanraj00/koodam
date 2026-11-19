@@ -2,7 +2,7 @@
 
 The egress proxy writes 1 JSON line to its stdout for each call from an Agent pod or a Workspace pod. This line is a span. This page is the contract for the programs that read the spans, for example `koodam trace` and Nookku.
 
-> Status: v0.3, in build. The proxy writes `v` and `port` from #168, and the `tls` kind from #166.
+> Status: v0.3.0 and later. The proxy writes `v` and `port` from #168, and the `tls` kind from #166.
 
 ## Example
 

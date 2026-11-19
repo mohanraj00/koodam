@@ -162,6 +162,7 @@ The condition `Evidence` of the AppVersion has these states:
 The gate has these limits:
 
 - If the signed claim check is on, the Service of the version refuses a request with no claim. The gate pod has no claim, so the entries of the gate project must get a claim from a different source. [#354](https://github.com/mohanraj00/koodam/issues/354) tracks this.
+- The controller has no watch on NetworkPolicy. If a user deletes or changes the policy of the gate pod, the controller restores it at the next reconcile, and the gate Job can end before that ([#359](https://github.com/mohanraj00/koodam/issues/359)).
 - The egress rule of the gate pod names port 53 of the namespace `kube-system`. A cluster DNS at a different location is not in the rule, and then the gate fails closed.
 
 ## The signed claim check
