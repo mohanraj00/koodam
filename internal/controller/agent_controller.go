@@ -107,6 +107,9 @@ type AgentReconciler struct {
 	// InstallerImage has /harness-install. The run pod uses it as an init container if the Agent
 	// has a harness. If it is empty, an Agent with a harness fails.
 	InstallerImage string
+	// NookkuImage is the Nookku data image with the pinned Nookku files (#83). If it is empty, an
+	// Agent with the nookku plugin fails.
+	NookkuImage string
 	// JobTTL is the time in seconds that the controller keeps a run Job and its pods after the Job
 	// ends. If it is 0 or less, the controller uses DefaultJobTTLSeconds.
 	JobTTL int32
@@ -355,7 +358,7 @@ func (r *AgentReconciler) provision(ctx context.Context, a *corev1alpha1.Agent) 
 		msg = r.noInstaller(a)
 	}
 	// The merge comes before the key, so that a template that is not valid makes no key.
-	job := runJob(a, r.InstallerImage, r.GatewayURL)
+	job := runJob(a, r.InstallerImage, r.NookkuImage, r.GatewayURL)
 	if msg == "" {
 		var err error
 		if job.Spec.Template, err = withPodTemplate(ctx, r.APIReader, a.Namespace, job.Spec.Template,
@@ -508,7 +511,7 @@ func gatewayEnv(url, m, key string) map[string]string {
 
 // runJob makes the run Job. The Job has no ttlSecondsAfterFinished. If Kubernetes deletes the Job
 // while the controller is down, the result of the run is lost. Thus deleteEndedJob deletes it.
-func runJob(a *corev1alpha1.Agent, installerImage, gatewayURL string) *batchv1.Job {
+func runJob(a *corev1alpha1.Agent, installerImage, nookkuImage, gatewayURL string) *batchv1.Job {
 	name := runName(a)
 	env := make([]corev1.EnvVar, 0, len(a.Spec.Env)+2)
 	for k, v := range a.Spec.Env {
@@ -535,7 +538,7 @@ func runJob(a *corev1alpha1.Agent, installerImage, gatewayURL string) *batchv1.J
 	if h := a.Spec.Harness; h != nil {
 		addHarness(&pod, h, installerImage)
 		if hasNookku(h) {
-			addAgentNookku(&pod)
+			addAgentNookku(&pod, h, nookkuImage)
 		}
 		if h.Name == harness.Codex {
 			tmpl.Annotations = map[string]string{codexConfigAnnotation: codexConfig(gatewayURL, a.Spec.ModelList()[0])}
@@ -621,6 +624,8 @@ func addHarness(pod *corev1.PodSpec, h *corev1alpha1.HarnessSpec, image string) 
 // run, or "".
 func (r *AgentReconciler) noInstaller(a *corev1alpha1.Agent) string {
 	switch {
+	case r.InstallerImage != "" && hasNookku(a.Spec.Harness) && r.NookkuImage == "":
+		return msgNoNookkuImage
 	case r.InstallerImage != "":
 		return ""
 	case a.Spec.Harness != nil:

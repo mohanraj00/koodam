@@ -110,7 +110,7 @@ func TestAgentNookkuFolder(t *testing.T) {
 func TestAgentNoNookkuFolder(t *testing.T) {
 	for _, a := range []*corev1alpha1.Agent{nookkuAgent(claudeName, false), nookkuAgent(codexName, false),
 		jobIngAgent(nil, "", nil)} {
-		c := runJob(a, jobIngInstaller, jobIngGatewayURL).Spec.Template.Spec.Containers[0]
+		c := runJob(a, jobIngInstaller, jobIngNookku, jobIngGatewayURL).Spec.Template.Spec.Containers[0]
 		if _, ok := nookkuMount(c); ok {
 			t.Error("an Agent with no nookku plugin mounts nookku-tests")
 		}
@@ -149,7 +149,7 @@ func TestAgentNookkuRefusesUserValues(t *testing.T) {
 func TestWorkspaceNookkuMarker(t *testing.T) {
 	ws := func(h ...corev1alpha1.HarnessSpec) *corev1alpha1.Workspace {
 		w := &corev1alpha1.Workspace{Spec: corev1alpha1.WorkspaceSpec{Harnesses: h}}
-		w.Name, w.Namespace = "n", "team"
+		w.Name, w.Namespace = "n", testTeam
 		return w
 	}
 	on := corev1alpha1.HarnessSpec{Name: codexName, Plugins: []corev1alpha1.HarnessPlugin{nookkuTestPlugin}}
@@ -170,7 +170,7 @@ func TestWorkspaceNookkuMarker(t *testing.T) {
 		return vols, mounts, ok
 	}
 	// The marker does not need an installer image: it is the folder, not the install.
-	for _, image := range []string{"", "example.com/koodam:1"} {
+	for _, image := range []string{"", installer} {
 		r := &WorkspaceReconciler{Image: testWorkspaceImage, InstallerImage: image}
 		for name, c := range map[string]struct {
 			w    *corev1alpha1.Workspace
@@ -250,7 +250,7 @@ func TestAgentNookkuPythonCheck(t *testing.T) {
 			t.Fatalf("%s: the merge failed: %v", h, err)
 		}
 		checkNookkuCheck(t, h, out.Spec)
-		off := runJob(nookkuAgent(h, false), jobIngInstaller, jobIngGatewayURL).Spec.Template.Spec
+		off := runJob(nookkuAgent(h, false), jobIngInstaller, jobIngNookku, jobIngGatewayURL).Spec.Template.Spec
 		if len(nookkuCheck(off)) != 0 {
 			t.Errorf("%s: an Agent with no nookku plugin has a Python check", h)
 		}
@@ -260,8 +260,8 @@ func TestAgentNookkuPythonCheck(t *testing.T) {
 func TestWorkspaceNookkuPythonCheck(t *testing.T) {
 	w := &corev1alpha1.Workspace{Spec: corev1alpha1.WorkspaceSpec{Harnesses: []corev1alpha1.HarnessSpec{
 		{Name: claudeName}, {Name: codexName, Plugins: []corev1alpha1.HarnessPlugin{nookkuTestPlugin}}}}}
-	w.Name, w.Namespace = "n", "team"
-	r := &WorkspaceReconciler{Image: testWorkspaceImage, InstallerImage: "example.com/koodam:1"}
+	w.Name, w.Namespace = "n", testTeam
+	r := &WorkspaceReconciler{Image: testWorkspaceImage, InstallerImage: installer}
 	checkNookkuCheck(t, "on", r.statefulSet(w, testProfile).Spec.Template.Spec)
 	w.Spec.Harnesses = w.Spec.Harnesses[:1]
 	if len(nookkuCheck(r.statefulSet(w, testProfile).Spec.Template.Spec)) != 0 {
@@ -328,6 +328,107 @@ func TestNookkuPythonScript(t *testing.T) {
 		}
 		if !c.ok && (err == nil || stderr.String() != want) {
 			t.Errorf("%s: got %v and %q, want a failure with the fixed message", name, err, stderr.String())
+		}
+	}
+}
+
+// The names and paths of the Nookku file copy, and the Claude Code env (#83, D5 and D6).
+const (
+	nookkuTestFiles    = "koodam-nookku-files"
+	nookkuTestFilesVol = "nookku-files"
+	nookkuTestDir      = "/koodam/nookku"
+	nookkuTestTitle    = "CLAUDE_CODE_DISABLE_TERMINAL_TITLE"
+	// installer is the installer image that the Workspace tests use.
+	installer = "example.com/koodam:1"
+)
+
+// checkNookkuFiles examines the copy of the pinned Nookku files: the data image, a fixed command,
+// the 2 volumes, no credential and a read-only mount in the main container.
+func checkNookkuFiles(t *testing.T, name, image string, p corev1.PodSpec) {
+	t.Helper()
+	var files []corev1.Container
+	for _, c := range p.InitContainers {
+		if c.Name == nookkuTestFiles {
+			files = append(files, c)
+		}
+	}
+	if len(files) != 1 {
+		t.Fatalf("%s: the pod has %d Nookku file copies, want 1", name, len(files))
+	}
+	c := files[0]
+	if c.Image != image || !slices.Equal(c.Command, []string{"/nookku-copy", "/nookku/share", nookkuTestDir,
+		"/nookku/bin/nookku", "/koodam/bin/nookku"}) || len(c.Args) != 0 {
+		t.Errorf("%s: the Nookku file copy is %+v", name, c)
+	}
+	if len(c.Env) != 0 || len(c.EnvFrom) != 0 || !reflect.DeepEqual(c.VolumeMounts, []corev1.VolumeMount{
+		{Name: nookkuTestFilesVol, MountPath: nookkuTestDir}, {Name: "harness", MountPath: "/koodam/bin"}}) {
+		t.Errorf("%s: the Nookku file copy has an env or other mounts: %+v", name, c)
+	}
+	if s := c.SecurityContext; s == nil || s.RunAsNonRoot == nil || !*s.RunAsNonRoot ||
+		s.ReadOnlyRootFilesystem == nil || !*s.ReadOnlyRootFilesystem {
+		t.Errorf("%s: the Nookku file copy is not a helper: %+v", name, s)
+	}
+	want := corev1.VolumeMount{Name: nookkuTestFilesVol, MountPath: nookkuTestDir, ReadOnly: true}
+	if !slices.ContainsFunc(p.Containers[0].VolumeMounts, func(m corev1.VolumeMount) bool { return reflect.DeepEqual(m, want) }) {
+		t.Errorf("%s: the main container does not mount the Nookku files read-only", name)
+	}
+	if !slices.ContainsFunc(p.Volumes, func(v corev1.Volume) bool { return v.Name == nookkuTestFilesVol && v.EmptyDir != nil }) {
+		t.Errorf("%s: the pod has no emptyDir nookku-files", name)
+	}
+}
+
+// TestAgentNookkuFiles checks the copy of the Nookku files and the env of Claude Code (#83, D5 and
+// D6), also after the pod template merge.
+func TestAgentNookkuFiles(t *testing.T) {
+	for _, h := range []string{claudeName, codexName} {
+		_, out, err := jobIngMerge(t, nookkuAgent(h, true))
+		if err != nil {
+			t.Fatalf("%s: the merge failed: %v", h, err)
+		}
+		checkNookkuFiles(t, h, jobIngNookku, out.Spec)
+		title := slices.ContainsFunc(out.Spec.Containers[0].Env, func(e corev1.EnvVar) bool {
+			return e == corev1.EnvVar{Name: nookkuTestTitle, Value: "1"}
+		})
+		if title != (h == claudeName) {
+			t.Errorf("%s: the env CLAUDE_CODE_DISABLE_TERMINAL_TITLE=1 is %v", h, title)
+		}
+		off := runJob(nookkuAgent(h, false), jobIngInstaller, jobIngNookku, jobIngGatewayURL).Spec.Template.Spec
+		if slices.ContainsFunc(off.InitContainers, func(c corev1.Container) bool { return c.Name == nookkuTestFiles }) ||
+			slices.ContainsFunc(off.Containers[0].Env, func(e corev1.EnvVar) bool { return e.Name == nookkuTestTitle }) {
+			t.Errorf("%s: an Agent with no nookku plugin gets Nookku files or the title env", h)
+		}
+	}
+	// A value of spec.env stays.
+	a := nookkuAgent(claudeName, true)
+	a.Spec.Env = map[string]string{nookkuTestTitle: "0"}
+	env := runJob(a, jobIngInstaller, jobIngNookku, jobIngGatewayURL).Spec.Template.Spec.Containers[0].Env
+	if n := slices.IndexFunc(env, func(e corev1.EnvVar) bool { return e.Name == nookkuTestTitle }); n < 0 ||
+		env[n].Value != "0" || slices.ContainsFunc(env[n+1:], func(e corev1.EnvVar) bool { return e.Name == nookkuTestTitle }) {
+		t.Errorf("the env of spec.env changed: %+v", env)
+	}
+	// With no Nookku image, the controller refuses the run.
+	r := &AgentReconciler{InstallerImage: jobIngInstaller}
+	if r.noInstaller(nookkuAgent(codexName, true)) != msgNoNookkuImage || r.noInstaller(nookkuAgent(codexName, false)) != "" {
+		t.Error("the controller does not refuse an Agent with nookku and no Nookku image")
+	}
+}
+
+func TestWorkspaceNookkuFiles(t *testing.T) {
+	w := &corev1alpha1.Workspace{Spec: corev1alpha1.WorkspaceSpec{Harnesses: []corev1alpha1.HarnessSpec{
+		{Name: claudeName}, {Name: codexName, Plugins: []corev1alpha1.HarnessPlugin{nookkuTestPlugin}}}}}
+	w.Name, w.Namespace = "n", testTeam
+	r := &WorkspaceReconciler{Image: testWorkspaceImage, InstallerImage: installer, NookkuImage: jobIngNookku}
+	spec := r.statefulSet(w, testProfile).Spec.Template.Spec
+	checkNookkuFiles(t, "on", jobIngNookku, spec)
+	if slices.ContainsFunc(spec.Containers[0].Env, func(e corev1.EnvVar) bool { return e.Name == nookkuTestTitle }) {
+		t.Error("a Workspace container gets the title env")
+	}
+	// With no Nookku image or no installer image, the pod has no copy.
+	for _, r := range []*WorkspaceReconciler{{Image: testWorkspaceImage, InstallerImage: installer},
+		{Image: testWorkspaceImage, NookkuImage: jobIngNookku}} {
+		if spec := r.statefulSet(w, testProfile).Spec.Template.Spec; slices.ContainsFunc(spec.InitContainers,
+			func(c corev1.Container) bool { return c.Name == nookkuTestFiles }) {
+			t.Errorf("the pod has a Nookku file copy with the images %q and %q", r.InstallerImage, r.NookkuImage)
 		}
 	}
 }

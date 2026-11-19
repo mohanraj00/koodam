@@ -1,7 +1,7 @@
 # Nookku preset (#83)
 
-Status: the API validation, the test folder and the Python check. Koodam installs no Nookku file at
-this stage.
+Status: the API validation, the test folder, the Python check, the copy of the pinned Nookku files
+and the Claude Code env of an Agent. Koodam does not load the plugin in a harness at this stage.
 
 ## The field
 
@@ -91,7 +91,41 @@ code.
 This check prevents a fail-open hook. In Claude Code, a hook command that fails with an exit code
 other than 2 does not block the harness. A hook that cannot start Nookku fails in this way.
 
+## Nookku files
+
+Koodam pins Nookku 0.5.9 in `internal/evidence/nookku.pin`, the same pin as the evidence gate. The
+Nookku data image (`images/nookku`) has these files, and no shell and no Python:
+
+- `/nookku/share/lib`: the content of the wheel. The build refuses a wheel with a different SHA-256.
+- `/nookku/share/plugin`: the files of `plugins/nookku` at the tag commit. The build refuses a file
+  with a SHA-256 that is not in `images/nookku/plugin.sha256`. The Nookku release has no plugin
+  asset, so the files come from the tag commit. The test file `hooks/register.test.ts` is not in
+  the image, because the plugin does not use it.
+- `/nookku/bin/nookku`: the launcher. It runs `python3 -I -S` with a fixed `sys.path`: the
+  standard library and `/koodam/nookku/lib`. It needs no `pip`.
+
+Build the image with `make docker-build-nookku`. Each publication of the image needs a separate
+approval of the maintainer. Give the image to the controller with `--nookku-image`. The reference
+must have a digest (`@sha256:`), so that the files cannot change after the review.
+
+If a harness selects `nookku`, the controller adds the init container `koodam-nookku-files`. It
+copies the files into an emptyDir, which the harness container mounts read-only at
+`/koodam/nookku`. It copies the launcher to `/koodam/bin/nookku`, which is on the `PATH` of the
+harness. The init container gets no credential and no env, and it has the restrictions of a
+helper.
+
+If the controller has no `--nookku-image`, an Agent with `nookku` fails. A Workspace gets no Nookku
+files, and its condition `Harnesses` is `False` with the reason `NoNookkuImage`.
+
+## Claude Code env
+
+For an Agent with Claude Code and `nookku`, the controller sets
+`CLAUDE_CODE_DISABLE_TERMINAL_TITLE=1`, if `spec.env` does not set it. Without it, the Nookku relay
+refuses a Claude Code session that is not the interactive CLI (Nookku `docs/limits.md`). A
+Workspace runs the interactive CLI, so it does not get the env.
+
 ## Later work
 
-These parts are approved, but not built: the pinned plugin files and the install (#83, D4 and D5),
-and the Codex trust writes.
+These parts are approved, but not built: the load of the plugin in Claude Code and Codex, and the
+Codex trust writes. The chart value of `--nookku-image` comes with the first publication of the
+image.

@@ -24,6 +24,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -31,6 +32,35 @@ import (
 )
 
 // TestWorkspaceImageFor checks the tag rule of the default workspace image.
+func TestDigestImage(t *testing.T) {
+	digest := strings.Repeat("a", 64)
+	for ref, want := range map[string]bool{
+		"example.com/koodam-nookku@sha256:" + digest:        true,
+		"example.com/koodam-nookku:v1@sha256:" + digest:     true,
+		"example.com/koodam-nookku:v1":                      false,
+		"example.com/koodam-nookku@sha256:" + digest[:63]:   false,
+		"example.com/koodam-nookku@sha256:" + digest + " x": false,
+		"@sha256:" + digest:                                 false,
+	} {
+		if digestImage.MatchString(ref) != want {
+			t.Errorf("%q: got %v, want %v", ref, !want, want)
+		}
+	}
+}
+
+func TestSplitNamespaces(t *testing.T) {
+	got, err := splitNamespaces("a,,b-1,")
+	if err != nil || !slices.Equal(got, []string{"a", "b-1"}) {
+		t.Errorf("got %q and %v, want [a b-1]", got, err)
+	}
+	if got, err := splitNamespaces(""); err != nil || got != nil {
+		t.Errorf("an empty list: got %q and %v", got, err)
+	}
+	if _, err := splitNamespaces("a,B_c"); err == nil {
+		t.Error("the split accepted a namespace that is not valid")
+	}
+}
+
 func TestWorkspaceImageFor(t *testing.T) {
 	const repo, latest = "ghcr.io/mohanraj00/koodam-workspace:", "latest"
 	for v, tag := range map[string]string{

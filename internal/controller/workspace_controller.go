@@ -116,6 +116,9 @@ type WorkspaceReconciler struct {
 	// InstallerImage has /harness-install. The pod uses it as an init container for each
 	// harness of spec.harnesses.
 	InstallerImage string
+	// NookkuImage is the Nookku data image with the pinned Nookku files (#83). If it is empty, the
+	// pod has no Nookku files, and the condition Harnesses is False.
+	NookkuImage string
 	// Gateway makes, renews and blocks the gateway keys.
 	Gateway gateway.Gateway
 	// GatewayURL is the gateway address for the workspace pods.
@@ -187,7 +190,7 @@ func (r *WorkspaceReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 		keysCond.Message = fmt.Sprintf("The controller skipped the keys at the indexes %v of spec.sshPublicKeys.", skipped)
 	}
 	meta.SetStatusCondition(&ws.Status.Conditions, keysCond)
-	meta.SetStatusCondition(&ws.Status.Conditions, harnessCondition(ws, r.InstallerImage))
+	meta.SetStatusCondition(&ws.Status.Conditions, harnessCondition(ws, r.InstallerImage, r.NookkuImage))
 	meta.SetStatusCondition(&ws.Status.Conditions, r.Egress.condition(ws.Generation))
 	res := ctrl.Result{}
 	var keyErr error
@@ -576,7 +579,7 @@ func (r *WorkspaceReconciler) statefulSet(ws *corev1alpha1.Workspace, user strin
 		Volumes:    volumes,
 	}}
 	addWorkspaceHarnesses(&tmpl.Spec, ws.Spec.Harnesses, r.InstallerImage)
-	addWorkspaceNookku(&tmpl.Spec, ws.Spec.Harnesses)
+	addWorkspaceNookku(&tmpl.Spec, ws.Spec.Harnesses, r.NookkuImage)
 	addIdentity(&tmpl.ObjectMeta, "", user)
 	r.Egress.annotate(&tmpl.ObjectMeta, hasGateway(ws), r.GatewayURL)
 	sts := &appsv1.StatefulSet{ObjectMeta: workspaceMeta(ws, ws.Name), Spec: appsv1.StatefulSetSpec{

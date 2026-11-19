@@ -166,6 +166,25 @@ func checkEgress(e controller.EgressProxy) error {
 	return nil
 }
 
+// digestImage matches an image reference with a sha256 digest. The digest pins the Nookku files.
+var digestImage = regexp.MustCompile(`^[^@\s]+@sha256:[0-9a-f]{64}$`)
+
+// splitNamespaces splits a comma-separated list of namespaces. It ignores an empty item, and it
+// refuses a name that is not a DNS-1123 label.
+func splitNamespaces(list string) ([]string, error) {
+	var namespaces []string
+	for ns := range strings.SplitSeq(list, ",") {
+		if ns == "" {
+			continue
+		}
+		if errs := validation.IsDNS1123Label(ns); len(errs) > 0 {
+			return nil, fmt.Errorf("the namespace %q is not valid: %s", ns, strings.Join(errs, "; "))
+		}
+		namespaces = append(namespaces, ns)
+	}
+	return namespaces, nil
+}
+
 func main() {
 	var metricsAddr string
 	var metricsCertPath, metricsCertName, metricsCertKey string
@@ -175,7 +194,7 @@ func main() {
 	var probeAddr string
 	var secureMetrics bool
 	var enableHTTP2 bool
-	var gatewayURL, gatewayKeyFile, agentGatewayURL, installerImage, workspaceImage string
+	var gatewayURL, gatewayKeyFile, agentGatewayURL, installerImage, nookkuImage, workspaceImage string
 	var testKeySingleGateway bool
 	var testKeyRevokeWait time.Duration
 	var keyGrace time.Duration
@@ -239,6 +258,9 @@ func main() {
 			"The value must be from 60 to 2147483647.")
 	flag.StringVar(&installerImage, "installer-image", "",
 		"The image with /harness-install, for an Agent or a Workspace with a harness. The chart gives the manager image.")
+	flag.StringVar(&nookkuImage, "nookku-image", "",
+		"The Nookku data image with the pinned Nookku files, for a harness with the nookku plugin (#83). "+
+			"The reference must have a digest (@sha256:).")
 	flag.StringVar(&workspaceImage, "workspace-image", defaultWorkspaceImage(),
 		"The workspace image for a Workspace with no spec.image.")
 	flag.BoolVar(&testKeySingleGateway, "test-key-single-instance-gateway", false,
@@ -354,6 +376,10 @@ func main() {
 		setupLog.Error(nil, "The flags --gateway-url and --gateway-master-key-file are required")
 		os.Exit(1)
 	}
+	if nookkuImage != "" && !digestImage.MatchString(nookkuImage) {
+		setupLog.Error(nil, "The flag --nookku-image must end with a digest @sha256:<64 hex characters>")
+		os.Exit(1)
+	}
 	masterKey, err := os.ReadFile(gatewayKeyFile)
 	if err != nil {
 		setupLog.Error(err, "Failed to read the gateway master key file")
@@ -371,16 +397,10 @@ func main() {
 		setupLog.Error(err, "--egress-proxy-pod-labels is not valid")
 		os.Exit(1)
 	}
-	var ingressNamespaces []string
-	for ns := range strings.SplitSeq(appIngressNamespaces, ",") {
-		if ns == "" {
-			continue
-		}
-		if errs := validation.IsDNS1123Label(ns); len(errs) > 0 {
-			setupLog.Error(nil, "--app-ingress-namespaces has a namespace that is not valid", "namespace", ns)
-			os.Exit(1)
-		}
-		ingressNamespaces = append(ingressNamespaces, ns)
+	ingressNamespaces, err := splitNamespaces(appIngressNamespaces)
+	if err != nil {
+		setupLog.Error(err, "--app-ingress-namespaces has a namespace that is not valid")
+		os.Exit(1)
 	}
 	claim.Image = installerImage
 	if claim, err = loadClaim(claim, claimJWKSFile); err != nil {
@@ -406,6 +426,7 @@ func main() {
 		Egress:         egress,
 		Grace:          keyGrace,
 		InstallerImage: installerImage,
+		NookkuImage:    nookkuImage,
 		JobTTL:         int32(jobTTLSeconds),
 		IngressEnabled: agentIngressEnabled,
 	}).SetupWithManager(mgr); err != nil {
@@ -425,6 +446,7 @@ func main() {
 		APIReader:      mgr.GetAPIReader(),
 		Image:          workspaceImage,
 		InstallerImage: installerImage,
+		NookkuImage:    nookkuImage,
 		Gateway:        gw,
 		GatewayURL:     strings.TrimRight(agentGatewayURL, "/"),
 		Egress:         egress,

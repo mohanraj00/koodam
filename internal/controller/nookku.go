@@ -20,12 +20,15 @@ import (
 	"slices"
 
 	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/api/resource"
 
 	corev1alpha1 "github.com/mohanraj00/koodam/api/v1alpha1"
+	"github.com/mohanraj00/koodam/internal/harness"
 )
 
-// The Nookku preset (#83). Koodam installs no Nookku file at this stage. It gives the test folder
-// to the pod, so that the tests stay after the pod stops, and it checks the Python of the image.
+// The Nookku preset (#83). Koodam copies the pinned Nookku files from the Nookku data image into
+// the pod, and puts the command nookku on the PATH of the harness. It gives the test folder to the
+// pod, so that the tests stay after the pod stops, and it checks the Python of the image.
 const (
 	// nookkuTestsEnv is the env of Nookku for its test folder.
 	nookkuTestsEnv = "NOOKKU_TESTS_DIR"
@@ -39,6 +42,18 @@ const (
 	workspaceNookkuDir = "/etc/koodam/nookku"
 	// nookkuPythonContainer is the init container that checks the Python of the harness image.
 	nookkuPythonContainer = "koodam-nookku-python"
+	// nookkuDir is the read-only folder of the pinned Nookku files in the main container. lib has
+	// the content of the wheel, and plugin has the plugin files. The launcher runs lib.
+	nookkuDir = "/koodam/nookku"
+	// nookkuFilesContainer is the init container that copies the files from the Nookku data image.
+	nookkuFilesContainer = "koodam-nookku-files"
+	// nookkuFilesVolume is the emptyDir of the pinned Nookku files.
+	nookkuFilesVolume = "nookku-files"
+	// claudeTitleEnv stops the terminal title of Claude Code. Without it, the Nookku relay refuses
+	// a Claude Code session that is not the interactive CLI (Nookku docs/limits.md).
+	claudeTitleEnv = "CLAUDE_CODE_DISABLE_TERMINAL_TITLE"
+	// msgNoNookkuImage is the reason for an Agent run with nookku if the controller has no image.
+	msgNoNookkuImage = "The controller has no --nookku-image, so it cannot install the nookku plugin."
 	// pathEnv is the name of the env that lists the command folders.
 	pathEnv = "PATH"
 	// msgNookkuPython is the termination message of nookkuPythonContainer if the check fails.
@@ -57,18 +72,50 @@ func hasNookku(h *corev1alpha1.HarnessSpec) bool {
 }
 
 // addAgentNookku mounts the user volume nookku-tests in the agent container and sets the env of the
-// folder. invalid refuses an Agent that also sets the env in spec.env.
-func addAgentNookku(pod *corev1.PodSpec) {
+// folder. invalid refuses an Agent that also sets the env in spec.env. For Claude Code, it also
+// sets claudeTitleEnv to 1, if spec.env does not set it.
+func addAgentNookku(pod *corev1.PodSpec, h *corev1alpha1.HarnessSpec, image string) {
 	c := &pod.Containers[0]
 	c.VolumeMounts = append(c.VolumeMounts, corev1.VolumeMount{Name: nookkuTestsVolume,
 		MountPath: agentNookkuTestsDir})
 	c.Env = append(c.Env, corev1.EnvVar{Name: nookkuTestsEnv, Value: agentNookkuTestsDir})
+	if h.Name == harness.ClaudeCode && !slices.ContainsFunc(c.Env, func(e corev1.EnvVar) bool { return e.Name == claudeTitleEnv }) {
+		c.Env = append(c.Env, corev1.EnvVar{Name: claudeTitleEnv, Value: "1"})
+	}
+	addNookkuFiles(pod, image)
 	addNookkuPythonCheck(pod)
 }
 
+// addNookkuFiles adds the init container that copies the pinned Nookku files from the Nookku data
+// image (#83, D5). The files go to an emptyDir that the main container mounts read-only at
+// nookkuDir. The launcher nookku goes to the harness volume, which the main container mounts
+// read-only at harnessDir, so it is on the PATH of the harness. The init container has no
+// credential, no env and the restrictions of a helper. If the image is empty or the pod has no
+// harness volume, the pod does not change.
+func addNookkuFiles(pod *corev1.PodSpec, image string) {
+	const harnessVolume = "harness"
+	if image == "" || !slices.ContainsFunc(pod.Volumes, func(v corev1.Volume) bool { return v.Name == harnessVolume }) {
+		return
+	}
+	limit := resource.MustParse("64Mi")
+	pod.Volumes = append(pod.Volumes, corev1.Volume{Name: nookkuFilesVolume, VolumeSource: corev1.VolumeSource{
+		EmptyDir: &corev1.EmptyDirVolumeSource{SizeLimit: &limit}}})
+	pod.InitContainers = append(pod.InitContainers, corev1.Container{
+		Name: nookkuFilesContainer, Image: image,
+		Command: []string{"/nookku-copy", "/nookku/share", nookkuDir, "/nookku/bin/nookku", harnessDir + "/nookku"},
+		VolumeMounts: []corev1.VolumeMount{{Name: nookkuFilesVolume, MountPath: nookkuDir},
+			{Name: harnessVolume, MountPath: harnessDir}},
+		SecurityContext: helperSecurityContext(),
+	})
+	c := &pod.Containers[0]
+	c.VolumeMounts = append(c.VolumeMounts, corev1.VolumeMount{Name: nookkuFilesVolume, MountPath: nookkuDir,
+		ReadOnly: true})
+}
+
 // addWorkspaceNookku mounts the marker folder if a harness of the Workspace selects nookku. The
-// marker has no data. A Workspace with no nookku plugin gets no change.
-func addWorkspaceNookku(pod *corev1.PodSpec, harnesses []corev1alpha1.HarnessSpec) {
+// marker has no data. It also adds the pinned Nookku files from image. A Workspace with no nookku
+// plugin gets no change.
+func addWorkspaceNookku(pod *corev1.PodSpec, harnesses []corev1alpha1.HarnessSpec, image string) {
 	if !slices.ContainsFunc(harnesses, func(h corev1alpha1.HarnessSpec) bool { return hasNookku(&h) }) {
 		return
 	}
@@ -78,6 +125,7 @@ func addWorkspaceNookku(pod *corev1.PodSpec, harnesses []corev1alpha1.HarnessSpe
 	c := &pod.Containers[0]
 	c.VolumeMounts = append(c.VolumeMounts, corev1.VolumeMount{Name: vol, MountPath: workspaceNookkuDir,
 		ReadOnly: true})
+	addNookkuFiles(pod, image)
 	addNookkuPythonCheck(pod)
 }
 
