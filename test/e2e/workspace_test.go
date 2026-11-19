@@ -260,9 +260,20 @@ var _ = Describe("Workspaces", Ordered, Label("workspace"), func() {
 
 	// The M1 exit test of v0.4 (#287): one Nookku test uses its own gateway key (#192).
 	It("gives one Nookku test its own gateway key and revokes it after the TTL", func() {
+		By("building the Workspace image with python3 and loading it on kind")
+		// The nookku plugin needs python3 3.10 or later, and the default Workspace image has none.
+		const pythonWorkspaceImage = "example.com/koodam-workspace-python:e2e"
+		dir, err := utils.GetProjectDir()
+		Expect(err).NotTo(HaveOccurred())
+		out, err := utils.Run(exec.Command("docker", "build", "-t", pythonWorkspaceImage,
+			"--build-arg", "BASE="+workspaceImage, filepath.Join(dir, "test", "e2e", "testdata", "workspace-python")))
+		Expect(err).NotTo(HaveOccurred(), "Failed to build the Workspace image with python3: "+out)
+		Expect(utils.LoadImageToKindClusterWithName(pythonWorkspaceImage)).To(Succeed())
+
 		By("permitting TestKeys and selecting the nookku plugin")
 		Expect(k8s.Get(ctx, client.ObjectKeyFromObject(ws), ws)).To(Succeed())
 		patch := client.MergeFrom(ws.DeepCopy())
+		ws.Spec.Image = pythonWorkspaceImage
 		ws.Spec.TestKeys = &corev1alpha1.WorkspaceTestKeys{MaxBudget: resource.MustParse("1"),
 			MaxTTL: metav1.Duration{Duration: 10 * time.Minute}}
 		ws.Spec.Harnesses = []corev1alpha1.HarnessSpec{{Name: "claude-code"},
@@ -275,9 +286,14 @@ var _ = Describe("Workspaces", Ordered, Label("workspace"), func() {
 		Eventually(func() error { _, err := ssh("test -d /etc/koodam/nookku"); return err },
 			5*time.Minute, 5*time.Second).Should(Succeed(), "The Workspace pod has no Nookku marker.")
 		waitPhase(ws, corev1alpha1.WorkspaceRunning)
-		out, err := ssh(`bash -lc 'test -d "$NOOKKU_TESTS_DIR" && printf %s "$NOOKKU_TESTS_DIR"'`)
+		out, err = ssh(`bash -lc 'test -d "$NOOKKU_TESTS_DIR" && printf %s "$NOOKKU_TESTS_DIR"'`)
 		Expect(err).NotTo(HaveOccurred(), "A login shell has no Nookku test folder.")
 		Expect(out).To(Equal("/home/dev/nookku-tests"))
+		pod := &corev1.Pod{}
+		Expect(k8s.Get(ctx, client.ObjectKey{Namespace: wsNS, Name: wsName + "-0"}, pod)).To(Succeed())
+		Expect(pod.Status.InitContainerStatuses).To(ContainElement(And(
+			HaveField("Name", "koodam-nookku-python"),
+			HaveField("State.Terminated.ExitCode", BeZero()))), "The python3 check did not pass.")
 
 		By("making a TestKey for one test")
 		const testID = "e2e-nookku-1"

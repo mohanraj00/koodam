@@ -24,8 +24,8 @@ import (
 	corev1alpha1 "github.com/mohanraj00/koodam/api/v1alpha1"
 )
 
-// The Nookku test folder (#83). Koodam installs no Nookku file at this stage. It only gives the
-// folder to the pod, so that the tests stay after the pod stops.
+// The Nookku preset (#83). Koodam installs no Nookku file at this stage. It gives the test folder
+// to the pod, so that the tests stay after the pod stops, and it checks the Python of the image.
 const (
 	// nookkuTestsEnv is the env of Nookku for its test folder.
 	nookkuTestsEnv = "NOOKKU_TESTS_DIR"
@@ -37,7 +37,17 @@ const (
 	// workspaceNookkuDir is an empty read-only marker folder. If it is in the pod, the image makes
 	// the test folder on the home PVC and exports nookkuTestsEnv in a login shell.
 	workspaceNookkuDir = "/etc/koodam/nookku"
+	// nookkuPythonContainer is the init container that checks the Python of the harness image.
+	nookkuPythonContainer = "koodam-nookku-python"
+	// msgNookkuPython is the termination message of nookkuPythonContainer if the check fails.
+	msgNookkuPython = "The nookku plugin needs python3 3.10 or later on the PATH of the image. The harness did not start."
 )
+
+// nookkuPythonScript exits with 0 only if python3 on the PATH is 3.10 or later. It runs no Nookku
+// code and reads no file.
+const nookkuPythonScript = `python3 -c 'import sys; sys.exit(sys.version_info < (3, 10))' >/dev/null 2>&1 && exit 0
+echo "` + msgNookkuPython + `" >&2
+exit 1`
 
 // hasNookku is true if the harness selects the nookku plugin.
 func hasNookku(h *corev1alpha1.HarnessSpec) bool {
@@ -51,6 +61,7 @@ func addAgentNookku(pod *corev1.PodSpec) {
 	c.VolumeMounts = append(c.VolumeMounts, corev1.VolumeMount{Name: nookkuTestsVolume,
 		MountPath: agentNookkuTestsDir})
 	c.Env = append(c.Env, corev1.EnvVar{Name: nookkuTestsEnv, Value: agentNookkuTestsDir})
+	addNookkuPythonCheck(pod)
 }
 
 // addWorkspaceNookku mounts the marker folder if a harness of the Workspace selects nookku. The
@@ -65,4 +76,34 @@ func addWorkspaceNookku(pod *corev1.PodSpec, harnesses []corev1alpha1.HarnessSpe
 	c := &pod.Containers[0]
 	c.VolumeMounts = append(c.VolumeMounts, corev1.VolumeMount{Name: vol, MountPath: workspaceNookkuDir,
 		ReadOnly: true})
+	addNookkuPythonCheck(pod)
+}
+
+// addNookkuPythonCheck adds an init container that stops the pod before the harness starts if the
+// image of the main container has no python3 3.10 or later (#83). Nookku needs Python 3.10 or later,
+// and a hook that cannot start Nookku must not let the harness run. The container gets no
+// credential, no mount and no env but PATH.
+func addNookkuPythonCheck(pod *corev1.PodSpec) {
+	pod.InitContainers = append(pod.InitContainers, corev1.Container{
+		Name: nookkuPythonContainer, Command: []string{"sh", "-c", nookkuPythonScript},
+		TerminationMessagePolicy: corev1.TerminationMessageFallbackToLogsOnError,
+		SecurityContext:          helperSecurityContext(),
+	})
+	syncNookkuPythonCheck(pod, pod.Containers[0].Name)
+}
+
+// syncNookkuPythonCheck gives the Python check the image and the literal PATH of the main
+// container. withPodTemplate calls it again after the merge, because spec.podTemplate can change
+// the image and the env of the main container. A pod with no check does not change.
+func syncNookkuPythonCheck(pod *corev1.PodSpec, main string) {
+	i := slices.IndexFunc(pod.InitContainers, func(c corev1.Container) bool { return c.Name == nookkuPythonContainer })
+	m := slices.IndexFunc(pod.Containers, func(c corev1.Container) bool { return c.Name == main })
+	if i < 0 || m < 0 {
+		return
+	}
+	check, c := &pod.InitContainers[i], pod.Containers[m]
+	check.Image, check.Env = c.Image, nil
+	if p := slices.IndexFunc(c.Env, func(e corev1.EnvVar) bool { return e.Name == "PATH" }); p >= 0 && c.Env[p].ValueFrom == nil {
+		check.Env = []corev1.EnvVar{{Name: "PATH", Value: c.Env[p].Value}}
+	}
 }

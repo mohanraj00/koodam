@@ -118,6 +118,7 @@ func withPodTemplate(ctx context.Context, rd client.Reader, ns string, base core
 	if len(errs) > 0 {
 		return base, &invalidTemplateError{errs: errs}
 	}
+	syncNookkuPythonCheck(&out.Spec, main)
 	return out, nil
 }
 
