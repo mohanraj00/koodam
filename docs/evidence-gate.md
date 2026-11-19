@@ -5,7 +5,7 @@ Status: design for #189. Nothing in this file is in `main`. The API part needs o
 An evidence gate holds a rollout, or a paused run, until the controller gets a valid evidence record. One gate design serves 2 sources:
 
 1. A sealed result of a scripted Nookku gate run. This design covers this source for an AppVersion (#189).
-2. A signed approval record. #190 and #246 build this source for a paused run. This design names only its seam.
+2. A signed approval record. #344 adds the offline verifier. #190 and #246 use it for a paused run.
 
 Nookku owns the format of its result. Koodam owns the gate, the check of the record and the seam test.
 
@@ -140,7 +140,7 @@ A platform team can require a gate with a `ValidatingAdmissionPolicy`: each AppV
 ## Key source
 
 - **Nookku source.** A seal has no key. The integrity check is the seal and its copy, which `nookku gate verify` checks. The origin check is the Job: the controller makes its spec, and the kubelet writes the report to the pod status. No user can write `status.evidence`.
-- **Approval source.** A signed record has a key. #190 decides the key source, for example a public key in a Secret that the admin names. The gate needs only the record of the table above from that verifier.
+- **Approval source.** The caller gives the verifier the bytes of a trusted key set that the admin selects separately from the signed record. #190 owns the choice of key source.
 
 ## Threat model
 
@@ -175,6 +175,12 @@ The seam test proves that Koodam reads the Nookku format of the pinned release.
 - **Seam.** A CI job installs the pinned wheel, runs the fixed verify script on the gate cases of `conformance/gate/` of the same release, and gives each report to the Go parser. Cases: a `pass`, a `fail`, a missing test, a `result.json` that changed after the seal, and a subject that does not match. The expected reason of each case is in the test.
 - **envtest.** An AppVersion with `spec.gate`: the Job spec (no token, read-only mounts, fixed argv), each state of the table from a fake pod status, and the weight 0 in effect until `Passed`.
 - **kind.** A gate image from the pinned release, with one gate that passes and one that fails. The test checks the condition and the weights of the HTTPRoute.
+
+The approval seam uses the signed record protocol and vectors of Entelos tag
+`v0.5.0`. The verifier uses the Entelos decision's `snapshot_ref` as the
+subject and compares it with the subject from the caller. A disposition of
+`accept` gives `pass`. A disposition of `reject` gives `fail`. The signed
+decision's `record_ref` gives both the evidence ID and digest.
 
 ## Build plan
 
