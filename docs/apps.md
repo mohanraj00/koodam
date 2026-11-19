@@ -123,13 +123,14 @@ spec:
 - `spec.gate` is immutable. You cannot add it, change it or remove it after create.
 - The image of the `app` container must have a `sha256` digest. If not, the condition is `Evidence=False/ImageNotPinned`.
 - The gate image has `python3` with the Nookku package, the Nookku project in `root`, and the gate file `gateFile` in that project. The path of the gate file is relative to `root`. Name the gate image by digest, because the gate trusts the code of this image.
+- The project has its egress answer in `.nookku/egress.json`. Nookku accepts an answer only for 30 minutes, so the gate Job registers this file before the run. With no answer, Nookku runs no test, and the condition is `Evidence=False/NotVerified`.
 - The entries of the project send the test messages to the address in the env variable `KOODAM_GATE_TARGET`. The value is a host and a port: the Service of the version and the first port of the `app` container.
 - `deadlineSeconds` is the maximum time of the gate Job. The default is 1800.
 
 The controller does these steps:
 
 1. It waits until each pod of the version is Ready.
-2. It makes the Job `kd-<version>-gate`. The Job runs `nookku gate run` with the subject of the version, and then `nookku gate verify`. The gate pod has no ServiceAccount token, no gateway key and no Secret. A NetworkPolicy lets the pod reach only the pods of the version and the cluster DNS in `kube-system`.
+2. It makes the Job `kd-<version>-gate`. If this name has more than 63 characters, the Job gets a short form of the name with a hash. The Job runs `nookku gate run` with the subject of the version, and then `nookku gate verify`. The gate pod has no ServiceAccount token, no gateway key and no Secret. A NetworkPolicy lets the pod reach only the pods of the version and the cluster DNS in `kube-system`.
 3. It reads the short report of the verify step from the pod status, and compares the subject of the report with the subject that it computes again.
 4. It writes the record to `status.evidence` one time, and sets the condition `Evidence`.
 

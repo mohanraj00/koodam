@@ -91,7 +91,7 @@ spec:
 
 The controller makes the Job after each pod of the version is Ready. The Job has these parts:
 
-1. An init container `gate` with the gate image. Its fixed argv copies the project from `<root>` to a work volume, because Nookku writes the tests and the gate folder in `.nookku/` of the project. Then it runs `nookku gate run <gateFile> --subject <subject> --root <copy> --json`. The env `KOODAM_GATE_TARGET` gives the address of the Service `kd-<version>`: a host and the first port of the `app` container. The entries of the project send the test messages to that address. The step does not use the exit code of the run, because the verify step decides.
+1. An init container `gate` with the gate image. Its fixed argv copies the project from `<root>` to a work volume, because Nookku writes the tests and the gate folder in `.nookku/` of the project. Nookku accepts an egress answer only for 30 minutes (SPEC.md section 7.11), so the step then registers the answer of the project, `.nookku/egress.json`, with `nookku register`. Then it runs `nookku gate run <gateFile> --subject <subject> --root <copy> --json`. The env `KOODAM_GATE_TARGET` gives the address of the Service `kd-<version>`: a host and the first port of the `app` container. The entries of the project send the test messages to that address. The step does not use the exit code of the run, because the verify step decides.
 2. A container `verify` with the same image and a fixed argv. It runs `nookku gate verify --root <copy> --json`. The work volume has only one gate folder, so the newest gate folder is the gate folder of this run. A fixed program then writes a short JSON report to the termination message: the exit code, the gate id, the subject, the verdict, the SHA-256 of `result.json`, the format version of `result.json` and the Nookku version. The full `result.json` stays in the pod log, because a termination message has a small size limit.
 3. Volumes: an `emptyDir` work volume for the project copy, and an `emptyDir` for `NOOKKU_HOME` with the seal copies. The `verify` container mounts both read-only. If `nookku gate verify` must write a file, the kind test shows it, and the design changes.
 
@@ -101,11 +101,13 @@ These rules apply to the Job:
 
 - The pod gets no service account token, no gateway key and no Secret. The tested app makes its model calls with the key of its own version.
 - The tested app runs in the pods of the version, not in the gate pod. Thus the app code cannot write the gate folder or the seal copy.
-- A NetworkPolicy lets the gate pod reach only the pods of the version and the cluster DNS in the namespace `kube-system`. The NetworkPolicy of the version permits ingress from the gate pod until the gate has an end state.
+- A NetworkPolicy lets the gate pod reach only the pods of the version and the cluster DNS in the namespace `kube-system`. The NetworkPolicy of the version permits ingress from the gate pod until the gate has an end state. Each reconcile applies the policy of the gate pod again while the Job runs. The controller has no watch on NetworkPolicy (#359).
 - The gate pod has the label `koodam.dev/app-gate`, and not the labels of the version. Thus it is not behind the Service of the version.
 - The Job has a `backoffLimit` of 2 and `activeDeadlineSeconds` from `deadlineSeconds`. Each retry is a new pod with new volumes.
+- The name of the Job is `kd-<version>-gate`. A Job name has 63 characters or fewer, so a long version name gets a short form with a hash of the name.
+- A revoke of the version deletes the Job and its pods after the block of the key.
 - The controller reads the report from the pod status with the existing `list` verb on pods. The controller already has the Job verbs. Thus the gate adds no RBAC verb.
-- The controller parses the report with fixed limits: exactly the known keys, each one time, a gate id of the Nookku form, and the subject. A report that does not parse gives `NotVerified`. A format version of `result.json` that the parser does not know also gives `NotVerified`.
+- The controller parses the report with fixed limits: exactly the known keys, each one time, no null value, a gate id of the Nookku form, and the subject. A report that does not parse gives `NotVerified`. A format version of `result.json` that the parser does not know also gives `NotVerified`.
 - The controller reads the report only from a pod that the Job controls, that succeeded, and that has the two containers of the gate Job: the same names, images, argv and env. If the Job has more than one such report, the controller accepts none.
 
 ## The check
