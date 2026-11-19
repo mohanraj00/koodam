@@ -35,6 +35,10 @@ The API is `v1alpha1` and can change between tags. The App parts are off by defa
 - Add the signed claim check at the ingress of each App. With `apps.claimCheck.issuer` in the chart, each AppVersion pod gets the container `koodam-claim` in front of the `app` container. It accepts a JWT of the issuer with RS256 or ES256, and it checks `iss`, `aud`, `exp` and `nbf` with the keys of `apps.claimCheck.jwks`. A request with no valid claim gets the status 401. The `app` container gets the caller label and the tenant label in the headers `Koodam-Caller` and `Koodam-Tenant`, and it does not get the token. The claim check needs `egressProxy.enabled`, because only the NetworkPolicy of a version blocks a call with no claim. The condition `ClaimCheck` of the AppVersion is `True` only if the NetworkPolicy of the version exists and the controller applied the objects of the version ([#316](https://github.com/mohanraj00/koodam/pull/316), [#317](https://github.com/mohanraj00/koodam/pull/317), [#318](https://github.com/mohanraj00/koodam/pull/318), [#319](https://github.com/mohanraj00/koodam/pull/319)).
 - The admission policy of the AppVersion refuses `template.rules` on a create and on a template change. The NetworkPolicy of an App pod has no path to the API server, so a version Role has no effect. [#340](https://github.com/mohanraj00/koodam/issues/340) adds this path ([#341](https://github.com/mohanraj00/koodam/pull/341)).
 
+### Nookku preset
+
+- If a harness selects `nookku`, the controller adds the init container `koodam-nookku-python` to the Agent Job pod and to the Workspace pod. It uses the image and the user of the harness container, and it fails with a fixed message if `python3` is absent or older than 3.10. An Agent run fails, and a Workspace pod stays in its init step. [docs/nookku-preset.md](docs/nookku-preset.md) has the requirement ([#366](https://github.com/mohanraj00/koodam/pull/366)).
+
 ### Evidence gate (Apps, not active yet)
 
 - Add `spec.gate` and `status.evidence` to the AppVersion, and the condition `Evidence` ([#348](https://github.com/mohanraj00/koodam/pull/348)).
@@ -64,7 +68,7 @@ The API is `v1alpha1` and can change between tags. The App parts are off by defa
 - The AppVersion controller has no watch on NetworkPolicy. If a user deletes or changes the policy of a version or of a gate pod, the controller restores it at the next reconcile ([#359](https://github.com/mohanraj00/koodam/issues/359)).
 - A valid signed approval record does not show that it is the current selection. A later reject, a suspension or a new snapshot can replace it, and only the Host answers that ([#364](https://github.com/mohanraj00/koodam/issues/364)).
 - With the signed claim check on, the gate pod has no claim, so each gate message gets a refusal and the gate gives `Evidence=False/Failed` ([#354](https://github.com/mohanraj00/koodam/issues/354)).
-- The plugin preset for Nookku in the harness pod is not in this version yet ([#83](https://github.com/mohanraj00/koodam/issues/83)).
+- The plugin preset for Nookku in the harness pod is not done. Only the Python check is in. The Nookku install and its env are not in ([#83](https://github.com/mohanraj00/koodam/issues/83)).
 
 ## v0.4.0-alpha.1 (pre-release, 2026-11-12)
 
