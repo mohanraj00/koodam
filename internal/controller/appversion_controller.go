@@ -943,8 +943,8 @@ func (r *AppVersionReconciler) revoke(ctx context.Context, av *corev1alpha1.AppV
 }
 
 // setRevoke sets the conditions Revoking, Revoked and Provisioned of a version in the revoke.
-// deleteObjects deletes the pods of the version and their access. The NetworkPolicy stays until
-// the garbage collector deletes it with the AppVersion.
+// deleteObjects deletes the pods of the version, their access and the gate Job. The NetworkPolicy
+// stays until the garbage collector deletes it with the AppVersion.
 func (r *AppVersionReconciler) deleteObjects(ctx context.Context, av *corev1alpha1.AppVersion) error {
 	for _, o := range []client.Object{&appsv1.Deployment{}, &corev1.Service{}, &rbacv1.RoleBinding{},
 		&rbacv1.Role{}, &corev1.ServiceAccount{}} {
@@ -952,7 +952,7 @@ func (r *AppVersionReconciler) deleteObjects(ctx context.Context, av *corev1alph
 			return err
 		}
 	}
-	return nil
+	return r.stopGate(ctx, av)
 }
 
 func (r *AppVersionReconciler) setRevoke(av *corev1alpha1.AppVersion, reason string, revoked metav1.ConditionStatus,

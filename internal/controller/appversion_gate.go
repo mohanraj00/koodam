@@ -118,6 +118,35 @@ func (r *AppVersionReconciler) startGate(ctx context.Context, av *corev1alpha1.A
 	return nil
 }
 
+// stopGate deletes the gate Job of a version in the revoke, with its pods. The AppVersion can
+// stay after a revoke, so the garbage collector does not delete the Job. A gate with no end state
+// gets the state Waiting, so that the status does not say that the Job runs.
+func (r *AppVersionReconciler) stopGate(ctx context.Context, av *corev1alpha1.AppVersion) error {
+	if av.Spec.Gate == nil {
+		return nil
+	}
+	job := &batchv1.Job{}
+	err := r.APIReader.Get(ctx, types.NamespacedName{Namespace: av.Namespace, Name: gateName(av)}, job)
+	if client.IgnoreNotFound(err) != nil {
+		return err
+	}
+	if err == nil && metav1.IsControlledBy(job, av) {
+		// The UID precondition stops the delete if the Job changed after the read.
+		uid := job.UID
+		if err := r.Delete(ctx, job, client.Preconditions{UID: &uid},
+			client.PropagationPolicy(metav1.DeletePropagationBackground)); client.IgnoreNotFound(err) != nil {
+			return err
+		}
+	}
+	if c := meta.FindStatusCondition(av.Status.Conditions, corev1alpha1.AppVersionEvidence); c != nil &&
+		c.Status == metav1.ConditionUnknown {
+		meta.SetStatusCondition(&av.Status.Conditions, metav1.Condition{Type: corev1alpha1.AppVersionEvidence,
+			Status: metav1.ConditionUnknown, Reason: corev1alpha1.EvidenceWaiting, ObservedGeneration: av.Generation,
+			Message: "The version has no key, so its gate does not run."})
+	}
+	return nil
+}
+
 // checkGate reads the report of a gate Job that completed, and does the check of the design. It
 // writes the record only for a report that the controller accepts. The messages have fixed text
 // only, never text of the report.

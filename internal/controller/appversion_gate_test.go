@@ -98,7 +98,7 @@ var _ = Describe("AppVersion evidence gate", func() {
 				Expect(k8sClient.Update(ctx, av)).To(Succeed())
 			}
 			Expect(k8sClient.Delete(ctx, av)).To(Succeed())
-			Expect(k8sClient.Delete(ctx, app)).To(Succeed())
+			Expect(client.IgnoreNotFound(k8sClient.Delete(ctx, app))).To(Succeed())
 		})
 	}
 	// podsReady writes the Deployment status of a version with each pod Ready.
@@ -195,6 +195,21 @@ var _ = Describe("AppVersion evidence gate", func() {
 		Expect(isGatePod(&job.Spec.Template.Spec, av, "kd-"+name+".default.svc:8080")).To(BeTrue())
 		argv := job.Spec.Template.Spec.InitContainers[0].Command
 		Expect(argv[len(argv)-1]).To(Equal(subject()))
+	})
+
+	It("deletes the gate Job in the revoke of a version, and does not say that the Job runs", func() {
+		newVersion(appImage, true)
+		run()
+		ready()
+		expectEvidence(metav1.ConditionUnknown, corev1alpha1.EvidenceRunning)
+
+		app := &corev1alpha1.App{}
+		Expect(k8sClient.Get(ctx, nn(name+"-app"), app)).To(Succeed())
+		Expect(k8sClient.Delete(ctx, app)).To(Succeed())
+		run()
+		av := expectEvidence(metav1.ConditionUnknown, corev1alpha1.EvidenceWaiting)
+		Expect(meta.IsStatusConditionTrue(av.Status.Conditions, corev1alpha1.AppVersionRevoked)).To(BeTrue())
+		Expect(apierrors.IsNotFound(k8sClient.Get(ctx, nn("kd-"+name+"-gate"), &batchv1.Job{}))).To(BeTrue())
 	})
 
 	It("accepts a pass, writes the record one time, and keeps it against a later Job", func() {
