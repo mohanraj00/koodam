@@ -26,6 +26,7 @@ import (
 	"time"
 
 	appsv1 "k8s.io/api/apps/v1"
+	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
 	networkingv1 "k8s.io/api/networking/v1"
 	rbacv1 "k8s.io/api/rbac/v1"
@@ -350,6 +351,12 @@ func (r *AppVersionReconciler) apply(ctx context.Context, av *corev1alpha1.AppVe
 		meta.SetStatusCondition(&av.Status.Conditions, r.Claim.condition(egress.Status, applied, av.Generation))
 	} else {
 		meta.RemoveStatusCondition(&av.Status.Conditions, condClaimCheck)
+	}
+	if !applied {
+		deploy = nil
+	}
+	if err := r.applyGate(ctx, av, deploy); err != nil {
+		return ctrl.Result{}, err
 	}
 	if err := r.writeStatus(ctx, av, old); err != nil {
 		return ctrl.Result{}, err
@@ -936,8 +943,8 @@ func (r *AppVersionReconciler) revoke(ctx context.Context, av *corev1alpha1.AppV
 }
 
 // setRevoke sets the conditions Revoking, Revoked and Provisioned of a version in the revoke.
-// deleteObjects deletes the pods of the version and their access. The NetworkPolicy stays until
-// the garbage collector deletes it with the AppVersion.
+// deleteObjects deletes the pods of the version, their access and the gate Job. The NetworkPolicy
+// stays until the garbage collector deletes it with the AppVersion.
 func (r *AppVersionReconciler) deleteObjects(ctx context.Context, av *corev1alpha1.AppVersion) error {
 	for _, o := range []client.Object{&appsv1.Deployment{}, &corev1.Service{}, &rbacv1.RoleBinding{},
 		&rbacv1.Role{}, &corev1.ServiceAccount{}} {
@@ -945,7 +952,7 @@ func (r *AppVersionReconciler) deleteObjects(ctx context.Context, av *corev1alph
 			return err
 		}
 	}
-	return nil
+	return r.stopGate(ctx, av)
 }
 
 func (r *AppVersionReconciler) setRevoke(av *corev1alpha1.AppVersion, reason string, revoked metav1.ConditionStatus,
@@ -1041,6 +1048,7 @@ func (r *AppVersionReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		For(&corev1alpha1.AppVersion{}).
 		Owns(&appsv1.Deployment{}).
 		Owns(&corev1.Service{}).
+		Owns(&batchv1.Job{}).
 		Watches(&corev1alpha1.App{}, handler.EnqueueRequestsFromMapFunc(r.versionsOfApp)).
 		Named("appversion").
 		Complete(r)
