@@ -54,12 +54,40 @@ const (
 	// AppVersionTracedEgress tells if the egress of the version pods goes through traced egress.
 	// It is False while no NetworkPolicy enforces the egress path of the App pods.
 	AppVersionTracedEgress = "TracedEgress"
+	// AppVersionEvidence tells the state of the evidence gate. A version with no spec.gate does
+	// not have this condition. A gated version gets traffic only while the condition is True.
+	AppVersionEvidence = "Evidence"
+)
+
+// The reasons of the condition Evidence. Each reason of a False condition is terminal for the
+// version. To test again, make a new AppVersion.
+const (
+	// EvidenceWaiting tells that not all pods of the version are Ready. The status is Unknown.
+	EvidenceWaiting = "Waiting"
+	// EvidenceRunning tells that the gate Job runs. The status is Unknown.
+	EvidenceRunning = "Running"
+	// EvidencePassed tells that the controller accepted a record with the verdict pass. The
+	// status is True.
+	EvidencePassed = "Passed"
+	// EvidenceFailed tells that the controller accepted a record with the verdict fail.
+	EvidenceFailed = "Failed"
+	// EvidenceNotVerified tells that the result cannot be used, that the report does not parse,
+	// or that the verdict does not agree with the exit code.
+	EvidenceNotVerified = "NotVerified"
+	// EvidenceSubjectMismatch tells that the subject of the report is not the expected subject.
+	EvidenceSubjectMismatch = "SubjectMismatch"
+	// EvidenceJobFailed tells that the gate Job failed after its retries, or that its deadline
+	// ended.
+	EvidenceJobFailed = "JobFailed"
+	// EvidenceImageNotPinned tells that the image of the app container has no digest.
+	EvidenceImageNotPinned = "ImageNotPinned"
 )
 
 // AppVersionSpec is one version of an App. The developer writes it. The AppVersion controller
 // makes a Deployment, a Service and a Role from it, and one gateway key if the template declares
 // a model.
 // +kubebuilder:validation:XValidation:rule="(has(self.template.model) || has(self.template.models)) == has(self.budgetPerDay)",message="budgetPerDay is necessary with a model, and it is not permitted with no model."
+// +kubebuilder:validation:XValidation:rule="has(self.gate) == has(oldSelf.gate)",message="spec.gate is immutable. You cannot add it or remove it after create."
 type AppVersionSpec struct {
 	// AppRef is the App of this version, in the same namespace. You cannot change it after
 	// create.
@@ -93,6 +121,138 @@ type AppVersionSpec struct {
 	// +kubebuilder:default=Active
 	// +kubebuilder:validation:XValidation:rule="oldSelf != 'Retiring' || self == 'Retiring'",message="spec.lifecycle Retiring is terminal. You cannot change it back to Active."
 	Lifecycle AppVersionLifecycle `json:"lifecycle,omitempty"`
+
+	// Gate is the evidence gate of the version. With a gate, the version gets no traffic until
+	// the controller accepts an evidence record with the verdict pass for this version. A gated
+	// version must name the image of the app container by digest. You cannot add, change or
+	// remove the gate after create.
+	// +optional
+	// +kubebuilder:validation:XValidation:rule="self == oldSelf",message="spec.gate is immutable."
+	Gate *AppVersionGate `json:"gate,omitempty"`
+}
+
+// AppVersionGate is the evidence gate of an AppVersion. It has one evidence source.
+type AppVersionGate struct {
+	// Nookku is a scripted Nookku gate run. The controller runs it in a Job after each pod of
+	// the version is Ready.
+	// +required
+	Nookku NookkuGate `json:"nookku"`
+}
+
+// NookkuGate is the gate run of Nookku for one AppVersion. The gate image has Nookku, the
+// project, the gate file, the scripts and the entries. The entries send the test messages to the
+// address in the environment variable KOODAM_GATE_TARGET, which is the Service of the version.
+type NookkuGate struct {
+	// Image is the gate image. Name it by digest, because the gate trusts the code of this
+	// image.
+	// +required
+	// +kubebuilder:validation:MinLength=1
+	// +kubebuilder:validation:MaxLength=1024
+	Image string `json:"image"`
+
+	// Root is the absolute path of the project root in the image. The Job copies it to a work
+	// volume before the run.
+	// +required
+	// +kubebuilder:validation:MaxLength=512
+	// +kubebuilder:validation:Pattern=`^/[A-Za-z0-9._/-]*$`
+	// +kubebuilder:validation:XValidation:rule="!self.split('/').exists(p, p == '..')",message="root must not have a .. part."
+	Root string `json:"root"`
+
+	// GateFile is the path of the gate file, relative to the project root.
+	// +required
+	// +kubebuilder:validation:MaxLength=512
+	// +kubebuilder:validation:Pattern=`^[A-Za-z0-9._][A-Za-z0-9._/-]*$`
+	// +kubebuilder:validation:XValidation:rule="!self.split('/').exists(p, p == '..')",message="gateFile must not have a .. part."
+	GateFile string `json:"gateFile"`
+
+	// DeadlineSeconds is the maximum time of the gate Job. After it, the gate has the reason
+	// JobFailed.
+	// +optional
+	// +kubebuilder:default=1800
+	// +kubebuilder:validation:Minimum=1
+	// +kubebuilder:validation:Maximum=86400
+	DeadlineSeconds *int32 `json:"deadlineSeconds,omitempty"`
+}
+
+// EvidenceSource is the source of an evidence record.
+// +kubebuilder:validation:Enum=nookku-gate;approval
+type EvidenceSource string
+
+const (
+	// EvidenceSourceNookkuGate is a sealed result of a Nookku gate run.
+	EvidenceSourceNookkuGate EvidenceSource = "nookku-gate"
+	// EvidenceSourceApproval is a signed approval record.
+	EvidenceSourceApproval EvidenceSource = "approval"
+)
+
+// EvidenceVerdict is the verdict of an evidence record. A denied approval is fail.
+// +kubebuilder:validation:Enum=pass;fail
+type EvidenceVerdict string
+
+const (
+	// EvidencePass is the verdict of a gate run with no failed check, or of an approval.
+	EvidencePass EvidenceVerdict = "pass"
+	// EvidenceFail is the verdict of a gate run with a failed check, or of a denied approval.
+	EvidenceFail EvidenceVerdict = "fail"
+)
+
+// EvidenceIntegrity is the integrity check of an evidence record.
+// +kubebuilder:validation:Enum=seal;signature
+type EvidenceIntegrity string
+
+const (
+	// EvidenceSeal is the seal of a Nookku result. A seal has no key.
+	EvidenceSeal EvidenceIntegrity = "seal"
+	// EvidenceSignature is the signature of an approval record.
+	EvidenceSignature EvidenceIntegrity = "signature"
+)
+
+// EvidenceRecord is the record that the controller makes after it accepts the evidence of one
+// source. It never holds a key value, a token or text from a test.
+type EvidenceRecord struct {
+	// Source is the evidence source: nookku-gate or approval.
+	// +required
+	Source EvidenceSource `json:"source"`
+
+	// Subject is the subject digest of the record. For an AppVersion it is
+	// koodam.dev/appversion/v1:<namespace>/<name>:<uid>:<image digest>.
+	// +required
+	// +kubebuilder:validation:MinLength=1
+	// +kubebuilder:validation:MaxLength=512
+	Subject string `json:"subject"`
+
+	// Verdict is pass or fail.
+	// +required
+	Verdict EvidenceVerdict `json:"verdict"`
+
+	// ID is the Nookku gate id, or the identity of the approval record.
+	// +required
+	// +kubebuilder:validation:MinLength=1
+	// +kubebuilder:validation:MaxLength=253
+	ID string `json:"id"`
+
+	// Digest is the SHA-256 of the bytes of the record: result.json of the gate run, or the
+	// approval record.
+	// +required
+	// +kubebuilder:validation:Pattern=`^sha256:[0-9a-f]{64}$`
+	Digest string `json:"digest"`
+
+	// Integrity is seal for a Nookku result, and signature for an approval record.
+	// +required
+	Integrity EvidenceIntegrity `json:"integrity"`
+
+	// NookkuVersion is the Nookku version of the verify step. Only a nookku-gate record has it.
+	// +optional
+	// +kubebuilder:validation:MaxLength=64
+	NookkuVersion string `json:"nookkuVersion,omitempty"`
+
+	// CheckedAt is the time of the check by the controller.
+	// +required
+	CheckedAt metav1.Time `json:"checkedAt"`
+
+	// ExpiresAt is the end of an approval record with a TTL.
+	// +optional
+	ExpiresAt *metav1.Time `json:"expiresAt,omitempty"`
 }
 
 // AppReference is the name of an App in the same namespace.
@@ -152,6 +312,7 @@ func (t *AppVersionTemplate) ModelList() []string {
 
 // AppVersionStatus is the observed state of an AppVersion. It never holds a key value, a
 // session identifier, a token, an environment value or a header.
+// +kubebuilder:validation:XValidation:rule="!has(oldSelf.evidence) || (has(self.evidence) && self.evidence == oldSelf.evidence)",message="status.evidence is written one time. You cannot change it or remove it."
 type AppVersionStatus struct {
 	// BoundAppUID is the UID of the App that this version is bound to. The version never binds
 	// to a different App with the same name.
@@ -172,6 +333,12 @@ type AppVersionStatus struct {
 	// controller made the key.
 	// +optional
 	CostGroup string `json:"costGroup,omitempty"`
+
+	// Evidence is the evidence record of the gate. The controller writes it one time, after it
+	// accepts the report of the gate Job. A later Job of the same version cannot change it. A
+	// version with no spec.gate has no record.
+	// +optional
+	Evidence *EvidenceRecord `json:"evidence,omitempty"`
 
 	// Conditions are the conditions of the AppVersion.
 	// +listType=map
