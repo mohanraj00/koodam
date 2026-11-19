@@ -118,6 +118,9 @@ spec:
         containers:
         - name: app
           image: registry.example.com/shop@sha256:...
+          ports:
+          - name: http
+            containerPort: 8080
 ```
 
 - `spec.gate` is immutable. You cannot add it, change it or remove it after create.
