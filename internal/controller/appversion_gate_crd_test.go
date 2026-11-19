@@ -25,6 +25,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/intstr"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
@@ -84,7 +85,7 @@ var _ = Describe("AppVersion gate CRD", func() {
 		Expect(apierrors.IsInvalid(err)).To(BeTrue(), "the error is not Invalid: %v", err)
 		Expect(err.Error()).To(ContainSubstring(message))
 	}
-	newRecord := func() *corev1alpha1.EvidenceRecord {
+	newRecordAt := func(checked metav1.Time) *corev1alpha1.EvidenceRecord {
 		return &corev1alpha1.EvidenceRecord{
 			Source:        corev1alpha1.EvidenceSourceNookkuGate,
 			Subject:       "koodam.dev/appversion/v1:default/v:uid:" + digest,
@@ -93,9 +94,10 @@ var _ = Describe("AppVersion gate CRD", func() {
 			Digest:        digest,
 			Integrity:     corev1alpha1.EvidenceSeal,
 			NookkuVersion: "0.5.9",
-			CheckedAt:     metav1.Now().Rfc3339Copy(),
+			CheckedAt:     checked,
 		}
 	}
+	newRecord := func() *corev1alpha1.EvidenceRecord { return newRecordAt(metav1.Now().Rfc3339Copy()) }
 
 	It("accepts a gate and defaults the deadline", func() {
 		v := newVersion("gate-valid", newGate())
@@ -160,6 +162,13 @@ var _ = Describe("AppVersion gate CRD", func() {
 		Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(v), v)).To(Succeed())
 		v.Status.Evidence = nil
 		expectInvalid(k8sClient.Status().Update(ctx, v), "status.evidence is written one time.")
+
+		// A patch that removes the full status does not remove the record.
+		Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(v), v)).To(Succeed())
+		noStatus := client.RawPatch(types.MergePatchType, []byte(`{"status":null}`))
+		expectInvalid(k8sClient.Status().Patch(ctx, v, noStatus), "status.evidence is written one time.")
+		Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(v), v)).To(Succeed())
+		Expect(v.Status.Evidence).To(Equal(newRecordAt(v.Status.Evidence.CheckedAt)))
 	})
 
 	It("refuses a record with a field that is not valid", func() {

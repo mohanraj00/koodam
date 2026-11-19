@@ -30,8 +30,10 @@ spec:
     name: v1alpha1
     schema:
       openAPIV3Schema:
-        description: AppVersion is one version of an App, with its own pods and its
-          own gateway key.
+        description: |-
+          AppVersion is one version of an App, with its own pods and its own gateway key. The rule for
+          status.evidence is on the resource and not on the status, because status is optional: a rule
+          on the status does not run for an update that removes the full status.
         properties:
           apiVersion:
             description: |-
@@ -9314,14 +9316,14 @@ spec:
                   calls, so it is not a credential.
                 type: string
             type: object
-            x-kubernetes-validations:
-            - message: status.evidence is written one time. You cannot change it or
-                remove it.
-              rule: '!has(oldSelf.evidence) || (has(self.evidence) && self.evidence
-                == oldSelf.evidence)'
         required:
         - spec
         type: object
+        x-kubernetes-validations:
+        - message: status.evidence is written one time. You cannot change it or remove
+            it.
+          rule: '!has(oldSelf.status) || !has(oldSelf.status.evidence) || (has(self.status)
+            && has(self.status.evidence) && self.status.evidence == oldSelf.status.evidence)'
     served: true
     storage: true
     subresources:

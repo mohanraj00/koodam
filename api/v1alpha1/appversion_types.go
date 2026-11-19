@@ -312,7 +312,6 @@ func (t *AppVersionTemplate) ModelList() []string {
 
 // AppVersionStatus is the observed state of an AppVersion. It never holds a key value, a
 // session identifier, a token, an environment value or a header.
-// +kubebuilder:validation:XValidation:rule="!has(oldSelf.evidence) || (has(self.evidence) && self.evidence == oldSelf.evidence)",message="status.evidence is written one time. You cannot change it or remove it."
 type AppVersionStatus struct {
 	// BoundAppUID is the UID of the App that this version is bound to. The version never binds
 	// to a different App with the same name.
@@ -353,8 +352,11 @@ type AppVersionStatus struct {
 // +kubebuilder:printcolumn:name="Lifecycle",type=string,JSONPath=`.spec.lifecycle`
 // +kubebuilder:printcolumn:name="Replicas",type=integer,JSONPath=`.spec.replicas`
 // +kubebuilder:printcolumn:name="Age",type=date,JSONPath=`.metadata.creationTimestamp`
+// +kubebuilder:validation:XValidation:rule="!has(oldSelf.status) || !has(oldSelf.status.evidence) || (has(self.status) && has(self.status.evidence) && self.status.evidence == oldSelf.status.evidence)",message="status.evidence is written one time. You cannot change it or remove it."
 
-// AppVersion is one version of an App, with its own pods and its own gateway key.
+// AppVersion is one version of an App, with its own pods and its own gateway key. The rule for
+// status.evidence is on the resource and not on the status, because status is optional: a rule
+// on the status does not run for an update that removes the full status.
 type AppVersion struct {
 	metav1.TypeMeta `json:",inline"`
 
