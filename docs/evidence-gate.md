@@ -1,6 +1,6 @@
 # Evidence gate (design)
 
-Status: design for #189. Nothing in this file is in `main`. The API part needs owner approval, because it changes `/api/`.
+Status: the gate of an AppVersion is built (#342), with Nookku 0.5.9. [apps.md](apps.md) has the use. The seam test with the pinned release and the kind test are #343. The approval source of a paused run is #190, #246 and #344.
 
 An evidence gate holds a rollout, or a paused run, until the controller gets a valid evidence record. One gate design serves 2 sources:
 
@@ -20,7 +20,7 @@ The format is the gate run of Nookku SPEC.md section 7.15, with the seal of sect
 | `result.json` | The aggregate verdict, the subject, the reasons and the result of each test. | `v: 1` |
 | `seal.json` and its copy | The SHA-256 of each file of the gate folder. | `v: 1` |
 
-The Nookku changelog puts the gate run in 0.5.8, and says that 0.5.8 is not released yet. The tag `v0.5.8` (commit `27dfc9eb`) is older than the gate run and does not have section 7.15. Thus the build must pin the first Nookku release that has section 7.15, and not the tag `v0.5.8`. The build starts only after that release.
+The build uses Nookku 0.5.9 (tag `v0.5.9`). This release has section 7.15 and the gate cases in `conformance/gate/`.
 
 These facts of the Nookku format control the design:
 
@@ -75,7 +75,7 @@ The controller gives the subject to `nookku gate run --subject`. It accepts a re
 
 ## The gate Job
 
-The App owner adds `spec.gate` to the AppVersion. The field sketch is below. The final field names come in the API PR.
+The App owner adds `spec.gate` to the AppVersion. The field is immutable.
 
 ```yaml
 spec:
@@ -91,18 +91,24 @@ spec:
 
 The controller makes the Job after each pod of the version is Ready. The Job has these parts:
 
-1. An init container `gate` with the gate image. Its fixed argv copies the project from `<root>` to a work volume, because Nookku writes the tests and the gate folder in `.nookku/` of the project. Then it runs `nookku gate run <gateFile> --subject <subject> --root <copy> --json`. The env `KOODAM_GATE_TARGET` gives the address of the Service `kd-<version>`. The entries of the project send the test messages to that address.
-2. A container `verify` with the same image and a fixed argv. It runs `nookku gate verify --root <copy> --json`. The work volume has only one gate folder, so the newest gate folder is the gate folder of this run. A fixed script then writes a short JSON report to the termination message: the exit code, the gate id, the subject, the verdict, the SHA-256 of `result.json` and the Nookku version. The full `result.json` stays in the pod log, because a termination message has a small size limit.
+1. An init container `gate` with the gate image. Its fixed argv copies the project from `<root>` to a work volume, because Nookku writes the tests and the gate folder in `.nookku/` of the project. Nookku accepts an egress answer only for 30 minutes (SPEC.md section 7.11), so the step then registers the answer of the project, `.nookku/egress.json`, with `nookku register`. Then it runs `nookku gate run <gateFile> --subject <subject> --root <copy> --json`. The env `KOODAM_GATE_TARGET` gives the address of the Service `kd-<version>`: a host and the first port of the `app` container. The entries of the project send the test messages to that address. The step does not use the exit code of the run, because the verify step decides.
+2. A container `verify` with the same image and a fixed argv. It runs `nookku gate verify --root <copy> --json`. The work volume has only one gate folder, so the newest gate folder is the gate folder of this run. A fixed program then writes a short JSON report to the termination message: the exit code, the gate id, the subject, the verdict, the SHA-256 of `result.json`, the format version of `result.json` and the Nookku version. The full `result.json` stays in the pod log, because a termination message has a small size limit.
 3. Volumes: an `emptyDir` work volume for the project copy, and an `emptyDir` for `NOOKKU_HOME` with the seal copies. The `verify` container mounts both read-only. If `nookku gate verify` must write a file, the kind test shows it, and the design changes.
+
+The two fixed programs are Python text in `internal/evidence`. The controller gives each program to `python3 -c`, with the values of the spec as separate arguments. Thus the gate image must have `python3` with the Nookku package, and no value of the spec goes through a shell.
 
 These rules apply to the Job:
 
 - The pod gets no service account token, no gateway key and no Secret. The tested app makes its model calls with the key of its own version.
 - The tested app runs in the pods of the version, not in the gate pod. Thus the app code cannot write the gate folder or the seal copy.
-- A NetworkPolicy lets the gate pod reach only the Service of the version and the cluster DNS. The NetworkPolicy of the version permits ingress from the gate pod.
-- The Job has `backoffLimit` and `activeDeadlineSeconds` from `deadlineSeconds`.
+- A NetworkPolicy lets the gate pod reach only the pods of the version and the cluster DNS in the namespace `kube-system`. The NetworkPolicy of the version permits ingress from the gate pod until the gate has an end state. Each reconcile applies the policy of the gate pod again while the Job runs. The controller has no watch on NetworkPolicy (#359). The name of this policy is `kd-<version>.gate`. A version name has no dot, so the name is never the name of the NetworkPolicy of a version.
+- The gate pod has the label `koodam.dev/app-gate`, and not the labels of the version. Thus it is not behind the Service of the version.
+- The Job has a `backoffLimit` of 2 and `activeDeadlineSeconds` from `deadlineSeconds`. Each retry is a new pod with new volumes.
+- The name of the Job is `kd-<version>-gate`. A Job name has 63 characters or fewer, so a long version name gets a short form with a hash of the name.
+- A revoke of the version deletes the Job and its pods after the block of the key.
 - The controller reads the report from the pod status with the existing `list` verb on pods. The controller already has the Job verbs. Thus the gate adds no RBAC verb.
-- The controller parses the report with fixed limits: exactly the known keys, a gate id of the Nookku form, and the subject. A report that does not parse gives `NotVerified`.
+- The controller parses the report with fixed limits: exactly the known keys, each one time, no null value, a gate id of the Nookku form, and the subject. A report that does not parse gives `NotVerified`. A format version of `result.json` that the parser does not know also gives `NotVerified`.
+- The controller reads the report only from a pod that the Job controls, that succeeded, and that has the two containers of the gate Job: the same names, images, argv and env. If the Job has more than one such report, the controller accepts none.
 
 ## The check
 
@@ -132,6 +138,7 @@ The condition `Evidence` of the AppVersion has these states:
 
 - "none" means that the App controller gives the version the weight 0 in effect. The header `Koodam-App-Version` also sends no request to the version. `status.endpoints` of the App shows the weight 0.
 - Each `False` state is terminal for the version. The template is immutable, so a new run tests the same code. To test again, make a new AppVersion. A field to start a second run is an open question.
+- The App controller gives the weights of the spec only if the condition is `True` and the record has the verdict `pass`.
 - A failed verdict thus stops the rollout: the old version keeps its traffic, and the new version gets none.
 - A version with no `spec.gate` has no condition `Evidence`, and its weights work as today.
 
@@ -155,6 +162,8 @@ The gate does not protect against these actors:
 
 - An App owner who selects the gate image. That owner selects the tests and the entries, and can already set the weights. The admission policy above removes this case.
 - A gate image that is not safe. Nookku states that the gate trusts the tested code, and the entries of the project run in the gate container. Thus pin the gate image by digest.
+- A user who can make pods or Jobs in the namespace. That user can already put a pod behind the Service of a live version. The compare of the pod containers stops a pod with a different program, and it does not examine each field of the pod.
+- A user who can write `status` of an AppVersion. That user can write a record by hand.
 
 ## Paused runs (#190 and #246)
 
@@ -170,20 +179,23 @@ A paused Agent uses the same gate. Its subject is the run identity and the outpu
 
 The seam test proves that Koodam reads the Nookku format of the pinned release.
 
-- **Pin.** Pin the first Nookku release with section 7.15 by its version and by the SHA-256 of its wheel. Nookku has the Apache-2.0 licence.
+- **Pin.** `internal/evidence/nookku.pin` pins Nookku 0.5.9 by its version, by the SHA-256 of its wheel and by the commit of its tag. The seam job and the kind test read this file. To use a new release, change the 3 values together. Nookku has the Apache-2.0 licence.
 - **Report parser.** A Go unit test for the parser of the report: a `pass`, a `fail`, exit code 2, a report that is not JSON, an unknown key, a verdict that does not agree with the exit code, and a wrong subject.
-- **Seam.** A CI job installs the pinned wheel, runs the fixed verify script on the gate cases of `conformance/gate/` of the same release, and gives each report to the Go parser. Cases: a `pass`, a `fail`, a missing test, a `result.json` that changed after the seal, and a subject that does not match. The expected reason of each case is in the test.
+- **Seam.** The CI job `seam` installs the pinned wheel, and `pip` refuses a wheel with a different SHA-256. It gets `conformance/gate/` of the pinned commit. A case there has the records of each test, and not a sealed gate folder. Thus `internal/evidence/testdata/seam_case.py` makes a sealed gate folder from a case with the functions of the pinned package. The test `TestSeam` then runs the fixed verify program on the folder and gives the report to the Go parser. Cases: a `pass`, a `fail`, a missing test, a `result.json` that changed after the seal, and a subject that does not match. The expected reason of each case is in the test. If the pinned release writes a format version of `result.json` that the parser does not know, the test fails and names the version that the parser knows.
 - **envtest.** An AppVersion with `spec.gate`: the Job spec (no token, read-only mounts, fixed argv), each state of the table from a fake pod status, and the weight 0 in effect until `Passed`.
-- **kind.** A gate image from the pinned release, with one gate that passes and one that fails. The test checks the condition and the weights of the HTTPRoute.
+- **kind.** `test/e2e/gate_test.go` builds a gate image from the pinned release, with one gate that passes and one that fails. The test checks the condition, the record, the weights in effect and the weights of the HTTPRoute. The gate image is in `test/e2e/testdata/gate`.
+
+## Open questions
+
+- The signed claim check. If the check is on, the Service of the version refuses a request with no claim, and the gate pod has no claim. [#354](https://github.com/mohanraj00/koodam/issues/354) tracks the decision.
+- The cluster DNS. The egress rule of the gate pod names port 53 of the namespace `kube-system`. A cluster DNS at a different location, for example a node-local cache, is not in the rule. Then the gate fails closed.
 
 ## Build plan
 
 Each PR stays at about 400 changed lines or fewer, not counting generated files.
 
-1. The API: `spec.gate`, `status.evidence` and the condition. Level 1.
-2. The gate Job, the report parser and the check, with the unit tests and envtest.
-3. The weight 0 in effect in the App controller, and the NetworkPolicy rule.
-4. The seam test with the pinned release, and the kind test.
-5. The doc in `docs/apps.md`.
-
-Start PR 1 only after the owner approves this design and the Nookku release exists.
+1. The API: `spec.gate`, `status.evidence` and the condition. Level 1. Done in #342.
+2. The gate Job, the report parser and the check, with the unit tests and envtest. Done in #342.
+3. The weight 0 in effect in the App controller, and the NetworkPolicy rule. Done in #342.
+4. The seam test with the pinned release, and the kind test. This is #343.
+5. The doc in `docs/apps.md`. Done in #342.
