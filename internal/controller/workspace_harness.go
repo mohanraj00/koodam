@@ -17,6 +17,8 @@ limitations under the License.
 package controller
 
 import (
+	"slices"
+
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -27,9 +29,11 @@ import (
 // condHarnesses tells if the pod installs the harnesses of spec.harnesses.
 const condHarnesses = "Harnesses"
 
-// harnessCondition is True if spec.harnesses is empty or the controller has an installer image.
-// With no installer image, addWorkspaceHarnesses adds no harness, and the condition says so.
-func harnessCondition(ws *corev1alpha1.Workspace, image string) metav1.Condition {
+// harnessCondition is True if spec.harnesses is empty or the controller has an installer image,
+// and also a Nookku image if a harness selects nookku. With no installer image,
+// addWorkspaceHarnesses adds no harness. With no Nookku image, the pod has no Nookku files. The
+// condition says so.
+func harnessCondition(ws *corev1alpha1.Workspace, image, nookkuImage string) metav1.Condition {
 	c := metav1.Condition{Type: condHarnesses, Status: metav1.ConditionTrue, Reason: "Installed",
 		Message: "The pod installs each harness of spec.harnesses.", ObservedGeneration: ws.Generation}
 	switch {
@@ -38,6 +42,9 @@ func harnessCondition(ws *corev1alpha1.Workspace, image string) metav1.Condition
 	case image == "":
 		c.Status, c.Reason = metav1.ConditionFalse, "NoInstallerImage"
 		c.Message = "The controller has no --installer-image, so the pod has no harness."
+	case nookkuImage == "" && slices.ContainsFunc(ws.Spec.Harnesses, func(h corev1alpha1.HarnessSpec) bool { return hasNookku(&h) }):
+		c.Status, c.Reason = metav1.ConditionFalse, "NoNookkuImage"
+		c.Message = "The controller has no --nookku-image, so the pod has no Nookku files."
 	}
 	return c
 }

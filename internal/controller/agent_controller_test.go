@@ -886,7 +886,7 @@ wire_api = "responses"
 		reconcileOnce(r)
 		Expect(k8sClient.Delete(ctx, &batchv1.Job{ObjectMeta: metav1.ObjectMeta{Name: "kd-" + name, Namespace: ns}},
 			client.PropagationPolicy(metav1.DeletePropagationBackground))).To(Succeed())
-		other := runJob(agent(), "", "")
+		other := runJob(agent(), "", "", "")
 		other.OwnerReferences = nil
 		Expect(k8sClient.Create(ctx, other)).To(Succeed())
 		reconcileOnce(r)

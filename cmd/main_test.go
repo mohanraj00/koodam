@@ -31,6 +31,22 @@ import (
 )
 
 // TestWorkspaceImageFor checks the tag rule of the default workspace image.
+func TestDigestImage(t *testing.T) {
+	digest := strings.Repeat("a", 64)
+	for ref, want := range map[string]bool{
+		"example.com/koodam-nookku@sha256:" + digest:        true,
+		"example.com/koodam-nookku:v1@sha256:" + digest:     true,
+		"example.com/koodam-nookku:v1":                      false,
+		"example.com/koodam-nookku@sha256:" + digest[:63]:   false,
+		"example.com/koodam-nookku@sha256:" + digest + " x": false,
+		"@sha256:" + digest:                                 false,
+	} {
+		if digestImage.MatchString(ref) != want {
+			t.Errorf("%q: got %v, want %v", ref, !want, want)
+		}
+	}
+}
+
 func TestWorkspaceImageFor(t *testing.T) {
 	const repo, latest = "ghcr.io/mohanraj00/koodam-workspace:", "latest"
 	for v, tag := range map[string]string{

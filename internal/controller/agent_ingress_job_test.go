@@ -37,7 +37,7 @@ import (
 const jobIngGatewayURL = "http://gw.test:4000"
 
 // jobIngInstaller is the installer image that the tests give to runJob.
-const jobIngInstaller = "installer"
+const jobIngInstaller, jobIngNookku = "installer", "example.com/koodam-nookku@sha256:" + "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
 
 // jobIngWebPort is the name of the user port in the fixture containers.
 const jobIngWebPort = "web"
@@ -81,7 +81,7 @@ func jobIngNoPorts(cs []corev1.Container) bool {
 // jobIngMerge merges the template of a into the run Job of a with the real merge.
 func jobIngMerge(t *testing.T, a *corev1alpha1.Agent) (corev1.PodTemplateSpec, corev1.PodTemplateSpec, error) {
 	t.Helper()
-	base := runJob(a, jobIngInstaller, jobIngGatewayURL).Spec.Template
+	base := runJob(a, jobIngInstaller, jobIngNookku, jobIngGatewayURL).Spec.Template
 	out, err := withPodTemplate(t.Context(), fake.NewClientBuilder().Build(), a.Namespace, base,
 		a.Spec.PodTemplate, agentContainer)
 	return base, out, err
@@ -89,7 +89,7 @@ func jobIngMerge(t *testing.T, a *corev1alpha1.Agent) (corev1.PodTemplateSpec, c
 
 func TestIngressJobAbsentPort(t *testing.T) {
 	for _, h := range []string{"", harness.ClaudeCode, harness.Codex} {
-		s := runJob(jobIngAgent(nil, h, nil), jobIngInstaller, jobIngGatewayURL).Spec.Template.Spec
+		s := runJob(jobIngAgent(nil, h, nil), jobIngInstaller, jobIngNookku, jobIngGatewayURL).Spec.Template.Spec
 		if !jobIngNoPorts(s.Containers) || !jobIngNoPorts(s.InitContainers) {
 			t.Fatal("a run Job with no ingress port has a container port")
 		}
@@ -99,7 +99,7 @@ func TestIngressJobAbsentPort(t *testing.T) {
 func TestIngressJobPorts(t *testing.T) {
 	for _, p := range []int32{1, 8080, 65535} {
 		for _, h := range []string{"", harness.ClaudeCode, harness.Codex} {
-			job := runJob(jobIngAgent(new(p), h, nil), jobIngInstaller, jobIngGatewayURL)
+			job := runJob(jobIngAgent(new(p), h, nil), jobIngInstaller, jobIngNookku, jobIngGatewayURL)
 			s := &job.Spec.Template.Spec
 			if len(s.Containers) != 1 || s.Containers[0].Name != agentContainer {
 				t.Fatal("the run Job does not have only the agent container")
@@ -118,7 +118,7 @@ func TestIngressJobPorts(t *testing.T) {
 			// With no ingress port, the Job must be the same as before. This also keeps the harness
 			// and the Codex config.
 			s.Containers[0].Ports = nil
-			if !equality.Semantic.DeepEqual(job, runJob(jobIngAgent(nil, h, nil), jobIngInstaller, jobIngGatewayURL)) {
+			if !equality.Semantic.DeepEqual(job, runJob(jobIngAgent(nil, h, nil), jobIngInstaller, jobIngNookku, jobIngGatewayURL)) {
 				t.Fatal("the ingress port changed a different part of the run Job")
 			}
 		}
@@ -154,7 +154,7 @@ func TestIngressJobMergeKeepsPort(t *testing.T) {
 		switch {
 		case !equality.Semantic.DeepEqual(a, before):
 			t.Fatal("the merge changed the Agent or its pod template")
-		case !equality.Semantic.DeepEqual(base, runJob(before, jobIngInstaller, jobIngGatewayURL).Spec.Template):
+		case !equality.Semantic.DeepEqual(base, runJob(before, jobIngInstaller, jobIngNookku, jobIngGatewayURL).Spec.Template):
 			t.Fatal("the merge changed the base template")
 		case !equality.Semantic.DeepEqual(base.Spec.Containers[0].Ports, jobIngWant(8080)):
 			t.Fatal("the base agent container does not have only the ingress port")

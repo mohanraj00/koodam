@@ -166,6 +166,9 @@ func checkEgress(e controller.EgressProxy) error {
 	return nil
 }
 
+// digestImage matches an image reference with a sha256 digest. The digest pins the Nookku files.
+var digestImage = regexp.MustCompile(`^[^@\s]+@sha256:[0-9a-f]{64}$`)
+
 func main() {
 	var metricsAddr string
 	var metricsCertPath, metricsCertName, metricsCertKey string
@@ -175,7 +178,7 @@ func main() {
 	var probeAddr string
 	var secureMetrics bool
 	var enableHTTP2 bool
-	var gatewayURL, gatewayKeyFile, agentGatewayURL, installerImage, workspaceImage string
+	var gatewayURL, gatewayKeyFile, agentGatewayURL, installerImage, nookkuImage, workspaceImage string
 	var testKeySingleGateway bool
 	var testKeyRevokeWait time.Duration
 	var keyGrace time.Duration
@@ -239,6 +242,9 @@ func main() {
 			"The value must be from 60 to 2147483647.")
 	flag.StringVar(&installerImage, "installer-image", "",
 		"The image with /harness-install, for an Agent or a Workspace with a harness. The chart gives the manager image.")
+	flag.StringVar(&nookkuImage, "nookku-image", "",
+		"The Nookku data image with the pinned Nookku files, for a harness with the nookku plugin (#83). "+
+			"The reference must have a digest (@sha256:).")
 	flag.StringVar(&workspaceImage, "workspace-image", defaultWorkspaceImage(),
 		"The workspace image for a Workspace with no spec.image.")
 	flag.BoolVar(&testKeySingleGateway, "test-key-single-instance-gateway", false,
@@ -354,6 +360,10 @@ func main() {
 		setupLog.Error(nil, "The flags --gateway-url and --gateway-master-key-file are required")
 		os.Exit(1)
 	}
+	if nookkuImage != "" && !digestImage.MatchString(nookkuImage) {
+		setupLog.Error(nil, "The flag --nookku-image must end with a digest @sha256:<64 hex characters>")
+		os.Exit(1)
+	}
 	masterKey, err := os.ReadFile(gatewayKeyFile)
 	if err != nil {
 		setupLog.Error(err, "Failed to read the gateway master key file")
@@ -406,6 +416,7 @@ func main() {
 		Egress:         egress,
 		Grace:          keyGrace,
 		InstallerImage: installerImage,
+		NookkuImage:    nookkuImage,
 		JobTTL:         int32(jobTTLSeconds),
 		IngressEnabled: agentIngressEnabled,
 	}).SetupWithManager(mgr); err != nil {
@@ -425,6 +436,7 @@ func main() {
 		APIReader:      mgr.GetAPIReader(),
 		Image:          workspaceImage,
 		InstallerImage: installerImage,
+		NookkuImage:    nookkuImage,
 		Gateway:        gw,
 		GatewayURL:     strings.TrimRight(agentGatewayURL, "/"),
 		Egress:         egress,
