@@ -72,9 +72,10 @@ container must have `python3` 3.10 or later on its `PATH`:
   selects `nookku` needs an image with Python.
 
 If a harness selects `nookku`, the controller adds the init container `koodam-nookku-python`. It
-uses the image, the literal `PATH`, the working folder, the user and the group of the harness
-container. Thus it finds the `python3` that the harness finds. It gets no privilege and no
-capability, and its root file system is read-only. It runs
+uses the image, the literal `PATH`, the user and the group of the harness container. Thus it finds
+the `python3` that the harness finds. It runs in the folder `/`, because the working folder of the
+harness can be on a volume that the check does not mount. It gets no privilege and no capability,
+and its root file system is read-only. It runs
 `python3 -c 'import sys; sys.exit(sys.version_info < (3, 10))'`. If `python3` is not on the `PATH`,
 or its version is earlier than 3.10, the container fails with this message:
 

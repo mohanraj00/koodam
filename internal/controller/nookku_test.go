@@ -210,7 +210,7 @@ func checkNookkuCheck(t *testing.T, name string, p corev1.PodSpec) {
 		t.Fatalf("%s: the pod has %d Python checks, want 1", name, len(checks))
 	}
 	c := checks[0]
-	if c.Image != main.Image || len(c.Command) != 3 || c.Command[0] != "sh" || c.Command[1] != "-c" ||
+	if c.Image != main.Image || c.ImagePullPolicy != main.ImagePullPolicy || len(c.Command) != 3 || c.Command[0] != "sh" || c.Command[1] != "-c" ||
 		len(c.Args) != 0 || c.TerminationMessagePolicy != corev1.TerminationMessageFallbackToLogsOnError {
 		t.Errorf("%s: the Python check is %+v", name, c)
 	}
@@ -238,7 +238,7 @@ func checkNookkuCheck(t *testing.T, name string, p corev1.PodSpec) {
 	}
 	if s := c.SecurityContext; s != nil && (!reflect.DeepEqual(s.RunAsUser, want.RunAsUser) ||
 		!reflect.DeepEqual(s.RunAsGroup, want.RunAsGroup) || !reflect.DeepEqual(s.RunAsNonRoot, want.RunAsNonRoot)) ||
-		c.WorkingDir != main.WorkingDir {
+		c.WorkingDir != "/" {
 		t.Errorf("%s: the Python check does not run as the main container", name)
 	}
 }
@@ -278,7 +278,7 @@ func TestNookkuPythonCheckFollowsMerge(t *testing.T) {
 	addNookkuPythonCheck(&pod)
 	pod.Containers[0].Image = "example.com/b:1"
 	pod.Containers[0].Env = []corev1.EnvVar{{Name: "PATH", Value: "/b"}, {Name: "OTHER", Value: "x"}}
-	pod.Containers[0].WorkingDir = "/work"
+	pod.Containers[0].WorkingDir, pod.Containers[0].ImagePullPolicy = "/work", corev1.PullNever
 	pod.Containers[0].SecurityContext = &corev1.SecurityContext{RunAsUser: new(int64(0)),
 		RunAsGroup: new(int64(10)), Privileged: new(true), Capabilities: &corev1.Capabilities{
 			Add: []corev1.Capability{"NET_ADMIN"}}}
