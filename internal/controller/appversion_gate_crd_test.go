@@ -43,6 +43,8 @@ var _ = Describe("AppVersion gate CRD", func() {
 		gateFile = "gates/release.json"
 		digest   = "sha256:2222222222222222222222222222222222222222222222222222222222222222"
 		gateID   = "gate-20261119-030000-0a1b2c3d"
+		// healthPath is the path of the readiness probe of the fixture.
+		healthPath = "/healthz"
 	)
 
 	newVersion := func(name string, gate *corev1alpha1.AppVersionGate) *corev1alpha1.AppVersion {
@@ -55,9 +57,9 @@ var _ = Describe("AppVersion gate CRD", func() {
 					Spec: corev1.PodSpec{Containers: []corev1.Container{{
 						Name:  corev1alpha1.AppContainerName,
 						Image: "registry.example.com/app@" + digest,
-						Ports: []corev1.ContainerPort{{Name: "http", ContainerPort: 8080}},
+						Ports: []corev1.ContainerPort{{Name: jobIngHTTPPortName, ContainerPort: 8080}},
 						ReadinessProbe: &corev1.Probe{ProbeHandler: corev1.ProbeHandler{
-							HTTPGet: &corev1.HTTPGetAction{Path: "/healthz", Port: intstr.FromString("http")},
+							HTTPGet: &corev1.HTTPGetAction{Path: healthPath, Port: intstr.FromString(jobIngHTTPPortName)},
 						}},
 					}}},
 				}},
