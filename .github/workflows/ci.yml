@@ -109,6 +109,53 @@ jobs:
         run: |
           go mod tidy
           make test-e2e
+  # The seam test of the evidence gate. internal/evidence/nookku.pin has the pin of the Nookku release:
+  # the version, the SHA-256 of the wheel and the commit of the tag. docs/evidence-gate.md has the design.
+  seam:
+    name: Seam test with the pinned Nookku
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@4b73464bb391d4059bd26b0524d20df3927bd417 # v6.3.0
+        with:
+          go-version-file: go.mod
+      # The pattern permits only digits, the letters a to f and a dot, so a value cannot hold a command.
+      - name: Read the pin
+        id: pin
+        run: |
+          grep -E '^NOOKKU_(VERSION|WHEEL_SHA256|COMMIT)=[0-9a-f.]+$' internal/evidence/nookku.pin >> "$GITHUB_OUTPUT"
+          test "$(grep -cE '^NOOKKU_(VERSION|WHEEL_SHA256|COMMIT)=[0-9a-f.]+$' internal/evidence/nookku.pin)" = 3
+      - name: Get the gate cases of the pinned commit
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: mohanraj00/nookku
+          ref: ${{ steps.pin.outputs.NOOKKU_COMMIT }}
+          path: nookku-cases
+          sparse-checkout: conformance/gate
+          persist-credentials: false
+      # pip refuses a wheel with a different SHA-256. Nookku has no dependency.
+      - name: Install the pinned wheel
+        env:
+          NOOKKU_VERSION: ${{ steps.pin.outputs.NOOKKU_VERSION }}
+          NOOKKU_WHEEL_SHA256: ${{ steps.pin.outputs.NOOKKU_WHEEL_SHA256 }}
+        run: |
+          python3 -m venv "$RUNNER_TEMP/nookku"
+          printf 'nookku==%s --hash=sha256:%s\n' "$NOOKKU_VERSION" "$NOOKKU_WHEEL_SHA256" > "$RUNNER_TEMP/nookku.txt"
+          "$RUNNER_TEMP/nookku/bin/pip" install --no-deps --only-binary :all: --require-hashes -r "$RUNNER_TEMP/nookku.txt"
+      - name: Run the seam test
+        env:
+          KOODAM_SEAM: "1"
+        run: |
+          export KOODAM_SEAM_PYTHON="$RUNNER_TEMP/nookku/bin/python"
+          export KOODAM_SEAM_CASES="$PWD/nookku-cases/conformance/gate"
+          go test ./internal/evidence/ -run 'TestSeam|TestNookkuPin' -v
   govulncheck:
     name: govulncheck
     needs: changes
@@ -150,7 +197,7 @@ jobs:
       - run: make helm-check
   # The required check. Each project job is in needs. A skipped job passes. A failed or cancelled job fails.
   ci-ok:
-    needs: [changes, check, lint, test-e2e, govulncheck, chart]
+    needs: [changes, check, lint, test-e2e, seam, govulncheck, chart]
     if: always()
     runs-on: ubuntu-24.04
     timeout-minutes: 2
