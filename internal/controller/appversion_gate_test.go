@@ -253,18 +253,18 @@ var _ = Describe("AppVersion evidence gate", func() {
 		}
 		Expect(policy("kd-" + name).Spec.Ingress).To(Equal([]networkingv1.NetworkPolicyIngressRule{gateIngress(version(), ports)}))
 		// The policy of the gate pod does not exist before the Job.
-		Expect(apierrors.IsNotFound(k8sClient.Get(ctx, nn("kd-"+name+"-gate"), &networkingv1.NetworkPolicy{}))).To(BeTrue())
+		Expect(apierrors.IsNotFound(k8sClient.Get(ctx, nn(gatePolicyName(version())), &networkingv1.NetworkPolicy{}))).To(BeTrue())
 
 		job := ready()
 		av := version()
-		gate := policy("kd-" + name + "-gate")
+		gate := policy(gatePolicyName(av))
 		Expect(metav1.IsControlledBy(gate, av)).To(BeTrue())
 		Expect(gate.Spec).To(Equal(gatePolicy(av, ports).Spec))
 		// A policy that a user deleted comes back while the Job runs.
 		Expect(k8sClient.Delete(ctx, gate)).To(Succeed())
 		run()
 		expectEvidence(metav1.ConditionUnknown, corev1alpha1.EvidenceRunning)
-		Expect(policy("kd-" + name + "-gate").Spec).To(Equal(gatePolicy(av, ports).Spec))
+		Expect(policy(gatePolicyName(av)).Spec).To(Equal(gatePolicy(av, ports).Spec))
 		pod(job, report(0, "pass", subject()), nil)
 		end(job, true)
 		run()
@@ -275,7 +275,7 @@ var _ = Describe("AppVersion evidence gate", func() {
 
 	It("waits if a NetworkPolicy with the name of the gate policy is not from the version", func() {
 		newVersion(appImage, true)
-		other := &networkingv1.NetworkPolicy{ObjectMeta: metav1.ObjectMeta{Name: "kd-" + name + "-gate", Namespace: ns}}
+		other := &networkingv1.NetworkPolicy{ObjectMeta: metav1.ObjectMeta{Name: "kd-" + name + ".gate", Namespace: ns}}
 		Expect(k8sClient.Create(ctx, other)).To(Succeed())
 		DeferCleanup(func() { Expect(k8sClient.Delete(ctx, other)).To(Succeed()) })
 		run()

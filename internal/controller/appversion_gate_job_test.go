@@ -118,7 +118,7 @@ var _ = Describe("AppVersion gate Job", func() {
 	It("lets the gate pod reach only the pods of the version and the cluster DNS", func() {
 		av := newVersion()
 		np := gatePolicy(av, []corev1.ContainerPort{{ContainerPort: 15080}, {ContainerPort: 15081}})
-		Expect(np.Name).To(Equal("kd-v2-gate"))
+		Expect(np.Name).To(Equal(gatePolicyName(av)))
 		Expect(metav1.IsControlledBy(np, av)).To(BeTrue())
 		Expect(np.Spec.PodSelector.MatchLabels).To(Equal(map[string]string{gateLabel: "v2"}))
 		Expect(np.Spec.PolicyTypes).To(ConsistOf(networkingv1.PolicyTypeIngress, networkingv1.PolicyTypeEgress))
@@ -140,6 +140,17 @@ var _ = Describe("AppVersion gate Job", func() {
 			PodSelector: &metav1.LabelSelector{MatchLabels: map[string]string{gateLabel: "v2"}}}}))
 		Expect(in.Ports).To(HaveLen(1))
 		Expect(in.Ports[0].Port.IntValue()).To(Equal(15080))
+	})
+
+	It("gives the gate policy a name that is not the name of the policy of a version", func() {
+		av, other := newVersion(), newVersion()
+		other.Name = av.Name + "-gate"
+		name := gatePolicy(av, nil).Name
+		Expect(name).To(Equal("kd-v2.gate"))
+		Expect(name).NotTo(Equal(appVersionName(other)))
+		Expect(gateName(av)).To(Equal(appVersionName(other)), "the Job name is not sufficient for the policy")
+		av.Name = strings.Repeat("a", 60)
+		Expect(validation.IsDNS1123Subdomain(gatePolicy(av, nil).Name)).To(BeEmpty())
 	})
 
 	It("gives the weights only to a version with no gate or with an accepted pass", func() {

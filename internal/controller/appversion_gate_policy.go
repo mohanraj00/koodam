@@ -68,13 +68,18 @@ func gateIngress(av *corev1alpha1.AppVersion, ports []corev1.ContainerPort) netw
 		PodSelector: &metav1.LabelSelector{MatchLabels: map[string]string{gateLabel: av.Name}}}}}
 }
 
+// gatePolicyName is the name of the NetworkPolicy of the gate pod. A version name is a DNS label,
+// so it has no dot. Thus the name is never the name of the NetworkPolicy of a version, also for a
+// version with a name that ends in "-gate".
+func gatePolicyName(av *corev1alpha1.AppVersion) string { return appVersionName(av) + ".gate" }
+
 // gatePolicy is the NetworkPolicy of the gate pod. The pod gets no ingress. It gets egress only to
 // the pods of the version on their ports, and to the cluster DNS.
 func gatePolicy(av *corev1alpha1.AppVersion, ports []corev1.ContainerPort) *networkingv1.NetworkPolicy {
 	tcp, udp := corev1.ProtocolTCP, corev1.ProtocolUDP
 	dns := new(intstr.FromInt32(gateDNSPort))
 	m := appVersionMeta(av)
-	m.Name, m.Labels = gateName(av), map[string]string{gateLabel: av.Name}
+	m.Name, m.Labels = gatePolicyName(av), map[string]string{gateLabel: av.Name}
 	return &networkingv1.NetworkPolicy{ObjectMeta: m, Spec: networkingv1.NetworkPolicySpec{
 		PodSelector: metav1.LabelSelector{MatchLabels: map[string]string{gateLabel: av.Name}},
 		PolicyTypes: []networkingv1.PolicyType{networkingv1.PolicyTypeIngress, networkingv1.PolicyTypeEgress},
