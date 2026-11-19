@@ -30,8 +30,10 @@ spec:
     name: v1alpha1
     schema:
       openAPIV3Schema:
-        description: AppVersion is one version of an App, with its own pods and its
-          own gateway key.
+        description: |-
+          AppVersion is one version of an App, with its own pods and its own gateway key. The rule for
+          status.evidence is on the resource and not on the status, because status is optional: a rule
+          on the status does not run for an update that removes the full status.
         properties:
           apiVersion:
             description: |-
@@ -83,6 +85,64 @@ spec:
                 x-kubernetes-validations:
                 - message: budgetPerDay must be more than zero
                   rule: quantity(string(self)).isGreaterThan(quantity('0'))
+              gate:
+                description: |-
+                  Gate is the evidence gate of the version. With a gate, the version gets no traffic until
+                  the controller accepts an evidence record with the verdict pass for this version. A gated
+                  version must name the image of the app container by digest. You cannot add, change or
+                  remove the gate after create.
+                properties:
+                  nookku:
+                    description: |-
+                      Nookku is a scripted Nookku gate run. The controller runs it in a Job after each pod of
+                      the version is Ready.
+                    properties:
+                      deadlineSeconds:
+                        default: 1800
+                        description: |-
+                          DeadlineSeconds is the maximum time of the gate Job. After it, the gate has the reason
+                          JobFailed.
+                        format: int32
+                        maximum: 86400
+                        minimum: 1
+                        type: integer
+                      gateFile:
+                        description: GateFile is the path of the gate file, relative
+                          to the project root.
+                        maxLength: 512
+                        pattern: ^[A-Za-z0-9._][A-Za-z0-9._/-]*$
+                        type: string
+                        x-kubernetes-validations:
+                        - message: gateFile must not have a .. part.
+                          rule: '!self.split(''/'').exists(p, p == ''..'')'
+                      image:
+                        description: |-
+                          Image is the gate image. Name it by digest, because the gate trusts the code of this
+                          image.
+                        maxLength: 1024
+                        minLength: 1
+                        type: string
+                      root:
+                        description: |-
+                          Root is the absolute path of the project root in the image. The Job copies it to a work
+                          volume before the run.
+                        maxLength: 512
+                        pattern: ^/[A-Za-z0-9._/-]*$
+                        type: string
+                        x-kubernetes-validations:
+                        - message: root must not have a .. part.
+                          rule: '!self.split(''/'').exists(p, p == ''..'')'
+                    required:
+                    - gateFile
+                    - image
+                    - root
+                    type: object
+                required:
+                - nookku
+                type: object
+                x-kubernetes-validations:
+                - message: spec.gate is immutable.
+                  rule: self == oldSelf
               lifecycle:
                 default: Active
                 description: |-
@@ -9102,6 +9162,9 @@ spec:
             - message: budgetPerDay is necessary with a model, and it is not permitted
                 with no model.
               rule: (has(self.template.model) || has(self.template.models)) == has(self.budgetPerDay)
+            - message: spec.gate is immutable. You cannot add it or remove it after
+                create.
+              rule: has(self.gate) == has(oldSelf.gate)
           status:
             description: status defines the observed state of AppVersion
             properties:
@@ -9175,6 +9238,73 @@ spec:
                   CostGroup is the cost group of the key, from the label koodam.dev/cost-group when the
                   controller made the key.
                 type: string
+              evidence:
+                description: |-
+                  Evidence is the evidence record of the gate. The controller writes it one time, after it
+                  accepts the report of the gate Job. A later Job of the same version cannot change it. A
+                  version with no spec.gate has no record.
+                properties:
+                  checkedAt:
+                    description: CheckedAt is the time of the check by the controller.
+                    format: date-time
+                    type: string
+                  digest:
+                    description: |-
+                      Digest is the SHA-256 of the bytes of the record: result.json of the gate run, or the
+                      approval record.
+                    pattern: ^sha256:[0-9a-f]{64}$
+                    type: string
+                  expiresAt:
+                    description: ExpiresAt is the end of an approval record with a
+                      TTL.
+                    format: date-time
+                    type: string
+                  id:
+                    description: ID is the Nookku gate id, or the identity of the
+                      approval record.
+                    maxLength: 253
+                    minLength: 1
+                    type: string
+                  integrity:
+                    description: Integrity is seal for a Nookku result, and signature
+                      for an approval record.
+                    enum:
+                    - seal
+                    - signature
+                    type: string
+                  nookkuVersion:
+                    description: NookkuVersion is the Nookku version of the verify
+                      step. Only a nookku-gate record has it.
+                    maxLength: 64
+                    type: string
+                  source:
+                    description: 'Source is the evidence source: nookku-gate or approval.'
+                    enum:
+                    - nookku-gate
+                    - approval
+                    type: string
+                  subject:
+                    description: |-
+                      Subject is the subject digest of the record. For an AppVersion it is
+                      koodam.dev/appversion/v1:<namespace>/<name>:<uid>:<image digest>.
+                    maxLength: 512
+                    minLength: 1
+                    type: string
+                  verdict:
+                    description: Verdict is pass or fail.
+                    enum:
+                    - pass
+                    - fail
+                    type: string
+                required:
+                - checkedAt
+                - digest
+                - id
+                - integrity
+                - source
+                - subject
+                - verdict
+                type: object
               keyAlias:
                 description: |-
                   KeyAlias identifies the gateway key. The key value is never in the status. A version with
@@ -9189,6 +9319,11 @@ spec:
         required:
         - spec
         type: object
+        x-kubernetes-validations:
+        - message: status.evidence is written one time. You cannot change it or remove
+            it.
+          rule: '!has(oldSelf.status) || !has(oldSelf.status.evidence) || (has(self.status)
+            && has(self.status.evidence) && self.status.evidence == oldSelf.status.evidence)'
     served: true
     storage: true
     subresources:
