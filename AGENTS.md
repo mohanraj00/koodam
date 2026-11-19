@@ -29,7 +29,7 @@ Work in parallel when the issues allow it. If you only do one issue, these rules
 
 [docs/STANDARD.md](docs/STANDARD.md) has the review gates, the reviewer for each builder, the fallback, the request cap and the rules to close a finding. [docs/REVIEW.md](docs/REVIEW.md) has the request texts. The project steps are below.
 
-- For a local fallback review with Antigravity, run `agy -p "<review prompt>" --mode plan --sandbox`. Post the result as a PR comment that starts with `Review (<harness> <version>):`.
+- For a local fallback review with Antigravity, run `gates/cross_review.py` of `mohanraj00/.github` at the gate pin. [docs/STANDARD.md](docs/STANDARD.md) describes the tool and its login check. Post the result as a PR comment that starts with `Review (<harness> <version>):`.
 - Post a local security result as a PR comment that starts with `Security review (<harness>):`.
 
 ### Outside PRs
