@@ -38,6 +38,8 @@ The API is `v1alpha1` and can change between tags. The App parts are off by defa
 ### Nookku preset
 
 - If a harness selects `nookku`, the controller adds the init container `koodam-nookku-python` to the Agent Job pod and to the Workspace pod. It uses the image and the user of the harness container, and it fails with a fixed message if `python3` is absent or older than 3.10. An Agent run fails, and a Workspace pod stays in its init step. [docs/nookku-preset.md](docs/nookku-preset.md) has the requirement ([#366](https://github.com/mohanraj00/koodam/pull/366)).
+- Add the Nookku data image definition in `images/nookku`. It has the pinned Nookku 0.5.9 wheel content and plugin files, with a SHA-256 check of each, and a launcher. It has no shell and no Python ([#368](https://github.com/mohanraj00/koodam/pull/368)).
+- Add the flag `--nookku-image`. The reference needs a digest. If a harness selects `nookku`, an init container copies the pinned Nookku files from this image into the pod, and `nookku` is on the `PATH` of the harness. With no flag, an Agent with `nookku` fails, and a Workspace has `Harnesses=False` with the reason `NoNookkuImage`. An Agent with Claude Code and `nookku` gets `CLAUDE_CODE_DISABLE_TERMINAL_TITLE=1` ([#369](https://github.com/mohanraj00/koodam/pull/369)).
 
 ### Evidence gate (Apps, not active yet)
 
@@ -68,7 +70,7 @@ The API is `v1alpha1` and can change between tags. The App parts are off by defa
 - The AppVersion controller has no watch on NetworkPolicy. If a user deletes or changes the policy of a version or of a gate pod, the controller restores it at the next reconcile ([#359](https://github.com/mohanraj00/koodam/issues/359)).
 - A valid signed approval record does not show that it is the current selection. A later reject, a suspension or a new snapshot can replace it, and only the Host answers that ([#364](https://github.com/mohanraj00/koodam/issues/364)).
 - With the signed claim check on, the gate pod has no claim, so each gate message gets a refusal and the gate gives `Evidence=False/Failed` ([#354](https://github.com/mohanraj00/koodam/issues/354)).
-- The plugin preset for Nookku in the harness pod is not done. Only the Python check is in. The Nookku install and its env are not in ([#83](https://github.com/mohanraj00/koodam/issues/83)).
+- The plugin preset for Nookku in the harness pod has the Python check and the copy of the pinned Nookku 0.5.9 files from a data image that you give with `--nookku-image`. No published data image exists yet. The proofs with a real harness are not done ([#83](https://github.com/mohanraj00/koodam/issues/83)).
 
 ## v0.4.0-alpha.1 (pre-release, 2026-11-12)
 
