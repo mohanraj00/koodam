@@ -118,7 +118,6 @@ func endRunJob(ctx context.Context, run types.NamespacedName, t batchv1.JobCondi
 const (
 	codexName      = "codex"
 	claudeName     = "claude-code"
-	pathEnv        = "PATH"
 	installerImage = "ghcr.io/mohanraj00/koodam:test"
 	installerCmd   = "/harness-install"
 )

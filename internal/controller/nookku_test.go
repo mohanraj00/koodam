@@ -219,7 +219,7 @@ func checkNookkuCheck(t *testing.T, name string, p corev1.PodSpec) {
 	}
 	var wantEnv []corev1.EnvVar
 	for _, e := range main.Env {
-		if e.Name == "PATH" {
+		if e.Name == pathEnv {
 			wantEnv = []corev1.EnvVar{e}
 		}
 	}
@@ -274,16 +274,16 @@ func TestWorkspaceNookkuPythonCheck(t *testing.T) {
 // source is not.
 func TestNookkuPythonCheckFollowsMerge(t *testing.T) {
 	pod := corev1.PodSpec{Containers: []corev1.Container{{Name: "main", Image: "example.com/a:1",
-		Env: []corev1.EnvVar{{Name: "PATH", Value: "/a"}}}}}
+		Env: []corev1.EnvVar{{Name: pathEnv, Value: "/a"}}}}}
 	addNookkuPythonCheck(&pod)
 	pod.Containers[0].Image = "example.com/b:1"
-	pod.Containers[0].Env = []corev1.EnvVar{{Name: "PATH", Value: "/b"}, {Name: "OTHER", Value: "x"}}
+	pod.Containers[0].Env = []corev1.EnvVar{{Name: pathEnv, Value: "/b"}, {Name: "OTHER", Value: "x"}}
 	pod.Containers[0].WorkingDir, pod.Containers[0].ImagePullPolicy = "/work", corev1.PullNever
 	pod.Containers[0].SecurityContext = &corev1.SecurityContext{RunAsUser: new(int64(0)),
 		RunAsGroup: new(int64(10)), Privileged: new(true), Capabilities: &corev1.Capabilities{
 			Add: []corev1.Capability{"NET_ADMIN"}}}
 	syncNookkuPythonCheck(&pod, "main")
-	if c := nookkuCheck(pod)[0]; c.Image != "example.com/b:1" || !slices.Equal(c.Env, []corev1.EnvVar{{Name: "PATH", Value: "/b"}}) {
+	if c := nookkuCheck(pod)[0]; c.Image != "example.com/b:1" || !slices.Equal(c.Env, []corev1.EnvVar{{Name: pathEnv, Value: "/b"}}) {
 		t.Errorf("the Python check is %+v after the merge", c)
 	}
 	// The check gets the user and the group, but no privilege or capability of the main container.
@@ -294,7 +294,7 @@ func TestNookkuPythonCheckFollowsMerge(t *testing.T) {
 	if pod.Containers[0].SecurityContext.RunAsUser == nookkuCheck(pod)[0].SecurityContext.RunAsUser {
 		t.Error("the Python check shares the security context of the main container")
 	}
-	pod.Containers[0].Env = []corev1.EnvVar{{Name: "PATH", ValueFrom: &corev1.EnvVarSource{
+	pod.Containers[0].Env = []corev1.EnvVar{{Name: pathEnv, ValueFrom: &corev1.EnvVarSource{
 		ConfigMapKeyRef: &corev1.ConfigMapKeySelector{Key: "path"}}}}
 	syncNookkuPythonCheck(&pod, "main")
 	if c := nookkuCheck(pod)[0]; len(c.Env) != 0 {

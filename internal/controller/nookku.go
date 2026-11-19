@@ -39,6 +39,8 @@ const (
 	workspaceNookkuDir = "/etc/koodam/nookku"
 	// nookkuPythonContainer is the init container that checks the Python of the harness image.
 	nookkuPythonContainer = "koodam-nookku-python"
+	// pathEnv is the name of the env that lists the command folders.
+	pathEnv = "PATH"
 	// msgNookkuPython is the termination message of nookkuPythonContainer if the check fails.
 	msgNookkuPython = "The nookku plugin needs python3 3.10 or later on the PATH of the image. The harness did not start."
 )
@@ -111,7 +113,7 @@ func syncNookkuPythonCheck(pod *corev1.PodSpec, main string) {
 		sc.RunAsNonRoot, sc.RunAsUser, sc.RunAsGroup = m.RunAsNonRoot, m.RunAsUser, m.RunAsGroup
 	}
 	check.SecurityContext = sc
-	if p := slices.IndexFunc(c.Env, func(e corev1.EnvVar) bool { return e.Name == "PATH" }); p >= 0 && c.Env[p].ValueFrom == nil {
-		check.Env = []corev1.EnvVar{{Name: "PATH", Value: c.Env[p].Value}}
+	if p := slices.IndexFunc(c.Env, func(e corev1.EnvVar) bool { return e.Name == pathEnv }); p >= 0 && c.Env[p].ValueFrom == nil {
+		check.Env = []corev1.EnvVar{{Name: pathEnv, Value: c.Env[p].Value}}
 	}
 }
