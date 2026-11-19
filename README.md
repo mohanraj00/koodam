@@ -29,9 +29,23 @@ Koodam adds Kubernetes resources for agent work, and an operator that reconciles
 
 ## Status and compatibility
 
-The current release is v0.3.0. It is the stable release. The pre-release [v0.4.0-alpha.1](https://github.com/mohanraj00/koodam/releases/tag/v0.4.0-alpha.1) has the TestKey work. [CHANGELOG.md](CHANGELOG.md) lists it.
+The current release is v0.3.0. It is the stable release. The pre-release [v0.4.0-alpha.1](https://github.com/mohanraj00/koodam/releases/tag/v0.4.0-alpha.1) has the TestKey work. `main` has the v0.4.0 work, and the tag is not pushed yet. [CHANGELOG.md](CHANGELOG.md) lists it.
 
-The resources are `Agent`, `Workspace`, `Profile` and `TestKey`. The `App` resource is not in `main`.
+The resources are `Agent`, `Workspace`, `Profile` and `TestKey`. `main` also has `App` and `AppVersion`. They are off by default: set `apps.enabled=true` in the chart. [docs/apps.md](docs/apps.md) has the use.
+
+The v0.4 parts in `main`, and what proves each part:
+
+- **Evidence gate.** `spec.gate` of an AppVersion runs a gate Job with a pinned Nookku release. The version has the traffic weight 0 until the gate verdict is `pass`. The seam test and the kind test prove this. [docs/evidence-gate.md](docs/evidence-gate.md) has the design.
+- **Signed approval verifier.** The offline check of an `entelos.record/1` record, with the `human` kind rule, is a Go package with unit tests. No controller calls it yet, so no resource uses an approval record.
+- **App ingress spans.** The claim check container writes one span for each request. [docs/app-ingress-spans.md](docs/app-ingress-spans.md) is the contract. The sample comes from the thin App test on kind.
+- **Egress spans and gateway log samples.** Each release has them as assets. [docs/egress-spans.md](docs/egress-spans.md) names the files.
+
+These limits are open:
+
+- The controller has no watch on NetworkPolicy, so it restores a deleted policy at the next reconcile ([#359](https://github.com/mohanraj00/koodam/issues/359)).
+- A valid signed approval record is not proof of the current selection ([#364](https://github.com/mohanraj00/koodam/issues/364)).
+- The gate and the signed claim check do not work together ([#354](https://github.com/mohanraj00/koodam/issues/354)).
+- The plugin preset for Nookku in the harness pod is not done ([#83](https://github.com/mohanraj00/koodam/issues/83)).
 
 The `nookku` plugin field gives the pod a Nookku test folder: `/koodam/nookku-tests` in an Agent pod and `/home/dev/nookku-tests` in a Workspace pod. Koodam does not install Nookku. [docs/nookku-preset.md](docs/nookku-preset.md) has the rules.
 
@@ -51,7 +65,9 @@ A Workspace is a pod with a home on a PVC. I connect to it over SSH and run the 
 - [Test keys](docs/test-keys.md): the TestKey resource, the key slot in the Workspace pod and the revoke.
 - [Nookku](docs/nookku.md): the Workspace setup for Nookku, the span contract and the test folder.
 - [Nookku preset](docs/nookku-preset.md): the `nookku` plugin field and the Nookku test folder.
-- [Evidence gate](docs/evidence-gate.md): the design of a rollout gate on a sealed Nookku result. It is not built.
+- [Evidence gate](docs/evidence-gate.md): the gate of an AppVersion on a sealed Nookku result, and the limits of a signed approval record.
+- [Apps](docs/apps.md): the `App` and `AppVersion` resources, the traffic split and the gate.
+- [App ingress spans](docs/app-ingress-spans.md): the contract of the spans at the App ingress.
 - [Release checklist](docs/release-checklist.md): the steps before a tag.
 - [Traced egress](docs/traced-egress.md): the egress proxy, the spans and `koodam trace`.
 - [Architecture](docs/architecture.md): the controller, the gateway, the Workspace pod, the PVC home and the tunnel.
