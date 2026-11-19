@@ -22,14 +22,18 @@ package evidence
 // arguments. Thus no value of the spec goes through a shell.
 
 // RunScript is the fixed program of the gate container. Its arguments are the project root in the
-// image, the folder for the copy, the gate file and the subject.
+// image, the folder for the copy, the gate file and the subject. The project must have its egress
+// answer in .nookku/egress.json (section 7.11 of the Nookku SPEC.md).
 const RunScript = `"""The fixed run step of the Koodam gate Job (docs/evidence-gate.md).
 
 Arguments: the project root in the image, the folder for the copy, the gate file and the subject.
 Nookku writes the tests and the gate folder in the project, so the step copies the project to the
-work volume first. The step does not use the exit code of the run: the verify step decides.
+work volume first. Nookku accepts an egress answer only for 30 minutes, so the step registers the
+answer of the project, .nookku/egress.json, before the run. The step does not use the exit code
+of the run: the verify step decides.
 """
 
+import pathlib
 import shutil
 import subprocess
 import sys
@@ -37,8 +41,12 @@ import sys
 
 def main(src: str, work: str, gate_file: str, subject: str) -> int:
     shutil.copytree(src, work, symlinks=True)
-    argv = [sys.executable, "-m", "nookku", "gate", "run", gate_file]
-    subprocess.run([*argv, "--subject", subject, "--root", work, "--json"], cwd=work, check=False)
+    nookku = [sys.executable, "-m", "nookku"]
+    answer = pathlib.Path(work, ".nookku", "egress.json")
+    if answer.is_file():
+        subprocess.run([*nookku, "register", "--file", str(answer), "--root", work], cwd=work, check=False)
+    argv = [*nookku, "gate", "run", gate_file, "--subject", subject, "--root", work, "--json"]
+    subprocess.run(argv, cwd=work, check=False)
     return 0
 
 
