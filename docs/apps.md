@@ -131,7 +131,7 @@ spec:
 - The image of the `app` container must have a `sha256` digest. If not, the condition is `Evidence=False/ImageNotPinned`.
 - The gate image has `python3` with the Nookku package, the Nookku project in `root`, and the gate file `gateFile` in that project. The path of the gate file is relative to `root`. Name the gate image by digest, because the gate trusts the code of this image.
 - The project has its egress answer in `.nookku/egress.json`. Nookku accepts an answer only for 30 minutes, so the gate Job registers this file before the run. With no answer, Nookku runs no test, and the condition is `Evidence=False/NotVerified`.
-- The entries of the project send the test messages to the address in the env variable `KOODAM_GATE_TARGET`. The value is a host and a port: the Service of the version and the first port of the `app` container.
+- The entries of the project send the test messages to the address in the env variable `KOODAM_GATE_TARGET`. The value is a host and a port: the Service of the version and the first port of the `app` container. An entry speaks the agent contract of Nookku on stdin and stdout. [test/e2e/testdata/gate](../test/e2e/testdata/gate) has a small example of a gate image.
 - `deadlineSeconds` is the maximum time of the gate Job. The default is 1800.
 
 The controller does these steps:

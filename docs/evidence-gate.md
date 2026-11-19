@@ -179,11 +179,11 @@ A paused Agent uses the same gate. Its subject is the run identity and the outpu
 
 The seam test proves that Koodam reads the Nookku format of the pinned release.
 
-- **Pin.** Pin Nookku 0.5.9 by its version and by the SHA-256 of its wheel. Nookku has the Apache-2.0 licence.
+- **Pin.** `internal/evidence/nookku.pin` pins Nookku 0.5.9 by its version, by the SHA-256 of its wheel and by the commit of its tag. The seam job and the kind test read this file. To use a new release, change the 3 values together. Nookku has the Apache-2.0 licence.
 - **Report parser.** A Go unit test for the parser of the report: a `pass`, a `fail`, exit code 2, a report that is not JSON, an unknown key, a verdict that does not agree with the exit code, and a wrong subject.
-- **Seam.** A CI job installs the pinned wheel, runs the fixed verify script on the gate cases of `conformance/gate/` of the same release, and gives each report to the Go parser. Cases: a `pass`, a `fail`, a missing test, a `result.json` that changed after the seal, and a subject that does not match. The expected reason of each case is in the test.
+- **Seam.** The CI job `seam` installs the pinned wheel, and `pip` refuses a wheel with a different SHA-256. It gets `conformance/gate/` of the pinned commit. A case there has the records of each test, and not a sealed gate folder. Thus `internal/evidence/testdata/seam_case.py` makes a sealed gate folder from a case with the functions of the pinned package. The test `TestSeam` then runs the fixed verify program on the folder and gives the report to the Go parser. Cases: a `pass`, a `fail`, a missing test, a `result.json` that changed after the seal, and a subject that does not match. The expected reason of each case is in the test. If the pinned release writes a format version of `result.json` that the parser does not know, the test fails and names the version that the parser knows.
 - **envtest.** An AppVersion with `spec.gate`: the Job spec (no token, read-only mounts, fixed argv), each state of the table from a fake pod status, and the weight 0 in effect until `Passed`.
-- **kind.** A gate image from the pinned release, with one gate that passes and one that fails. The test checks the condition and the weights of the HTTPRoute.
+- **kind.** `test/e2e/gate_test.go` builds a gate image from the pinned release, with one gate that passes and one that fails. The test checks the condition, the record, the weights in effect and the weights of the HTTPRoute. The gate image is in `test/e2e/testdata/gate`.
 
 ## Open questions
 
