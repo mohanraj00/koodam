@@ -1,5 +1,6 @@
 # The pin of the Nookku release for the seam test and the kind test of the evidence gate
-# (docs/evidence-gate.md, "Seam test"). Change the 3 values together.
+# (docs/evidence-gate.md, "Seam test"), and for the Nookku data image (images/nookku). Change the
+# 3 values together, and the plugin hashes of images/nookku/plugin.sha256 with them.
 # NOOKKU_VERSION is the release on PyPI. NOOKKU_WHEEL_SHA256 is the SHA-256 of its wheel.
 # NOOKKU_COMMIT is the commit of the tag v<version>, with the gate cases in conformance/gate/.
 NOOKKU_VERSION=0.5.9
