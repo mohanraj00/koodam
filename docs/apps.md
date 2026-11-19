@@ -94,6 +94,68 @@ The App controller makes one `HTTPRoute` for each endpoint, with the name `kd-<a
 
 A request with the header `Koodam-App-Version: <version>` goes to that version only, if the version has a weight of more than 0 in the spec of the endpoint. A retiring version with such a weight keeps this rule for the drain time. The header is not proof of a session: each caller can send it. A version with the weight 0 gets no traffic, also while it retires. The app container has the name of its version in the env variable `KOODAM_APP_VERSION`. Thus the app can give the name to its client, and the client sends the header to stay on the version. Koodam does not use the session persistence of the Gateway API, because it is not in the standard channel.
 
+## The evidence gate
+
+An AppVersion can have an evidence gate. A gated version gets traffic only after the controller accepts a sealed result of a Nookku gate run with the verdict `pass`. [evidence-gate.md](evidence-gate.md) has the design, the check and the threat model.
+
+```yaml
+apiVersion: core.koodam.dev/v1alpha1
+kind: AppVersion
+metadata:
+  name: shop-v2
+spec:
+  appRef:
+    name: shop
+  gate:
+    nookku:
+      image: registry.example.com/shop-gate@sha256:...
+      root: /project
+      gateFile: gates/release.json
+      deadlineSeconds: 1800
+  template:
+    podTemplate:
+      spec:
+        containers:
+        - name: app
+          image: registry.example.com/shop@sha256:...
+```
+
+- `spec.gate` is immutable. You cannot add it, change it or remove it after create.
+- The image of the `app` container must have a `sha256` digest. If not, the condition is `Evidence=False/ImageNotPinned`.
+- The gate image has `python3` with the Nookku package, the Nookku project in `root`, and the gate file `gateFile` in that project. The path of the gate file is relative to `root`. Name the gate image by digest, because the gate trusts the code of this image.
+- The entries of the project send the test messages to the address in the env variable `KOODAM_GATE_TARGET`. The value is a host and a port: the Service of the version and the first port of the `app` container.
+- `deadlineSeconds` is the maximum time of the gate Job. The default is 1800.
+
+The controller does these steps:
+
+1. It waits until each pod of the version is Ready.
+2. It makes the Job `kd-<version>-gate`. The Job runs `nookku gate run` with the subject of the version, and then `nookku gate verify`. The gate pod has no ServiceAccount token, no gateway key and no Secret. A NetworkPolicy lets the pod reach only the pods of the version and the cluster DNS in `kube-system`.
+3. It reads the short report of the verify step from the pod status, and compares the subject of the report with the subject that it computes again.
+4. It writes the record to `status.evidence` one time, and sets the condition `Evidence`.
+
+The condition `Evidence` of the AppVersion has these states:
+
+| Status | Reason | Meaning |
+|---|---|---|
+| `Unknown` | `Waiting` | Not all pods of the version are Ready. |
+| `Unknown` | `Running` | The gate Job runs. |
+| `True` | `Passed` | The controller accepted a record with the verdict `pass`. |
+| `False` | `Failed` | The controller accepted a record with the verdict `fail`. |
+| `False` | `NotVerified` | The result cannot be used, the report does not parse, or the verdict does not agree with the exit code. |
+| `False` | `SubjectMismatch` | The subject of the report is not the subject of this version. |
+| `False` | `JobFailed` | The gate Job failed after its retries, or its deadline ended. |
+| `False` | `ImageNotPinned` | The image of the `app` container has no digest. |
+
+- Only `True/Passed` gives the version the weights of the spec. In each other state the version has the weight 0 in effect, `status.endpoints` of the App shows the weight 0, and the header `Koodam-App-Version` sends no request to the version. Thus the old version keeps its traffic.
+- Each `False` state is terminal. The template is immutable, so a new run tests the same code. To test again, make a new AppVersion.
+- A version with no `spec.gate` has no condition `Evidence`, and its weights work as before.
+- The full `result.json` of the gate run is in the log of the `verify` container of the gate pod.
+
+The gate has these limits:
+
+- If the signed claim check is on, the Service of the version refuses a request with no claim. The gate pod has no claim, so the entries of the gate project must get a claim from a different source. [#354](https://github.com/mohanraj00/koodam/issues/354) tracks this.
+- The egress rule of the gate pod names port 53 of the namespace `kube-system`. A cluster DNS at a different location is not in the rule, and then the gate fails closed.
+
 ## The signed claim check
 
 The operator can require a signed claim for each request to an App. The claim is a JWT from one issuer. The check is on for each App of the cluster when the chart has an issuer:
