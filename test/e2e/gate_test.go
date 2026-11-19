@@ -197,9 +197,12 @@ var _ = Describe("Evidence gate", Ordered, Label("gate"), func() {
 
 		By("applying the Gateway API CRDs if the cluster does not have the HTTPRoute")
 		if _, err := utils.Run(exec.Command("kubectl", "get", "crd", "httproutes.gateway.networking.k8s.io")); err != nil {
-			// helm writes the pull messages of an OCI chart to stderr. Only stdout has the CRDs.
-			crds, err := exec.Command("helm", "show", "crds", crdChart, "--version", crdVersion).Output()
+			shown, err := exec.Command("helm", "show", "crds", crdChart, "--version", crdVersion).Output()
 			Expect(err).NotTo(HaveOccurred(), "Failed to read the CRDs of the chart.")
+			// helm writes the pull messages of an OCI chart to stdout, before the first YAML document.
+			// kubectl refuses that text, so the spec applies only the text after the first separator.
+			_, crds, found := bytes.Cut(append([]byte("\n"), shown...), []byte("\n---\n"))
+			Expect(found).To(BeTrue(), "The output of helm has no YAML document.")
 			apply := exec.Command("kubectl", "apply", "--server-side", "-f", "-")
 			apply.Stdin = bytes.NewReader(crds)
 			out, err := utils.Run(apply)
