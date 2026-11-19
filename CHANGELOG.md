@@ -2,7 +2,7 @@
 
 This file records the changes for each Koodam version. The newest version is first.
 
-## v0.4.0 (not tagged yet)
+## v0.4.0 (2026-11-20)
 
 The API is `v1alpha1` and can change between tags. The App parts are off by default. [Known limits of v0.4.0](#known-limits-of-v040) lists the open limits.
 
