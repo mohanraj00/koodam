@@ -1,0 +1,1 @@
+{"v": 1, "tests": [{"name": "repeat", "script": "scripts/repeat.jsonl", "limits": {"repeated_reply": 0}}]}
