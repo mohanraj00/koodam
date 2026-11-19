@@ -1,11 +1,11 @@
 # Evidence gate (design)
 
-Status: the gate of an AppVersion is built (#342), with Nookku 0.5.9. [apps.md](apps.md) has the use. The seam test with the pinned release and the kind test are #343. The approval source of a paused run is #190, #246 and #344.
+Status: the gate of an AppVersion is built (#342), with Nookku 0.5.9. [apps.md](apps.md) has the use. The seam test with the pinned release and the kind test are #343. The approval source of a paused run is #190, #246 and #344. Of that source, only the offline verifier (#344) is in `main`. The API part needs owner approval, because it changes `/api/`.
 
 An evidence gate holds a rollout, or a paused run, until the controller gets a valid evidence record. One gate design serves 2 sources:
 
 1. A sealed result of a scripted Nookku gate run. This design covers this source for an AppVersion (#189).
-2. A signed approval record. #190 and #246 build this source for a paused run. This design names only its seam.
+2. A signed approval record. #344 adds the offline verifier. #190 and #246 use it for a paused run.
 
 Nookku owns the format of its result. Koodam owns the gate, the check of the record and the seam test.
 
@@ -147,7 +147,7 @@ A platform team can require a gate with a `ValidatingAdmissionPolicy`: each AppV
 ## Key source
 
 - **Nookku source.** A seal has no key. The integrity check is the seal and its copy, which `nookku gate verify` checks. The origin check is the Job: the controller makes its spec, and the kubelet writes the report to the pod status. No user can write `status.evidence`.
-- **Approval source.** A signed record has a key. #190 decides the key source, for example a public key in a Secret that the admin names. The gate needs only the record of the table above from that verifier.
+- **Approval source.** The caller gives the verifier the bytes of a trusted key set that the admin selects separately from the signed record. #190 owns the choice of key source.
 
 ## Threat model
 
@@ -184,6 +184,14 @@ The seam test proves that Koodam reads the Nookku format of the pinned release.
 - **Seam.** The CI job `seam` installs the pinned wheel, and `pip` refuses a wheel with a different SHA-256. It gets `conformance/gate/` of the pinned commit. A case there has the records of each test, and not a sealed gate folder. Thus `internal/evidence/testdata/seam_case.py` makes a sealed gate folder from a case with the functions of the pinned package. The test `TestSeam` then runs the fixed verify program on the folder and gives the report to the Go parser. Cases: a `pass`, a `fail`, a missing test, a `result.json` that changed after the seal, and a subject that does not match. The expected reason of each case is in the test. If the pinned release writes a format version of `result.json` that the parser does not know, the test fails and names the version that the parser knows.
 - **envtest.** An AppVersion with `spec.gate`: the Job spec (no token, read-only mounts, fixed argv), each state of the table from a fake pod status, and the weight 0 in effect until `Passed`.
 - **kind.** `test/e2e/gate_test.go` builds a gate image from the pinned release, with one gate that passes and one that fails. The test checks the condition, the record, the weights in effect and the weights of the HTTPRoute. The gate image is in `test/e2e/testdata/gate`.
+
+The approval seam uses the signed record protocol and vectors of Entelos tag
+`v0.5.0`. The caller gives the expected `scope`, `function` and subject, and the
+time of the check. The verifier refuses a decision with a different `scope`,
+`function` or `snapshot_ref`. It also refuses a decision when the UTC date of
+the check is before `from`, or at or after `until`. A disposition of `accept`
+gives `pass`. A disposition of `reject` gives `fail`. The signed decision's
+`record_ref` gives both the evidence ID and digest.
 
 ## Open questions
 
