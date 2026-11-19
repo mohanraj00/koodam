@@ -87,13 +87,14 @@ func addNookkuPythonCheck(pod *corev1.PodSpec) {
 	pod.InitContainers = append(pod.InitContainers, corev1.Container{
 		Name: nookkuPythonContainer, Command: []string{"sh", "-c", nookkuPythonScript},
 		TerminationMessagePolicy: corev1.TerminationMessageFallbackToLogsOnError,
-		SecurityContext:          helperSecurityContext(),
 	})
 	syncNookkuPythonCheck(pod, pod.Containers[0].Name)
 }
 
-// syncNookkuPythonCheck gives the Python check the image and the literal PATH of the main
-// container. withPodTemplate calls it again after the merge, because spec.podTemplate can change
+// syncNookkuPythonCheck gives the Python check the image, the literal PATH, the working folder and
+// the user and group of the main container. Thus the check finds the python3 that the harness
+// finds. The check keeps the restrictions of a helper: no privilege escalation, no capabilities and
+// a read-only root file system. withPodTemplate calls it again after the merge, because spec.podTemplate can change
 // the image and the env of the main container. A pod with no check does not change.
 func syncNookkuPythonCheck(pod *corev1.PodSpec, main string) {
 	i := slices.IndexFunc(pod.InitContainers, func(c corev1.Container) bool { return c.Name == nookkuPythonContainer })
@@ -102,7 +103,13 @@ func syncNookkuPythonCheck(pod *corev1.PodSpec, main string) {
 		return
 	}
 	check, c := &pod.InitContainers[i], pod.Containers[m]
-	check.Image, check.Env = c.Image, nil
+	check.Image, check.Env, check.WorkingDir = c.Image, nil, c.WorkingDir
+	sc := helperSecurityContext()
+	sc.RunAsNonRoot, sc.RunAsUser = nil, nil
+	if m := c.SecurityContext.DeepCopy(); m != nil {
+		sc.RunAsNonRoot, sc.RunAsUser, sc.RunAsGroup = m.RunAsNonRoot, m.RunAsUser, m.RunAsGroup
+	}
+	check.SecurityContext = sc
 	if p := slices.IndexFunc(c.Env, func(e corev1.EnvVar) bool { return e.Name == "PATH" }); p >= 0 && c.Env[p].ValueFrom == nil {
 		check.Env = []corev1.EnvVar{{Name: "PATH", Value: c.Env[p].Value}}
 	}

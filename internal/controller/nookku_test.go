@@ -21,6 +21,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"slices"
 	"testing"
 
@@ -226,8 +227,19 @@ func checkNookkuCheck(t *testing.T, name string, p corev1.PodSpec) {
 		t.Errorf("%s: the env of the Python check is %+v, want %+v", name, c.Env, wantEnv)
 	}
 	if s := c.SecurityContext; s == nil || s.AllowPrivilegeEscalation == nil || *s.AllowPrivilegeEscalation ||
-		s.Capabilities == nil || len(s.Capabilities.Drop) != 1 || s.Privileged != nil && *s.Privileged {
+		s.Capabilities == nil || len(s.Capabilities.Drop) != 1 || s.Privileged != nil && *s.Privileged ||
+		s.ReadOnlyRootFilesystem == nil || !*s.ReadOnlyRootFilesystem {
 		t.Errorf("%s: the security context of the Python check is %+v", name, s)
+	}
+	// The check runs as the user of the main container, so it finds the same python3.
+	var want corev1.SecurityContext
+	if m := main.SecurityContext; m != nil {
+		want = corev1.SecurityContext{RunAsNonRoot: m.RunAsNonRoot, RunAsUser: m.RunAsUser, RunAsGroup: m.RunAsGroup}
+	}
+	if s := c.SecurityContext; s != nil && (!reflect.DeepEqual(s.RunAsUser, want.RunAsUser) ||
+		!reflect.DeepEqual(s.RunAsGroup, want.RunAsGroup) || !reflect.DeepEqual(s.RunAsNonRoot, want.RunAsNonRoot)) ||
+		c.WorkingDir != main.WorkingDir {
+		t.Errorf("%s: the Python check does not run as the main container", name)
 	}
 }
 
@@ -266,9 +278,21 @@ func TestNookkuPythonCheckFollowsMerge(t *testing.T) {
 	addNookkuPythonCheck(&pod)
 	pod.Containers[0].Image = "example.com/b:1"
 	pod.Containers[0].Env = []corev1.EnvVar{{Name: "PATH", Value: "/b"}, {Name: "OTHER", Value: "x"}}
+	pod.Containers[0].WorkingDir = "/work"
+	pod.Containers[0].SecurityContext = &corev1.SecurityContext{RunAsUser: new(int64(0)),
+		RunAsGroup: new(int64(10)), Privileged: new(true), Capabilities: &corev1.Capabilities{
+			Add: []corev1.Capability{"NET_ADMIN"}}}
 	syncNookkuPythonCheck(&pod, "main")
 	if c := nookkuCheck(pod)[0]; c.Image != "example.com/b:1" || !slices.Equal(c.Env, []corev1.EnvVar{{Name: "PATH", Value: "/b"}}) {
 		t.Errorf("the Python check is %+v after the merge", c)
+	}
+	// The check gets the user and the group, but no privilege or capability of the main container.
+	checkNookkuCheck(t, "merged", pod)
+	if s := nookkuCheck(pod)[0].SecurityContext; s.Privileged != nil || len(s.Capabilities.Add) != 0 {
+		t.Errorf("the Python check gets a privilege of the main container: %+v", s)
+	}
+	if pod.Containers[0].SecurityContext.RunAsUser == nookkuCheck(pod)[0].SecurityContext.RunAsUser {
+		t.Error("the Python check shares the security context of the main container")
 	}
 	pod.Containers[0].Env = []corev1.EnvVar{{Name: "PATH", ValueFrom: &corev1.EnvVarSource{
 		ConfigMapKeyRef: &corev1.ConfigMapKeySelector{Key: "path"}}}}
