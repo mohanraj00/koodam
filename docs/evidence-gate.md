@@ -101,7 +101,7 @@ These rules apply to the Job:
 
 - The pod gets no service account token, no gateway key and no Secret. The tested app makes its model calls with the key of its own version.
 - The tested app runs in the pods of the version, not in the gate pod. Thus the app code cannot write the gate folder or the seal copy.
-- A NetworkPolicy lets the gate pod reach only the pods of the version and the cluster DNS in the namespace `kube-system`. The NetworkPolicy of the version permits ingress from the gate pod until the gate has an end state. Each reconcile applies the policy of the gate pod again while the Job runs. The controller has no watch on NetworkPolicy (#359).
+- A NetworkPolicy lets the gate pod reach only the pods of the version and the cluster DNS in the namespace `kube-system`. The NetworkPolicy of the version permits ingress from the gate pod until the gate has an end state. Each reconcile applies the policy of the gate pod again while the Job runs. The controller has no watch on NetworkPolicy (#359). The name of this policy is `kd-<version>.gate`. A version name has no dot, so the name is never the name of the NetworkPolicy of a version.
 - The gate pod has the label `koodam.dev/app-gate`, and not the labels of the version. Thus it is not behind the Service of the version.
 - The Job has a `backoffLimit` of 2 and `activeDeadlineSeconds` from `deadlineSeconds`. Each retry is a new pod with new volumes.
 - The name of the Job is `kd-<version>-gate`. A Job name has 63 characters or fewer, so a long version name gets a short form with a hash of the name.

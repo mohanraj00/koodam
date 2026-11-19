@@ -121,6 +121,10 @@ spec:
           ports:
           - name: http
             containerPort: 8080
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: http
 ```
 
 - `spec.gate` is immutable. You cannot add it, change it or remove it after create.
