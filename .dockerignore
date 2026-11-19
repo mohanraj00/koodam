@@ -15,3 +15,8 @@
 
 # Re-include the script that the package images/workspace embeds for harness-install
 !images/workspace/koodam-project.sh
+
+# Re-include the files of the Nookku data image (images/nookku/Dockerfile)
+!images/nookku/fetch.py
+!images/nookku/nookku
+!images/nookku/plugin.sha256

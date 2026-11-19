@@ -1,0 +1,9 @@
+#!/bin/sh
+# The nookku command of the Koodam Nookku data image (#83). It runs the pinned Nookku of
+# /koodam/nookku/lib with the python3 of the PATH. -I ignores the PYTHON env and the user site,
+# and -S ignores the site packages, so sys.path has only the standard library and the pinned lib.
+exec python3 -I -S -c 'import sys
+sys.path.insert(0, "/koodam/nookku/lib")
+sys.argv[0] = "nookku"
+from nookku.__main__ import main
+sys.exit(main())' "$@"

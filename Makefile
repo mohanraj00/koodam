@@ -152,6 +152,15 @@ WORKSPACE_IMG ?= koodam-workspace:dev
 docker-build-workspace: ## Build the workspace image from images/workspace.
 	$(CONTAINER_TOOL) build -t ${WORKSPACE_IMG} images/workspace
 
+# NOOKKU_IMG is the tag of the Nookku data image (#83). Each publication needs the approval of the
+# maintainer. The build reads the 3 values of internal/evidence/nookku.pin.
+NOOKKU_IMG ?= koodam-nookku:dev
+
+.PHONY: docker-build-nookku
+docker-build-nookku: ## Build the Nookku data image from images/nookku.
+	$(CONTAINER_TOOL) build -f images/nookku/Dockerfile -t ${NOOKKU_IMG} \
+		$$(sed -n 's/^\(NOOKKU_[A-Z0-9_]*\)=\([0-9a-f.]*\)$$/--build-arg \1=\2/p' internal/evidence/nookku.pin) .
+
 .PHONY: docker-push
 docker-push: ## Push docker image with the manager.
 	$(CONTAINER_TOOL) push ${IMG}
