@@ -260,6 +260,11 @@ var _ = Describe("AppVersion evidence gate", func() {
 		gate := policy("kd-" + name + "-gate")
 		Expect(metav1.IsControlledBy(gate, av)).To(BeTrue())
 		Expect(gate.Spec).To(Equal(gatePolicy(av, ports).Spec))
+		// A policy that a user deleted comes back while the Job runs.
+		Expect(k8sClient.Delete(ctx, gate)).To(Succeed())
+		run()
+		expectEvidence(metav1.ConditionUnknown, corev1alpha1.EvidenceRunning)
+		Expect(policy("kd-" + name + "-gate").Spec).To(Equal(gatePolicy(av, ports).Spec))
 		pod(job, report(0, "pass", subject()), nil)
 		end(job, true)
 		run()

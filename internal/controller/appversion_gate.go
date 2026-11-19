@@ -72,12 +72,12 @@ func (r *AppVersionReconciler) applyGate(ctx context.Context, av *corev1alpha1.A
 		return nil
 	}
 	subject, target := evidence.AppVersionSubject(av.Namespace, av.Name, av.UID, digest), gateTarget(av, deploy)
+	pod := &deploy.Spec.Template.Spec
+	policy := gatePolicy(av, r.Claim.claimPorts(pod, appContainer(pod).Ports))
 	job := &batchv1.Job{}
 	err := r.APIReader.Get(ctx, types.NamespacedName{Namespace: av.Namespace, Name: gateName(av)}, job)
 	switch {
 	case apierrors.IsNotFound(err):
-		pod := &deploy.Spec.Template.Spec
-		policy := gatePolicy(av, r.Claim.claimPorts(pod, appContainer(pod).Ports))
 		return r.startGate(ctx, av, policy, gateJob(av, target, subject), set)
 	case err != nil:
 		return err
@@ -94,9 +94,20 @@ func (r *AppVersionReconciler) applyGate(ctx context.Context, av *corev1alpha1.A
 			return r.checkGate(ctx, av, job, target, subject, set)
 		}
 	}
+	// Each reconcile applies the policy again while the Job runs, so that a policy that a user
+	// deleted or changed comes back.
+	if err := r.applyGatePolicy(ctx, av, policy); errors.Is(err, errNotOwned) {
+		set(metav1.ConditionUnknown, corev1alpha1.EvidenceWaiting, msgGatePolicyNotOwned)
+		return nil
+	} else if err != nil {
+		return err
+	}
 	set(metav1.ConditionUnknown, corev1alpha1.EvidenceRunning, "The gate Job runs.")
 	return nil
 }
+
+// msgGatePolicyNotOwned is the message of a gate that waits for the name of its NetworkPolicy.
+const msgGatePolicyNotOwned = "A NetworkPolicy with the name of the gate policy is not from this version."
 
 // startGate makes the gate Job if each pod of the version is Ready. The NetworkPolicy of the gate
 // pod is first, so that the pod does not start before its policy.
@@ -114,8 +125,7 @@ func (r *AppVersionReconciler) startGate(ctx context.Context, av *corev1alpha1.A
 	}
 	err = r.applyGatePolicy(ctx, av, policy)
 	if errors.Is(err, errNotOwned) {
-		set(metav1.ConditionUnknown, corev1alpha1.EvidenceWaiting,
-			"A NetworkPolicy with the name of the gate policy is not from this version.")
+		set(metav1.ConditionUnknown, corev1alpha1.EvidenceWaiting, msgGatePolicyNotOwned)
 		return nil
 	}
 	if err == nil {
