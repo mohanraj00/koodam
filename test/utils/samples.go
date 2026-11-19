@@ -31,6 +31,9 @@ import (
 const (
 	SpanSample    = "egress-spans.jsonl"
 	GatewaySample = "gateway-log.jsonl"
+	// AppSpanSample is the sample of the App ingress spans. docs/app-ingress-spans.md is its
+	// contract.
+	AppSpanSample = "app-ingress-spans.jsonl"
 )
 
 // SamplesEnv is the env variable with the folder of the release samples. If it is empty, the
@@ -40,8 +43,11 @@ const SamplesEnv = "KOODAM_E2E_SAMPLES"
 // keyWord matches a gateway key: the master key and the keys of the runs start with "sk-".
 var keyWord = regexp.MustCompile(`sk-[A-Za-z0-9_-]{8,}`)
 
+// signedToken matches a JSON Web Token: a base64url JSON header, a payload and a signature.
+var signedToken = regexp.MustCompile(`eyJ[A-Za-z0-9_-]{4,}\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]*`)
+
 // CheckSample returns an error if data holds a credential: one of the secrets, a word with the
-// key prefix "sk-", or a bearer token. The error names the file and the kind of the match. It
+// key prefix "sk-", a bearer token or a signed token (JWT). The error names the file and the kind of the match. It
 // never holds the value.
 func CheckSample(name string, data []byte, secrets ...string) error {
 	for i, s := range secrets {
@@ -54,6 +60,9 @@ func CheckSample(name string, data []byte, secrets ...string) error {
 	}
 	if bytes.Contains(bytes.ToLower(data), []byte("bearer ")) {
 		return fmt.Errorf("the sample %s holds a bearer token", name)
+	}
+	if signedToken.Match(data) {
+		return fmt.Errorf("the sample %s holds a signed token", name)
 	}
 	return nil
 }

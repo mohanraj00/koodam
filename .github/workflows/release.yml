@@ -15,6 +15,7 @@ on:
       - charts/**
       # The samples job runs this code.
       - test/e2e/egress_test.go
+      - test/e2e/app_test.go
       - test/utils/samples.go
 
 permissions: {}
@@ -24,8 +25,9 @@ env:
   CHART_REPO: oci://ghcr.io/mohanraj00/charts
 
 jobs:
-  # A kind run of the commit makes the release samples: the egress spans and the gateway logs.
-  # docs/egress-spans.md names the files. The e2e test checks that they hold no credential.
+  # A kind run of the commit makes the release samples: the egress spans, the gateway logs and the
+  # App ingress spans. docs/egress-spans.md names the files. The e2e tests check that they hold no
+  # credential.
   samples:
     permissions:
       contents: read
@@ -72,11 +74,12 @@ jobs:
         with:
           version: v4.2.3
 
-      # Only the egress tests run. The last egress test writes the samples to samples/.
-      - name: Run the egress e2e tests
+      # Only the egress tests and the App tests run. The last egress test and the App sample test
+      # write the samples to samples/. The inner quotes keep the filter in 1 word for the Makefile.
+      - name: Run the egress and App e2e tests
         run: |
           go mod tidy
-          make test-e2e E2E_ARGS='-ginkgo.label-filter=egress' KOODAM_E2E_SAMPLES="$PWD/samples"
+          make test-e2e E2E_ARGS="-ginkgo.label-filter='egress || app'" KOODAM_E2E_SAMPLES="$PWD/samples"
 
       - name: Keep the samples
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
@@ -132,6 +135,7 @@ jobs:
           cat dist/checksums.txt
           grep -Eq ' egress-spans\.jsonl$' dist/checksums.txt
           grep -Eq ' gateway-log\.jsonl$' dist/checksums.txt
+          grep -Eq ' app-ingress-spans\.jsonl$' dist/checksums.txt
 
       # The binary must show the snapshot version, not "dev". This shows that the ldflags set it.
       - name: Check the CLI version

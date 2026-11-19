@@ -25,16 +25,21 @@ import (
 
 const (
 	span = `{"v":2,"kind":"llm","host":"gateway","result":"ok","bytesIn":10,"bytesOut":20}`
-	log  = `{"request_id":"r1","api_key":"0a1b2c3d","metadata":{"user_api_key_alias":"kd-1"},"spend":0.1}`
+	// appSpan is a span of docs/app-ingress-spans.md. The caller and the tenant are labels.
+	appSpan = `{"v":1,"kind":"app-ingress","method":"GET","status":200,"outcome":"ok","caller":"c1"}`
+	log     = `{"request_id":"r1","api_key":"0a1b2c3d","metadata":{"user_api_key_alias":"kd-1"},"spend":0.1}`
 )
 
 func TestCheckSampleRefusesCredentials(t *testing.T) {
 	const master = "sk-master-value-1234"
+	// jwt has the shape of a signed token: {"alg":"ES256"}, a payload and a signature.
+	const jwt = "eyJhbGciOiJFUzI1NiJ9.eyJzdWIiOiJ4In0.c2ln"
 	for _, c := range []struct{ name, data, want string }{
 		{"secret", `{"note":"x` + "0123456789abcdef" + `"}`, "secret number 2"},
 		{"key prefix", `{"key":"sk-kd-AbCdEf0123456789"}`, "key prefix sk-"},
 		{"master key", `{"key":"` + master + `"}`, "secret number 1"},
 		{"bearer", `{"headers":{"authorization":"Bearer abc"}}`, "bearer token"},
+		{"signed token", `{"claim":"` + jwt + `"}`, "signed token"},
 	} {
 		err := CheckSample(c.name, []byte(c.data), master, "0123456789abcdef")
 		if err == nil || !strings.Contains(err.Error(), c.want) {
@@ -42,13 +47,13 @@ func TestCheckSampleRefusesCredentials(t *testing.T) {
 			continue
 		}
 		// The error must not hold the value of the credential.
-		for _, v := range []string{master, "0123456789abcdef", "sk-kd-AbCdEf0123456789", "Bearer abc"} {
+		for _, v := range []string{master, "0123456789abcdef", "sk-kd-AbCdEf0123456789", "Bearer abc", jwt} {
 			if strings.Contains(err.Error(), v) {
 				t.Errorf("%s: the error holds the credential value", c.name)
 			}
 		}
 	}
-	if err := CheckSample("clean", []byte(span+"\n"+log), master); err != nil {
+	if err := CheckSample("clean", []byte(span+"\n"+log+"\n"+appSpan), master); err != nil {
 		t.Errorf("a clean sample: %v", err)
 	}
 }
