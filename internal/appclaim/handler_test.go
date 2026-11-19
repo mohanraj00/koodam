@@ -86,8 +86,8 @@ func TestCheckHandler(t *testing.T) {
 	if len(lines) != 5 || json.Unmarshal([]byte(lines[0]), &first) != nil {
 		t.Fatalf("spans: %q", spans.String())
 	}
-	want := Span{Time: now.UTC(), Kind: "app-ingress", App: testAud, Version: "shop-v1", Method: http.MethodPost,
-		Status: http.StatusAccepted, Outcome: outcomeOK, Caller: testCaller, Tenant: testTenant}
+	want := Span{V: SpanVersion, Time: now.UTC(), Kind: KindIngress, App: testAud, Version: "shop-v1",
+		Method: http.MethodPost, Status: http.StatusAccepted, Outcome: outcomeOK, Caller: testCaller, Tenant: testTenant}
 	if first != want {
 		t.Errorf("span: %+v", first)
 	}

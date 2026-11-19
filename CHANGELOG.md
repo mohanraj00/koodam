@@ -36,6 +36,7 @@ This file records the changes for each Koodam version. The newest version is fir
 ### Release
 
 - Each release has 2 sample files as assets: `egress-spans.jsonl` and `gateway-log.jsonl`. A kind run of the tagged commit makes them, and `checksums.txt` has the SHA-256 of each file. The e2e test refuses a sample with the master key, a word with the key prefix `sk-` or a bearer token. [docs/egress-spans.md](docs/egress-spans.md) names the files and says how to download them ([#331](https://github.com/mohanraj00/koodam/issues/331)).
+- Each release has a third sample file, `app-ingress-spans.jsonl`, from the thin App test on kind, with its SHA-256 in `checksums.txt`. Each App ingress span has the contract version `v`. [docs/app-ingress-spans.md](docs/app-ingress-spans.md) is the contract. The sample check also refuses a signed token (JWT) ([#345](https://github.com/mohanraj00/koodam/issues/345)).
 
 ## v0.4.0-alpha.1 (pre-release, 2026-11-12)
 

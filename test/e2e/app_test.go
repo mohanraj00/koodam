@@ -20,12 +20,14 @@ limitations under the License.
 package e2e
 
 import (
+	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"time"
 
 	. "github.com/onsi/ginkgo/v2"
@@ -42,6 +44,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	corev1alpha1 "github.com/mohanraj00/koodam/api/v1alpha1"
+	"github.com/mohanraj00/koodam/internal/appclaim"
 	"github.com/mohanraj00/koodam/test/utils"
 )
 
@@ -309,6 +312,41 @@ var _ = Describe("Thin App", Ordered, Label("app"), func() {
 		Expect(k8s.Update(ctx, app)).To(Succeed())
 		Eventually(func() map[string]int { return call(10, static) }, time.Minute, time.Second).
 			Should(Equal(map[string]int{static: 10}), "The version with no model serves with no gateway key.")
+	})
+
+	// The release workflow sets utils.SamplesEnv. The sample is the spans of the requests above,
+	// as the check containers of the App pods wrote them. The drain of the next spec stops the
+	// pods of v1, so this spec reads the spans first.
+	It("writes the release sample of the App ingress spans", func() {
+		dir := os.Getenv(utils.SamplesEnv)
+		if dir == "" {
+			Skip(utils.SamplesEnv + " is not set")
+		}
+		By("reading the spans of the check containers")
+		out, err := exec.Command("kubectl", "-n", appNS, "logs", "-l", "koodam.dev/app="+appName,
+			"-c", "koodam-claim", "--tail=-1", "--max-log-requests=10").Output()
+		Expect(err).NotTo(HaveOccurred())
+		// kubectl logs also gives the stderr of the container. Only a JSON line is a span.
+		var lines []byte
+		outcomes := map[string]bool{}
+		for line := range strings.Lines(string(out)) {
+			if !strings.HasPrefix(line, "{") {
+				continue
+			}
+			var sp appclaim.Span
+			Expect(json.Unmarshal([]byte(line), &sp)).To(Succeed(), line)
+			Expect(sp.V).To(Equal(appclaim.SpanVersion), "A span has no contract version: %s", line)
+			Expect(sp.Kind).To(Equal(appclaim.KindIngress))
+			outcomes[sp.Outcome] = true
+			lines = append(lines, line...)
+		}
+		// The spec before sent requests with a valid claim, with no claim and with a bad signature.
+		Expect(outcomes).To(HaveKey("ok"), "The spans have no request with a valid claim.")
+		Expect(outcomes).To(HaveKey(string(appclaim.RefusedSyntax)), "The spans have no request with no claim.")
+		Expect(outcomes).To(HaveKey(string(appclaim.RefusedSignature)), "The spans have no bad signature.")
+
+		By("checking the sample for credentials and writing it")
+		Expect(utils.WriteSamples(dir, map[string][]byte{utils.AppSpanSample: lines}, token, masterKey)).To(Succeed())
 	})
 
 	It("drains a retiring version and then revokes its key", func() {

@@ -40,11 +40,18 @@ const (
 	TenantHeader = "Koodam-Tenant"
 	// outcomeOK is the outcome of a request with a valid claim.
 	outcomeOK = "ok"
+	// KindIngress is the kind of each span of the check.
+	KindIngress = "app-ingress"
+	// SpanVersion is the version of the span contract in docs/app-ingress-spans.md. An added
+	// field keeps the version. A removed field, a renamed field or a new meaning of a field
+	// changes it.
+	SpanVersion = 1
 )
 
 // Span is the record of one request at the ingress of an App. It has no token, no path, no
 // header and no body.
 type Span struct {
+	V          int       `json:"v"`
 	Time       time.Time `json:"time"`
 	Kind       string    `json:"kind"`
 	App        string    `json:"app,omitempty"`
@@ -121,7 +128,7 @@ func (c *Check) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		now = c.Now
 	}
 	start := now()
-	span := Span{Time: start.UTC(), Kind: "app-ingress", App: c.App, Version: c.Version, Method: "OTHER"}
+	span := Span{V: SpanVersion, Time: start.UTC(), Kind: KindIngress, App: c.App, Version: c.Version, Method: "OTHER"}
 	if methods[r.Method] {
 		span.Method = r.Method
 	}
