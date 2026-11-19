@@ -23,6 +23,7 @@ import (
 	. "github.com/onsi/gomega"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
+	networkingv1 "k8s.io/api/networking/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/validation"
 
@@ -55,7 +56,7 @@ var _ = Describe("AppVersion gate Job", func() {
 
 	It("gives the address of the Service of the version, with the first port of the app container", func() {
 		deploy := &appsv1.Deployment{Spec: appsv1.DeploymentSpec{Template: corev1.PodTemplateSpec{Spec: corev1.PodSpec{
-			Containers: []corev1.Container{{Name: "proxy"}, {Name: corev1alpha1.AppContainerName,
+			Containers: []corev1.Container{{Name: "first"}, {Name: corev1alpha1.AppContainerName,
 				Ports: []corev1.ContainerPort{{ContainerPort: 8080}, {ContainerPort: 9090}}}}}}}}
 		Expect(gateTarget(newVersion(), deploy)).To(Equal(target))
 	})
@@ -112,6 +113,65 @@ var _ = Describe("AppVersion gate Job", func() {
 				Expect(m.ReadOnly).To(Equal(c.Name == gateVerifyContainer), c.Name+" "+m.Name)
 			}
 		}
+	})
+
+	It("lets the gate pod reach only the pods of the version and the cluster DNS", func() {
+		av := newVersion()
+		np := gatePolicy(av, []corev1.ContainerPort{{ContainerPort: 15080}, {ContainerPort: 15081}})
+		Expect(np.Name).To(Equal(gatePolicyName(av)))
+		Expect(metav1.IsControlledBy(np, av)).To(BeTrue())
+		Expect(np.Spec.PodSelector.MatchLabels).To(Equal(map[string]string{gateLabel: "v2"}))
+		Expect(np.Spec.PolicyTypes).To(ConsistOf(networkingv1.PolicyTypeIngress, networkingv1.PolicyTypeEgress))
+		Expect(np.Spec.Ingress).To(BeEmpty())
+		Expect(np.Spec.Egress).To(HaveLen(2))
+		toVersion, toDNS := np.Spec.Egress[0], np.Spec.Egress[1]
+		Expect(toVersion.To).To(Equal([]networkingv1.NetworkPolicyPeer{{
+			PodSelector: &metav1.LabelSelector{MatchLabels: appVersionLabels(av)}}}))
+		Expect(toVersion.Ports).To(HaveLen(2))
+		Expect(toVersion.Ports[1].Port.IntValue()).To(Equal(15081))
+		Expect(toDNS.To).To(Equal([]networkingv1.NetworkPolicyPeer{{NamespaceSelector: &metav1.LabelSelector{
+			MatchLabels: map[string]string{corev1.LabelMetadataName: "kube-system"}}}}))
+		for _, p := range toDNS.Ports {
+			Expect(p.Port.IntValue()).To(Equal(53))
+		}
+		// The rule of the version policy names only the gate pod of this version, on the same ports.
+		in := gateIngress(av, []corev1.ContainerPort{{ContainerPort: 15080}})
+		Expect(in.From).To(Equal([]networkingv1.NetworkPolicyPeer{{
+			PodSelector: &metav1.LabelSelector{MatchLabels: map[string]string{gateLabel: "v2"}}}}))
+		Expect(in.Ports).To(HaveLen(1))
+		Expect(in.Ports[0].Port.IntValue()).To(Equal(15080))
+	})
+
+	It("gives the gate policy a name that is not the name of the policy of a version", func() {
+		av, other := newVersion(), newVersion()
+		other.Name = av.Name + "-gate"
+		name := gatePolicy(av, nil).Name
+		Expect(name).To(Equal("kd-v2.gate"))
+		Expect(name).NotTo(Equal(appVersionName(other)))
+		Expect(gateName(av)).To(Equal(appVersionName(other)), "the Job name is not sufficient for the policy")
+		av.Name = strings.Repeat("a", 60)
+		Expect(validation.IsDNS1123Subdomain(gatePolicy(av, nil).Name)).To(BeEmpty())
+	})
+
+	It("gives the weights only to a version with no gate or with an accepted pass", func() {
+		av := newVersion()
+		setEvidence := func(status metav1.ConditionStatus, verdict corev1alpha1.EvidenceVerdict) {
+			av.Status.Conditions = []metav1.Condition{{Type: corev1alpha1.AppVersionEvidence, Status: status}}
+			av.Status.Evidence = &corev1alpha1.EvidenceRecord{Verdict: verdict}
+		}
+		Expect([]bool{gatePassed(av), gateOpen(av)}).To(Equal([]bool{false, true}), "no condition")
+		av.Status.Conditions = []metav1.Condition{{Type: corev1alpha1.AppVersionEvidence, Status: metav1.ConditionTrue}}
+		Expect([]bool{gatePassed(av), gateOpen(av)}).To(Equal([]bool{false, true}), "a True condition with no record")
+		av.Status.Conditions[0].Status = metav1.ConditionFalse
+		Expect([]bool{gatePassed(av), gateOpen(av)}).To(Equal([]bool{false, false}), "a False condition")
+		setEvidence(metav1.ConditionFalse, corev1alpha1.EvidenceFail)
+		Expect([]bool{gatePassed(av), gateOpen(av)}).To(Equal([]bool{false, false}), "a fail record")
+		setEvidence(metav1.ConditionUnknown, corev1alpha1.EvidencePass)
+		Expect([]bool{gatePassed(av), gateOpen(av)}).To(Equal([]bool{false, false}), "a pass record with no True condition")
+		setEvidence(metav1.ConditionTrue, corev1alpha1.EvidencePass)
+		Expect([]bool{gatePassed(av), gateOpen(av)}).To(Equal([]bool{true, false}), "an accepted pass")
+		av.Spec.Gate, av.Status = nil, corev1alpha1.AppVersionStatus{}
+		Expect([]bool{gatePassed(av), gateOpen(av)}).To(Equal([]bool{true, false}), "no gate")
 	})
 
 	It("uses the default deadline if the spec has none", func() {

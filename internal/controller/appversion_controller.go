@@ -729,6 +729,10 @@ func (r *AppVersionReconciler) applyObjects(ctx context.Context, av *corev1alpha
 	}
 	// The NetworkPolicy is first, so that no pod of the version starts before its policy.
 	want := r.Egress.policy(appVersionMeta(av), appVersionLabels(av), listen, r.IngressNamespaces)
+	if want != nil && gateOpen(av) {
+		// The gate pod sends the test messages to the pods of the version until the gate ends.
+		want.Spec.Ingress = append(want.Spec.Ingress, gateIngress(av, listen))
+	}
 	if want != nil {
 		objs = append([]client.Object{want.DeepCopy()}, objs...)
 	}

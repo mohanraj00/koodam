@@ -241,6 +241,61 @@ var _ = Describe("App controller", func() {
 		Expect(st.Message).To(ContainSubstring(appName + "-v2, " + appName + "-v3."))
 	})
 
+	It("gives a gated version the weight 0 and no session rule until the controller accepts a pass", func() {
+		app := newApp(endpoint("web", weight(appName+"-v1", 90), weight(appName+"-v2", 10)))
+		newVersion(app, appName+"-v1", 8080)
+		gated := &corev1alpha1.AppVersion{ObjectMeta: metav1.ObjectMeta{Name: appName + "-v2", Namespace: ns},
+			Spec: corev1alpha1.AppVersionSpec{AppRef: corev1alpha1.AppReference{Name: app.Name},
+				Gate: &corev1alpha1.AppVersionGate{Nookku: corev1alpha1.NookkuGate{
+					Image: gateTestImage, Root: gateTestRoot, GateFile: gateTestFile}},
+				Template: corev1alpha1.AppVersionTemplate{PodTemplate: corev1alpha1.PodTemplate{Spec: corev1.PodSpec{
+					Containers: []corev1.Container{{Name: corev1alpha1.AppContainerName, Image: "registry.example.com/app:v2",
+						Ports: []corev1.ContainerPort{{Name: port, ContainerPort: 8080}},
+						ReadinessProbe: &corev1.Probe{ProbeHandler: corev1.ProbeHandler{
+							HTTPGet: &corev1.HTTPGetAction{Path: "/gate-ready", Port: intstr.FromString(port)}}}}}}}}}}
+		Expect(k8sClient.Create(ctx, gated)).To(Succeed())
+		svc := &corev1.Service{ObjectMeta: appVersionMeta(gated), Spec: corev1.ServiceSpec{
+			Ports: []corev1.ServicePort{{Name: port, Port: 8080}}}}
+		Expect(k8sClient.Create(ctx, svc)).To(Succeed())
+		DeferCleanup(func() {
+			Expect(k8sClient.Delete(ctx, svc)).To(Succeed())
+			Expect(k8sClient.Delete(ctx, gated)).To(Succeed())
+		})
+		// setGate writes the status that the AppVersion controller gives a gated version.
+		setGate := func(status metav1.ConditionStatus, reason string, verdict corev1alpha1.EvidenceVerdict) {
+			Expect(k8sClient.Get(ctx, nn(gated.Name), gated)).To(Succeed())
+			gated.Status.BoundAppUID = app.UID
+			meta.SetStatusCondition(&gated.Status.Conditions, metav1.Condition{
+				Type: corev1alpha1.AppVersionEvidence, Status: status, Reason: reason})
+			if verdict != "" {
+				gated.Status.Evidence = &corev1alpha1.EvidenceRecord{Source: corev1alpha1.EvidenceSourceNookkuGate,
+					Subject: "subject", Verdict: verdict, ID: "gate-20261119-030000-0a1b2c3d", Integrity: corev1alpha1.EvidenceSeal,
+					Digest:    "sha256:3333333333333333333333333333333333333333333333333333333333333333",
+					CheckedAt: metav1.Now()}
+			}
+			Expect(k8sClient.Status().Update(ctx, gated)).To(Succeed())
+			mustReconcile()
+		}
+		expectClosed := func() {
+			GinkgoHelper()
+			Expect(backends(route("web"))).To(Equal([]any{backend("-v1", 8080, 90)}))
+			Expect(pinned(route("web"))).To(Equal([]string{"kd-" + appName + "-v1"}))
+			Expect(status()[0].Weights).To(Equal([]corev1alpha1.AppEndpointVersion{
+				weight(appName+"-v1", 90), weight(appName+"-v2", 0)}))
+			Expect(status()[0].Message).To(ContainSubstring(appName + "-v2."))
+		}
+		// The gate runs. Then the version has a True condition with no record. Then it has a pass record.
+		setGate(metav1.ConditionUnknown, corev1alpha1.EvidenceRunning, "")
+		expectClosed()
+		setGate(metav1.ConditionTrue, corev1alpha1.EvidencePassed, "")
+		expectClosed()
+		setGate(metav1.ConditionTrue, corev1alpha1.EvidencePassed, corev1alpha1.EvidencePass)
+		Expect(backends(route("web"))).To(Equal([]any{backend("-v1", 8080, 90), backend("-v2", 8080, 10)}))
+		Expect(pinned(route("web"))).To(Equal([]string{"kd-" + appName + "-v1", "kd-" + appName + "-v2"}))
+		Expect(status()[0].Weights).To(Equal([]corev1alpha1.AppEndpointVersion{
+			weight(appName+"-v1", 90), weight(appName+"-v2", 10)}))
+	})
+
 	It("does not send traffic to a version of a different App or to a Service that is not from the version", func() {
 		app := newApp(endpoint("web", weight(appName+"-v1", 1), weight(appName+"-v2", 1)))
 		other := newVersion(app, appName+"-v1", 8080)
