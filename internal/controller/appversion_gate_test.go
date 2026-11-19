@@ -26,6 +26,7 @@ import (
 	appsv1 "k8s.io/api/apps/v1"
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
+	networkingv1 "k8s.io/api/networking/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -236,6 +237,46 @@ var _ = Describe("AppVersion evidence gate", func() {
 		end(later, true)
 		run()
 		Expect(expectEvidence(metav1.ConditionTrue, corev1alpha1.EvidencePassed).Status.Evidence).To(Equal(av.Status.Evidence))
+	})
+
+	It("opens the NetworkPolicy of the version to the gate pod only until the gate ends", func() {
+		// With the pods of the egress proxy, the version has a default-deny NetworkPolicy.
+		rec.Egress = testEgress
+		rec.Egress.Namespace, rec.Egress.PodLabels = "egress-system", map[string]string{"gate-test/role": "egress"}
+		newVersion(appImage, true)
+		run()
+		ports := []corev1.ContainerPort{{Name: jobIngHTTPPortName, ContainerPort: 8080}}
+		policy := func(s string) *networkingv1.NetworkPolicy {
+			np := &networkingv1.NetworkPolicy{}
+			Expect(k8sClient.Get(ctx, nn(s), np)).To(Succeed())
+			return np
+		}
+		Expect(policy("kd-" + name).Spec.Ingress).To(Equal([]networkingv1.NetworkPolicyIngressRule{gateIngress(version(), ports)}))
+		// The policy of the gate pod does not exist before the Job.
+		Expect(apierrors.IsNotFound(k8sClient.Get(ctx, nn("kd-"+name+"-gate"), &networkingv1.NetworkPolicy{}))).To(BeTrue())
+
+		job := ready()
+		av := version()
+		gate := policy("kd-" + name + "-gate")
+		Expect(metav1.IsControlledBy(gate, av)).To(BeTrue())
+		Expect(gate.Spec).To(Equal(gatePolicy(av, ports).Spec))
+		pod(job, report(0, "pass", subject()), nil)
+		end(job, true)
+		run()
+		expectEvidence(metav1.ConditionTrue, corev1alpha1.EvidencePassed)
+		run()
+		Expect(policy("kd-" + name).Spec.Ingress).To(BeEmpty())
+	})
+
+	It("waits if a NetworkPolicy with the name of the gate policy is not from the version", func() {
+		newVersion(appImage, true)
+		other := &networkingv1.NetworkPolicy{ObjectMeta: metav1.ObjectMeta{Name: "kd-" + name + "-gate", Namespace: ns}}
+		Expect(k8sClient.Create(ctx, other)).To(Succeed())
+		DeferCleanup(func() { Expect(k8sClient.Delete(ctx, other)).To(Succeed()) })
+		run()
+		podsReady()
+		expectEvidence(metav1.ConditionUnknown, corev1alpha1.EvidenceWaiting)
+		Expect(apierrors.IsNotFound(k8sClient.Get(ctx, nn("kd-"+name+"-gate"), &batchv1.Job{}))).To(BeTrue())
 	})
 
 	DescribeTable("gives each end state of the gate from the status of the Job and the pod",

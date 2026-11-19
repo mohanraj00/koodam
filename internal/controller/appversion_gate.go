@@ -18,11 +18,13 @@ package controller
 
 import (
 	"context"
+	"errors"
 	"time"
 
 	appsv1 "k8s.io/api/apps/v1"
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
+	networkingv1 "k8s.io/api/networking/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -74,7 +76,9 @@ func (r *AppVersionReconciler) applyGate(ctx context.Context, av *corev1alpha1.A
 	err := r.APIReader.Get(ctx, types.NamespacedName{Namespace: av.Namespace, Name: gateName(av)}, job)
 	switch {
 	case apierrors.IsNotFound(err):
-		return r.startGate(ctx, av, gateJob(av, target, subject), set)
+		pod := &deploy.Spec.Template.Spec
+		policy := gatePolicy(av, r.Claim.claimPorts(pod, appContainer(pod).Ports))
+		return r.startGate(ctx, av, policy, gateJob(av, target, subject), set)
 	case err != nil:
 		return err
 	case !metav1.IsControlledBy(job, av):
@@ -94,9 +98,10 @@ func (r *AppVersionReconciler) applyGate(ctx context.Context, av *corev1alpha1.A
 	return nil
 }
 
-// startGate makes the gate Job if each pod of the version is Ready.
-func (r *AppVersionReconciler) startGate(ctx context.Context, av *corev1alpha1.AppVersion, job *batchv1.Job,
-	set func(metav1.ConditionStatus, string, string)) error {
+// startGate makes the gate Job if each pod of the version is Ready. The NetworkPolicy of the gate
+// pod is first, so that the pod does not start before its policy.
+func (r *AppVersionReconciler) startGate(ctx context.Context, av *corev1alpha1.AppVersion,
+	policy *networkingv1.NetworkPolicy, job *batchv1.Job, set func(metav1.ConditionStatus, string, string)) error {
 	d := &appsv1.Deployment{}
 	found, err := r.getOwned(ctx, av, d)
 	if err != nil {
@@ -107,9 +112,18 @@ func (r *AppVersionReconciler) startGate(ctx context.Context, av *corev1alpha1.A
 		set(metav1.ConditionUnknown, corev1alpha1.EvidenceWaiting, "Not all pods of the version are Ready.")
 		return nil
 	}
-	switch err := r.Create(ctx, job); {
+	err = r.applyGatePolicy(ctx, av, policy)
+	if errors.Is(err, errNotOwned) {
+		set(metav1.ConditionUnknown, corev1alpha1.EvidenceWaiting,
+			"A NetworkPolicy with the name of the gate policy is not from this version.")
+		return nil
+	}
+	if err == nil {
+		err = r.Create(ctx, job)
+	}
+	switch {
 	case permanent(err):
-		set(metav1.ConditionFalse, corev1alpha1.EvidenceJobFailed, "The API server refused the gate Job.")
+		set(metav1.ConditionFalse, corev1alpha1.EvidenceJobFailed, "The API server refused the gate Job or its NetworkPolicy.")
 		return nil
 	case err != nil:
 		return err
