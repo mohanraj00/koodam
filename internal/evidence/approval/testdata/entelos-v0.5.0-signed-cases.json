@@ -1108,28 +1108,6 @@
    "signer": "example-signer"
   }
  },
- "keys": {
-  "a": {
-   "key_id": "ed25519:7a0fe328375aeaed3b30f26d5bde835b01c92d0f37a67862e37753a68af64dde",
-   "public_key": "rAMsSsLM2Zd9bj6yKlVW0C6czSnT0g7F7XPSVggPCF8=",
-   "seed": "XWtHCqYkGWUX2QQrEDhr1RdiKOcsdpW6iZu+ZR5oek4="
-  },
-  "b": {
-   "key_id": "ed25519:7cb4db9c2861c3e22805ef6bfc44b7a97ae80412ecc0c1a1193fbdeb34579105",
-   "public_key": "gKDCAVlLrINpYF1VcVgYH/cKPezJ0avlR9wNxMIA4bI=",
-   "seed": "k1DPLoZOYUqX147uD1gxDMkTAV32YHrpt0tO0beY1SQ="
-  },
-  "c": {
-   "key_id": "ed25519:565368dbd4c52a12f4f5b4750c3ac92ddfe99c02a1e24325713b68cde0e0e8a2",
-   "public_key": "LiHNsDC5YPyImUgcsiiBAZUvPw/uIkSVMI1OUjIxhNQ=",
-   "seed": "VNLlqxjME++l0FjmXmiuoIfsDswqfolemTdMQJ3dWTE="
-  },
-  "d": {
-   "key_id": "ed25519:2085217e1fd0cc728611a2f9fa7676de31d5b3252e26db72c307b8a22ce83b69",
-   "public_key": "JPkQCCIVFWx2/0EHx0jgzwZlJN4o0vU80Q0r1bEri4Y=",
-   "seed": "3uuv3WcQrg6c7npKuO9xjWXAapekPJwgoN6Ur487sK4="
-  }
- },
  "note": "Test data. The seeds are public. Never use these keys outside the vectors.",
  "records": {
   "decision": {

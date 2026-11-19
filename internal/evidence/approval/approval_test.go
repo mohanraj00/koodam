@@ -19,8 +19,10 @@ var inWindow = time.Date(2026, 11, 15, 12, 0, 0, 0, time.UTC)
 
 func TestSignedVectors(t *testing.T) {
 	const (
-		tag     = "v0.5.0"
-		digest  = "05498e56d1c1a9a3d11da45a7b7d56d1b4abdf407c824f7eb5169166a8a0b90b"
+		tag = "v0.5.0"
+		// The SHA-256 of the vector file with the top-level keys object removed. testdata/README.md
+		// has the SHA-256 of the source file and the strip step.
+		digest  = "f968adc4a59c69e9af17a20284c168b6980b5d4b4c02d53fbedb2eccf968754a"
 		subject = "sha256:16a0eeb0791b6c92451fd284dd9f599e0a7dbe7f6ebea6e2d2d06c7f74aec112"
 	)
 	raw, err := os.ReadFile("testdata/entelos-" + tag + "-signed-cases.json")
@@ -111,6 +113,39 @@ func TestSignedVectors(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestVectorsHaveNoSeeds fails if the vector file has the top-level keys object, or a seed field
+// at any depth. The source file has the private key seeds of its test keys there.
+func TestVectorsHaveNoSeeds(t *testing.T) {
+	raw, err := os.ReadFile("testdata/entelos-v0.5.0-signed-cases.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var doc map[string]any
+	if err := json.Unmarshal(raw, &doc); err != nil {
+		t.Fatal("invalid vectors")
+	}
+	if _, found := doc["keys"]; found {
+		t.Fatal("the vector file has the top-level keys object")
+	}
+	var walk func(value any)
+	walk = func(value any) {
+		switch v := value.(type) {
+		case map[string]any:
+			for name, item := range v {
+				if name == "seed" {
+					t.Fatal("the vector file has a seed field")
+				}
+				walk(item)
+			}
+		case []any:
+			for _, item := range v {
+				walk(item)
+			}
+		}
+	}
+	walk(doc)
 }
 
 func TestVerifyRejectAndKeepBytesPrivate(t *testing.T) {

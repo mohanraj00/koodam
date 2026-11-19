@@ -243,6 +243,8 @@ func verifySigned(raw, keySet []byte) (verifiedRecord, error) {
 	const domain = "entelos.signature/1\x00"
 	kind, ref, id := doc.text("record_kind"), doc.text("record_ref"), doc.text("key_id")
 	message := append([]byte(domain+"application/vnd.cel-lifecycle."+kind+"+json\x00"), record...)
+	// The record reference is the hash of the envelope: the media type, a zero byte and the
+	// record bytes. The signature covers the same envelope after the domain prefix.
 	if ref != fmt.Sprintf("sha256:%x", sha256.Sum256(message[len(domain):])) {
 		return verifiedRecord{}, Refusal{"record_mismatch", "ref"}
 	}
