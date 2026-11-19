@@ -29,7 +29,7 @@ Koodam adds Kubernetes resources for agent work, and an operator that reconciles
 
 ## Status and compatibility
 
-The current release is v0.3.0. It is the stable release. The pre-release [v0.4.0-alpha.1](https://github.com/mohanraj00/koodam/releases/tag/v0.4.0-alpha.1) has the TestKey work. `main` has the v0.4.0 work, and the tag is not pushed yet. [CHANGELOG.md](CHANGELOG.md) lists it.
+The current release is v0.4.0. The API is `v1alpha1`. The pre-release [v0.4.0-alpha.1](https://github.com/mohanraj00/koodam/releases/tag/v0.4.0-alpha.1) came before it. [CHANGELOG.md](CHANGELOG.md) lists the changes.
 
 The resources are `Agent`, `Workspace`, `Profile` and `TestKey`. `main` also has `App` and `AppVersion`. They are off by default: set `apps.enabled=true` in the chart. [docs/apps.md](docs/apps.md) has the use.
 
@@ -165,7 +165,7 @@ Each release tag `vX.Y.Z` publishes 3 things: the controller image `ghcr.io/moha
 The chart installs the controller and the `Agent` CRD. It uses an existing LiteLLM gateway, or it installs its own:
 
 ```sh
-VERSION=0.3.0
+VERSION=0.4.0
 kubectl create namespace koodam-system
 kubectl -n koodam-system create secret generic koodam-gateway --from-file=master-key=./master-key
 helm install koodam oci://ghcr.io/mohanraj00/charts/koodam --version "$VERSION" -n koodam-system \
@@ -177,7 +177,7 @@ With an existing gateway, do not use `values-bundled.yaml`. Pass `--set gateway.
 The CLI is for linux and darwin, on amd64 and arm64. Check the archive against `checksums.txt` before you install it:
 
 ```sh
-VERSION=0.3.0
+VERSION=0.4.0
 OS=linux     # or darwin
 ARCH=amd64   # or arm64
 FILE="koodam_${VERSION}_${OS}_${ARCH}.tar.gz"
