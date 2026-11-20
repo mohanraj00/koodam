@@ -26,6 +26,7 @@ import (
 	"testing"
 
 	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/api/resource"
 
 	corev1alpha1 "github.com/mohanraj00/koodam/api/v1alpha1"
 )
@@ -217,13 +218,8 @@ func checkNookkuCheck(t *testing.T, name string, p corev1.PodSpec) {
 	if len(c.EnvFrom) != 0 || len(c.VolumeMounts) != 0 || len(c.Ports) != 0 {
 		t.Errorf("%s: the Python check has an env source, a mount or a port", name)
 	}
-	var wantEnv []corev1.EnvVar
-	for _, e := range main.Env {
-		if e.Name == pathEnv {
-			wantEnv = []corev1.EnvVar{e}
-		}
-	}
-	if !slices.Equal(c.Env, wantEnv) {
+	checkNookkuResources(t, name+": the Python check", c)
+	if wantEnv := wantCheckEnv(main.Env); !reflect.DeepEqual(c.Env, wantEnv) {
 		t.Errorf("%s: the env of the Python check is %+v, want %+v", name, c.Env, wantEnv)
 	}
 	if s := c.SecurityContext; s == nil || s.AllowPrivilegeEscalation == nil || *s.AllowPrivilegeEscalation ||
@@ -240,6 +236,38 @@ func checkNookkuCheck(t *testing.T, name string, p corev1.PodSpec) {
 		!reflect.DeepEqual(s.RunAsGroup, want.RunAsGroup) || !reflect.DeepEqual(s.RunAsNonRoot, want.RunAsNonRoot)) ||
 		c.WorkingDir != "/" {
 		t.Errorf("%s: the Python check does not run as the main container", name)
+	}
+}
+
+// wantCheckEnv gives the env of the Python check for the env of the main container: only a PATH
+// with a literal value, a field of the pod or a key of a ConfigMap.
+func wantCheckEnv(env []corev1.EnvVar) []corev1.EnvVar {
+	for _, e := range env {
+		if v := e.ValueFrom; e.Name == pathEnv && (v == nil || v.FieldRef != nil || v.ConfigMapKeyRef != nil) {
+			return []corev1.EnvVar{e}
+		}
+	}
+	return nil
+}
+
+// checkNookkuResources examines the fixed requests and limits of a Nookku init container (#367).
+// They do not come from the main container.
+func checkNookkuResources(t *testing.T, name string, c corev1.Container) {
+	t.Helper()
+	r := c.Resources
+	for _, w := range []struct {
+		kind string
+		got  corev1.ResourceList
+		res  corev1.ResourceName
+		want string
+	}{{"request", r.Requests, corev1.ResourceCPU, "10m"}, {"request", r.Requests, corev1.ResourceMemory, "16Mi"},
+		{"limit", r.Limits, corev1.ResourceCPU, "100m"}, {"limit", r.Limits, corev1.ResourceMemory, "64Mi"}} {
+		if q, ok := w.got[w.res]; !ok || q.String() != w.want {
+			t.Errorf("%s: the %s %s is %v, want %s", name, w.res, w.kind, w.got[w.res], w.want)
+		}
+	}
+	if len(r.Requests) != 2 || len(r.Limits) != 2 || len(r.Claims) != 0 {
+		t.Errorf("%s: the resources are %+v, want only the CPU and memory", name, r)
 	}
 }
 
@@ -294,12 +322,40 @@ func TestNookkuPythonCheckFollowsMerge(t *testing.T) {
 	if pod.Containers[0].SecurityContext.RunAsUser == nookkuCheck(pod)[0].SecurityContext.RunAsUser {
 		t.Error("the Python check shares the security context of the main container")
 	}
-	pod.Containers[0].Env = []corev1.EnvVar{{Name: pathEnv, ValueFrom: &corev1.EnvVarSource{
-		ConfigMapKeyRef: &corev1.ConfigMapKeySelector{Key: "path"}}}}
-	syncNookkuPythonCheck(&pod, "main")
-	if c := nookkuCheck(pod)[0]; len(c.Env) != 0 {
-		t.Errorf("the Python check copies a PATH from a source: %+v", c.Env)
+	// A PATH from a ConfigMap or a field of the pod is copied (#367). A PATH from a Secret or a
+	// resource is not.
+	cm := &corev1.EnvVarSource{ConfigMapKeyRef: &corev1.ConfigMapKeySelector{
+		LocalObjectReference: corev1.LocalObjectReference{Name: "paths"}, Key: "path", Optional: new(true)}}
+	field := &corev1.EnvVarSource{FieldRef: &corev1.ObjectFieldSelector{FieldPath: "metadata.annotations['path']"}}
+	secret := &corev1.EnvVarSource{SecretKeyRef: &corev1.SecretKeySelector{
+		LocalObjectReference: corev1.LocalObjectReference{Name: "token"}, Key: "path"}}
+	res := &corev1.EnvVarSource{ResourceFieldRef: &corev1.ResourceFieldSelector{Resource: "limits.cpu"}}
+	// A slice, not a map, so that the resource case is last.
+	for _, c := range []struct {
+		name string
+		from *corev1.EnvVarSource
+		copy bool
+	}{{"ConfigMap", cm, true}, {"field", field, true}, {"Secret", secret, false}, {"resource", res, false}} {
+		name := c.name
+		pod.Containers[0].Env = []corev1.EnvVar{{Name: "LANG", Value: "C"}, {Name: pathEnv, ValueFrom: c.from}}
+		syncNookkuPythonCheck(&pod, "main")
+		var want []corev1.EnvVar
+		if c.copy {
+			want = []corev1.EnvVar{{Name: pathEnv, ValueFrom: c.from}}
+		}
+		if got := nookkuCheck(pod)[0].Env; !reflect.DeepEqual(got, want) {
+			t.Errorf("%s: the Python check gets the env %+v, want %+v", name, got, want)
+		}
+		checkNookkuCheck(t, name, pod)
 	}
+	if c := nookkuCheck(pod)[0]; c.Env != nil || pod.Containers[0].Env[1].ValueFrom != res {
+		t.Errorf("the merge changes the env of the main container: %+v", pod.Containers[0].Env)
+	}
+	// The check keeps its fixed resources if the main container has larger ones.
+	pod.Containers[0].Resources = corev1.ResourceRequirements{Limits: corev1.ResourceList{
+		corev1.ResourceCPU: resource.MustParse("4"), corev1.ResourceMemory: resource.MustParse("8Gi")}}
+	syncNookkuPythonCheck(&pod, "main")
+	checkNookkuResources(t, "large main", nookkuCheck(pod)[0])
 }
 
 // TestNookkuPythonScript runs the script of the Python check with a fake python3. The fake gives the
@@ -368,6 +424,7 @@ func checkNookkuFiles(t *testing.T, name, image string, p corev1.PodSpec) {
 		s.ReadOnlyRootFilesystem == nil || !*s.ReadOnlyRootFilesystem {
 		t.Errorf("%s: the Nookku file copy is not a helper: %+v", name, s)
 	}
+	checkNookkuResources(t, name+": the Nookku file copy", c)
 	want := corev1.VolumeMount{Name: nookkuTestFilesVol, MountPath: nookkuTestDir, ReadOnly: true}
 	if !slices.ContainsFunc(p.Containers[0].VolumeMounts, func(m corev1.VolumeMount) bool { return reflect.DeepEqual(m, want) }) {
 		t.Errorf("%s: the main container does not mount the Nookku files read-only", name)

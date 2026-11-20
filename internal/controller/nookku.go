@@ -105,7 +105,7 @@ func addNookkuFiles(pod *corev1.PodSpec, image string) {
 		Command: []string{"/nookku-copy", "/nookku/share", nookkuDir, "/nookku/bin/nookku", harnessDir + "/nookku"},
 		VolumeMounts: []corev1.VolumeMount{{Name: nookkuFilesVolume, MountPath: nookkuDir},
 			{Name: harnessVolume, MountPath: harnessDir}},
-		SecurityContext: helperSecurityContext(),
+		SecurityContext: helperSecurityContext(), Resources: nookkuInitResources(),
 	})
 	c := &pod.Containers[0]
 	c.VolumeMounts = append(c.VolumeMounts, corev1.VolumeMount{Name: nookkuFilesVolume, MountPath: nookkuDir,
@@ -141,8 +141,20 @@ func addNookkuPythonCheck(pod *corev1.PodSpec) {
 	syncNookkuPythonCheck(pod, pod.Containers[0].Name)
 }
 
-// syncNookkuPythonCheck gives the Python check the image, the pull policy, the literal PATH and the
-// user and group of the main container. Thus the check finds the python3 that the harness finds. The check runs in
+// nookkuInitResources gives the small fixed requests and limits of the Nookku init containers
+// (#367). Thus each one has a CPU and a memory limit, also in a namespace with no LimitRange. The
+// copy and the Python check need much less than these limits.
+func nookkuInitResources() corev1.ResourceRequirements {
+	return corev1.ResourceRequirements{
+		Requests: corev1.ResourceList{corev1.ResourceCPU: resource.MustParse("10m"),
+			corev1.ResourceMemory: resource.MustParse("16Mi")},
+		Limits: corev1.ResourceList{corev1.ResourceCPU: resource.MustParse("100m"),
+			corev1.ResourceMemory: resource.MustParse("64Mi")},
+	}
+}
+
+// syncNookkuPythonCheck gives the Python check the image, the pull policy, the PATH, the fixed
+// resources and the user and group of the main container. Thus the check finds the python3 that the harness finds. The check runs in
 // the folder "/", because the working folder of the main container can be on a volume that the
 // check does not mount. The check keeps the restrictions of a helper: no privilege escalation, no
 // capabilities and a read-only root file system. withPodTemplate calls it again after the merge, because spec.podTemplate can change
@@ -160,8 +172,19 @@ func syncNookkuPythonCheck(pod *corev1.PodSpec, main string) {
 	if m := c.SecurityContext.DeepCopy(); m != nil {
 		sc.RunAsNonRoot, sc.RunAsUser, sc.RunAsGroup = m.RunAsNonRoot, m.RunAsUser, m.RunAsGroup
 	}
-	check.SecurityContext = sc
-	if p := slices.IndexFunc(c.Env, func(e corev1.EnvVar) bool { return e.Name == pathEnv }); p >= 0 && c.Env[p].ValueFrom == nil {
-		check.Env = []corev1.EnvVar{{Name: pathEnv, Value: c.Env[p].Value}}
+	check.SecurityContext, check.Resources = sc, nookkuInitResources()
+	if p := slices.IndexFunc(c.Env, func(e corev1.EnvVar) bool { return e.Name == pathEnv }); p >= 0 {
+		check.Env = checkPathEnv(c.Env[p])
 	}
+}
+
+// checkPathEnv gives the PATH env of the main container to the Python check (#367). It copies a
+// literal value, a field of the pod and a key of a ConfigMap. It does not copy a key of a Secret,
+// because the check must not get a credential, or a resource, because it is not a PATH. In these
+// cases the check uses the PATH of the image.
+func checkPathEnv(e corev1.EnvVar) []corev1.EnvVar {
+	if v := e.ValueFrom; v != nil && v.FieldRef == nil && v.ConfigMapKeyRef == nil {
+		return nil
+	}
+	return []corev1.EnvVar{*e.DeepCopy()}
 }

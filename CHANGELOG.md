@@ -2,6 +2,12 @@
 
 This file records the changes for each Koodam version. The newest version is first.
 
+## Unreleased
+
+### Nookku preset
+
+- Give the init containers `koodam-nookku-python` and `koodam-nookku-files` fixed requests (10m CPU, 16Mi memory) and limits (100m CPU, 64Mi memory). The Python check also gets a `PATH` of the harness container from a ConfigMap key or a field of the pod. A `PATH` from a Secret or a resource is not copied, and [docs/nookku-preset.md](docs/nookku-preset.md) states the limits ([#371](https://github.com/mohanraj00/koodam/pull/371)).
+
 ## v0.4.0 (2026-11-20)
 
 The API is `v1alpha1` and can change between tags. The App parts are off by default. [Known limits of v0.4.0](#known-limits-of-v040) lists the open limits.
