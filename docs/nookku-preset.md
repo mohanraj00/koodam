@@ -72,8 +72,8 @@ container must have `python3` 3.10 or later on its `PATH`:
   selects `nookku` needs an image with Python.
 
 If a harness selects `nookku`, the controller adds the init container `koodam-nookku-python`. It
-uses the image, the literal `PATH`, the user and the group of the harness container. Thus it finds
-the `python3` that the harness finds. It runs in the folder `/`, because the working folder of the
+uses the image, the `PATH`, the user and the group of the harness container. Thus it finds the
+`python3` that the harness finds. It runs in the folder `/`, because the working folder of the
 harness can be on a volume that the check does not mount. It gets no privilege and no capability,
 and its root file system is read-only. It runs
 `python3 -c 'import sys; sys.exit(sys.version_info < (3, 10))'`. If `python3` is not on the `PATH`,
@@ -87,6 +87,22 @@ The harness then does not start. An Agent run fails. A Workspace pod stays in it
 correct a Workspace, change its image or remove `nookku`, then delete the pod. A StatefulSet does
 not replace a pod that never became Ready. The check needs `sh` in the image. It gets no credential, no mount and no other env. It runs no Nookku
 code.
+
+The check gets the `PATH` of `env` of the harness container if it has a literal value, a key of a
+ConfigMap or a field of the pod. These are the limits. In each case, the check uses the `PATH` of
+the image:
+
+- A `PATH` from a key of a Secret. The check must not get a credential.
+- A `PATH` from a resource of a container, or a `PATH` from `envFrom`.
+- A `$(NAME)` reference in a literal `PATH`. The check has no other env, so the reference stays
+  as it is.
+
+If the check finds a different `python3` than the harness, the hook of the plugin still fails
+closed when it cannot start Nookku. The result is a late failure.
+
+Each Nookku init container has fixed requests (10m CPU, 16Mi memory) and fixed limits (100m CPU,
+64Mi memory). They do not come from the harness container, so a namespace with no `LimitRange`
+also gets a limit. A `LimitRange` with a larger minimum refuses the pod.
 
 This check prevents a fail-open hook. In Claude Code, a hook command that fails with an exit code
 other than 2 does not block the harness. A hook that cannot start Nookku fails in this way.
