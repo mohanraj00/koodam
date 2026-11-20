@@ -120,9 +120,12 @@ Nookku data image (`images/nookku`) has these files, and no shell and no Python:
 - `/nookku/bin/nookku`: the launcher. It runs `python3 -I -S` with a fixed `sys.path`: the
   standard library and `/koodam/nookku/lib`. It needs no `pip`.
 
-Build the image with `make docker-build-nookku`. Each publication of the image needs a separate
-approval of the maintainer. Give the image to the controller with `--nookku-image`. The reference
-must have a digest (`@sha256:`), so that the files cannot change after the review.
+Build the image with `make docker-build-nookku`. The job `nookku` of `.github/workflows/image.yml`
+builds the image with the same pin and pushes `ghcr.io/mohanraj00/koodam-nookku` on each release
+tag. The tag push is the approval of the maintainer for each publication. The job summary shows the
+digest. Give the image to the controller with `--nookku-image`, or with the chart value
+`nookku.image`. The reference must have a digest (`@sha256:`), so that the files cannot change after
+the review.
 
 If a harness selects `nookku`, the controller adds the init container `koodam-nookku-files`. It
 copies the files into an emptyDir, which the harness container mounts read-only at
@@ -143,5 +146,5 @@ Workspace runs the interactive CLI, so it does not get the env.
 ## Later work
 
 These parts are approved, but not built: the load of the plugin in Claude Code and Codex, and the
-Codex trust writes. The chart value of `--nookku-image` comes with the first publication of the
-image.
+Codex trust writes. The default of `nookku.image` is empty, because the digest exists only after the
+first tag push. A later change can pin the digest of a published image.

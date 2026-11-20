@@ -54,6 +54,14 @@ workspace:
     extraEgress: []
 
 # Use 1 replica. The controller uses leader election, so more replicas are standby replicas.
+# The Nookku data image of the nookku plugin (#83, docs/nookku-preset.md). The image job pushes
+# ghcr.io/mohanraj00/koodam-nookku on each release tag and shows its digest. If the value is set,
+# the chart gives it to the controller with the flag --nookku-image. The reference must end with a
+# digest (@sha256:<64 hex characters>), so that the files cannot change after the review. If the
+# value is empty, the chart gives no flag, and a harness with the nookku plugin gets no Nookku files.
+nookku:
+  image: ""
+
 replicaCount: 1
 leaderElection: true
 
