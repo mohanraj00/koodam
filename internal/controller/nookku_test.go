@@ -218,14 +218,8 @@ func checkNookkuCheck(t *testing.T, name string, p corev1.PodSpec) {
 	if len(c.EnvFrom) != 0 || len(c.VolumeMounts) != 0 || len(c.Ports) != 0 {
 		t.Errorf("%s: the Python check has an env source, a mount or a port", name)
 	}
-	var wantEnv []corev1.EnvVar
-	for _, e := range main.Env {
-		if v := e.ValueFrom; e.Name == pathEnv && (v == nil || v.FieldRef != nil || v.ConfigMapKeyRef != nil) {
-			wantEnv = []corev1.EnvVar{e}
-		}
-	}
 	checkNookkuResources(t, name+": the Python check", c)
-	if !reflect.DeepEqual(c.Env, wantEnv) {
+	if wantEnv := wantCheckEnv(main.Env); !reflect.DeepEqual(c.Env, wantEnv) {
 		t.Errorf("%s: the env of the Python check is %+v, want %+v", name, c.Env, wantEnv)
 	}
 	if s := c.SecurityContext; s == nil || s.AllowPrivilegeEscalation == nil || *s.AllowPrivilegeEscalation ||
@@ -245,23 +239,31 @@ func checkNookkuCheck(t *testing.T, name string, p corev1.PodSpec) {
 	}
 }
 
+// wantCheckEnv gives the env of the Python check for the env of the main container: only a PATH
+// with a literal value, a field of the pod or a key of a ConfigMap.
+func wantCheckEnv(env []corev1.EnvVar) []corev1.EnvVar {
+	for _, e := range env {
+		if v := e.ValueFrom; e.Name == pathEnv && (v == nil || v.FieldRef != nil || v.ConfigMapKeyRef != nil) {
+			return []corev1.EnvVar{e}
+		}
+	}
+	return nil
+}
+
 // checkNookkuResources examines the fixed requests and limits of a Nookku init container (#367).
 // They do not come from the main container.
 func checkNookkuResources(t *testing.T, name string, c corev1.Container) {
 	t.Helper()
 	r := c.Resources
-	for k, want := range map[string]string{"cpu request": "10m", "memory request": "16Mi",
-		"cpu limit": "100m", "memory limit": "64Mi"} {
-		list := r.Requests
-		if k == "cpu limit" || k == "memory limit" {
-			list = r.Limits
-		}
-		res := corev1.ResourceCPU
-		if k == "memory request" || k == "memory limit" {
-			res = corev1.ResourceMemory
-		}
-		if q, ok := list[res]; !ok || q.String() != want {
-			t.Errorf("%s: the %s is %v, want %s", name, k, list[res], want)
+	for _, w := range []struct {
+		kind string
+		got  corev1.ResourceList
+		res  corev1.ResourceName
+		want string
+	}{{"request", r.Requests, corev1.ResourceCPU, "10m"}, {"request", r.Requests, corev1.ResourceMemory, "16Mi"},
+		{"limit", r.Limits, corev1.ResourceCPU, "100m"}, {"limit", r.Limits, corev1.ResourceMemory, "64Mi"}} {
+		if q, ok := w.got[w.res]; !ok || q.String() != w.want {
+			t.Errorf("%s: the %s %s is %v, want %s", name, w.res, w.kind, w.got[w.res], w.want)
 		}
 	}
 	if len(r.Requests) != 2 || len(r.Limits) != 2 || len(r.Claims) != 0 {
@@ -335,7 +337,7 @@ func TestNookkuPythonCheckFollowsMerge(t *testing.T) {
 		copy bool
 	}{{"ConfigMap", cm, true}, {"field", field, true}, {"Secret", secret, false}, {"resource", res, false}} {
 		name := c.name
-		pod.Containers[0].Env = []corev1.EnvVar{{Name: "OTHER", Value: "x"}, {Name: pathEnv, ValueFrom: c.from}}
+		pod.Containers[0].Env = []corev1.EnvVar{{Name: "LANG", Value: "C"}, {Name: pathEnv, ValueFrom: c.from}}
 		syncNookkuPythonCheck(&pod, "main")
 		var want []corev1.EnvVar
 		if c.copy {
