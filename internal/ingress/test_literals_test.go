@@ -43,3 +43,12 @@ const (
 	// litCaseError is the name of the test case where the span sink returns an error.
 	litCaseError = "error"
 )
+
+const (
+	litCaseEmptyValue    = "empty value"
+	litCaseLeadingSpace  = "leading space"
+	litCaseShortTraceID  = "short trace-id"
+	litCaseShortParentID = "short parent-id"
+	litCaseZeroTraceID   = "zero trace-id"
+	litCaseZeroParentID  = "zero parent-id"
+)
