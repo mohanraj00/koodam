@@ -328,10 +328,13 @@ func TestNookkuPythonCheckFollowsMerge(t *testing.T) {
 	secret := &corev1.EnvVarSource{SecretKeyRef: &corev1.SecretKeySelector{
 		LocalObjectReference: corev1.LocalObjectReference{Name: "token"}, Key: "path"}}
 	res := &corev1.EnvVarSource{ResourceFieldRef: &corev1.ResourceFieldSelector{Resource: "limits.cpu"}}
-	for name, c := range map[string]struct {
+	// A slice, not a map, so that the resource case is last.
+	for _, c := range []struct {
+		name string
 		from *corev1.EnvVarSource
 		copy bool
-	}{"ConfigMap": {cm, true}, "field": {field, true}, "Secret": {secret, false}, "resource": {res, false}} {
+	}{{"ConfigMap", cm, true}, {"field", field, true}, {"Secret", secret, false}, {"resource", res, false}} {
+		name := c.name
 		pod.Containers[0].Env = []corev1.EnvVar{{Name: "OTHER", Value: "x"}, {Name: pathEnv, ValueFrom: c.from}}
 		syncNookkuPythonCheck(&pod, "main")
 		var want []corev1.EnvVar
