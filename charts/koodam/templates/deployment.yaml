@@ -72,6 +72,12 @@ spec:
         - --job-ttl-seconds={{ int64 .Values.jobTTLSeconds }}
         - "--installer-image={{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
         - "--workspace-image={{ include "koodam.workspaceImage" . }}"
+        {{- with (.Values.nookku | default dict).image }}
+        {{- if not (regexMatch "^[^@\\s]+@sha256:[0-9a-f]{64}$" .) }}
+        {{- fail "nookku.image must end with a digest @sha256:<64 hex characters>." }}
+        {{- end }}
+        - "--nookku-image={{ . }}"
+        {{- end }}
         {{- if .Values.egressProxy.enabled }}
         # The Agent and Workspace pods use the proxy as their DNS server and their gateway (#142).
         - --egress-proxy-ip={{ .Values.egressProxy.clusterIP }}
