@@ -16,7 +16,12 @@ limitations under the License.
 
 package main
 
-import "testing"
+import (
+	"context"
+	"errors"
+	"testing"
+	"time"
+)
 
 func TestRoutes(t *testing.T) {
 	var r routes
@@ -30,5 +35,35 @@ func TestRoutes(t *testing.T) {
 	}
 	if len(r) != 2 || r.String() == "" {
 		t.Errorf("A route that is not valid changed the list: %v", r)
+	}
+}
+
+// every calls the load function again after an error, and it stops with the context.
+func TestEvery(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	calls := make(chan struct{}, 8)
+	done := make(chan struct{})
+	go func() {
+		every(ctx, time.Millisecond, "test:", func() error {
+			select {
+			case calls <- struct{}{}:
+			default:
+			}
+			return errors.New("the load failed")
+		})
+		close(done)
+	}()
+	for range 2 {
+		select {
+		case <-calls:
+		case <-time.After(5 * time.Second):
+			t.Fatal("every did not call the load function 2 times")
+		}
+	}
+	cancel()
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("every did not stop with the context")
 	}
 }

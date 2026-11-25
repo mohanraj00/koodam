@@ -72,6 +72,8 @@ type HTTPError struct {
 	Body   string
 	// keyNotFound is true if the full body is the LiteLLM error for a missing key.
 	keyNotFound bool
+	// customerNotFound is true if the full body is the LiteLLM error for a missing customer.
+	customerNotFound bool
 }
 
 func (e *HTTPError) Error() string {
@@ -146,7 +148,8 @@ func (l *LiteLLM) do(ctx context.Context, method, path string, body any, secret 
 				b = b[:300]
 			}
 			return &HTTPError{Path: strings.SplitN(path, "?", 2)[0], Status: resp.StatusCode, Body: b,
-				keyNotFound: resp.StatusCode == http.StatusNotFound && isKeyNotFound(data)}
+				keyNotFound:      resp.StatusCode == http.StatusNotFound && isKeyNotFound(data),
+				customerNotFound: resp.StatusCode == http.StatusNotFound && isCustomerNotFound(data)}
 		}
 		if out != nil {
 			if err := json.Unmarshal(data, out); err != nil {
