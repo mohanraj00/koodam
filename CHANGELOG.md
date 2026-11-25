@@ -4,6 +4,10 @@ This file records the changes for each Koodam version. The newest version is fir
 
 ## Unreleased
 
+### Agents
+
+- Add the [read-only spend API](docs/spend-api.md) for Agent runs and spend by label. The binary `spend-api` serves `/v1/runs`, `/v1/spend` and `/v1/openapi.json` ([#397](https://github.com/mohanraj00/koodam/pull/397), [#393](https://github.com/mohanraj00/koodam/pull/393), [#394](https://github.com/mohanraj00/koodam/pull/394), [#395](https://github.com/mohanraj00/koodam/pull/395), [#396](https://github.com/mohanraj00/koodam/pull/396), [#398](https://github.com/mohanraj00/koodam/pull/398)).
+
 ### Nookku preset
 
 - Give the init containers `koodam-nookku-python` and `koodam-nookku-files` fixed requests (10m CPU, 16Mi memory) and limits (100m CPU, 64Mi memory). The Python check also gets a `PATH` of the harness container from a ConfigMap key or a field of the pod. A `PATH` from a Secret or a resource is not copied, and [docs/nookku-preset.md](docs/nookku-preset.md) states the limits ([#371](https://github.com/mohanraj00/koodam/pull/371)).
