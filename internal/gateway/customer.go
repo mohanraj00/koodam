@@ -49,6 +49,9 @@ type CustomerUsage struct {
 	Spend float64
 	// Requests is the count of successful model calls of the customer in the current period.
 	Requests int64
+	// RequestsCapped shows that the gateway stopped the count at its maximum. Requests is then
+	// a minimum: the customer made more calls.
+	RequestsCapped bool
 	// PeriodEnd is the time when the gateway starts the next period.
 	PeriodEnd time.Time
 }
@@ -183,17 +186,21 @@ func (l *LiteLLM) SetCustomer(ctx context.Context, s CustomerSpec) error {
 	if err := l.do(ctx, http.MethodPost, "/budget/info", map[string]any{"budgets": []string{budgetID}}, "", &rows); err != nil {
 		return err
 	}
+	// updated shows a change of a budget that the gateway already had.
+	updated := false
 	switch {
 	case len(rows) == 0:
 		err := l.do(ctx, http.MethodPost, "/budget/new", s.body(), "", nil)
 		// A second controller can make the budget at the same time. Then set its limits.
 		if isStatus(err, http.StatusBadRequest) {
+			updated = true
 			err = l.do(ctx, http.MethodPost, "/budget/update", s.body(), "", nil)
 		}
 		if err != nil {
 			return err
 		}
 	case !s.same(rows[0]):
+		updated = true
 		if err := l.do(ctx, http.MethodPost, "/budget/update", s.body(), "", nil); err != nil {
 			return err
 		}
@@ -210,7 +217,10 @@ func (l *LiteLLM) SetCustomer(ctx context.Context, s CustomerSpec) error {
 		return err
 	case err != nil:
 		return err
-	case info.BudgetID == nil || *info.BudgetID != budgetID:
+	// The gateway keeps a customer and its budget in a cache. A budget update does not remove
+	// that cache entry, but a customer update does. Thus a budget change also writes the link
+	// again, so that the next model call uses the new limits.
+	case updated || info.BudgetID == nil || *info.BudgetID != budgetID:
 		return l.do(ctx, http.MethodPost, "/customer/update", link, "", nil)
 	}
 	return nil
@@ -231,7 +241,8 @@ const spendLogTime = "2006-01-02 15:04:05"
 
 // CustomerUsage implements Customers. The spend is the count of the gateway for the current
 // budget period. The requests are the successful calls in the spend log from the start of that
-// period. The gateway gives only the count, so the answer is small for each count of calls.
+// period. The gateway gives only the count, so the answer is small for each count of calls. The
+// gateway stops the count at a maximum, and then it sets a flag. RequestsCapped has that flag.
 func (l *LiteLLM) CustomerUsage(ctx context.Context, id string) (CustomerUsage, error) {
 	info, err := l.customer(ctx, id)
 	if err != nil {
@@ -250,7 +261,8 @@ func (l *LiteLLM) CustomerUsage(ctx context.Context, id string) (CustomerUsage, 
 		"start_date": {b.ResetAt.Add(-period).UTC().Format(spendLogTime)},
 		"end_date":   {time.Now().Add(time.Hour).UTC().Format(spendLogTime)}}
 	var logs struct {
-		Total *int64 `json:"total"`
+		Total  *int64 `json:"total"`
+		Capped bool   `json:"total_is_capped"`
 	}
 	if err := l.do(ctx, http.MethodGet, "/spend/logs/v2?"+q.Encode(), nil, "", &logs); err != nil {
 		return CustomerUsage{}, err
@@ -258,7 +270,7 @@ func (l *LiteLLM) CustomerUsage(ctx context.Context, id string) (CustomerUsage, 
 	if logs.Total == nil || *logs.Total < 0 {
 		return CustomerUsage{}, errors.New("litellm: the spend log answer has no total")
 	}
-	return CustomerUsage{Spend: info.Spend, Requests: *logs.Total, PeriodEnd: b.ResetAt.UTC()}, nil
+	return CustomerUsage{Spend: info.Spend, Requests: *logs.Total, RequestsCapped: logs.Capped, PeriodEnd: b.ResetAt.UTC()}, nil
 }
 
 // DeleteCustomer implements Customers. It deletes the customer first, because a budget with a

@@ -55,7 +55,7 @@ func TestParseTenantLimits(t *testing.T) {
 		}
 	}
 	for _, doc := range []string{
-		``, `[]`, `{} {}`, `{"other":1}`,
+		``, `[]`, `null`, ` null `, `{} {}`, `{}}`, `{}]`, `{} x`, `{"other":1}`,
 		`{"default":{"rate":-1,"burst":1}}`,
 		`{"default":{"rate":1}}`,
 		`{"default":{"burst":3}}`,
@@ -87,8 +87,9 @@ func TestTenantsLoad(t *testing.T) {
 	if err := tenants.Load(path); err != nil {
 		t.Fatal(err)
 	}
-	// A file that is not valid, or too large, keeps the last valid limits.
-	for _, bad := range [][]byte{[]byte("{"), bytes.Repeat([]byte(" "), maxLimitsFile+1)} {
+	// A file that is not valid, or too large, keeps the last valid limits. The JSON value null
+	// is not a limits file.
+	for _, bad := range [][]byte{[]byte("{"), []byte("null"), bytes.Repeat([]byte(" "), maxLimitsFile+1)} {
 		if err := os.WriteFile(path, bad, 0o600); err != nil {
 			t.Fatal(err)
 		}
@@ -130,6 +131,17 @@ func TestTenantsAllow(t *testing.T) {
 	// A clock that goes back adds no token.
 	if reason, _ := allow(tenantFast, 0); reason != ReasonTenantRateLimited {
 		t.Errorf("clock back: %q", reason)
+	}
+	// Requests with times that are not in order get the tokens of a time range one time only.
+	// The default limit is 1 for each second with a burst of 1.
+	passed := 0
+	for _, ms := range []int{0, 1000, 0, 1000} {
+		if reason, _ := allow("late", ms); reason == "" {
+			passed++
+		}
+	}
+	if passed != 2 {
+		t.Errorf("times not in order: %d requests passed, want 2", passed)
 	}
 	// A long idle time fills the bucket to the burst, and not more.
 	for i := range 3 {
@@ -206,6 +218,64 @@ func TestTenantsSmallRateAndRemoval(t *testing.T) {
 	}
 	if reason, _ := tenants.Allow("busy", later); reason != ReasonTenantRateLimited {
 		t.Errorf("a bucket in use lost its state: %q", reason)
+	}
+}
+
+// If no bucket is full, a removal does not start again for each new tenant. The next removal
+// starts at two times the count of the buckets in use.
+func TestTenantsRemovalWorkHasALimit(t *testing.T) {
+	tenants := mustLimits(t, `{"default":{"rate":1e-12,"burst":1}}`)
+	start := time.Unix(100, 0)
+	name := func(i int) string { return "t-" + strconv.Itoa(i) }
+	for i := range maxTenantBuckets {
+		tenants.Allow(name(i), start)
+	}
+	if tenants.removeAt != 0 {
+		t.Fatalf("a removal started below the limit: %d", tenants.removeAt)
+	}
+	for i := maxTenantBuckets; i < 2*maxTenantBuckets; i++ {
+		tenants.Allow(name(i), start)
+		if tenants.removeAt != 2*maxTenantBuckets {
+			t.Fatalf("with %d buckets in use, the next removal is at %d", i+1, tenants.removeAt)
+		}
+	}
+	tenants.Allow(name(2*maxTenantBuckets), start)
+	if tenants.removeAt != 4*maxTenantBuckets || len(tenants.buckets) != 2*maxTenantBuckets+1 {
+		t.Errorf("next removal at %d with %d buckets", tenants.removeAt, len(tenants.buckets))
+	}
+	// A removal that makes the map small moves the start back to the minimum.
+	tenants.limits.Store(&TenantLimits{Default: &TenantLimit{Rate: 1, Burst: 1}})
+	tenants.removeAt = len(tenants.buckets)
+	tenants.Allow("last", start.Add(time.Minute))
+	if tenants.removeAt != 0 || len(tenants.buckets) != 1 {
+		t.Errorf("after a full removal: next removal at %d with %d buckets", tenants.removeAt, len(tenants.buckets))
+	}
+}
+
+// A request with an older time makes a removed bucket again. The tenant does not get the tokens
+// of the time before the removal a second time.
+func TestTenantsRemovalKeepsTheTime(t *testing.T) {
+	tenants := mustLimits(t, `{"default":{"rate":1,"burst":1}}`)
+	start := time.Unix(100, 0)
+	later := start.Add(time.Second)
+	accepted := 0
+	if reason, _ := tenants.Allow("late", start); reason == "" {
+		accepted++
+	}
+	for i := range maxTenantBuckets - 1 {
+		tenants.Allow("idle-"+string(rune('a'+i%26))+strings.Repeat("x", i/26), start)
+	}
+	tenants.Allow("next", later)
+	if tenants.buckets["late"] != nil {
+		t.Fatal("the removal kept a full bucket")
+	}
+	for _, at := range []time.Time{start, later, later} {
+		if reason, _ := tenants.Allow("late", at); reason == "" {
+			accepted++
+		}
+	}
+	if accepted != 2 {
+		t.Errorf("got %d accepted requests in 1 second for rate 1 and burst 1, want 2", accepted)
 	}
 }
 

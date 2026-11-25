@@ -16,6 +16,10 @@ This file records the changes for each Koodam version. The newest version is fir
 - Give the init containers `koodam-nookku-python` and `koodam-nookku-files` fixed requests (10m CPU, 16Mi memory) and limits (100m CPU, 64Mi memory). The Python check also gets a `PATH` of the harness container from a ConfigMap key or a field of the pod. A `PATH` from a Secret or a resource is not copied, and [docs/nookku-preset.md](docs/nookku-preset.md) states the limits ([#371](https://github.com/mohanraj00/koodam/pull/371)).
 - Build and push the Nookku data image `ghcr.io/mohanraj00/koodam-nookku` on each release tag, with the same tag rules as the controller image. The job summary shows the digest. Add the chart value `nookku.image`. If it is set, the chart passes `--nookku-image` to the controller, and the reference must have a digest. The default is empty, and then the chart passes no flag ([#372](https://github.com/mohanraj00/koodam/pull/372)).
 
+### Evidence gate
+
+- Pin Nookku 0.6.0 in `internal/evidence/nookku.pin`, with the plugin hashes of the tag `v0.6.0` in `images/nookku/plugin.sha256`. The seam test adds the 3 new gate cases of 0.6.0: a persona set, a second message that passes and a second message that is late. The report parser needs no change, because the verify program does not read the tests of `result.json` ([#377](https://github.com/mohanraj00/koodam/pull/377)).
+
 ## v0.4.0 (2026-11-20)
 
 The API is `v1alpha1` and can change between tags. The App parts are off by default. [Known limits of v0.4.0](#known-limits-of-v040) lists the open limits.
