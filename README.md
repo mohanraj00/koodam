@@ -31,7 +31,7 @@ Koodam adds Kubernetes resources for agent work, and an operator that reconciles
 
 The current release is v0.4.0. The API is `v1alpha1`. The pre-release [v0.4.0-alpha.1](https://github.com/mohanraj00/koodam/releases/tag/v0.4.0-alpha.1) came before it. [CHANGELOG.md](CHANGELOG.md) lists the changes.
 
-The resources are `Agent`, `Workspace`, `Profile` and `TestKey`. `main` also has `App` and `AppVersion`. They are off by default: set `apps.enabled=true` in the chart. [docs/apps.md](docs/apps.md) has the use.
+The resources are `Agent`, `Workspace`, `Profile` and `TestKey`. `main` also has `App`, `AppVersion` and `TenantQuota`. They are off by default: set `apps.enabled=true` in the chart. [docs/apps.md](docs/apps.md) has the use.
 
 The v0.4 parts in `main`, and what proves each part:
 
@@ -62,13 +62,17 @@ A Workspace is a pod with a home on a PVC. I connect to it over SSH and run the 
 - [Profiles](docs/profiles.md): the namespace binding, the shared login, the global files, the project files and the memory.
 - [The CLI](docs/cli.md): each command, and the spend and the projected cost.
 - [The gateway](docs/gateway.md): the budget, the revoke and the spend.
+- [Prometheus metrics](docs/metrics.md): Agent counts, run time, spend and budgets.
 - [Test keys](docs/test-keys.md): the TestKey resource, the key slot in the Workspace pod and the revoke.
 - [Nookku](docs/nookku.md): the Workspace setup for Nookku, the span contract and the test folder.
 - [Nookku preset](docs/nookku-preset.md): the `nookku` plugin field and the Nookku test folder.
 - [Evidence gate](docs/evidence-gate.md): the gate of an AppVersion on a sealed Nookku result, and the limits of a signed approval record.
 - [Apps](docs/apps.md): the `App` and `AppVersion` resources, the traffic split and the gate.
+- [Tenants](docs/tenants.md): the `TenantQuota` resource, with a quota and a rate limit for each tenant of an App.
 - [App ingress spans](docs/app-ingress-spans.md): the contract of the spans at the App ingress.
 - [Release checklist](docs/release-checklist.md): the steps before a tag.
+- [Security](SECURITY.md): how to report a security problem, the supported versions and the response goal.
+- [Threat model](docs/threat-model.md): the threats, the control and the test for each threat, and the risks that stay.
 - [Traced egress](docs/traced-egress.md): the egress proxy, the spans and `koodam trace`.
 - [Architecture](docs/architecture.md): the controller, the gateway, the Workspace pod, the PVC home and the tunnel.
 - [Bring your Claude Code to Kubernetes, not a new agent platform](https://mohanraj00.github.io/tech/introducing-koodam/): the blog post. Why I built Koodam, and a day with a Workspace.

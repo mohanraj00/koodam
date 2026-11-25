@@ -21,6 +21,7 @@ import (
 	"errors"
 	"io"
 	"log"
+	"math"
 	"net"
 	"net/http"
 	"net/http/httputil"
@@ -38,6 +39,8 @@ const (
 	CallerHeader = "Koodam-Caller"
 	// TenantHeader gives the tenant label of the claim to the app container.
 	TenantHeader = "Koodam-Tenant"
+	// ReasonHeader gives the typed reason of a tenant refusal to the caller.
+	ReasonHeader = "Koodam-Reason"
 	// outcomeOK is the outcome of a request with a valid claim.
 	outcomeOK = "ok"
 	// KindIngress is the kind of each span of the check.
@@ -106,6 +109,8 @@ func (k *Keys) Load(path string) error {
 type Check struct {
 	Config Config
 	Keys   *Keys
+	// Tenants has the limits of the tenants. If it is nil, a tenant has no limit.
+	Tenants *Tenants
 	// Next gets the request after the check. The request has no Authorization header.
 	Next http.Handler
 	// Spans gets one span for each request.
@@ -157,8 +162,22 @@ func (c *Check) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		span.Status = http.StatusUnauthorized
 		w.Header().Set("WWW-Authenticate", "Bearer")
 		http.Error(w, "A valid signed claim is necessary.", http.StatusUnauthorized)
+		return
+	}
+	// The claim is valid, so a tenant refusal has the labels of the claim in its span.
+	span.Caller, span.Tenant = id.Caller, id.Tenant
+	if reason, wait := c.tenantRefusal(id.Tenant, start); reason != "" {
+		span.Outcome, span.Status = reason, http.StatusTooManyRequests
+		if reason == ReasonUnknownTenant {
+			span.Status = http.StatusForbidden
+		}
+		if wait > 0 {
+			w.Header().Set("Retry-After", strconv.Itoa(int(math.Ceil(wait.Seconds()))))
+		}
+		w.Header().Set(ReasonHeader, reason)
+		http.Error(w, reason, span.Status)
 	} else {
-		span.Outcome, span.Caller, span.Tenant = outcomeOK, id.Caller, id.Tenant
+		span.Outcome = outcomeOK
 		r.Header.Set(CallerHeader, id.Caller)
 		if id.Tenant != "" {
 			r.Header.Set(TenantHeader, id.Tenant)
@@ -166,6 +185,15 @@ func (c *Check) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		rec = &statusWriter{ResponseWriter: w, status: http.StatusOK}
 		c.Next.ServeHTTP(rec, r)
 	}
+}
+
+// tenantRefusal gives back the typed reason if the limits refuse the request of the tenant. A
+// request with no tenant label has no tenant limit.
+func (c *Check) tenantRefusal(tenant string, now time.Time) (string, time.Duration) {
+	if c.Tenants == nil || tenant == "" {
+		return "", 0
+	}
+	return c.Tenants.Allow(tenant, now)
 }
 
 // Upstream gives back a handler that sends each request to a port of the loopback address. The
