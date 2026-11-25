@@ -62,6 +62,7 @@ A Workspace is a pod with a home on a PVC. I connect to it over SSH and run the 
 - [Profiles](docs/profiles.md): the namespace binding, the shared login, the global files, the project files and the memory.
 - [The CLI](docs/cli.md): each command, and the spend and the projected cost.
 - [The gateway](docs/gateway.md): the budget, the revoke and the spend.
+- I read Agent spend and budgets over HTTP. [Spend API](docs/spend-api.md)
 - [Test keys](docs/test-keys.md): the TestKey resource, the key slot in the Workspace pod and the revoke.
 - [Nookku](docs/nookku.md): the Workspace setup for Nookku, the span contract and the test folder.
 - [Nookku preset](docs/nookku-preset.md): the `nookku` plugin field and the Nookku test folder.
