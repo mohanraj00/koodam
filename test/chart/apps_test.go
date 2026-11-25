@@ -20,6 +20,9 @@ import (
 	"slices"
 	"strings"
 	"testing"
+
+	appsv1 "k8s.io/api/apps/v1"
+	rbacv1 "k8s.io/api/rbac/v1"
 )
 
 // The chart installs the App parts only if apps.enabled is true. The default install has no App
@@ -142,5 +145,59 @@ func TestAppClaimCheck(t *testing.T) {
 		if !strings.Contains(on, s) {
 			t.Errorf("the install with an issuer does not have %q", s)
 		}
+	}
+}
+
+// With a claim check and a tenant claim, the tenant token is on by default. The manager and the
+// proxy get their flags together, and the proxy can read the AppVersions of each App namespace.
+func TestAppTenantToken(t *testing.T) {
+	const values = "egressProxy: {enabled: true, clusterIP: 10.96.0.50, networkPolicy: {enabled: false}}\n" +
+		"workspace: {networkPolicy: {namespaces: [shop, bank]}}\n" +
+		"apps:\n  claimCheck:\n    jwks: '{\"keys\":[{\"kty\":\"EC\"}]}'\n"
+	base := []string{"apps.enabled=true", "apps.claimCheck.issuer=https://issuer.example.com", "apps.claimCheck.audience=shop"}
+	for name, c := range map[string]struct {
+		set []string
+		on  bool
+	}{
+		"a tenant claim":                     {[]string{"apps.claimCheck.tenantClaim=tenant"}, true},
+		"no tenant claim":                    {nil, false},
+		"a tenant claim with the switch off": {[]string{"apps.claimCheck.tenantClaim=tenant", "apps.claimCheck.tenantToken=false"}, false},
+	} {
+		t.Run(name, func(t *testing.T) {
+			out, err := helmTemplate(t, values, append(base, c.set...)...)
+			if err != nil {
+				t.Fatalf("helm template failed: %v\n%s", err, out)
+			}
+			if strings.Contains(out, `"--app-claim-tenant-token=true"`) != c.on ||
+				strings.Contains(out, `"--app-claim-tenant-token=false"`) == c.on {
+				t.Errorf("the manager flag of the tenant token must be %v", c.on)
+			}
+			deps := decode[appsv1.Deployment](t, out, "Deployment", proxyName)
+			if slices.Contains(deps[0].Spec.Template.Spec.Containers[0].Args, "--tenant-tokens") != c.on {
+				t.Errorf("the proxy flag --tenant-tokens must be %v", c.on)
+			}
+			roles := decode[rbacv1.Role](t, out, "Role", proxyName)
+			if len(roles) != 2 {
+				t.Fatalf("got %d proxy Roles, want 2", len(roles))
+			}
+			for _, r := range roles {
+				if !c.on {
+					checkPodRules(t, r.Rules)
+					continue
+				}
+				checkPodRules(t, r.Rules[:1])
+				if len(r.Rules) != 2 || !slices.Equal(r.Rules[1].APIGroups, []string{"core.koodam.dev"}) ||
+					!slices.Equal(r.Rules[1].Resources, []string{"appversions"}) ||
+					!slices.Equal(r.Rules[1].Verbs, []string{"get", "list", "watch"}) {
+					t.Errorf("the proxy Role in %s must have get, list and watch on appversions: %+v", r.Namespace, r.Rules)
+				}
+			}
+		})
+	}
+	// With no Apps, the proxy has no tenant token flag and no AppVersion rule.
+	out := render(t, proxyValues, "workspace.networkPolicy.namespaces={dev-a}", "apps.claimCheck.tenantClaim=tenant",
+		"apps.claimCheck.issuer=https://issuer.example.com")
+	if strings.Contains(out, "--tenant-tokens") || strings.Contains(out, "appversions") {
+		t.Error("the install with no Apps has the tenant token of the proxy")
 	}
 }

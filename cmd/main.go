@@ -249,6 +249,9 @@ func main() {
 	flag.StringVar(&claim.CallerClaim, "app-claim-caller-claim", "sub", "The claim with the caller label.")
 	flag.StringVar(&claim.TenantClaim, "app-claim-tenant-claim", "",
 		"The claim with the tenant label. If it is empty, the check reads no tenant label.")
+	flag.BoolVar(&claim.TenantToken, "app-claim-tenant-token", true,
+		"With a tenant claim, the check container signs a tenant token for the tenant of each request. "+
+			"The egress proxy then needs --tenant-tokens.")
 	flag.StringVar(&claimJWKSFile, "app-claim-jwks-file", "",
 		"The file with the JWKS of the issuer. The manager reads it at its start.")
 	flag.StringVar(&egress.ClusterDomain, "cluster-domain", "cluster.local", "The DNS domain of the cluster.")
