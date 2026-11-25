@@ -48,6 +48,7 @@ type customerFake struct {
 	calls     []string
 	logQuery  map[string]string
 	total     any
+	capped    bool
 	// raceBudget and raceCustomer make the first create fail as if a second writer made the row.
 	raceBudget, raceCustomer bool
 	// wrongRoute makes each customer path answer with the 404 of a wrong route.
@@ -143,7 +144,7 @@ func (f *customerFake) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		for k, v := range r.URL.Query() {
 			f.logQuery[k] = v[0]
 		}
-		_ = json.NewEncoder(w).Encode(map[string]any{"total": f.total, "data": []any{}})
+		_ = json.NewEncoder(w).Encode(map[string]any{"total": f.total, "total_is_capped": f.capped, "data": []any{}})
 	default:
 		fail(http.StatusNotFound, routeNotFound)
 	}
@@ -268,6 +269,12 @@ func TestCustomerUsage(t *testing.T) {
 		q["page_size"] != "1" || q["end_date"] <= time.Now().UTC().Format(spendLogTime) {
 		t.Errorf("spend log query %v", q)
 	}
+	// The gateway stops the count at its maximum. The count is then a minimum, and the flag shows it.
+	f.total, f.capped = 10000, true
+	if u, err := l.CustomerUsage(ctx, testTenant); err != nil || u.Requests != 10000 || !u.RequestsCapped {
+		t.Fatalf("capped usage %+v, error %v", u, err)
+	}
+	f.capped = false
 	for name, change := range map[string]func(){
 		"no total":       func() { f.total = nil },
 		"negative total": func() { f.total = -1 },

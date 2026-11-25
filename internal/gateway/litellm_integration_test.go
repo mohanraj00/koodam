@@ -122,7 +122,7 @@ func TestLiteLLMCustomerLive(t *testing.T) {
 		u, err := l.CustomerUsage(ctx, id)
 		now := time.Now()
 		// The gateway starts a period of an hour at the full hour, and a period of a day at 00:00 UTC.
-		if err != nil || u.Spend != 0 || u.Requests != 0 || !u.PeriodEnd.After(now) || u.PeriodEnd.After(now.Add(s.Period)) ||
+		if err != nil || u.Spend != 0 || u.Requests != 0 || u.RequestsCapped || !u.PeriodEnd.After(now) || u.PeriodEnd.After(now.Add(s.Period)) ||
 			!u.PeriodEnd.Equal(u.PeriodEnd.Truncate(s.Period)) {
 			t.Fatalf("usage after set %+v: %+v, error %v", s, u, err)
 		}

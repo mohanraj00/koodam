@@ -49,6 +49,9 @@ type CustomerUsage struct {
 	Spend float64
 	// Requests is the count of successful model calls of the customer in the current period.
 	Requests int64
+	// RequestsCapped shows that the gateway stopped the count at its maximum. Requests is then
+	// a minimum: the customer made more calls.
+	RequestsCapped bool
 	// PeriodEnd is the time when the gateway starts the next period.
 	PeriodEnd time.Time
 }
@@ -231,7 +234,8 @@ const spendLogTime = "2006-01-02 15:04:05"
 
 // CustomerUsage implements Customers. The spend is the count of the gateway for the current
 // budget period. The requests are the successful calls in the spend log from the start of that
-// period. The gateway gives only the count, so the answer is small for each count of calls.
+// period. The gateway gives only the count, so the answer is small for each count of calls. The
+// gateway stops the count at a maximum, and then it sets a flag. RequestsCapped has that flag.
 func (l *LiteLLM) CustomerUsage(ctx context.Context, id string) (CustomerUsage, error) {
 	info, err := l.customer(ctx, id)
 	if err != nil {
@@ -250,7 +254,8 @@ func (l *LiteLLM) CustomerUsage(ctx context.Context, id string) (CustomerUsage, 
 		"start_date": {b.ResetAt.Add(-period).UTC().Format(spendLogTime)},
 		"end_date":   {time.Now().Add(time.Hour).UTC().Format(spendLogTime)}}
 	var logs struct {
-		Total *int64 `json:"total"`
+		Total  *int64 `json:"total"`
+		Capped bool   `json:"total_is_capped"`
 	}
 	if err := l.do(ctx, http.MethodGet, "/spend/logs/v2?"+q.Encode(), nil, "", &logs); err != nil {
 		return CustomerUsage{}, err
@@ -258,7 +263,7 @@ func (l *LiteLLM) CustomerUsage(ctx context.Context, id string) (CustomerUsage, 
 	if logs.Total == nil || *logs.Total < 0 {
 		return CustomerUsage{}, errors.New("litellm: the spend log answer has no total")
 	}
-	return CustomerUsage{Spend: info.Spend, Requests: *logs.Total, PeriodEnd: b.ResetAt.UTC()}, nil
+	return CustomerUsage{Spend: info.Spend, Requests: *logs.Total, RequestsCapped: logs.Capped, PeriodEnd: b.ResetAt.UTC()}, nil
 }
 
 // DeleteCustomer implements Customers. It deletes the customer first, because a budget with a
