@@ -9315,6 +9315,13 @@ spec:
                   KeyHash is the SHA-256 hash of the gateway key. The gateway refuses the hash for model
                   calls, so it is not a credential.
                 type: string
+              tenantTokenKey:
+                description: |-
+                  TenantTokenKey is the public key of the tenant token of the version. The claim check
+                  container of each pod signs the tenant token with the private key. The egress proxy reads
+                  this field, and it accepts a model call of a pod of the version only with a token that
+                  this key verifies. With no tenant token, the field is empty.
+                type: string
             type: object
         required:
         - spec
