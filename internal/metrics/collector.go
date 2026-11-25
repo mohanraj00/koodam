@@ -137,21 +137,22 @@ func runDuration(status *corev1alpha1.AgentStatus) (float64, bool) {
 }
 
 func addCosts(agent *corev1alpha1.Agent, spend, budgets map[[2]string]float64) {
-	models := agent.Spec.ModelList()
-	if len(models) == 0 {
-		return
-	}
-	key := [2]string{agent.Namespace, models[0]}
-	if usage := agent.Status.Usage; usage != nil {
-		hasModelSpend := false
+	usage := agent.Status.Usage
+	hasModelSpend := false
+	if usage != nil {
 		for _, model := range usage.Models {
 			if recordSpend(spend, [2]string{agent.Namespace, model.Model}, model.Spend) {
 				hasModelSpend = true
 			}
 		}
-		if !hasModelSpend {
-			recordSpend(spend, key, usage.Spend)
-		}
+	}
+	models := agent.Spec.ModelList()
+	if len(models) == 0 {
+		return
+	}
+	key := [2]string{agent.Namespace, models[0]}
+	if usage != nil && !hasModelSpend {
+		recordSpend(spend, key, usage.Spend)
 	}
 	// A quantity with a format can declare a zero budget.
 	if budget := agent.Spec.Budget; budget.Format != "" || !budget.IsZero() {

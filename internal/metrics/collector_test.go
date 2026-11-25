@@ -130,6 +130,26 @@ koodam_agent_budget_usd{model="model-b",namespace="beta"} 0
 	compareMetrics(t, registry, fmt.Sprintf(errorText, 0))
 }
 
+func TestAddCostsWithoutSpecModel(t *testing.T) {
+	agent := &corev1alpha1.Agent{
+		ObjectMeta: metav1.ObjectMeta{Namespace: nsA},
+		Spec:       corev1alpha1.AgentSpec{Budget: resource.MustParse("1")},
+		Status: corev1alpha1.AgentStatus{
+			Usage: &corev1alpha1.AgentUsage{Spend: "0.5", Models: []corev1alpha1.ModelUsage{
+				{Model: modelB, Spend: "0.75"},
+			}},
+		},
+	}
+	spend, budgets := make(map[[2]string]float64), make(map[[2]string]float64)
+	addCosts(agent, spend, budgets)
+	if len(spend) != 1 || spend[[2]string{nsA, modelB}] != 0.75 {
+		t.Errorf("spend = %v, want 0.75 for %s in %s", spend, modelB, nsA)
+	}
+	if len(budgets) != 0 {
+		t.Errorf("budgets = %v, want no budgets", budgets)
+	}
+}
+
 func TestCollectorListError(t *testing.T) {
 	agent := &corev1alpha1.Agent{ObjectMeta: metav1.ObjectMeta{Namespace: nsA, Name: "first"}}
 	reader := fakeBuilder(t, agent).WithInterceptorFuncs(interceptor.Funcs{
