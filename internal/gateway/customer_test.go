@@ -195,8 +195,14 @@ func TestSetCustomer(t *testing.T) {
 		t.Errorf("the same spec made %d writes", got-writes)
 	}
 	// A spec with no limit removes the limits with a JSON null, and an hour uses the unit h.
+	links := f.count("/customer/update")
 	if err := l.SetCustomer(ctx, CustomerSpec{ID: testTenant, Period: time.Hour}); err != nil {
 		t.Fatal(err)
+	}
+	// A budget change also writes the link of the customer, because only that write removes the
+	// customer from the cache of the gateway.
+	if got := f.count("/customer/update") - links; got != 1 || f.calls[len(f.calls)-1] != "/customer/update" {
+		t.Errorf("a budget change made %d customer updates, and the last call was %s", got, f.calls[len(f.calls)-1])
 	}
 	if b[fieldMax] != nil || b["rpm_limit"] != nil || b[fieldDuration] != "1h" || f.count(pathBudgetUp) != 1 {
 		t.Errorf("budget after the change: %v", b)

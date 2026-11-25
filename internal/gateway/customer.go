@@ -186,17 +186,21 @@ func (l *LiteLLM) SetCustomer(ctx context.Context, s CustomerSpec) error {
 	if err := l.do(ctx, http.MethodPost, "/budget/info", map[string]any{"budgets": []string{budgetID}}, "", &rows); err != nil {
 		return err
 	}
+	// updated shows a change of a budget that the gateway already had.
+	updated := false
 	switch {
 	case len(rows) == 0:
 		err := l.do(ctx, http.MethodPost, "/budget/new", s.body(), "", nil)
 		// A second controller can make the budget at the same time. Then set its limits.
 		if isStatus(err, http.StatusBadRequest) {
+			updated = true
 			err = l.do(ctx, http.MethodPost, "/budget/update", s.body(), "", nil)
 		}
 		if err != nil {
 			return err
 		}
 	case !s.same(rows[0]):
+		updated = true
 		if err := l.do(ctx, http.MethodPost, "/budget/update", s.body(), "", nil); err != nil {
 			return err
 		}
@@ -213,7 +217,10 @@ func (l *LiteLLM) SetCustomer(ctx context.Context, s CustomerSpec) error {
 		return err
 	case err != nil:
 		return err
-	case info.BudgetID == nil || *info.BudgetID != budgetID:
+	// The gateway keeps a customer and its budget in a cache. A budget update does not remove
+	// that cache entry, but a customer update does. Thus a budget change also writes the link
+	// again, so that the next model call uses the new limits.
+	case updated || info.BudgetID == nil || *info.BudgetID != budgetID:
 		return l.do(ctx, http.MethodPost, "/customer/update", link, "", nil)
 	}
 	return nil
