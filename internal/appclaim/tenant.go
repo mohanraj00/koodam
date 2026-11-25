@@ -44,7 +44,8 @@ const (
 const (
 	// maxTenantRate is the largest rate and the largest burst of a tenant.
 	maxTenantRate = 1_000_000
-	// maxTenantBuckets is the count of buckets that starts a removal of the full buckets.
+	// maxTenantBuckets is the smallest count of buckets that starts a removal of the full
+	// buckets.
 	maxTenantBuckets = 4096
 	// maxLimitsFile is the largest limits file. A ConfigMap has 1 MiB at most.
 	maxLimitsFile = 1 << 20
@@ -126,6 +127,9 @@ type Tenants struct {
 	// removed is the latest time of a bucket that removeIdle removed. A new bucket starts at
 	// this time or later.
 	removed time.Time
+	// removeAt is the count of buckets that starts the next removal, if it is more than
+	// maxTenantBuckets.
+	removeAt int
 }
 
 // Load reads the limits file. If the file is not valid, the last valid limits stay.
@@ -179,8 +183,12 @@ func (t *Tenants) Allow(tenant string, now time.Time) (reason string, wait time.
 		if t.buckets == nil {
 			t.buckets = map[string]*bucket{}
 		}
-		if len(t.buckets) >= maxTenantBuckets {
+		if len(t.buckets) >= max(t.removeAt, maxTenantBuckets) {
 			t.removeIdle(limits, now)
+			// A removal examines all the buckets with the lock. The next removal starts at two
+			// times the count of the buckets in use. Thus the work of the removals stays in
+			// proportion to the count of new buckets, also if no bucket is full.
+			t.removeAt = 2 * len(t.buckets)
 		}
 		// A request with an older time can make the bucket again after a removal. The bucket
 		// then starts at the time of the removal, and it adds no token for the time before.

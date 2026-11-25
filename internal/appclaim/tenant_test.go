@@ -221,6 +221,37 @@ func TestTenantsSmallRateAndRemoval(t *testing.T) {
 	}
 }
 
+// If no bucket is full, a removal does not start again for each new tenant. The next removal
+// starts at two times the count of the buckets in use.
+func TestTenantsRemovalWorkHasALimit(t *testing.T) {
+	tenants := mustLimits(t, `{"default":{"rate":1e-12,"burst":1}}`)
+	start := time.Unix(100, 0)
+	name := func(i int) string { return "t-" + strconv.Itoa(i) }
+	for i := range maxTenantBuckets {
+		tenants.Allow(name(i), start)
+	}
+	if tenants.removeAt != 0 {
+		t.Fatalf("a removal started below the limit: %d", tenants.removeAt)
+	}
+	for i := maxTenantBuckets; i < 2*maxTenantBuckets; i++ {
+		tenants.Allow(name(i), start)
+		if tenants.removeAt != 2*maxTenantBuckets {
+			t.Fatalf("with %d buckets in use, the next removal is at %d", i+1, tenants.removeAt)
+		}
+	}
+	tenants.Allow(name(2*maxTenantBuckets), start)
+	if tenants.removeAt != 4*maxTenantBuckets || len(tenants.buckets) != 2*maxTenantBuckets+1 {
+		t.Errorf("next removal at %d with %d buckets", tenants.removeAt, len(tenants.buckets))
+	}
+	// A removal that makes the map small moves the start back to the minimum.
+	tenants.limits.Store(&TenantLimits{Default: &TenantLimit{Rate: 1, Burst: 1}})
+	tenants.removeAt = len(tenants.buckets)
+	tenants.Allow("last", start.Add(time.Minute))
+	if tenants.removeAt != 0 || len(tenants.buckets) != 1 {
+		t.Errorf("after a full removal: next removal at %d with %d buckets", tenants.removeAt, len(tenants.buckets))
+	}
+}
+
 // A request with an older time makes a removed bucket again. The tenant does not get the tokens
 // of the time before the removal a second time.
 func TestTenantsRemovalKeepsTheTime(t *testing.T) {
