@@ -20,6 +20,7 @@ import (
 	"context"
 	"encoding/json"
 	"slices"
+	"strings"
 	"testing"
 
 	. "github.com/onsi/ginkgo/v2"
@@ -129,6 +130,39 @@ func TestTenantLimitsOfVersion(t *testing.T) {
 	empty, _ := json.Marshal(AppClaimCheck{}.limits(av, nil))
 	if string(empty) != `{}` {
 		t.Errorf("empty limits: %s", empty)
+	}
+}
+
+// The check container gets the zone flags only if the install has a zone.
+func TestClaimZoneArgs(t *testing.T) {
+	const zone, zoneClaim, flag = "zone-a", "zone", "--zone"
+	av := &corev1alpha1.AppVersion{ObjectMeta: metav1.ObjectMeta{Name: "v1"},
+		Spec: corev1alpha1.AppVersionSpec{AppRef: corev1alpha1.AppReference{Name: limitsApp}}}
+	for name, tc := range map[string]struct {
+		claim AppClaimCheck
+		want  []string
+	}{
+		"no zone": {claim: AppClaimCheck{ZoneClaim: zoneClaim, RequireZoneClaim: true}},
+		"zone":    {claim: AppClaimCheck{Zone: zone}, want: []string{flag, zone}},
+		"claim":   {claim: AppClaimCheck{Zone: zone, ZoneClaim: zoneClaim}, want: []string{flag, zone, "--zone-claim", zoneClaim}},
+		"necessary": {claim: AppClaimCheck{Zone: zone, ZoneClaim: zoneClaim, RequireZoneClaim: true},
+			want: []string{flag, zone, "--zone-claim", zoneClaim, "--zone-require-claim"}},
+	} {
+		tc.claim.Issuer, tc.claim.Image = limitsIssuer, "registry.example.com/koodam:zone"
+		tmpl := &corev1.PodTemplateSpec{}
+		if err := tc.claim.add(tmpl, av, []corev1.ContainerPort{{ContainerPort: 8080}}); err != nil {
+			t.Fatal(err)
+		}
+		args := tmpl.Spec.InitContainers[0].Args
+		var got []string
+		for _, a := range args {
+			if strings.HasPrefix(a, flag) || a == zone || a == zoneClaim {
+				got = append(got, a)
+			}
+		}
+		if !slices.Equal(got, tc.want) {
+			t.Errorf("%s: got %q, want %q", name, got, tc.want)
+		}
 	}
 }
 

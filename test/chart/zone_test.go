@@ -46,6 +46,43 @@ func TestZoneValues(t *testing.T) {
 	}
 }
 
+// The manager gets the zone claim of the claim check. The chart refuses a zone claim with no zone
+// and a necessary zone claim with no claim check.
+func TestZoneClaimValues(t *testing.T) {
+	const claimFlag, requireFlag = "--app-claim-zone-claim=", "--app-claim-require-zone"
+	const claim = "egressProxy: {enabled: true, clusterIP: 10.96.0.50, networkPolicy: {enabled: false}}\n" +
+		"workspace: {networkPolicy: {namespaces: [shop]}}\n" +
+		"apps:\n  enabled: true\n  claimCheck:\n    issuer: https://issuer.example.com\n    audience: shop\n" +
+		"    jwks: '{\"keys\":[{\"kty\":\"EC\"}]}'\n"
+	const zoneClaim, zone = "    zoneClaim: zone\n", "zone: {name: zone-a}\n"
+	plain, err := helmTemplate(t, claim+zone)
+	if err != nil || strings.Contains(plain, claimFlag) || strings.Contains(plain, requireFlag) {
+		t.Fatalf("the install with no zone claim has a zone claim flag: %v", err)
+	}
+	on, err := helmTemplate(t, claim+zoneClaim+"zone: {name: zone-a, requireClaim: true}\n")
+	if err != nil {
+		t.Fatalf("helm template failed: %v\n%s", err, on)
+	}
+	for _, s := range []string{`"` + claimFlag + `zone"`, "- " + requireFlag + "\n", `"--zone=zone-a"`} {
+		if !strings.Contains(on, s) {
+			t.Errorf("the install with a zone claim does not have %q", s)
+		}
+	}
+	if out, err := helmTemplate(t, claim+zoneClaim); err == nil ||
+		!strings.Contains(out, "apps.claimCheck.zoneClaim needs zone.name") {
+		t.Errorf("a zone claim with no zone is accepted: %v", err)
+	}
+	for name, values := range map[string]string{
+		"no Apps":       "zone: {name: zone-a, requireClaim: true}\n",
+		"no issuer":     "apps: {enabled: true, claimCheck: {zoneClaim: zone}}\nzone: {name: zone-a, requireClaim: true}\n",
+		"no zone claim": claim + "zone: {name: zone-a, requireClaim: true}\n",
+	} {
+		if out, err := helmTemplate(t, values); err == nil || !strings.Contains(out, "zone.requireClaim needs") {
+			t.Errorf("%s: a necessary zone claim is accepted: %v", name, err)
+		}
+	}
+}
+
 // The App CRDs and the admission policy of the AppVersion are for the full cluster. The second
 // install of a cluster does not render them, and it has no other object for the full cluster
 // with a name that the first install has.

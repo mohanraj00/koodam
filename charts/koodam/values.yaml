@@ -257,6 +257,10 @@ apps:
     # The claim with the tenant label. The app container gets it in the header Koodam-Tenant. If
     # it is empty, the check reads no tenant label.
     tenantClaim: ""
+    # The claim with the zone of the caller. With it, a request with a zone claim that is not
+    # zone.name gets the status 403 and the reason ZoneMismatch. It needs zone.name. If it is
+    # empty, the check reads no zone. docs/zones.md has the rules.
+    zoneClaim: ""
     # The JWKS document of the issuer, as text. It has public keys only: the manager refuses a
     # document with private or symmetric key material. A change of this value starts the manager
     # again, and then each AppVersion gets new pods.
@@ -273,6 +277,10 @@ zone:
   # It is necessary if the cluster has 2 installs, and 2 installs must not have the same
   # namespace.
   namespaces: []
+  # Refuse a request to an App with no zone claim in its token (ZoneMismatch). By default, the
+  # claim check accepts such a request. It needs apps.claimCheck.issuer and
+  # apps.claimCheck.zoneClaim.
+  requireClaim: false
 
 # The tenants of the Apps. A TenantQuota gives one tenant label its quota and its rate limit.
 # The controller reads the use of each tenant from the gateway. defaultQuota and refuseUnknown

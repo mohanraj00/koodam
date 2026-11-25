@@ -196,6 +196,8 @@ The JWKS has public keys only. The manager refuses a JWKS with private or symmet
 
 The kubelet sends the probes of the `app` container directly to that container, with no claim.
 
+With `apps.claimCheck.zoneClaim`, the check also refuses a caller of a different zone with the status 403 and the reason `ZoneMismatch`. [zones.md](zones.md) has the rules.
+
 ## Tenants
 
 A `TenantQuota` gives one tenant label of the signed claim a quota for each period and a rate limit. [tenants.md](tenants.md) has the API and the state of the work.

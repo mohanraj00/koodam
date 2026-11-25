@@ -24,7 +24,7 @@ A tenant of #193 has no zone of its own. A tenant label is known only in the ins
 | Part | Control | Typed reason | In `main` |
 |---|---|---|---|
 | Install | `zone.name`, `zone.namespaces`, `apps.sharedResources` | none | yes |
-| Ingress of an App | The claim check compares the zone claim of the caller with the zone of the install | `ZoneMismatch` | no |
+| Ingress of an App | The claim check compares the zone claim of the caller with the zone of the install | `ZoneMismatch` | yes |
 | Model route | The route list of the gateway has only the routes of the zone | `RouteOutOfZone` | no |
 | Egress | The egress proxy refuses a host with a different declared zone | `EgressOutOfZone` | no |
 | Placement | An admission policy examines the node placement and the storage class of an AppVersion | `ZonePlacement` | no |
@@ -33,7 +33,25 @@ Each refusal has one typed reason. The reason is in the response and in the span
 
 ### Ingress of an App
 
-`apps.claimCheck.zoneClaim` names the claim of the signed token that has the zone of the caller. If the claim is not the zone of the install, the claim check answers 403 with the reason `ZoneMismatch`, and the ingress span has this outcome. By default, a token with no zone claim is accepted. With `zone.requireClaim: true`, such a token gets the same refusal.
+`apps.claimCheck.zoneClaim` names the claim of the signed token that has the zone of the caller. It needs `zone.name` and the claim check of [apps.md](apps.md).
+
+```yaml
+zone:
+  name: zone-a
+  requireClaim: false
+apps:
+  claimCheck:
+    zoneClaim: zone
+```
+
+- If the zone claim of a valid token is not the zone of the install, the claim check answers 403. The reason `ZoneMismatch` is in the header `Koodam-Reason` and in the body. The app container does not get the request.
+- The comparison is exact. A zone claim that is not a string, for example a list or `null`, is a different zone.
+- By default, a token with no zone claim is accepted. With `zone.requireClaim: true`, such a token gets the same refusal.
+- The zone check comes before the tenant check. Thus a refused request uses no part of the rate limit of the tenant.
+- The ingress span has the outcome `ZoneMismatch`, the labels of the caller and the zone of the install. [app-ingress-spans.md](app-ingress-spans.md) has the contract.
+- With `zone.name`, each ingress span has the field `zone`, also with no zone claim.
+
+A change of these values gives each AppVersion a new pod template, so its pods start again one time.
 
 ### Model route
 

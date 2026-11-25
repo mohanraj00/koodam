@@ -140,7 +140,8 @@ func loadClaim(c controller.AppClaimCheck, jwksFile string) (controller.AppClaim
 	if c.Issuer == "" {
 		return controller.AppClaimCheck{}, nil
 	}
-	cfg := appclaim.Config{Issuer: c.Issuer, Audience: c.Audience, CallerClaim: c.CallerClaim, TenantClaim: c.TenantClaim}
+	cfg := appclaim.Config{Issuer: c.Issuer, Audience: c.Audience, CallerClaim: c.CallerClaim, TenantClaim: c.TenantClaim,
+		Zone: c.Zone, ZoneClaim: c.ZoneClaim, RequireZoneClaim: c.RequireZoneClaim}
 	if err := cfg.Valid(); err != nil {
 		return c, err
 	}
@@ -327,6 +328,10 @@ func main() {
 	flag.StringVar(&claim.CallerClaim, "app-claim-caller-claim", "sub", "The claim with the caller label.")
 	flag.StringVar(&claim.TenantClaim, "app-claim-tenant-claim", "",
 		"The claim with the tenant label. If it is empty, the check reads no tenant label.")
+	flag.StringVar(&claim.ZoneClaim, "app-claim-zone-claim", "",
+		"The claim with the zone of the caller. With it, the check refuses a caller of a zone that is not --zone.")
+	flag.BoolVar(&claim.RequireZoneClaim, "app-claim-require-zone", false,
+		"Refuse a token with no zone claim. It needs --app-claim-zone-claim.")
 	flag.StringVar(&claimJWKSFile, "app-claim-jwks-file", "",
 		"The file with the JWKS of the issuer. The manager reads it at its start.")
 	flag.StringVar(&egress.ClusterDomain, "cluster-domain", "cluster.local", "The DNS domain of the cluster.")
@@ -499,6 +504,7 @@ func main() {
 		os.Exit(1)
 	}
 	claim.Image = installerImage
+	claim.Zone = zone
 	if claim, err = loadClaim(claim, claimJWKSFile); err == nil {
 		claim, err = loadTenantDefaults(claim, tenantDefaultRate, tenantDefaultBurst, tenantRefuseUnknown)
 	}
