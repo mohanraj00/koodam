@@ -1,0 +1,22 @@
+{
+  "name": "card",
+  "description": "A card with a title, optional details and an optional collapse control.",
+  "slots": {"citation": {"required": false}},
+  "data": {
+    "title": {"type": "text", "required": true, "min_length": 1, "size": "title"},
+    "summary": {"type": "text", "max_length": 1000},
+    "date": {"type": "date"},
+    "date_label": {"type": "text", "size": "short"},
+    "facts": {"type": "list", "max_items": 6, "items": {"type": "component", "label": "Fact", "name": "fact"}},
+    "collapsible": {"type": "boolean", "label": "Collapse control"},
+    "collapsed": {"type": "boolean", "label": "Start collapsed"},
+    "status": {"type": "text", "size": "title"},
+    "collapsed_summary": {"type": "text", "size": "summary"}
+  },
+  "states": ["+expanded", "+collapsed"],
+  "tokens": [
+    "color.surface", "color.text", "color.text-muted", "color.border", "space.2", "space.3", "space.4", "radius.2",
+    "type.body", "type.caption", "type.weight-strong", "color.focus"
+  ],
+  "accessibility": {"role": "article", "name": {"field": "title"}, "keyboard": ["Tab", "Enter", "Space"]}
+}

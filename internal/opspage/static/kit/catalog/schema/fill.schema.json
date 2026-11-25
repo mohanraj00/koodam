@@ -1,0 +1,38 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/mohanraj00/mugham/catalog/schema/fill.schema.json",
+  "title": "Mugham component fill, format 2",
+  "type": "object",
+  "required": ["component", "version", "data"],
+  "additionalProperties": false,
+  "properties": {
+    "component": {"type": "string", "maxLength": 40, "pattern": "^[a-z][a-z0-9]*(-[a-z0-9]+)*$"},
+    "version": {"type": "string", "pattern": "^(0|[1-9][0-9]{0,5})\\.(0|[1-9][0-9]{0,5})\\.(0|[1-9][0-9]{0,5})$"},
+    "data": {"type": "object", "maxProperties": 40},
+    "slots": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "authorship": {
+          "type": "object",
+          "required": ["type", "id"],
+          "additionalProperties": false,
+          "properties": {
+            "type": {"enum": ["human", "agent", "system"]},
+            "id": {"type": "string", "minLength": 1, "maxLength": 128},
+            "name": {"type": "string", "minLength": 1, "maxLength": 80}
+          }
+        },
+        "citation": {
+          "type": "object",
+          "required": ["source", "locator"],
+          "additionalProperties": false,
+          "properties": {
+            "source": {"type": "string", "minLength": 1, "maxLength": 120},
+            "locator": {"type": "string", "maxLength": 2000, "pattern": "^https://[^\\x00-\\x20\\x7f-\\x9f\u00a0\u1680\u2000-\u200f\u2028-\u202f\u205f-\u206f\u3000\ufeff/?#@]+([/?#][^\\x00-\\x20\\x7f-\\x9f\u00a0\u1680\u2000-\u200f\u2028-\u202f\u205f-\u206f\u3000\ufeff]*)?$"}
+          }
+        }
+      }
+    }
+  }
+}

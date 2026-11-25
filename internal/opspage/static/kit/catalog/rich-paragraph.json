@@ -1,0 +1,13 @@
+{
+  "name": "rich-paragraph",
+  "description": "A paragraph node of rich text: a list of inline nodes. It is also the content of a list item and of a quote.",
+  "data": {
+    "content": {
+      "type": "list",
+      "required": true,
+      "max_items": 50,
+      "items": {"type": "component", "label": "Inline node", "names": ["rich-span", "rich-link"]}
+    }
+  },
+  "tokens": ["color.text", "color.text-muted", "color.border", "space.1", "space.2", "type.body"]
+}

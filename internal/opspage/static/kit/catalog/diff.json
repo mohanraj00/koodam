@@ -1,0 +1,21 @@
+{
+  "name": "diff",
+  "description": "The difference between two versions of a text or a list of fields, in parts that a person can open and close.",
+  "data": {
+    "title": {"type": "text", "required": true, "min_length": 1, "size": "title"},
+    "before_label": {"type": "text", "min_length": 1, "size": "short"},
+    "after_label": {"type": "text", "min_length": 1, "size": "short"},
+    "parts": {
+      "type": "list",
+      "required": true,
+      "max_items": 20,
+      "items": {"type": "component", "label": "Part", "name": "diff-part"}
+    }
+  },
+  "states": ["+empty", "+refused"],
+  "tokens": [
+    "color.text", "color.text-muted", "color.border", "color.accent", "color.danger", "space.1", "space.2", "space.3",
+    "radius.2", "type.body", "type.caption", "type.weight-strong"
+  ],
+  "accessibility": {"role": "group", "name": {"field": "title"}, "keyboard": ["Tab", "Shift+Tab", "Enter", "Space"]}
+}
