@@ -7,6 +7,7 @@ This file records the changes for each Koodam version. The newest version is fir
 ### Apps
 
 - Add the namespaced `TenantQuota` type with its CRD rules. It gives one tenant label of the signed claim a request limit and a spend limit for each period, and a rate limit. The chart installs the CRD with `apps.enabled`. No controller reads the type in this change. [docs/tenants.md](docs/tenants.md) has the API ([#378](https://github.com/mohanraj00/koodam/pull/378)).
+- Refuse a tenant in the claim check container with a typed reason: `UnknownTenant` (403), `TenantQuotaExceeded` (429) and `TenantRateLimited` (429, with `Retry-After`). The container reads the limits of the tenants from a file and keeps one token bucket for each tenant. The answer has the reason in the header `Koodam-Reason`, and the ingress span has it as its `outcome`. No controller writes the limits file in this change ([#379](https://github.com/mohanraj00/koodam/pull/379)).
 
 ### Nookku preset
 
