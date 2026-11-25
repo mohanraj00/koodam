@@ -67,12 +67,20 @@ func claimValues() string {
 }
 
 // claimToken signs a token of the test issuer for one hour.
-func claimToken(caller string) string {
+func claimToken(caller string) string { return claimTokenFor(caller, "team-e2e", "") }
+
+// claimTokenFor signs a token of the test issuer for one hour, with the tenant label. With a
+// zone, the token has the claim "zone".
+func claimTokenFor(caller, tenant, zone string) string {
 	claimValues()
 	enc := base64.RawURLEncoding.EncodeToString
+	zoneClaim := ""
+	if zone != "" {
+		zoneClaim = fmt.Sprintf(`"zone":%q,`, zone)
+	}
 	input := enc([]byte(`{"alg":"ES256","kid":"e2e"}`)) + "." + enc(fmt.Appendf(nil,
-		`{"iss":%q,"aud":%q,"sub":%q,"tenant":"team-e2e","exp":%d}`,
-		claimIssuer, claimAudience, caller, time.Now().Add(time.Hour).Unix()))
+		`{"iss":%q,"aud":%q,"sub":%q,"tenant":%q,%s"exp":%d}`,
+		claimIssuer, claimAudience, caller, tenant, zoneClaim, time.Now().Add(time.Hour).Unix()))
 	sum := sha256.Sum256([]byte(input))
 	r, s, err := ecdsa.Sign(rand.Reader, claimKey, sum[:])
 	Expect(err).NotTo(HaveOccurred())
