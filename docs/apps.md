@@ -4,7 +4,7 @@ An `App` is an application that serves clients. Each `AppVersion` of the App is 
 
 ## Install
 
-Set `apps.enabled=true` in the chart. The chart then installs the `App` and `AppVersion` CRDs, the App role and the admission policy of the AppVersion, and the manager runs the App controllers. Helm keeps the App CRDs on an uninstall.
+Set `apps.enabled=true` in the chart. The chart then installs the `App`, `AppVersion` and `TenantQuota` CRDs, the App role and the admission policy of the AppVersion, and the manager runs the App controllers. Helm keeps the App CRDs on an uninstall.
 
 An endpoint of an App needs a Gateway API implementation in the cluster, with the `HTTPRoute` of the standard channel. The chart does not install one. Koodam has no router: the Gateway API implementation moves the traffic. The kind test of this repository uses Envoy Gateway.
 
@@ -186,6 +186,7 @@ Then each AppVersion pod gets the container `koodam-claim` in front of the `app`
 - The check accepts the algorithms RS256 and ES256 only. It verifies the signature with the keys of `jwks`, and it checks `iss`, `aud`, `exp` and `nbf`.
 - A request with no valid claim gets the status 401. It does not get to the `app` container.
 - The `app` container does not get the token. It gets the caller label in the header `Koodam-Caller`, and the tenant label in `Koodam-Tenant` if `tenantClaim` is set. A caller cannot set these headers.
+- With a tenant claim, the `app` container also gets a tenant token in the header `Koodam-Tenant-Token`. The app must send this header with each model call. See [tenants.md](tenants.md#the-tenant-token).
 - The check container writes one JSON line for each request to its log: the time, the App, the version, the method, the status, the outcome and the 2 labels. The line has no token, no path and no header.
 
 `jwks` has the public keys of the issuer. A change of `jwks` starts the manager again, and then each AppVersion gets new pods. A JWKS URL is not in this step.
@@ -195,6 +196,10 @@ The check protects a version only if the version has its NetworkPolicy. The poli
 The JWKS has public keys only. The manager refuses a JWKS with private or symmetric key material, because it copies the document into an annotation of each App pod.
 
 The kubelet sends the probes of the `app` container directly to that container, with no claim.
+
+## Tenants
+
+A `TenantQuota` gives one tenant label of the signed claim a quota for each period and a rate limit. [tenants.md](tenants.md) has the API and the state of the work.
 
 ## Retire a version
 
