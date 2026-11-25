@@ -1,7 +1,7 @@
 {{- if .Values.apps.enabled }}
 {{- $fullname := include "koodam.fullname" . -}}
 {{- /* The App CRDs come from config/apps/crd/bases (controller-gen). Helm keeps them on an uninstall. */ -}}
-{{- range $file := list "files/app-crd-apps.yaml" "files/app-crd-appversions.yaml" }}
+{{- range $file := list "files/app-crd-apps.yaml" "files/app-crd-appversions.yaml" "files/app-crd-tenantquotas.yaml" }}
 {{- $crd := $.Files.Get $file | fromYaml }}
 {{- $_ := set $crd.metadata "annotations" (merge (dict "helm.sh/resource-policy" "keep") ($crd.metadata.annotations | default dict)) }}
 {{- $_ := set $crd.metadata "labels" (include "koodam.labels" $ | fromYaml) }}
