@@ -177,7 +177,7 @@ func (c *Check) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	span.Caller, span.Tenant = id.Caller, id.Tenant
 	if reason, wait := c.tenantRefusal(id.Tenant, start); reason != "" {
 		span.Outcome, span.Status = reason, http.StatusTooManyRequests
-		if reason == ReasonUnknownTenant {
+		if reason == ReasonUnknownTenant || reason == ReasonReservedTenant {
 			span.Status = http.StatusForbidden
 		}
 		if wait > 0 {
@@ -202,8 +202,12 @@ func (c *Check) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 }
 
 // tenantRefusal gives back the typed reason if the limits refuse the request of the tenant. A
-// request with no tenant label has no tenant limit.
+// request with no tenant label has no tenant limit. It always refuses the reserved label, also
+// with no limits: a request of an App must not share the customer of the calls with no tenant.
 func (c *Check) tenantRefusal(tenant string, now time.Time) (string, time.Duration) {
+	if tenant == tenanttoken.NoTenant {
+		return ReasonReservedTenant, 0
+	}
 	if c.Tenants == nil || tenant == "" {
 		return "", 0
 	}

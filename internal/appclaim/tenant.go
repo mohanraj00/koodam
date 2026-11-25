@@ -39,6 +39,9 @@ const (
 	// ReasonUnknownTenant tells that the limits do not name the tenant label, and the install
 	// refuses such a tenant.
 	ReasonUnknownTenant = "UnknownTenant"
+	// ReasonReservedTenant tells that the claim has the reserved tenant label of the calls with
+	// no tenant. No tenant can have this label.
+	ReasonReservedTenant = "ReservedTenant"
 )
 
 const (

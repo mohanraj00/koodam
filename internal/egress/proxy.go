@@ -87,6 +87,11 @@ const (
 // ReasonHeader gives the typed reason of a tenant token refusal to the app.
 const ReasonHeader = "Koodam-Reason"
 
+// NoTenantCustomer is the customer of a model call of a pod that is not an App pod, when the
+// proxy examines tenant tokens. It is a reserved label: no tenant can have it. Thus the code in
+// an Agent pod or a Workspace pod cannot make the gateway count its call for a tenant.
+const NoTenantCustomer = tenanttoken.NoTenant
+
 // customerHeaders are the headers from which the gateway reads the customer of a model call.
 // The gateway reads them before each field of the body. The proxy sets the first one.
 var customerHeaders = []string{"X-Litellm-Customer-Id", "X-Litellm-End-User-Id"}
@@ -183,9 +188,10 @@ type Proxy struct {
 	// the proxy refuses the call.
 	Identify func(r *http.Request, sp *Span) error
 	// TenantKey gives the public key of the tenant token of an AppVersion. If it is not nil, the
-	// proxy accepts a model call of an App pod only with a valid tenant token. The key must come
-	// from a source that the pod and the users of its namespace cannot write. If it is nil, the
-	// proxy examines no tenant token.
+	// proxy accepts a model call of an App pod only with a valid tenant token, and each model call
+	// of a different pod gets the customer NoTenantCustomer. The key must come from a source that
+	// the pod and the users of its namespace cannot write. If it is nil, the proxy examines no
+	// tenant token.
 	TenantKey func(namespace, appVersion string) (ed25519.PublicKey, bool)
 
 	once      sync.Once
@@ -371,11 +377,15 @@ func (p *Proxy) llm(w http.ResponseWriter, r *http.Request, sp *Span) {
 // caller sets the customer header of the gateway call to the label, and it removes the customer
 // headers that the pod sent. The gateway reads this header before each field of the body. Thus
 // the gateway counts the call for the tenant of the token, and not for a label that the code in
-// the pod selects. A pod that is not an App pod has no tenant: the label is empty, and its call
-// passes with no change.
+// the pod selects. A pod that is not an App pod has no tenant, and its label is the reserved
+// label NoTenantCustomer. If the proxy examines no tenant token, the label is empty, and the
+// call passes with no change.
 func (p *Proxy) tenantOf(w http.ResponseWriter, r *http.Request, sp *Span) (tenant string, ok bool) {
-	if p.TenantKey == nil || sp.App == "" {
+	if p.TenantKey == nil {
 		return "", true
+	}
+	if sp.App == "" {
+		return NoTenantCustomer, true
 	}
 	token := r.Header.Get(tenanttoken.Header)
 	reason := ""
@@ -393,6 +403,9 @@ func (p *Proxy) tenantOf(w http.ResponseWriter, r *http.Request, sp *Span) (tena
 			reason = ReasonTenantTokenInvalid
 		case !headerText(tenant):
 			reason = ReasonTenantLabelNotASCII
+		case tenant == NoTenantCustomer:
+			// No claim can give the reserved label to a tenant.
+			reason = ReasonTenantTokenInvalid
 		}
 	}
 	if reason != "" {

@@ -33,6 +33,10 @@ const (
 	// Header is the header with the token. The claim check container gives it to the app, and
 	// the app sends it with each model call.
 	Header = "Koodam-Tenant-Token"
+	// NoTenant is the reserved tenant label. The egress proxy gives it as the customer to each
+	// model call of a pod that is not an App pod. No tenant can have it: the claim check refuses
+	// a claim with this label, and the gateway client makes no customer limits for it.
+	NoTenant = "koodam-no-tenant"
 	// SeedSize is the length of the private seed of a key.
 	SeedSize = ed25519.SeedSize
 

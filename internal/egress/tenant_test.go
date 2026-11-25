@@ -149,6 +149,7 @@ func TestTenantTokenRefusals(t *testing.T) {
 		{"a token after its end time", tenanttoken.Sign(key, testTenant, time.Now().Add(-time.Second)), ReasonTenantTokenExpired},
 		{"a label that is not ASCII", tenanttoken.Sign(key, "tenant-ü", end), ReasonTenantLabelNotASCII},
 		{"a label with a space at its end", tenanttoken.Sign(key, testTenant+" ", end), ReasonTenantLabelNotASCII},
+		{"the reserved label", tenanttoken.Sign(key, NoTenantCustomer, end), ReasonTenantTokenInvalid},
 	}
 	refused := func(t *testing.T, keys map[string]ed25519.PrivateKey, token, reason string) {
 		t.Helper()
@@ -176,26 +177,40 @@ func TestTenantTokenRefusals(t *testing.T) {
 	})
 }
 
-func TestCallsWithNoTenantPass(t *testing.T) {
-	key := tokenKey(t, 1)
-	for name, c := range map[string]struct {
-		app  bool
-		keys map[string]ed25519.PrivateKey
-	}{
-		"a pod that is not an App pod":    {false, map[string]ed25519.PrivateKey{tenantNS + "/" + appV1: key}},
-		"a proxy with no tenant key func": {true, nil},
+// The code in a pod that is not an App pod cannot make the gateway count its call for a tenant:
+// the call gets the reserved customer.
+func TestPodWithNoTenantGetsTheReservedCustomer(t *testing.T) {
+	pu, sink, calls := tenantProxy(t, false, map[string]ed25519.PrivateKey{})
+	for name, header := range map[string]map[string]string{
+		"no header of the pod": {},
+		"the customer headers of a tenant": {customerHeaders[0]: victim, customerHeaders[1]: victim,
+			tenanttoken.Header: "x"},
+		"a Connection header that names the customer header": {customerHeaders[1]: victim, "Connection": customerHeaders[0]},
 	} {
-		t.Run(name, func(t *testing.T) {
-			pu, sink, calls := tenantProxy(t, c.app, c.keys)
-			resp := modelCall(t, pu, map[string]string{tenanttoken.Header: "x", customerHeaders[0]: run1})
-			if sp := sink.next(t); resp.StatusCode != http.StatusOK || sp.Result != ResultOK || len(*calls) != 1 {
-				t.Fatalf("status %d, span %+v", resp.StatusCode, sp)
-			}
-			// The gateway never gets the token header. The other headers of the pod do not change.
-			if got := (*calls)[0]; got.Get(tenanttoken.Header) != "" || got.Get(customerHeaders[0]) != run1 {
-				t.Errorf("The gateway call: %v", got)
-			}
-		})
+		resp := modelCall(t, pu, header)
+		got := (*calls)[len(*calls)-1]
+		if sp := sink.next(t); resp.StatusCode != http.StatusOK || sp.Result != ResultOK {
+			t.Fatalf("%s: status %d, span %+v", name, resp.StatusCode, sp)
+		}
+		if v := got.Values(customerHeaders[0]); len(v) != 1 || v[0] != NoTenantCustomer ||
+			got.Get(customerHeaders[1]) != "" || got.Get(tenanttoken.Header) != "" {
+			t.Errorf("%s: the gateway call has the headers %v", name, got)
+		}
+	}
+}
+
+// A proxy that examines no tenant token changes no customer header.
+func TestProxyWithNoTenantKeysChangesNoCall(t *testing.T) {
+	for _, app := range []bool{true, false} {
+		pu, sink, calls := tenantProxy(t, app, nil)
+		resp := modelCall(t, pu, map[string]string{tenanttoken.Header: "x", customerHeaders[0]: run1})
+		if sp := sink.next(t); resp.StatusCode != http.StatusOK || sp.Result != ResultOK || len(*calls) != 1 {
+			t.Fatalf("status %d, span %+v", resp.StatusCode, sp)
+		}
+		// The gateway never gets the token header. The other headers of the pod do not change.
+		if got := (*calls)[0]; got.Get(tenanttoken.Header) != "" || got.Get(customerHeaders[0]) != run1 {
+			t.Errorf("The gateway call: %v", got)
+		}
 	}
 }
 
