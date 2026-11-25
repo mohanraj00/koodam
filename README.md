@@ -68,6 +68,7 @@ A Workspace is a pod with a home on a PVC. I connect to it over SSH and run the 
 - [Evidence gate](docs/evidence-gate.md): the gate of an AppVersion on a sealed Nookku result, and the limits of a signed approval record.
 - [Apps](docs/apps.md): the `App` and `AppVersion` resources, the traffic split and the gate.
 - [Tenants](docs/tenants.md): the `TenantQuota` resource, with a quota and a rate limit for each tenant of an App.
+- [Zones](docs/zones.md): one install for each zone, and 2 installs in one cluster.
 - [App ingress spans](docs/app-ingress-spans.md): the contract of the spans at the App ingress.
 - [Release checklist](docs/release-checklist.md): the steps before a tag.
 - [Traced egress](docs/traced-egress.md): the egress proxy, the spans and `koodam trace`.

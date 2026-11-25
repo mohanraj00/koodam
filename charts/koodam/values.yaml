@@ -235,6 +235,9 @@ egressProxy:
 # the proxy gives an App pod an identity only in a named namespace.
 apps:
   enabled: false
+  # The App CRDs and the admission policy of the AppVersion are for the full cluster. Each
+  # cluster has them one time. Set false in the second install of a cluster.
+  sharedResources: true
   # The namespaces whose pods can send traffic to the App pods, for example the namespace of the
   # Gateway data plane. It has an effect only with egressProxy.enabled: then each AppVersion has
   # a NetworkPolicy, and that policy permits no ingress if this list is empty.
@@ -258,6 +261,18 @@ apps:
     # document with private or symmetric key material. A change of this value starts the manager
     # again, and then each AppVersion gets new pods.
     jwks: ""
+
+# The zone of this install. One install is one zone: a workload, its model routes and its egress
+# stay in the zone of the install. docs/zones.md has the design, and the steps for 2 installs in
+# one cluster.
+zone:
+  # The name of the zone, as a DNS label, for example "zone-a". Empty: the install has no zone.
+  name: ""
+  # The namespaces of this install. With items, the manager reads the namespaced objects of
+  # these namespaces and of the release namespace only. Empty: each namespace of the cluster.
+  # It is necessary if the cluster has 2 installs, and 2 installs must not have the same
+  # namespace.
+  namespaces: []
 
 # The tenants of the Apps. A TenantQuota gives one tenant label its quota and its rate limit.
 # The controller reads the use of each tenant from the gateway. defaultQuota and refuseUnknown

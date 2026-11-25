@@ -62,6 +62,36 @@ func TestSplitNamespaces(t *testing.T) {
 	}
 }
 
+func TestInstallScope(t *testing.T) {
+	got, err := installScope("zone-a", "team-1,team-2")
+	if err != nil || !slices.Equal(got, []string{"team-1", "team-2"}) {
+		t.Errorf("got %q and %v, want [team-1 team-2]", got, err)
+	}
+	if got, err := installScope("", ""); err != nil || got != nil {
+		t.Errorf("an install with no zone: got %q and %v", got, err)
+	}
+	for _, zone := range []string{"Zone_A", "zone a", "-zone", strings.Repeat("z", 64)} {
+		if _, err := installScope(zone, ""); err == nil {
+			t.Errorf("the zone %q is accepted", zone)
+		}
+	}
+	if _, err := installScope("zone-a", "Team_1"); err == nil {
+		t.Error("a namespace that is not valid is accepted")
+	}
+}
+
+// With no namespaces, the cache has each namespace. With namespaces, it has only them.
+func TestWorkspaceCacheNamespaces(t *testing.T) {
+	if all := workspaceCache(nil); all.DefaultNamespaces != nil || len(all.ByObject) != 2 {
+		t.Errorf("the cache of a full cluster: %v", all.DefaultNamespaces)
+	}
+	scoped := workspaceCache([]string{"team-1", "team-2"})
+	_, ok := scoped.DefaultNamespaces["team-2"]
+	if !ok || len(scoped.DefaultNamespaces) != 2 || len(scoped.ByObject) != 2 {
+		t.Errorf("the cache of 2 namespaces: %v", scoped.DefaultNamespaces)
+	}
+}
+
 func TestWorkspaceImageFor(t *testing.T) {
 	const repo, latest = "ghcr.io/mohanraj00/koodam-workspace:", "latest"
 	for v, tag := range map[string]string{
