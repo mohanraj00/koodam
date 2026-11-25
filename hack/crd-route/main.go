@@ -16,7 +16,7 @@ limitations under the License.
 
 // Command crd-route moves the CRDs that controller-gen wrote to a staging directory to their
 // destinations in the repository. The closed kind index in internal/manifestlayout gives each
-// destination. Thus the App and AppVersion CRDs go to config/apps/crd/bases, and the default
+// destination. Thus the App, AppVersion and TenantQuota CRDs go to config/apps/crd/bases, and the default
 // install in config/crd/bases has no App CRD.
 //
 // Usage, from the repository root: go run ./hack/crd-route STAGING_DIR
