@@ -50,6 +50,7 @@ const (
 var errCursor = errors.New("the page cursor is not valid")
 
 // Config sets the data scope, the gateway connection and the caller check.
+// Configure one caller check: the issuer keys, the local tokens or the viewer reviews.
 type Config struct {
 	Kube       client.Reader
 	Namespaces []string
@@ -60,11 +61,13 @@ type Config struct {
 	Claims       appclaim.Config
 	Keys         *appclaim.KeySet
 	StaticTokens []string
+	Viewers      *Viewers
 }
 
 type api struct {
 	kube       client.Reader
 	namespaces []string
+	viewers    *Viewers
 	gateway    *liteLLM
 	timeout    time.Duration
 	claims     appclaim.Config
@@ -81,16 +84,25 @@ func New(c Config) (http.Handler, error) {
 	if err != nil {
 		return nil, err
 	}
-	if (c.Keys != nil) == (len(c.StaticTokens) != 0) {
-		return nil, errors.New("configure either the issuer keys or the local tokens")
+	checks := 0
+	for _, set := range []bool{c.Keys != nil, len(c.StaticTokens) != 0, c.Viewers != nil} {
+		if set {
+			checks++
+		}
+	}
+	if checks != 1 {
+		return nil, errors.New("configure one of the issuer keys, the local tokens or the viewer reviews")
 	}
 	if c.Keys != nil {
 		if err := c.Claims.Valid(); err != nil {
 			return nil, err
 		}
 	}
+	if c.Viewers != nil && !c.Viewers.valid() {
+		return nil, errors.New("the viewer reviews need a TokenReview client, a SubjectAccessReview client and no empty audience")
+	}
 	a := &api{
-		kube: c.Kube, namespaces: slices.Clone(c.Namespaces),
+		kube: c.Kube, namespaces: slices.Clone(c.Namespaces), viewers: c.Viewers,
 		gateway: l, timeout: c.Timeout, claims: c.Claims, keys: c.Keys,
 	}
 	a.tokens = make([][sha256.Size]byte, 0, len(c.StaticTokens))
@@ -126,12 +138,31 @@ func bearer(r *http.Request) (string, bool) {
 }
 
 // scope gives the namespaces that the caller can read, or the HTTP status of the refusal.
-func (a *api) scope(r *http.Request) ([]string, int, problem) {
+func (a *api) scope(ctx context.Context, r *http.Request) ([]string, int, problem) {
 	token, ok := bearer(r)
-	if !ok || !a.authorized(token) {
+	if !ok || (a.viewers == nil && !a.authorized(token)) {
 		return nil, http.StatusUnauthorized, problem{"A valid bearer token is necessary."}
 	}
-	return a.namespaces, http.StatusOK, problem{}
+	if a.viewers == nil {
+		return a.namespaces, http.StatusOK, problem{}
+	}
+	user, err := a.viewers.user(ctx, token)
+	if errors.Is(err, errNotAuthenticated) {
+		return nil, http.StatusUnauthorized, problem{"A valid bearer token is necessary."}
+	}
+	var namespaces []string
+	if err == nil {
+		namespaces, err = a.viewers.allowed(ctx, user, a.namespaces)
+	}
+	switch {
+	case ctx.Err() != nil:
+		return nil, http.StatusGatewayTimeout, problem{"The request time limit expired."}
+	case err != nil:
+		return nil, http.StatusBadGateway, problem{"The Kubernetes access review is not available."}
+	case len(namespaces) == 0:
+		return nil, http.StatusForbidden, problem{"The caller cannot list Agents in a namespace of this server."}
+	}
+	return namespaces, http.StatusOK, problem{}
 }
 
 func (a *api) authorized(token string) bool {
@@ -157,7 +188,7 @@ func (a *api) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		reply(w, r, http.StatusMethodNotAllowed, problem{"Use GET or HEAD."})
 		return
 	}
-	namespaces, status, refusal := a.scope(r)
+	namespaces, status, refusal := a.scope(ctx, r)
 	if status != http.StatusOK {
 		if status == http.StatusUnauthorized {
 			w.Header().Set("WWW-Authenticate", "Bearer")

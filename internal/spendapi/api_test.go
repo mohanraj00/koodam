@@ -158,7 +158,7 @@ func TestKubernetesErrors(t *testing.T) {
 
 func TestNewRefusesBadConfig(t *testing.T) {
 	good := Config{
-		Kube: agentReader{}, Namespaces: []string{testNamespace}, GatewayURL: "http://litellm.example",
+		Kube: agentReader{}, Namespaces: []string{testNamespace}, GatewayURL: testGateway,
 		MasterKey: "master", Timeout: time.Second, StaticTokens: []string{"token"},
 	}
 	if _, err := New(good); err != nil {
@@ -170,6 +170,7 @@ func TestNewRefusesBadConfig(t *testing.T) {
 		func(c *Config) { c.Namespaces = nil },
 		func(c *Config) { c.Namespaces = []string{testNamespace, testNamespace} },
 		func(c *Config) { c.Namespaces = make([]string, maxNamespaces+1) },
+		func(c *Config) { c.Viewers = &Viewers{} },
 		func(c *Config) { c.Timeout = 0 },
 		func(c *Config) { c.MasterKey = "" },
 		func(c *Config) { c.StaticTokens = nil },
@@ -188,7 +189,7 @@ func TestNewRefusesBadConfig(t *testing.T) {
 
 func TestSignedClaim(t *testing.T) {
 	f := newFixture(t, 0)
-	f.claims = appclaim.Config{Issuer: "https://issuer.example", Audience: "spend", CallerClaim: "sub"}
+	f.claims = appclaim.Config{Issuer: "https://issuer.example", Audience: testAudience, CallerClaim: "sub"}
 	f.tokens = nil
 	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if err != nil {
@@ -241,7 +242,7 @@ func TestGatewayFailures(t *testing.T) {
 func BenchmarkPage100(b *testing.B) {
 	f := newFixture(b, 101)
 	f.serveGateway(b)
-	for name, path := range map[string]string{"runs": runsPath, "spend": testPeriod + "team"} {
+	for name, path := range map[string]string{"runs": runsPath, testAudience: testPeriod + "team"} {
 		b.Run(name, func(b *testing.B) {
 			w := f.call(b, http.MethodGet, path, f.token, http.StatusOK)
 			p := decode[page[json.RawMessage]](b, w)
