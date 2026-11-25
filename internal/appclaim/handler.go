@@ -221,9 +221,10 @@ func Upstream(port int) http.Handler {
 			pr.Out.Host = pr.In.Host
 			pr.Out.Header["X-Forwarded-For"] = pr.In.Header["X-Forwarded-For"]
 			pr.SetXForwarded()
-			// A Connection header of the caller can name the labels of the claim, and the proxy then
-			// removes them. Set them again from the request that Check made.
-			for _, h := range []string{CallerHeader, TenantHeader} {
+			// A Connection header of the caller can name the labels of the claim or the tenant
+			// token, and the proxy then removes them. Set them again from the request that Check
+			// made.
+			for _, h := range []string{CallerHeader, TenantHeader, tenanttoken.Header} {
 				if v := pr.In.Header.Get(h); v != "" {
 					pr.Out.Header.Set(h, v)
 				}

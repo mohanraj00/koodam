@@ -40,7 +40,9 @@ func tokenKey(t *testing.T, fill byte) ed25519.PrivateKey {
 
 const (
 	testTenant = "acme"
-	tenantNS   = "team-a"
+	// victim is the label of a tenant that sent no request to the pod.
+	victim   = "victim"
+	tenantNS = "team-a"
 )
 
 // tenantProxy runs a proxy with a gateway that records the headers of each call. The source pod
@@ -79,7 +81,7 @@ func tenantProxy(t *testing.T, app bool, keys map[string]ed25519.PrivateKey) (pu
 func modelCall(t *testing.T, pu *url.URL, header map[string]string) *http.Response {
 	t.Helper()
 	// The body has the label of a different tenant. The gateway reads the header first.
-	req, _ := http.NewRequest(http.MethodPost, pu.String()+llmMessages, strings.NewReader(`{"user":"victim"}`))
+	req, _ := http.NewRequest(http.MethodPost, pu.String()+llmMessages, strings.NewReader(`{"user":"`+victim+`"}`))
 	for k, v := range header {
 		req.Header.Set(k, v)
 	}
@@ -97,7 +99,7 @@ func TestTenantTokenBindsTheModelCall(t *testing.T) {
 	token := tenanttoken.Sign(key, testTenant, time.Now().Add(time.Minute))
 	// The pod sends the token of one tenant and the customer headers of a different tenant.
 	resp := modelCall(t, pu, map[string]string{tenanttoken.Header: token,
-		"x-litellm-customer-id": "victim", "X-LiteLLM-End-User-Id": "victim"})
+		"x-litellm-customer-id": victim, "X-LiteLLM-End-User-Id": victim})
 	sp := sink.next(t)
 	if resp.StatusCode != http.StatusOK || sp.Result != ResultOK || len(*calls) != 1 {
 		t.Fatalf("status %d, span %+v, %d gateway calls", resp.StatusCode, sp, len(*calls))
@@ -108,6 +110,15 @@ func TestTenantTokenBindsTheModelCall(t *testing.T) {
 	}
 	if got.Get(customerHeaders[1]) != "" || got.Get(tenanttoken.Header) != "" {
 		t.Errorf("The gateway call has a header of the pod: %v", got)
+	}
+	// A Connection header that names the customer header and the token header cannot remove the
+	// header of the proxy, and it cannot remove the token before the proxy reads it.
+	resp = modelCall(t, pu, map[string]string{tenanttoken.Header: token, customerHeaders[1]: victim,
+		"Connection": customerHeaders[0] + ", " + tenanttoken.Header})
+	if got = (*calls)[len(*calls)-1]; resp.StatusCode != http.StatusOK || sink.next(t).Result != ResultOK ||
+		len(*calls) != 2 || got.Get(customerHeaders[0]) != testTenant || got.Get(customerHeaders[1]) != "" ||
+		got.Get(tenanttoken.Header) != "" {
+		t.Errorf("With a Connection header: status %d, gateway call %v", resp.StatusCode, got)
 	}
 	var out bytes.Buffer
 	NewJSONSink(&out).Write(sp)

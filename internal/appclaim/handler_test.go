@@ -105,9 +105,10 @@ func TestCheckHandler(t *testing.T) {
 }
 
 func TestUpstreamAndStatus(t *testing.T) {
-	var host, forwarded, caller string
+	var host, forwarded, caller, token string
 	app := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		host, forwarded, caller = r.Host, r.Header.Get("X-Forwarded-For"), r.Header.Get(CallerHeader)
+		token = r.Header.Get(tenanttoken.Header)
 		w.WriteHeader(http.StatusTeapot)
 		_, _ = w.Write([]byte("tea"))
 	}))
@@ -116,16 +117,17 @@ func TestUpstreamAndStatus(t *testing.T) {
 	n, _ := strconv.Atoi(port)
 	r := httptest.NewRequest(http.MethodGet, "http://shop.example.com/", nil)
 	r.Header.Set("X-Forwarded-For", "203.0.113.7")
-	// A Connection header that names the label does not remove the label.
-	r.Header.Set("Connection", CallerHeader)
+	// A Connection header that names the label or the tenant token does not remove them.
+	r.Header.Set("Connection", CallerHeader+", "+tenanttoken.Header)
 	r.Header.Set(CallerHeader, "alice")
+	r.Header.Set(tenanttoken.Header, "signed")
 	rec := httptest.NewRecorder()
 	w := &statusWriter{ResponseWriter: rec, status: http.StatusOK}
 	Upstream(n).ServeHTTP(w, r)
 	if w.status != http.StatusTeapot || rec.Body.String() != "tea" || host != "shop.example.com" ||
-		!strings.HasPrefix(forwarded, "203.0.113.7, ") || w.Unwrap() != rec || caller != "alice" {
-		t.Errorf("status %d, body %q, host %q, forwarded %q, caller %q", w.status, rec.Body.String(), host,
-			forwarded, caller)
+		!strings.HasPrefix(forwarded, "203.0.113.7, ") || w.Unwrap() != rec || caller != "alice" || token != "signed" {
+		t.Errorf("status %d, body %q, host %q, forwarded %q, caller %q, token %q", w.status, rec.Body.String(), host,
+			forwarded, caller, token)
 	}
 
 	// With no app, the answer has a fixed text and no detail of the error.

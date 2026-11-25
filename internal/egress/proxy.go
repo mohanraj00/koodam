@@ -342,7 +342,8 @@ func (p *Proxy) llm(w http.ResponseWriter, r *http.Request, sp *Span) {
 	if sp.Port == "" {
 		sp.Port = map[string]string{schemeHTTP: "80", "https": "443"}[p.Gateway.Scheme]
 	}
-	if !p.bindTenant(w, r, sp) {
+	tenant, ok := p.tenantOf(w, r, sp)
+	if !ok {
 		return
 	}
 	// The gateway key header passes through. The span has no header.
@@ -351,24 +352,34 @@ func (p *Proxy) llm(w http.ResponseWriter, r *http.Request, sp *Span) {
 		pr.Out.URL.Path = strings.TrimPrefix(pr.In.URL.Path, root)
 		pr.Out.URL.RawPath = strings.TrimPrefix(pr.In.URL.RawPath, root)
 		pr.SetURL(p.Gateway)
+		// The gateway never gets the token.
+		pr.Out.Header.Del(tenanttoken.Header)
+		// A Connection header of the pod can name the customer header, and ReverseProxy removes
+		// such a header before this function. Thus the header of the proxy is set here, after
+		// that removal, and the pod cannot remove it.
+		if tenant != "" {
+			for _, h := range customerHeaders {
+				pr.Out.Header.Del(h)
+			}
+			pr.Out.Header.Set(customerHeaders[0], tenant)
+		}
 	})
 }
 
-// bindTenant binds the model call of an App pod to the tenant of its token. It refuses a call
-// with no valid token of the AppVersion of the pod. For a valid token, it sets the customer
-// header of the gateway to the tenant label of the token, and it removes the customer headers
-// that the pod sent. The gateway reads this header before each field of the body. Thus the
-// gateway counts the call for the tenant of the token, and not for a label that the code in the
-// pod selects. A pod that is not an App pod has no tenant, and its call passes with no change.
-// The gateway never gets the token.
-func (p *Proxy) bindTenant(w http.ResponseWriter, r *http.Request, sp *Span) bool {
-	token := r.Header.Get(tenanttoken.Header)
-	r.Header.Del(tenanttoken.Header)
+// tenantOf gives back the tenant label that the gateway call of an App pod must have. It
+// refuses a call with no valid token of the AppVersion of the pod, and ok is then false. The
+// caller sets the customer header of the gateway call to the label, and it removes the customer
+// headers that the pod sent. The gateway reads this header before each field of the body. Thus
+// the gateway counts the call for the tenant of the token, and not for a label that the code in
+// the pod selects. A pod that is not an App pod has no tenant: the label is empty, and its call
+// passes with no change.
+func (p *Proxy) tenantOf(w http.ResponseWriter, r *http.Request, sp *Span) (tenant string, ok bool) {
 	if p.TenantKey == nil || sp.App == "" {
-		return true
+		return "", true
 	}
-	reason, tenant := "", ""
-	if key, ok := p.TenantKey(sp.Namespace, sp.AppVersion); !ok {
+	token := r.Header.Get(tenanttoken.Header)
+	reason := ""
+	if key, found := p.TenantKey(sp.Namespace, sp.AppVersion); !found {
 		reason = ReasonTenantTokenNoKey
 	} else if token == "" {
 		reason = ReasonTenantTokenMissing
@@ -387,13 +398,9 @@ func (p *Proxy) bindTenant(w http.ResponseWriter, r *http.Request, sp *Span) boo
 	if reason != "" {
 		w.Header().Set(ReasonHeader, reason)
 		p.deny(w, sp, reason)
-		return false
+		return "", false
 	}
-	for _, h := range customerHeaders {
-		r.Header.Del(h)
-	}
-	r.Header.Set(customerHeaders[0], tenant)
-	return true
+	return tenant, true
 }
 
 // headerText is true for a label that a header can hold with no change: visible ASCII
