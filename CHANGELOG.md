@@ -7,6 +7,16 @@ This file records the changes for each Koodam version. The newest version is fir
 ### Agents
 
 - Add the [read-only spend API](docs/spend-api.md) for Agent runs and spend by label. The binary `spend-api` serves `/v1/runs`, `/v1/spend` and `/v1/openapi.json` ([#397](https://github.com/mohanraj00/koodam/pull/397), [#393](https://github.com/mohanraj00/koodam/pull/393), [#394](https://github.com/mohanraj00/koodam/pull/394), [#395](https://github.com/mohanraj00/koodam/pull/395), [#396](https://github.com/mohanraj00/koodam/pull/396), [#398](https://github.com/mohanraj00/koodam/pull/398)).
+- Export [Prometheus metrics](docs/metrics.md) for Agent counts, run time, spend and budgets
+  ([#413](https://github.com/mohanraj00/koodam/pull/413)).
+
+### Apps
+
+- Add the namespaced `TenantQuota` type with its CRD rules. It gives one tenant label of the signed claim a request limit and a spend limit for each period, and a rate limit. The chart installs the CRD with `apps.enabled`. No controller reads the type in this change. [docs/tenants.md](docs/tenants.md) has the API ([#378](https://github.com/mohanraj00/koodam/pull/378)).
+- Refuse a tenant in the claim check container with a typed reason: `UnknownTenant` (403), `TenantQuotaExceeded` (429) and `TenantRateLimited` (429, with `Retry-After`). The container reads the limits of the tenants from a file and keeps one token bucket for each tenant. The answer has the reason in the header `Koodam-Reason`, and the ingress span has it as its `outcome`. No controller writes the limits file in this change ([#379](https://github.com/mohanraj00/koodam/pull/379)).
+- Add the gateway customer of a tenant label to the LiteLLM client: make the customer with a budget for each period and a rate, read its spend and its count of model calls in the current period, and delete it. Koodam owns one LiteLLM budget for each tenant label and changes no other budget. No controller calls this code in this change ([#380](https://github.com/mohanraj00/koodam/pull/380)).
+- Add the tenant token, which binds a model call of an App pod to the tenant of a request. With `--tenant-token-key-file`, the claim check container signs a token for the tenant of each request and gives it to the app in the header `Koodam-Tenant-Token`. The egress proxy code can accept a model call of an App pod only with a valid token of its AppVersion, and it then sets the customer header of the gateway call to the tenant of the token. A refusal has a typed reason: `TenantTokenNoKey`, `TenantTokenMissing`, `TenantTokenInvalid`, `TenantTokenExpired` or `TenantLabelNotASCII`. No controller makes the key and the proxy command does not read it in this change ([#415](https://github.com/mohanraj00/koodam/issues/415)).
+- Add the tenant token key of an AppVersion. With the field `TenantToken` of the claim check configuration and a tenant claim, the controller makes a Secret with the private seed of an Ed25519 key for each AppVersion. Only the claim check container mounts the seed. The public key is in the new field `status.tenantTokenKey` of the AppVersion, and the controller writes it before a pod gets the seed. A pod template cannot use the name of the seed volume. No manager flag sets the field in this change ([#415](https://github.com/mohanraj00/koodam/issues/415)).
 
 ### Nookku preset
 

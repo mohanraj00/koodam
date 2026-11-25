@@ -20,3 +20,6 @@
 !images/nookku/fetch.py
 !images/nookku/nookku
 !images/nookku/plugin.sha256
+
+# Re-include the OpenAPI document that the package docs embeds for the spend API
+!docs/spend-api.openapi.json
