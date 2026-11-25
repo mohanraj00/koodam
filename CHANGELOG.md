@@ -11,7 +11,7 @@ This file records the changes for each Koodam version. The newest version is fir
 
 ### Evidence gate
 
-- Pin Nookku 0.6.0 in `internal/evidence/nookku.pin`, with the plugin hashes of the tag `v0.6.0` in `images/nookku/plugin.sha256`. The seam test adds the 3 new gate cases of 0.6.0: a persona set, a second message that passes and a second message that is late. The report parser needs no change, because the verify program does not read the tests of `result.json` ([#373](https://github.com/mohanraj00/koodam/issues/373)).
+- Pin Nookku 0.6.0 in `internal/evidence/nookku.pin`, with the plugin hashes of the tag `v0.6.0` in `images/nookku/plugin.sha256`. The seam test adds the 3 new gate cases of 0.6.0: a persona set, a second message that passes and a second message that is late. The report parser needs no change, because the verify program does not read the tests of `result.json` ([#377](https://github.com/mohanraj00/koodam/pull/377)).
 
 ## v0.4.0 (2026-11-20)
 
