@@ -17,24 +17,183 @@ limitations under the License.
 package spendapi
 
 import (
+	"context"
+	"crypto/sha256"
+	"crypto/subtle"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"net/http"
+	"net/url"
+	"strconv"
+	"strings"
+	"time"
 
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/util/validation"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+
+	"github.com/mohanraj00/koodam/internal/appclaim"
 )
 
 const (
-	maxPage  = 100
-	runsPath = "/v1/runs"
+	maxPage   = 100
+	runsPath  = "/v1/runs"
+	spendPath = "/v1/spend"
 )
 
 var errCursor = errors.New("the page cursor is not valid")
+
+// Config sets the data scope, the gateway connection and the caller check.
+type Config struct {
+	Kube       client.Reader
+	Namespace  string
+	GatewayURL string
+	MasterKey  string
+	Timeout    time.Duration
+
+	Claims       appclaim.Config
+	Keys         *appclaim.KeySet
+	StaticTokens []string
+}
 
 type api struct {
 	kube      client.Reader
 	namespace string
 	gateway   *liteLLM
+	timeout   time.Duration
+	claims    appclaim.Config
+	keys      *appclaim.KeySet
+	tokens    [][sha256.Size]byte
+}
+
+// New makes a read-only handler. One instance serves one namespace.
+func New(c Config) (http.Handler, error) {
+	if c.Kube == nil || len(validation.IsDNS1123Label(c.Namespace)) != 0 || c.Timeout <= 0 {
+		return nil, errors.New("a Kubernetes client, a namespace and a positive request time limit are necessary")
+	}
+	l, err := newLiteLLM(c.GatewayURL, c.MasterKey)
+	if err != nil {
+		return nil, err
+	}
+	if (c.Keys != nil) == (len(c.StaticTokens) != 0) {
+		return nil, errors.New("configure either the issuer keys or the local tokens")
+	}
+	if c.Keys != nil {
+		if err := c.Claims.Valid(); err != nil {
+			return nil, err
+		}
+	}
+	a := &api{kube: c.Kube, namespace: c.Namespace, gateway: l, timeout: c.Timeout, claims: c.Claims, keys: c.Keys}
+	a.tokens = make([][sha256.Size]byte, 0, len(c.StaticTokens))
+	for _, token := range c.StaticTokens {
+		if token == "" || strings.ContainsAny(token, " \r\n\t") {
+			return nil, errors.New("a local token is empty or contains white space")
+		}
+		a.tokens = append(a.tokens, sha256.Sum256([]byte(token)))
+	}
+	return a, nil
+}
+
+func (a *api) authorized(r *http.Request) bool {
+	// Use the same bearer header rules as the App claim check.
+	headers := r.Header.Values("Authorization")
+	if len(headers) != 1 {
+		return false
+	}
+	scheme, token, ok := strings.Cut(headers[0], " ")
+	if !ok || token == "" || !strings.EqualFold(scheme, "Bearer") {
+		return false
+	}
+	if a.keys != nil {
+		_, err := a.claims.Verify(a.keys, token, time.Now())
+		return err == nil
+	}
+	sum := sha256.Sum256([]byte(token))
+	var match int
+	for _, want := range a.tokens {
+		match |= subtle.ConstantTimeCompare(sum[:], want[:])
+	}
+	return match == 1
+}
+
+func (a *api) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	ctx, cancel := context.WithTimeout(r.Context(), a.timeout)
+	defer cancel()
+	w.Header().Set("Cache-Control", "no-store")
+	w.Header().Set("Content-Type", "application/json")
+	if r.Method != http.MethodGet && r.Method != http.MethodHead {
+		w.Header().Set("Allow", "GET, HEAD")
+		reply(w, r, http.StatusMethodNotAllowed, problem{"Use GET or HEAD."})
+		return
+	}
+	if !a.authorized(r) {
+		w.Header().Set("WWW-Authenticate", "Bearer")
+		reply(w, r, http.StatusUnauthorized, problem{"A valid bearer token is necessary."})
+		return
+	}
+	switch r.URL.Path {
+	case runsPath, spendPath:
+		a.list(ctx, w, r)
+	default:
+		reply(w, r, http.StatusNotFound, problem{"This path does not exist."})
+	}
+}
+
+type problem struct {
+	Error string `json:"error"`
+}
+
+func reply(w http.ResponseWriter, r *http.Request, status int, body any) {
+	w.WriteHeader(status)
+	if r.Method != http.MethodHead {
+		_ = json.NewEncoder(w).Encode(body)
+	}
+}
+
+func (a *api) list(ctx context.Context, w http.ResponseWriter, r *http.Request) {
+	q, err := url.ParseQuery(r.URL.RawQuery)
+	limit, valid := pageLimit(q)
+	if err != nil || !valid {
+		reply(w, r, http.StatusBadRequest, problem{"Use a valid query and a limit from 1 to 100."})
+		return
+	}
+	var result any
+	if r.URL.Path == runsPath {
+		result, err = a.runs(ctx, limit, q.Get("cursor"))
+	} else {
+		p, ok := parsePeriod(q)
+		if !ok {
+			reply(w, r, http.StatusBadRequest, problem{"Use UTC dates and groupBy=label:<name>."})
+			return
+		}
+		result, err = a.spend(ctx, p, limit, q.Get("cursor"))
+	}
+	switch {
+	case ctx.Err() != nil:
+		reply(w, r, http.StatusGatewayTimeout, problem{"The request time limit expired."})
+	case err == nil:
+		reply(w, r, http.StatusOK, result)
+	case errors.Is(err, errCursor) || apierrors.IsBadRequest(err):
+		reply(w, r, http.StatusBadRequest, problem{"The page cursor is not valid."})
+	case apierrors.IsResourceExpired(err):
+		reply(w, r, http.StatusGone, problem{"The page cursor expired. Start again with no cursor."})
+	default:
+		reply(w, r, http.StatusBadGateway, problem{"The spend data is not available."})
+	}
+}
+
+func pageLimit(q url.Values) (int, bool) {
+	for _, values := range q {
+		if len(values) != 1 {
+			return 0, false
+		}
+	}
+	if !q.Has("limit") {
+		return maxPage, true
+	}
+	n, err := strconv.Atoi(q.Get("limit"))
+	return n, err == nil && n > 0 && n <= maxPage
 }
 
 // A cursor keeps a position with the query that gave it to the caller.

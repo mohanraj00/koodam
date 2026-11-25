@@ -22,6 +22,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"net/url"
 	"strconv"
 	"sync/atomic"
 	"testing"
@@ -36,7 +37,11 @@ import (
 	"github.com/mohanraj00/koodam/internal/gateway"
 )
 
-const testNamespace = "sample"
+const (
+	testNamespace = "sample"
+	testFrom      = "2026-01-01"
+	testTo        = "2026-01-31"
+)
 
 type agentReader struct {
 	client.Reader
@@ -71,15 +76,15 @@ type fakeKey struct {
 
 type fixture struct {
 	*api
-	runKeys  []fakeKey
-	keyIndex map[string]int
-	master   string
+	runKeys       []fakeKey
+	keyIndex      map[string]int
+	master, token string
 }
 
 func newFixture(t testing.TB, count int) fixture {
 	t.Helper()
 	f := fixture{
-		master:  rand.Text(),
+		master: rand.Text(), token: rand.Text(),
 		runKeys: make([]fakeKey, max(1, count)), keyIndex: make(map[string]int, count),
 	}
 	items := make([]corev1alpha1.Agent, count)
@@ -99,17 +104,21 @@ func newFixture(t testing.TB, count int) fixture {
 			ObjectMeta: metav1.ObjectMeta{
 				Name: name, Namespace: testNamespace, UID: types.UID(name),
 				CreationTimestamp: metav1.NewTime(time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)),
-				Labels:            map[string]string{"team": name},
+				Labels:            map[string]string{"team": name, costGroupLabel: "edited"},
 			},
 			Spec:   corev1alpha1.AgentSpec{Budget: resource.MustParse("2")},
-			Status: corev1alpha1.AgentStatus{KeyHash: hash, KeyAlias: "run-alias"},
+			Status: corev1alpha1.AgentStatus{KeyHash: hash, KeyAlias: "run-alias", CostGroup: "saved"},
 		}
 	}
-	l, err := newLiteLLM("http://litellm.example", f.master)
+	handler, err := New(Config{
+		Kube: agentReader{items: items}, Namespace: testNamespace,
+		GatewayURL: "http://litellm.example", MasterKey: f.master, Timeout: 2 * time.Second,
+		StaticTokens: []string{f.token},
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	f.api = &api{kube: agentReader{items: items}, namespace: testNamespace, gateway: l}
+	f.api = handler.(*api)
 	return f
 }
 
@@ -133,6 +142,20 @@ func (f fixture) serveGateway(t testing.TB) {
 			}
 			_, _ = fmt.Fprintf(w, `{"key":%q, "info":{"spend":%g,"token":%q}}`,
 				f.runKeys[i].value, 0.75+float64(i)/4, hash)
+		case "/spend/logs":
+			hash := q.Get("api_key")
+			i, ok := f.keyIndex[hash]
+			if !ok || q.Get("start_date") != testFrom ||
+				q.Get("end_date") != "2026-02-01" || q.Get("summarize") != "true" {
+				t.Error("the gateway did not receive the expected spend query")
+				w.WriteHeader(http.StatusBadRequest)
+				return
+			}
+			_, _ = fmt.Fprintf(w, `[
+				{"startTime":%q, "spend":%g, %q:%g},
+				{"startTime":%q, "spend":0.5, %q:0.5},
+				{"startTime":"2026-02-01", "spend":5, %q:5}
+			]`, testFrom, 0.25+float64(i)/4, hash, 0.25+float64(i)/4, testTo, hash, hash)
 		default:
 			t.Error("the gateway received an unexpected path")
 			w.WriteHeader(http.StatusNotFound)
@@ -217,5 +240,82 @@ func TestParallel(t *testing.T) {
 	})
 	if !errors.Is(err, failure) || count.Load() > maxGatewayReads {
 		t.Fatal("parallel did not stop the reads after the first error")
+	}
+}
+
+func testPeriodOf(t *testing.T, label string) period {
+	t.Helper()
+	p, ok := parsePeriod(url.Values{"from": {testFrom}, "to": {testTo}, "groupBy": {"label:" + label}})
+	if !ok {
+		t.Fatal("parsePeriod refused a valid period")
+	}
+	return p
+}
+
+func TestPeriodSpend(t *testing.T) {
+	f := newFixture(t, 4)
+	items := f.kube.(agentReader).items
+	items[1].Labels["team"] = items[0].Labels["team"]
+	items[2].Labels["team"] = "red"
+	items[3].CreationTimestamp = metav1.NewTime(time.Date(2026, 2, 1, 0, 0, 0, 0, time.UTC))
+	f.serveGateway(t)
+	team := testPeriodOf(t, "team")
+	p, err := f.spend(t.Context(), team, 1, "")
+	if err != nil || p.From != testFrom || p.To != testTo || p.GroupBy != "label:team" || len(p.Items) != 1 ||
+		p.Items[0].LabelValue != items[0].Name || spendOf(p.Items[0].amounts) != 1.75 || p.NextCursor == "" {
+		t.Fatal("the first period page does not match the spend")
+	}
+	if p.Items[0].Budget != nil || p.Items[0].RemainingBudget != nil {
+		t.Fatal("the period has undeclared budgets")
+	}
+	next := p.NextCursor
+	p, err = f.spend(t.Context(), team, 1, next)
+	if err != nil || len(p.Items) != 1 || p.Items[0].LabelValue != "red" || spendOf(p.Items[0].amounts) != 1.25 ||
+		p.NextCursor != "" {
+		t.Fatal("the second period page does not match the spend")
+	}
+	p, err = f.spend(t.Context(), testPeriodOf(t, costGroupLabel), maxPage, "")
+	if err != nil || len(p.Items) != 1 || p.Items[0].LabelValue != "saved" || spendOf(p.Items[0].amounts) != 3 {
+		t.Fatal("the period does not use the saved cost group")
+	}
+	if _, err := f.spend(t.Context(), testPeriodOf(t, "project"), 1, next); !errors.Is(err, errCursor) {
+		t.Fatal("the period accepted a cursor of another query")
+	}
+}
+
+func TestPeriodWithNoKey(t *testing.T) {
+	f := newFixture(t, 1)
+	f.kube.(agentReader).items[0].Status.KeyHash = ""
+	p, err := f.spend(t.Context(), testPeriodOf(t, "team"), maxPage, "")
+	if err != nil || len(p.Items) != 1 || spendOf(p.Items[0].amounts) != 0 {
+		t.Fatal("a group with no key does not have zero spend")
+	}
+}
+
+func TestParsePeriod(t *testing.T) {
+	for _, query := range []string{
+		"", "from=2026-01-01&to=2026-01-31", "from=2026-02-01&to=2026-01-01&groupBy=label:team",
+		"from=2026-01-01&to=2026-01-31&groupBy=team", "from=2026-01-01&to=2026-01-31&groupBy=label:a/b/c",
+		"from=2026-01-01&to=2026-01-31&groupBy=label:", "from=0000-01-01&to=2026-01-31&groupBy=label:team",
+		"from=2026-01-01&to=9999-12-31&groupBy=label:team", "from=2026-1-1&to=2026-01-31&groupBy=label:team",
+	} {
+		q, err := url.ParseQuery(query)
+		if _, ok := parsePeriod(q); err != nil || ok {
+			t.Fatalf("parsePeriod accepted %q", query)
+		}
+	}
+}
+
+func TestPeriodErrors(t *testing.T) {
+	f := newFixture(t, 1)
+	useGateway(t, f.gateway, func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+	})
+	if _, err := f.spend(t.Context(), testPeriodOf(t, "team"), 1, ""); !errors.Is(err, errGateway) {
+		t.Fatal("the period accepted a gateway error")
+	}
+	f.kube.(agentReader).items[0].Status.KeyHash = "not-a-hash"
+	if _, err := f.spend(t.Context(), testPeriodOf(t, "team"), 1, ""); !errors.Is(err, errGateway) {
+		t.Fatal("the period accepted a bad key hash")
 	}
 }

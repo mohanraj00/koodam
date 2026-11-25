@@ -4,6 +4,11 @@ This file records the changes for each Koodam version. The newest version is fir
 
 ## Unreleased
 
+### Agents
+
+- Export [Prometheus metrics](docs/metrics.md) for Agent counts, run time, spend and budgets
+  ([#413](https://github.com/mohanraj00/koodam/pull/413)).
+
 ### Apps
 
 - Add the namespaced `TenantQuota` type with its CRD rules. It gives one tenant label of the signed claim a request limit and a spend limit for each period, and a rate limit. The chart installs the CRD with `apps.enabled`. No controller reads the type in this change. [docs/tenants.md](docs/tenants.md) has the API ([#378](https://github.com/mohanraj00/koodam/pull/378)).
