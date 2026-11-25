@@ -25,8 +25,9 @@ import (
 )
 
 const (
-	maxPage  = 100
-	runsPath = "/v1/runs"
+	maxPage   = 100
+	runsPath  = "/v1/runs"
+	spendPath = "/v1/spend"
 )
 
 var errCursor = errors.New("the page cursor is not valid")
