@@ -7,9 +7,11 @@ Send an `Authorization: Bearer` header on each GET or HEAD, including the OpenAP
 ## Start the server
 
 Build with `go build ./cmd/spend-api`. Run the binary with an identity that has `list` on
-`agents.core.koodam.dev` in the namespace. The server uses the current kubeconfig or the pod's service
-account. Set `-namespace` to select the namespace. The default is the namespace of the Kubernetes
-client. Each caller with a valid claim can read the full namespace that the server uses.
+`agents.core.koodam.dev` in each namespace. The server uses the current kubeconfig or the pod's service
+account. Set `-namespace` to select the namespaces, separated by commas, for example `team-a,team-b`.
+The server refuses a list that is longer than the `maxNamespaces` constant in
+`internal/spendapi/api.go`. The default is the namespace of the Kubernetes client. Each caller with a
+valid claim can read all the namespaces that the server uses.
 
 ```sh
 ./spend-api -namespace dev-sample -gateway-url https://gateway.example.com \
@@ -32,7 +34,8 @@ spend data.
 
 ## List runs
 
-`GET /v1/runs` gives the retained Agent runs. Each item has the run ID, name, namespace, creation time
+`GET /v1/runs` gives the retained Agent runs, one namespace after the other, in the order of
+`-namespace`. Each item has the run ID, name, namespace, creation time
 and declared budget. The API reads the lifetime spend of the key from LiteLLM. If LiteLLM no longer
 has the key, the API uses the spend saved in the Agent status, if available. An Agent with no key
 and no saved usage has zero spend. If the key is missing and the spend is unknown, the API omits
@@ -49,7 +52,7 @@ GET /v1/spend?from=2026-01-01&to=2026-01-31&groupBy=label:koodam.dev/cost-group
 
 Give both UTC dates in `YYYY-MM-DD` format. The range includes both dates.
 The API sums daily spend from LiteLLM for the keys of retained Agents that existed before the
-end of the range. A group can have zero spend. Deleted Agent objects are outside the report.
+end of the range. A group includes the Agents of all the namespaces of the caller. A group can have zero spend. Deleted Agent objects are outside the report.
 The report uses the dates of gateway calls. The gateway can remove older spend logs.
 The API uses the open-source LiteLLM spend endpoint and groups the results in Koodam.
 

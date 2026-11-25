@@ -25,6 +25,7 @@ import (
 	"errors"
 	"net/http"
 	"net/url"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -38,10 +39,12 @@ import (
 )
 
 const (
-	maxPage   = 100
-	runsPath  = "/v1/runs"
-	spendPath = "/v1/spend"
-	specPath  = "/v1/openapi.json"
+	maxPage = 100
+	// maxNamespaces limits the reviews and the reads of one request.
+	maxNamespaces = 64
+	runsPath      = "/v1/runs"
+	spendPath     = "/v1/spend"
+	specPath      = "/v1/openapi.json"
 )
 
 var errCursor = errors.New("the page cursor is not valid")
@@ -49,7 +52,7 @@ var errCursor = errors.New("the page cursor is not valid")
 // Config sets the data scope, the gateway connection and the caller check.
 type Config struct {
 	Kube       client.Reader
-	Namespace  string
+	Namespaces []string
 	GatewayURL string
 	MasterKey  string
 	Timeout    time.Duration
@@ -60,19 +63,19 @@ type Config struct {
 }
 
 type api struct {
-	kube      client.Reader
-	namespace string
-	gateway   *liteLLM
-	timeout   time.Duration
-	claims    appclaim.Config
-	keys      *appclaim.KeySet
-	tokens    [][sha256.Size]byte
+	kube       client.Reader
+	namespaces []string
+	gateway    *liteLLM
+	timeout    time.Duration
+	claims     appclaim.Config
+	keys       *appclaim.KeySet
+	tokens     [][sha256.Size]byte
 }
 
-// New makes a read-only handler. One instance serves one namespace.
+// New makes a read-only handler. One instance serves a fixed list of namespaces.
 func New(c Config) (http.Handler, error) {
-	if c.Kube == nil || len(validation.IsDNS1123Label(c.Namespace)) != 0 || c.Timeout <= 0 {
-		return nil, errors.New("a Kubernetes client, a namespace and a positive request time limit are necessary")
+	if c.Kube == nil || !validNamespaces(c.Namespaces) || c.Timeout <= 0 {
+		return nil, errors.New("a Kubernetes client, 1 to 64 different namespaces and a positive request time limit are necessary")
 	}
 	l, err := newLiteLLM(c.GatewayURL, c.MasterKey)
 	if err != nil {
@@ -86,7 +89,10 @@ func New(c Config) (http.Handler, error) {
 			return nil, err
 		}
 	}
-	a := &api{kube: c.Kube, namespace: c.Namespace, gateway: l, timeout: c.Timeout, claims: c.Claims, keys: c.Keys}
+	a := &api{
+		kube: c.Kube, namespaces: slices.Clone(c.Namespaces),
+		gateway: l, timeout: c.Timeout, claims: c.Claims, keys: c.Keys,
+	}
 	a.tokens = make([][sha256.Size]byte, 0, len(c.StaticTokens))
 	for _, token := range c.StaticTokens {
 		if token == "" || strings.ContainsAny(token, " \r\n\t") {
@@ -97,16 +103,38 @@ func New(c Config) (http.Handler, error) {
 	return a, nil
 }
 
-func (a *api) authorized(r *http.Request) bool {
-	// Use the same bearer header rules as the App claim check.
+func validNamespaces(namespaces []string) bool {
+	if len(namespaces) == 0 || len(namespaces) > maxNamespaces {
+		return false
+	}
+	for i, namespace := range namespaces {
+		if len(validation.IsDNS1123Label(namespace)) != 0 || slices.Contains(namespaces[:i], namespace) {
+			return false
+		}
+	}
+	return true
+}
+
+// bearer uses the same header rules as the App claim check.
+func bearer(r *http.Request) (string, bool) {
 	headers := r.Header.Values("Authorization")
 	if len(headers) != 1 {
-		return false
+		return "", false
 	}
 	scheme, token, ok := strings.Cut(headers[0], " ")
-	if !ok || token == "" || !strings.EqualFold(scheme, "Bearer") {
-		return false
+	return token, ok && token != "" && strings.EqualFold(scheme, "Bearer")
+}
+
+// scope gives the namespaces that the caller can read, or the HTTP status of the refusal.
+func (a *api) scope(r *http.Request) ([]string, int, problem) {
+	token, ok := bearer(r)
+	if !ok || !a.authorized(token) {
+		return nil, http.StatusUnauthorized, problem{"A valid bearer token is necessary."}
 	}
+	return a.namespaces, http.StatusOK, problem{}
+}
+
+func (a *api) authorized(token string) bool {
 	if a.keys != nil {
 		_, err := a.claims.Verify(a.keys, token, time.Now())
 		return err == nil
@@ -129,9 +157,12 @@ func (a *api) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		reply(w, r, http.StatusMethodNotAllowed, problem{"Use GET or HEAD."})
 		return
 	}
-	if !a.authorized(r) {
-		w.Header().Set("WWW-Authenticate", "Bearer")
-		reply(w, r, http.StatusUnauthorized, problem{"A valid bearer token is necessary."})
+	namespaces, status, refusal := a.scope(r)
+	if status != http.StatusOK {
+		if status == http.StatusUnauthorized {
+			w.Header().Set("WWW-Authenticate", "Bearer")
+		}
+		reply(w, r, status, refusal)
 		return
 	}
 	switch r.URL.Path {
@@ -142,7 +173,7 @@ func (a *api) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			w.WriteHeader(http.StatusOK)
 		}
 	case runsPath, spendPath:
-		a.list(ctx, w, r)
+		a.list(ctx, w, r, namespaces)
 	default:
 		reply(w, r, http.StatusNotFound, problem{"This path does not exist."})
 	}
@@ -159,7 +190,7 @@ func reply(w http.ResponseWriter, r *http.Request, status int, body any) {
 	}
 }
 
-func (a *api) list(ctx context.Context, w http.ResponseWriter, r *http.Request) {
+func (a *api) list(ctx context.Context, w http.ResponseWriter, r *http.Request, namespaces []string) {
 	q, err := url.ParseQuery(r.URL.RawQuery)
 	limit, valid := pageLimit(q)
 	if err != nil || !valid {
@@ -168,14 +199,14 @@ func (a *api) list(ctx context.Context, w http.ResponseWriter, r *http.Request) 
 	}
 	var result any
 	if r.URL.Path == runsPath {
-		result, err = a.runs(ctx, limit, q.Get("cursor"))
+		result, err = a.runs(ctx, namespaces, limit, q.Get("cursor"))
 	} else {
 		p, ok := parsePeriod(q)
 		if !ok {
 			reply(w, r, http.StatusBadRequest, problem{"Use UTC dates and groupBy=label:<name>."})
 			return
 		}
-		result, err = a.spend(ctx, p, limit, q.Get("cursor"))
+		result, err = a.spend(ctx, namespaces, p, limit, q.Get("cursor"))
 	}
 	switch {
 	case ctx.Err() != nil:
