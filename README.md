@@ -31,7 +31,7 @@ Koodam adds Kubernetes resources for agent work, and an operator that reconciles
 
 The current release is v0.4.0. The API is `v1alpha1`. The pre-release [v0.4.0-alpha.1](https://github.com/mohanraj00/koodam/releases/tag/v0.4.0-alpha.1) came before it. [CHANGELOG.md](CHANGELOG.md) lists the changes.
 
-The resources are `Agent`, `Workspace`, `Profile` and `TestKey`. `main` also has `App` and `AppVersion`. They are off by default: set `apps.enabled=true` in the chart. [docs/apps.md](docs/apps.md) has the use.
+The resources are `Agent`, `Workspace`, `Profile` and `TestKey`. `main` also has `App`, `AppVersion` and `TenantQuota`. They are off by default: set `apps.enabled=true` in the chart. [docs/apps.md](docs/apps.md) has the use.
 
 The v0.4 parts in `main`, and what proves each part:
 
@@ -67,6 +67,7 @@ A Workspace is a pod with a home on a PVC. I connect to it over SSH and run the 
 - [Nookku preset](docs/nookku-preset.md): the `nookku` plugin field and the Nookku test folder.
 - [Evidence gate](docs/evidence-gate.md): the gate of an AppVersion on a sealed Nookku result, and the limits of a signed approval record.
 - [Apps](docs/apps.md): the `App` and `AppVersion` resources, the traffic split and the gate.
+- [Tenants](docs/tenants.md): the `TenantQuota` resource, with a quota and a rate limit for each tenant of an App.
 - [App ingress spans](docs/app-ingress-spans.md): the contract of the spans at the App ingress.
 - [Release checklist](docs/release-checklist.md): the steps before a tag.
 - [Traced egress](docs/traced-egress.md): the egress proxy, the spans and `koodam trace`.

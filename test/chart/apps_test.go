@@ -42,8 +42,8 @@ func TestAppsOnlyIfEnabled(t *testing.T) {
 		t.Fatalf("helm template failed: %v\n%s", err, on)
 	}
 	crds := objects(t, on, "CustomResourceDefinition")
-	if len(crds) != 2 {
-		t.Fatalf("got %d CRDs in the templates, want the App and the AppVersion", len(crds))
+	if len(crds) != 3 {
+		t.Fatalf("got %d CRDs in the templates, want the App, the AppVersion and the TenantQuota", len(crds))
 	}
 	for _, crd := range crds {
 		if !strings.Contains(crd, "helm.sh/resource-policy: keep") {
