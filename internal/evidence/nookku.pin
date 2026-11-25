@@ -3,6 +3,6 @@
 # 3 values together, and the plugin hashes of images/nookku/plugin.sha256 with them.
 # NOOKKU_VERSION is the release on PyPI. NOOKKU_WHEEL_SHA256 is the SHA-256 of its wheel.
 # NOOKKU_COMMIT is the commit of the tag v<version>, with the gate cases in conformance/gate/.
-NOOKKU_VERSION=0.5.9
-NOOKKU_WHEEL_SHA256=2e380dcf147527a89bbfa7916637e2dc9d6a5e57e49ba45166ba67dc2237b961
-NOOKKU_COMMIT=67859582fdb8f769aaafbe6c3cb9dca7e47005ab
+NOOKKU_VERSION=0.6.0
+NOOKKU_WHEEL_SHA256=f05a955810169fd358a4a665cc6e0165e3ee9fea9fa93a4554ff086520ee1d7b
+NOOKKU_COMMIT=31165e05ec6955ca04eaf2a19e17f670e7a5b6e0
