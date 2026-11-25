@@ -283,7 +283,10 @@ func TestKeyScanLimits(t *testing.T) {
 		return "?" + q.String()[1:]
 	}
 	half := len(key) / 2
-	atLimit := strings.Repeat("x", maxKeyValue)
+	const xLong = "X-Long"
+	atLimit := strings.Repeat("x", maxKeyBytes)
+	// The headers of the client and the path are also in the total, so half is below the limit.
+	below := atLimit[:maxKeyBytes/2]
 	cases := map[string]struct {
 		query  string
 		header map[string]string
@@ -293,12 +296,16 @@ func TestKeyScanLimits(t *testing.T) {
 		"more key texts than the maximum": {query: texts(maxKeyTexts + 1), reason: ReasonKeyScanLimit},
 		"the key of the App after the maximum number of key texts": {
 			query: texts(maxKeyTexts) + "&key=" + key, reason: ReasonKeyScanLimit},
-		"a value of the maximum length":   {header: map[string]string{"X-Long": atLimit}},
-		"a value over the maximum length": {header: map[string]string{"X-Long": atLimit + "x"}, reason: ReasonKeyScanLimit},
+		"a value below the maximum length": {header: map[string]string{xLong: below}},
+		"a value over the maximum length":  {header: map[string]string{xLong: atLimit + "x"}, reason: ReasonKeyScanLimit},
+		"values that are together over the maximum length": {
+			query: "?a=" + below, header: map[string]string{xLong: below}, reason: ReasonKeyScanLimit},
+		"many values with no key text, together over the maximum length": {
+			query: "?a=x" + strings.Repeat("&a="+atLimit[:maxKeyBytes/8], 15), reason: ReasonKeyScanLimit},
 		"a divided key in a value over the maximum length": {header: map[string]string{
-			authorization: "Bearer " + key[:half] + strings.Repeat("Bearer ", maxKeyValue/7) + key[half:]}, reason: ReasonKeyScanLimit},
-		"a query value of the maximum length":   {query: "?a=" + atLimit},
-		"a query value over the maximum length": {query: "?a=" + atLimit + "x", reason: ReasonKeyScanLimit},
+			authorization: "Bearer " + key[:half] + strings.Repeat("Bearer ", maxKeyBytes/7) + key[half:]}, reason: ReasonKeyScanLimit},
+		"a query value below the maximum length": {query: "?a=" + below},
+		"a query value over the maximum length":  {query: "?a=" + atLimit + "x", reason: ReasonKeyScanLimit},
 		"a query value with an escape over the maximum length, then the key of the App": {
 			query: "?a=%2D" + atLimit + "&key=" + key, reason: ReasonKeyScanLimit},
 		"a path over the maximum length": {query: "/" + atLimit, reason: ReasonKeyScanLimit},
@@ -323,6 +330,19 @@ func TestKeyScanLimits(t *testing.T) {
 	}
 }
 
+// The limit of the text is for the values of one call together, at the byte.
+func TestKeyScanCountsTheTextOfEachValue(t *testing.T) {
+	half := strings.Repeat("x", maxKeyBytes/2)
+	s := newKeyScan(func(string) (string, string, bool) { return "", "", false }, &Span{})
+	s.value(half)
+	if s.query("a=" + half[1:] + "&b=x"); s.limit {
+		t.Fatal("The scan is at its limit with the maximum length of text.")
+	}
+	if s.value("x"); !s.limit {
+		t.Error("The scan is not at its limit with more text than the maximum length.")
+	}
+}
+
 // The scan of a long query makes no map of the query and no copy of each value. It makes the
 // hashes of the first key texts, and then it stops.
 func TestKeyScanOfALongQueryAllocatesLittle(t *testing.T) {
@@ -335,8 +355,8 @@ func TestKeyScanOfALongQueryAllocatesLittle(t *testing.T) {
 		raw, sp := q.String(), &Span{}
 		allocs := testing.AllocsPerRun(5, func() {
 			s := newKeyScan(owner, sp)
-			if s.query(raw); s.limit != (name == "key texts") {
-				t.Errorf("%s: the limit state of the scan is %v.", name, s.limit)
+			if s.query(raw); !s.limit {
+				t.Errorf("%s: the scan is not at its limit.", name)
 			}
 		})
 		if allocs > 4*maxKeyTexts {

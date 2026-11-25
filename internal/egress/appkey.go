@@ -47,12 +47,13 @@ var keyPrefixBytes = []byte(keyPrefix)
 const (
 	// maxKeyTexts is the number of key texts that the proxy examines.
 	maxKeyTexts = 16
-	// maxKeyValue is the length of a header value, a query value or a path that the proxy
-	// examines.
-	maxKeyValue = 64 << 10
+	// maxKeyBytes is the total length of the header values, the query values and the path that
+	// the proxy examines. The scan reads each value some times, in each form of keyScan.value.
+	// Thus a limit for each value does not limit the work of a call with many values.
+	maxKeyBytes = 64 << 10
 )
 
-// ReasonKeyScanLimit tells that the model call has more key texts, or a longer key value, than
+// ReasonKeyScanLimit tells that the model call has more key texts, or more text in its values, than
 // the proxy examines. The proxy refuses such a call, because a key can be in the part that it
 // did not examine.
 const ReasonKeyScanLimit = "KeyScanLimit"
@@ -94,6 +95,8 @@ type keyScan struct {
 	// buf has the decoded base64 text of one value. The scan uses it again for each value.
 	buf   []byte
 	texts int
+	// bytes is the total length of the values that the scan examined.
+	bytes int
 	// out tells that the call has the key of an AppVersion and the pod is not of that AppVersion.
 	out bool
 	// limit tells that the call is over a limit of the scan. The scan stops then.
@@ -132,12 +135,12 @@ func (s *keyScan) value(v string) {
 	if s.limit {
 		return
 	}
-	scanKeys(v, s.found)
-	if len(v) > maxKeyValue {
-		// The scan does not change or decode a longer value, and a key can be in it.
+	if s.bytes += len(v); s.bytes > maxKeyBytes {
+		// The scan does not examine more text, and a key can be in it.
 		s.limit = true
 		return
 	}
+	scanKeys(v, s.found)
 	s.basic(v)
 	for _, word := range keyWords {
 		if strings.Contains(v, word) {
@@ -171,7 +174,8 @@ func (s *keyScan) query(raw string) {
 		pair, raw, _ = strings.Cut(raw, "&")
 		_, v, _ := strings.Cut(pair, "=")
 		if strings.ContainsAny(v, "%+") {
-			if len(v) > maxKeyValue {
+			// The text with no escape is not longer than v.
+			if s.bytes+len(v) > maxKeyBytes {
 				s.limit = true
 				return
 			}
@@ -186,6 +190,16 @@ func (s *keyScan) query(raw string) {
 }
 
 const base64Alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"
+
+// base64Digit has, for each character of the alphabet, its value plus 1. It has 0 for each other
+// character. A table keeps the time of the decoder small.
+var base64Digit = func() [256]byte {
+	var t [256]byte
+	for i := range len(base64Alphabet) {
+		t[base64Alphabet[i]] = byte(i) + 1
+	}
+	return t
+}()
 
 // basicText adds the decoded base64 text of v to out, as the decoder of the gateway does it.
 // The decoder ignores each character that is not in the alphabet. For a pad character, the
@@ -209,12 +223,12 @@ func basicText(out []byte, v string, stop bool) []byte {
 			}
 			continue
 		}
-		d := strings.IndexByte(base64Alphabet, v[i])
-		if d < 0 {
+		d := base64Digit[v[i]]
+		if d == 0 {
 			continue
 		}
 		pads = 0
-		b := byte(d)
+		b := d - 1
 		switch group {
 		case 0:
 			left = b

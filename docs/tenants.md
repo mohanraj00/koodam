@@ -111,7 +111,7 @@ If the token is not valid, the app gets the status `403` from the proxy. The hea
 | `TenantTokenNoKey` | The status of the AppVersion has no key. The controller writes the key before it makes the pods. |
 | `TenantLabelNotASCII` | The tenant label cannot be the value of a header. |
 | `AppKeyOutOfPod` | The model call has the gateway key of an AppVersion, and the pod is not a pod of that AppVersion. |
-| `KeyScanLimit` | The model call has more key texts than the proxy examines, or a header value, a query value or a path that is too long. |
+| `KeyScanLimit` | The model call has more key texts than the proxy examines, or its header values, its query values and its path are together too long. |
 
 - An app can make a model call only for a request with a tenant label. A model call with no request of a tenant gets the refusal `TenantTokenMissing`.
 - A tenant label must have only visible ASCII characters, with no space at its start or end.
@@ -121,7 +121,7 @@ If the token is not valid, the app gets the status `403` from the proxy. The hea
   - The proxy reads the hash of the key from the status of the AppVersion, and it makes the hash of each key text in the call.
   - It examines each header value, each query value and the path of the call. These include `Authorization`, `x-litellm-api-key`, `API-Key`, `x-api-key`, `x-goog-api-key`, `Ocp-Apim-Subscription-Key`, `litellm_user_api_key`, `Sec-WebSocket-Protocol` and the query value `key`.
   - It examines each value in the forms that the gateway reads: with no change, with a word (`Bearer`, `bearer` or `Basic`) removed at each position, and as base64 text. For base64 text, it uses the 2 behaviors that the Python decoder of a gateway can have for a pad character.
-  - The scan of one call has limits, so a call with much text cannot use much memory of the proxy. A call of a client has one short key. The proxy refuses a call with more key texts or a longer value than its limits (`KeyScanLimit`), because a key can be in the part that it did not examine.
+  - The scan of one call has 2 limits, so a call with much text cannot use much memory or time of the proxy. One limit is for the number of key texts. The other limit is for the total length of the header values, the query values and the path. A call of a client has one short key. The proxy refuses a call over a limit (`KeyScanLimit`), because a key can be in the part that it did not examine.
 - The gateway does not get the token, and no span has the token or the tenant label.
 
 This is a change from v0.4.0 for an install with a tenant claim: the app must send the header `Koodam-Tenant-Token` with each model call. With `apps.claimCheck.tenantToken=false`, the install has the behavior of v0.4.0.
