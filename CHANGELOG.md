@@ -4,6 +4,10 @@ This file records the changes for each Koodam version. The newest version is fir
 
 ## Unreleased
 
+### Apps
+
+- Add the namespaced `TenantQuota` type with its CRD rules. It gives one tenant label of the signed claim a request limit and a spend limit for each period, and a rate limit. The chart installs the CRD with `apps.enabled`. No controller reads the type in this change. [docs/tenants.md](docs/tenants.md) has the API ([#378](https://github.com/mohanraj00/koodam/pull/378)).
+
 ### Nookku preset
 
 - Give the init containers `koodam-nookku-python` and `koodam-nookku-files` fixed requests (10m CPU, 16Mi memory) and limits (100m CPU, 64Mi memory). The Python check also gets a `PATH` of the harness container from a ConfigMap key or a field of the pod. A `PATH` from a Secret or a resource is not copied, and [docs/nookku-preset.md](docs/nookku-preset.md) states the limits ([#371](https://github.com/mohanraj00/koodam/pull/371)).
