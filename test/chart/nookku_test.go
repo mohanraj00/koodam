@@ -42,11 +42,17 @@ func TestNookkuImage(t *testing.T) {
 		set    []string
 		want   []string
 	}{
-		"default":        {},
-		"empty":          {set: []string{"nookku.image="}},
-		"null nookku":    {values: "nookku: null\n"},
-		"digest":         {set: []string{"nookku.image=ghcr.io/mohanraj00/koodam-nookku" + digest}, want: []string{"=ghcr.io/mohanraj00/koodam-nookku" + digest}},
-		"tag and digest": {set: []string{"nookku.image=registry.example/n:0.5.0" + digest}, want: []string{"=registry.example/n:0.5.0" + digest}},
+		"default":     {},
+		"empty":       {set: []string{"nookku.image="}},
+		"null nookku": {values: "nookku: null\n"},
+		"digest": {
+			set:  []string{"nookku.image=ghcr.io/mohanraj00/koodam-nookku" + digest},
+			want: []string{"=ghcr.io/mohanraj00/koodam-nookku" + digest},
+		},
+		"tag and digest": {
+			set:  []string{"nookku.image=registry.example/n:0.5.0" + digest},
+			want: []string{"=registry.example/n:0.5.0" + digest},
+		},
 	}
 	for name, c := range cases {
 		t.Run(name, func(t *testing.T) {
