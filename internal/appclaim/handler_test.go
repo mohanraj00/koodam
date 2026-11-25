@@ -19,6 +19,7 @@ package appclaim
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -28,6 +29,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/mohanraj00/koodam/internal/tenanttoken"
 )
 
 func TestCheckHandler(t *testing.T) {
@@ -157,5 +160,56 @@ func TestCheckWritesSpanOnAbort(t *testing.T) {
 	}()
 	if !strings.Contains(spans.String(), `"status":206,"outcome":"ok"`) {
 		t.Errorf("The span of an aborted answer is not correct: %q", spans.String())
+	}
+}
+
+func TestCheckGivesTheTenantToken(t *testing.T) {
+	f := newFixture(t)
+	path := filepath.Join(t.TempDir(), "jwks.json")
+	keys := &Keys{}
+	if err := errors.Join(os.WriteFile(path, f.jwks, 0o600), keys.Load(path)); err != nil {
+		t.Fatal(err)
+	}
+	key, err := tenanttoken.PrivateKey(bytes.Repeat([]byte{7}, tenanttoken.SeedSize))
+	if err != nil {
+		t.Fatal(err)
+	}
+	pub, _ := tenanttoken.PublicKey(tenanttoken.PublicText(key))
+	var got http.Header
+	spans := &bytes.Buffer{}
+	check := &Check{Config: testCfg, Keys: keys, Spans: NewSpanWriter(spans), Now: func() time.Time { return now },
+		TokenKey: key, TokenLife: time.Minute,
+		Next: http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) { got = r.Header.Clone() })}
+	call := func(claim string) {
+		r := httptest.NewRequest(http.MethodGet, "/", nil)
+		r.Header.Set("Authorization", "Bearer "+claim)
+		// A caller cannot give a token to the app.
+		r.Header.Set(tenanttoken.Header, "forged")
+		got = nil
+		check.ServeHTTP(httptest.NewRecorder(), r)
+	}
+
+	call(f.sign(t, header(algES256, "e1"), claims(nil)))
+	token := got.Get(tenanttoken.Header)
+	if tenant, err := tenanttoken.Verify(pub, token, now.Add(59*time.Second)); err != nil || tenant != testTenant {
+		t.Fatalf("The token of the app: tenant %q, %v", tenant, err)
+	}
+	if _, err := tenanttoken.Verify(pub, token, now.Add(time.Minute)); !errors.Is(err, tenanttoken.ErrExpired) {
+		t.Errorf("The token must end after TokenLife: %v", err)
+	}
+	if strings.Contains(spans.String(), token) || strings.Contains(spans.String(), strings.Split(token, ".")[2]) {
+		t.Error("A span has the tenant token.")
+	}
+
+	// A claim with no tenant label gets no token, and a check with no key gives no token.
+	check.Config.TenantClaim = ""
+	call(f.sign(t, header(algES256, "e1"), claims(nil)))
+	if got == nil || got.Get(tenanttoken.Header) != "" {
+		t.Errorf("A request with no tenant label must have no token: %v", got)
+	}
+	check.Config, check.TokenKey = testCfg, nil
+	call(f.sign(t, header(algES256, "e1"), claims(nil)))
+	if got == nil || got.Get(TenantHeader) != testTenant || got.Get(tenanttoken.Header) != "" {
+		t.Errorf("A check with no key must give no token: %v", got)
 	}
 }
