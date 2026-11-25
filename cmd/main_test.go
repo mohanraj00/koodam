@@ -176,3 +176,39 @@ func TestSetupAppsInterval(t *testing.T) {
 		t.Errorf("got %v", err)
 	}
 }
+
+// The flags for a tenant label with no TenantQuota need a tenant claim, and the manager refuses
+// a rate or a burst out of range.
+func TestLoadTenantDefaults(t *testing.T) {
+	claim := controller.AppClaimCheck{Issuer: "https://tenants.example.com", TenantClaim: "tenant"}
+	got, err := loadTenantDefaults(claim, "500m", 3, true)
+	want := controller.AppTenantLimits{DefaultRate: 0.5, DefaultBurst: 3, RefuseUnknown: true}
+	if err != nil || got.Tenants != want {
+		t.Errorf("got %+v, %v", got.Tenants, err)
+	}
+	// With no tenant flag, a claim check with no tenant claim is valid.
+	if got, err := loadTenantDefaults(controller.AppClaimCheck{}, "", 0, false); err != nil ||
+		got.Tenants != (controller.AppTenantLimits{}) {
+		t.Errorf("no flag: %+v, %v", got.Tenants, err)
+	}
+	for name, tc := range map[string]struct {
+		claim  controller.AppClaimCheck
+		rate   string
+		burst  int
+		refuse bool
+	}{
+		"no issuer":          {claim: controller.AppClaimCheck{TenantClaim: "tenant"}, refuse: true},
+		"no tenant claim":    {claim: controller.AppClaimCheck{Issuer: claim.Issuer}, rate: "1"},
+		"rate of 0":          {claim: claim, rate: "0"},
+		"rate below 0":       {claim: claim, rate: "-1"},
+		"rate not a number":  {claim: claim, rate: "fast"},
+		"rate too large":     {claim: claim, rate: "1000001"},
+		"burst below 0":      {claim: claim, rate: "1", burst: -1},
+		"burst too large":    {claim: claim, rate: "1", burst: 1000001},
+		"burst with no rate": {claim: claim, burst: 2},
+	} {
+		if _, err := loadTenantDefaults(tc.claim, tc.rate, tc.burst, tc.refuse); err == nil {
+			t.Errorf("%s is accepted", name)
+		}
+	}
+}

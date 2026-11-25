@@ -7,7 +7,8 @@ A tenant is a client group of an App. The tenant label comes from the signed cla
 - The `TenantQuota` API is in `main`. The chart installs its CRD with `apps.enabled=true`.
 - The claim check container can refuse a tenant from a limits file. See "The refusals of the claim check".
 - With `apps.enabled`, the TenantQuota controller makes the gateway customer of each tenant label and writes the use to the status. See "The gateway customer" and "The controller".
-- No pod gets a limits file at this time. Thus the claim check refuses no tenant: the rate limit, the refusal of a tenant at its quota and the default for an unknown tenant come in a later change of [#193](https://github.com/mohanraj00/koodam/issues/193). The gateway already refuses a model call of a tenant at its spend limit.
+- With a tenant claim (`apps.claimCheck.tenantClaim`), each AppVersion pod gets the limits file of its tenants. Then the claim check refuses a tenant above its rate, a tenant at its quota and, if the chart says so, an unknown tenant. See "The limits file" and "A tenant with no TenantQuota".
+- The spend group `tenant` of the spend report comes in a later change of [#193](https://github.com/mohanraj00/koodam/issues/193).
 
 ## The TenantQuota spec
 
@@ -70,6 +71,36 @@ The check examines a request after it verified the signed claim:
 - The ingress span of the request has the reason as its `outcome`, with the caller label and the tenant label ([app-ingress-spans.md](app-ingress-spans.md)).
 - Each pod has its own token bucket for each tenant. A refused request uses no token, and the limit of one tenant has no effect on a different tenant.
 - A request with no tenant label has no tenant limit. This occurs only if the claim check has no tenant claim.
+
+## The limits file
+
+With `apps.claimCheck.tenantClaim`, the controller writes one ConfigMap for each AppVersion, with the name `kd-<version>-tenants`. The check container of each pod of the version mounts it as its limits file.
+
+- The file has each `TenantQuota` of the namespace of the version that applies to its App: a `TenantQuota` with no `appRef`, or with the `appRef` of the App. A tenant label of a different App or a different namespace is an unknown tenant for the version.
+- Each pod gets the rate divided by `spec.replicas` of the version. The burst of a pod is the burst divided by the replicas, to the next full number, with a minimum of 1. Thus the sum of the bursts can be more than the burst of the tenant.
+- The file has the mark of the condition `QuotaExceeded`. While the mark is set, the claim check refuses each request of the tenant with `TenantQuotaExceeded`.
+- A change of a `TenantQuota`, of its mark or of `spec.replicas` changes the ConfigMap. The kubelet then updates the file in the pods, and the check container reads it again. This can take more than 1 minute. The pods do not start again.
+- A ConfigMap has a maximum of 1 MiB. This is space for some thousand tenants of one App.
+- Without a tenant claim, the claim check has no tenant label, and a pod gets no limits file.
+
+## A tenant with no TenantQuota
+
+By default, the claim check accepts a tenant label with no `TenantQuota`, with no limit. The chart can change this:
+
+```yaml
+tenants:
+  defaultQuota:
+    rateLimit:
+      requestsPerSecond: "5"
+      burst: 10
+  refuseUnknown: false
+  usageInterval: 30s
+```
+
+- `tenants.defaultQuota.rateLimit` gives such a tenant a rate limit. Each tenant label has its own token bucket. The gateway has no customer for such a tenant, so it has no quota for each period.
+- `tenants.refuseUnknown: true` refuses such a tenant with the status 403 and the reason `UnknownTenant`. Then `defaultQuota` has no effect.
+- `tenants.usageInterval` is the time between 2 reads of the use from the gateway.
+- `defaultQuota` and `refuseUnknown` need `apps.claimCheck.issuer` and `apps.claimCheck.tenantClaim`. The chart refuses them without these values.
 
 ## The gateway customer
 

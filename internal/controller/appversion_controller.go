@@ -727,6 +727,12 @@ func (r *AppVersionReconciler) applyObjects(ctx context.Context, av *corev1alpha
 		&corev1.Service{ObjectMeta: appVersionMeta(av), Spec: corev1.ServiceSpec{
 			Selector: appVersionLabels(av), Ports: svcPorts}},
 	}
+	// The limits file of the tenants is there before a pod of the version starts.
+	if err := applyTenantLimits(ctx, r.Client, r.APIReader, r.Claim, av); errors.Is(err, errNotOwned) {
+		return reasonNameConflict, nil
+	} else if err != nil {
+		return "", err
+	}
 	// The NetworkPolicy is first, so that no pod of the version starts before its policy.
 	want := r.Egress.policy(appVersionMeta(av), appVersionLabels(av), listen, r.IngressNamespaces)
 	if want != nil && gateOpen(av) {

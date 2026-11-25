@@ -259,6 +259,24 @@ apps:
     # again, and then each AppVersion gets new pods.
     jwks: ""
 
+# The tenants of the Apps. A TenantQuota gives one tenant label its quota and its rate limit.
+# The controller reads the use of each tenant from the gateway. defaultQuota and refuseUnknown
+# are for a tenant label with no TenantQuota, and they need apps.claimCheck.tenantClaim.
+tenants:
+  # The quota of a tenant label with no TenantQuota. With no rate, such a tenant has no limit.
+  defaultQuota:
+    rateLimit:
+      # The requests for each second, as a quantity, for example "5" or "500m". Empty: no limit.
+      requestsPerSecond: ""
+      # The count of requests that such a tenant can send at one time. 0: the rate, with a
+      # minimum of 1.
+      burst: 0
+  # If true, the claim check refuses a tenant label with no TenantQuota, with the status 403 and
+  # the reason UnknownTenant. Then defaultQuota has no effect.
+  refuseUnknown: false
+  # The time between 2 reads of the use of a tenant from the gateway. It is 1s or more.
+  usageInterval: 30s
+
 # The metrics endpoint (HTTPS). If true, the chart adds the metrics Service and the
 # metrics-auth ClusterRole (tokenreviews and subjectaccessreviews, verb create).
 metrics:

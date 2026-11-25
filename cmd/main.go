@@ -35,6 +35,7 @@ import (
 
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/api/resource"
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/selection"
@@ -135,6 +136,34 @@ func loadClaim(c controller.AppClaimCheck, jwksFile string) (controller.AppClaim
 	return c, nil
 }
 
+// loadTenantDefaults examines the flags for a tenant label with no TenantQuota. rate is a
+// quantity of requests for each second, or empty. The flags need a tenant claim, because the
+// claim check has no tenant label without it.
+func loadTenantDefaults(c controller.AppClaimCheck, rate string, burst int, refuse bool) (
+	controller.AppClaimCheck, error) {
+	if rate == "" && burst == 0 && !refuse {
+		return c, nil
+	}
+	if c.Issuer == "" || c.TenantClaim == "" {
+		return c, errors.New("the tenant flags need --app-claim-issuer and --app-claim-tenant-claim")
+	}
+	if burst < 0 || burst > maxTenantRate || (burst > 0 && rate == "") {
+		return c, errors.New("--tenant-default-burst must be from 0 to 1000000, and it needs --tenant-default-rate")
+	}
+	c.Tenants = controller.AppTenantLimits{DefaultBurst: int32(burst), RefuseUnknown: refuse}
+	if rate != "" {
+		q, err := resource.ParseQuantity(rate)
+		if err != nil || q.Sign() <= 0 || q.AsApproximateFloat64() > maxTenantRate {
+			return c, errors.New("--tenant-default-rate must be a quantity more than 0, and 1000000 or less")
+		}
+		c.Tenants.DefaultRate = q.AsApproximateFloat64()
+	}
+	return c, nil
+}
+
+// maxTenantRate is the largest default rate and the largest default burst of a tenant.
+const maxTenantRate = 1_000_000
+
 // setupApps adds the App controllers to the manager. It refuses a read interval of the tenant
 // use below 1 second.
 func setupApps(mgr ctrl.Manager, versions *controller.AppVersionReconciler,
@@ -147,6 +176,11 @@ func setupApps(mgr ctrl.Manager, versions *controller.AppVersionReconciler,
 	}
 	if err := quotas.SetupWithManager(mgr); err != nil {
 		return fmt.Errorf("tenantquota: %w", err)
+	}
+	limits := &controller.TenantLimitsReconciler{Client: mgr.GetClient(), APIReader: mgr.GetAPIReader(),
+		Claim: versions.Claim}
+	if err := limits.SetupWithManager(mgr); err != nil {
+		return fmt.Errorf("tenantlimits: %w", err)
 	}
 	apps := &controller.AppReconciler{Client: mgr.GetClient(), APIReader: mgr.GetAPIReader()}
 	if err := apps.SetupWithManager(mgr); err != nil {
@@ -221,7 +255,9 @@ func main() {
 	var egress controller.EgressProxy
 	var egressPodLabels, appIngressNamespaces, claimJWKSFile string
 	var claim controller.AppClaimCheck
-	var jobTTLSeconds int
+	var jobTTLSeconds, tenantDefaultBurst int
+	var tenantDefaultRate string
+	var tenantRefuseUnknown bool
 	var agentIngressEnabled, appsEnabled bool
 	var tlsOpts []func(*tls.Config)
 	flag.StringVar(&metricsAddr, "metrics-bind-address", "0", "The address the metrics endpoint binds to. "+
@@ -290,6 +326,12 @@ func main() {
 	flag.BoolVar(&appsEnabled, "apps-enabled", false,
 		"If set, the manager runs the App and AppVersion controllers. The App CRDs and the App role in config/apps "+
 			"must be installed first.")
+	flag.StringVar(&tenantDefaultRate, "tenant-default-rate", "",
+		"The rate limit of a tenant label with no TenantQuota, in requests for each second. Empty: no limit.")
+	flag.IntVar(&tenantDefaultBurst, "tenant-default-burst", 0,
+		"The burst of a tenant label with no TenantQuota. 0: the rate, with a minimum of 1.")
+	flag.BoolVar(&tenantRefuseUnknown, "tenant-refuse-unknown", false,
+		"If set, the claim check refuses a tenant label with no TenantQuota.")
 	flag.DurationVar(&tenantUsageInterval, "tenant-usage-interval", controller.DefaultTenantUsageInterval,
 		"The time between 2 reads of the use of a tenant from the gateway. It is 1s or more.")
 	flag.BoolVar(&agentIngressEnabled, "agent-ingress-enabled", false,
@@ -425,8 +467,11 @@ func main() {
 		os.Exit(1)
 	}
 	claim.Image = installerImage
-	if claim, err = loadClaim(claim, claimJWKSFile); err != nil {
-		setupLog.Error(err, "The App claim check flags are not valid")
+	if claim, err = loadClaim(claim, claimJWKSFile); err == nil {
+		claim, err = loadTenantDefaults(claim, tenantDefaultRate, tenantDefaultBurst, tenantRefuseUnknown)
+	}
+	if err != nil {
+		setupLog.Error(err, "The App claim check flags or the tenant flags are not valid")
 		os.Exit(1)
 	}
 	if err := checkClaimPolicy(claim, egress); err != nil {
