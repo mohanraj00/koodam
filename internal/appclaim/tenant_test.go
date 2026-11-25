@@ -222,7 +222,7 @@ func TestCheckTenantRefusals(t *testing.T) {
 	}
 	calls := 0
 	spans := &bytes.Buffer{}
-	check := &Check{Config: testCfg, Keys: keys, Spans: NewSpanWriter(spans), App: testAud, Version: "shop-v1",
+	check := &Check{Config: testCfg, Keys: keys, Spans: NewSpanWriter(spans), App: testAud, Version: "shop-v2",
 		Now:  func() time.Time { return now },
 		Next: http.HandlerFunc(func(http.ResponseWriter, *http.Request) { calls++ })}
 	token := f.sign(t, header(algES256, "e1"), claims(nil))
