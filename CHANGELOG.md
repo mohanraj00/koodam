@@ -15,6 +15,7 @@ This file records the changes for each Koodam version. The newest version is fir
 - Add the chart values `zone.name`, `zone.namespaces` and `apps.sharedResources`, and the design file `docs/zones.md` ([#385](https://github.com/mohanraj00/koodam/pull/385)).
 - Refuse a caller of a different zone in the claim check. With `apps.claimCheck.zoneClaim`, a request with a zone claim that is not `zone.name` gets the status 403 and the reason `ZoneMismatch`. `zone.requireClaim` also refuses a token with no zone claim. Each ingress span of an install with a zone has the field `zone` ([#386](https://github.com/mohanraj00/koodam/pull/386)).
 - Refuse a model route of a different zone in the bundled gateway. An item of `gateway.bundled.litellm.modelList` can have a `zone`. With `zone.name`, the route list has only the items with no zone or with the zone of the install, and a call for a model name of a different zone gets the status 403 and the reason `RouteOutOfZone` ([#387](https://github.com/mohanraj00/koodam/pull/387)).
+- Refuse an egress host of a different zone in the egress proxy. The chart value `zone.egressHosts` gives a zone to a host. A call to a host with a zone that is not `zone.name` gets a denied egress span with the reason `EgressOutOfZone`. Each egress span of an install with a zone has the field `zone` ([#388](https://github.com/mohanraj00/koodam/pull/388)).
 
 ### Nookku preset
 
