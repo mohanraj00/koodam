@@ -110,8 +110,9 @@ koodam_agent_run_duration_seconds_sum{namespace="beta",phase="Failed"} 4
 koodam_agent_run_duration_seconds_count{namespace="beta",phase="Failed"} 1
 # HELP koodam_agent_spend_usd Total recorded Agent spend in USD by namespace and model.
 # TYPE koodam_agent_spend_usd gauge
-koodam_agent_spend_usd{model="model-a",namespace="alpha"} 0.75
+koodam_agent_spend_usd{model="model-a",namespace="alpha"} 0.5
 koodam_agent_spend_usd{model="model-a",namespace="beta"} 0.125
+koodam_agent_spend_usd{model="model-b",namespace="alpha"} 0.25
 # HELP koodam_agent_budget_usd Total declared Agent budget in USD by namespace and model.
 # TYPE koodam_agent_budget_usd gauge
 koodam_agent_budget_usd{model="model-a",namespace="alpha"} 2

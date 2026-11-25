@@ -58,6 +58,7 @@ func NewCollector(reader client.Reader) *Collector {
 	}
 }
 
+// Describe sends the metric descriptors to ch.
 func (c *Collector) Describe(ch chan<- *prometheus.Desc) {
 	ch <- runsDesc
 	ch <- durationDesc
@@ -72,6 +73,7 @@ type runStats struct {
 	durationSum   float64
 }
 
+// Collect reads Agents from the cache and sends their metrics to ch.
 func (c *Collector) Collect(ch chan<- prometheus.Metric) {
 	defer c.scrapeErrors.Collect(ch)
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -141,13 +143,27 @@ func addCosts(agent *corev1alpha1.Agent, spend, budgets map[[2]string]float64) {
 	}
 	key := [2]string{agent.Namespace, models[0]}
 	if usage := agent.Status.Usage; usage != nil {
-		value, err := strconv.ParseFloat(usage.Spend, 64)
-		if err == nil && !math.IsNaN(value) && !math.IsInf(value, 0) {
-			spend[key] += value
+		hasModelSpend := false
+		for _, model := range usage.Models {
+			if recordSpend(spend, [2]string{agent.Namespace, model.Model}, model.Spend) {
+				hasModelSpend = true
+			}
+		}
+		if !hasModelSpend {
+			recordSpend(spend, key, usage.Spend)
 		}
 	}
 	// A quantity with a format can declare a zero budget.
 	if budget := agent.Spec.Budget; budget.Format != "" || !budget.IsZero() {
 		budgets[key] += budget.AsApproximateFloat64()
 	}
+}
+
+func recordSpend(spend map[[2]string]float64, key [2]string, amount string) bool {
+	value, err := strconv.ParseFloat(amount, 64)
+	if err != nil || math.IsNaN(value) || math.IsInf(value, 0) {
+		return false
+	}
+	spend[key] += value
+	return true
 }

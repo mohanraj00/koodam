@@ -4,7 +4,10 @@ This file records the changes for each Koodam version. The newest version is fir
 
 ## Unreleased
 
-- Export [Prometheus metrics](docs/metrics.md) for Agent counts, run time, spend and budgets.
+### Agents
+
+- Export [Prometheus metrics](docs/metrics.md) for Agent counts, run time, spend and budgets
+  ([#130](https://github.com/mohanraj00/koodam/issues/130)).
 
 ### Apps
 

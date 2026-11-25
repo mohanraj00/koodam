@@ -1,8 +1,11 @@
 # Prometheus metrics
 
-The controller serves metrics at `/metrics`. Set `--metrics-bind-address=:8443` to enable the HTTPS endpoint.
-The default bind address is `0`, which disables the endpoint. The HTTPS endpoint checks authentication and
-authorization. For HTTP, set `--metrics-secure=false` and set a bind address such as `:8080`.
+The controller serves metrics at `/metrics`. Use the HTTPS endpoint with authentication and authorization for these
+metrics. Set `--metrics-bind-address=:8443` to enable it. The default bind address is `0`, which disables the endpoint.
+
+HTTP mode has no authentication and exposes spend and budget data for all namespaces to any client that can reach it.
+Use HTTP only for local debugging. Set `--metrics-secure=false` and bind to `127.0.0.1`, for example with
+`--metrics-bind-address=127.0.0.1:8080`.
 
 Each scrape lists Agents in the manager cache with a 5-second time limit. The run and money metrics show the Agents
 that exist at scrape time. When an Agent is deleted, its values leave the totals. For a replicated controller,
@@ -24,10 +27,11 @@ They can decrease when an Agent is deleted. Query the current mean duration in s
 koodam_agent_run_duration_seconds_sum / koodam_agent_run_duration_seconds_count
 ```
 
-Spend includes finite values in `status.usage.spend`. Budget includes declared values in `spec.budget`. These metrics
-use the amounts from the gateway price table, which must use USD for the metric names to match the currency.
+Spend uses finite values from `status.usage.models` and labels each value with the model in that entry. If no entry
+has a finite spend value, the collector uses finite `status.usage.spend` for `spec.model` or the first entry in
+`spec.models`. Budget uses the declared `spec.budget` and labels it with `spec.model` or the first entry in
+`spec.models`. The gateway price table must use USD for the metric names to match the currency.
 
 The collector uses only the `namespace`, `phase` and `model` labels. An empty phase is `Pending`. Any phase outside
-the Agent phase list is `Unknown`. The `model` label is `spec.model` or the first entry in `spec.models`. Spend and
-budget for a run with several models go to that first model. The collector uses no key values, key hashes, key aliases,
-tokens, user names or login values for labels.
+the Agent phase list is `Unknown`. The collector uses no key values, key hashes, key aliases, tokens, user names or
+login values for labels.
