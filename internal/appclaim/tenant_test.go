@@ -55,7 +55,7 @@ func TestParseTenantLimits(t *testing.T) {
 		}
 	}
 	for _, doc := range []string{
-		``, `[]`, `{} {}`, `{"other":1}`,
+		``, `[]`, `null`, ` null `, `{} {}`, `{"other":1}`,
 		`{"default":{"rate":-1,"burst":1}}`,
 		`{"default":{"rate":1}}`,
 		`{"default":{"burst":3}}`,
@@ -87,8 +87,9 @@ func TestTenantsLoad(t *testing.T) {
 	if err := tenants.Load(path); err != nil {
 		t.Fatal(err)
 	}
-	// A file that is not valid, or too large, keeps the last valid limits.
-	for _, bad := range [][]byte{[]byte("{"), bytes.Repeat([]byte(" "), maxLimitsFile+1)} {
+	// A file that is not valid, or too large, keeps the last valid limits. The JSON value null
+	// is not a limits file.
+	for _, bad := range [][]byte{[]byte("{"), []byte("null"), bytes.Repeat([]byte(" "), maxLimitsFile+1)} {
 		if err := os.WriteFile(path, bad, 0o600); err != nil {
 			t.Fatal(err)
 		}
@@ -130,6 +131,17 @@ func TestTenantsAllow(t *testing.T) {
 	// A clock that goes back adds no token.
 	if reason, _ := allow(tenantFast, 0); reason != ReasonTenantRateLimited {
 		t.Errorf("clock back: %q", reason)
+	}
+	// Requests with times that are not in order get the tokens of a time range one time only.
+	// The default limit is 1 for each second with a burst of 1.
+	passed := 0
+	for _, ms := range []int{0, 1000, 0, 1000} {
+		if reason, _ := allow("late", ms); reason == "" {
+			passed++
+		}
+	}
+	if passed != 2 {
+		t.Errorf("times not in order: %d requests passed, want 2", passed)
 	}
 	// A long idle time fills the bucket to the burst, and not more.
 	for i := range 3 {

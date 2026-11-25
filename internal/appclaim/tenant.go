@@ -77,6 +77,10 @@ type TenantLimits struct {
 // ParseTenantLimits reads a limits file. It refuses an unknown field, a rate that is not from 0
 // to maxTenantRate, and a rate with a burst that is not from 1 to maxTenantRate.
 func ParseTenantLimits(data []byte) (*TenantLimits, error) {
+	// The JSON value null decodes to limits with no field. Only an object can be a limits file.
+	if body := bytes.TrimSpace(data); len(body) == 0 || body[0] != '{' {
+		return nil, errors.New("the tenant limits are not one JSON object of the known fields")
+	}
 	dec := json.NewDecoder(bytes.NewReader(data))
 	dec.DisallowUnknownFields()
 	var l TenantLimits
@@ -174,11 +178,13 @@ func (t *Tenants) Allow(tenant string, now time.Time) (reason string, wait time.
 		b = &bucket{tokens: size, last: now}
 		t.buckets[tenant] = b
 	}
-	// A clock that goes back adds no token.
+	// The requests of one tenant can come with times that are not in order, and a clock can go
+	// back. An older time adds no token, and it does not move the time of the bucket back. Thus
+	// the bucket adds the tokens of a time range one time only.
 	if d := now.Sub(b.last); d > 0 {
 		b.tokens += d.Seconds() * limit.Rate
+		b.last = now
 	}
-	b.last = now
 	// A smaller burst after a reload also makes the bucket smaller.
 	b.tokens = math.Min(b.tokens, size)
 	if b.tokens < 1 {
