@@ -25,7 +25,7 @@ A tenant of #193 has no zone of its own. A tenant label is known only in the ins
 |---|---|---|---|
 | Install | `zone.name`, `zone.namespaces`, `apps.sharedResources` | none | yes |
 | Ingress of an App | The claim check compares the zone claim of the caller with the zone of the install | `ZoneMismatch` | yes |
-| Model route | The route list of the gateway has only the routes of the zone | `RouteOutOfZone` | no |
+| Model route | The route list of the gateway has only the routes of the zone | `RouteOutOfZone` | yes |
 | Egress | The egress proxy refuses a host with a different declared zone | `EgressOutOfZone` | no |
 | Placement | An admission policy examines the node placement and the storage class of an AppVersion | `ZonePlacement` | no |
 
@@ -55,7 +55,33 @@ A change of these values gives each AppVersion a new pod template, so its pods s
 
 ### Model route
 
-Each item of `gateway.bundled.litellm.modelList` can have a `zone`. The chart puts an item in the route list of the gateway only if the item has no zone or the zone of the install. A call for the model name of a removed item gets a 403 with the reason `RouteOutOfZone`. An item with no zone is a route that the operator permits in each zone.
+Each item of `gateway.bundled.litellm.modelList` can have a `zone`. You can then use one list for each install.
+
+```yaml
+zone:
+  name: zone-a
+gateway:
+  bundled:
+    litellm:
+      modelList:
+      - model_name: model-a
+        zone: zone-a
+        litellm_params: {model: openai/model-a, api_base: https://models.zone-a.example.com}
+      - model_name: model-b
+        zone: zone-b
+        litellm_params: {model: openai/model-b, api_base: https://models.zone-b.example.com}
+```
+
+- The chart puts an item in the route list of the gateway only if the item has no zone or the zone of the install. The key `zone` is not in the route list.
+- An item with no zone is a route that the operator permits in each zone.
+- A call for a model name that only items of a different zone have gets the status 403. The message starts with `RouteOutOfZone`. Here, `model-b` gets this refusal in the install of `zone-a`.
+- If a model name has an item of the install zone and an item of a different zone, the gateway uses only the item of the install zone.
+- The gateway writes one JSON line to its log for each refusal: `{"kind": "gateway-zone", "outcome": "RouteOutOfZone", "zone": "zone-a", "model": "model-b"}`. The line has no key and no request data.
+- The gateway examines the key before the zone. Thus a key that does not permit the model name gets the usual key refusal of the gateway, not `RouteOutOfZone`.
+
+The refusal comes from a hook of the bundled LiteLLM gateway. The chart adds the hook only if the list has a route of a different zone. Its source is `config/gateway/koodam_zone.py`. A change of the routes of a different zone starts the gateway pod again.
+
+With your own gateway (`gateway.mode: existing`), Koodam does not control the route list. The operator of that gateway must remove the routes of other zones.
 
 ### Egress
 

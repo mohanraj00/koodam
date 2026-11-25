@@ -59,7 +59,7 @@ For an existing gateway, do not use `values-bundled.yaml`. Use `--set gateway.ur
 
 The `model` of an Agent is a model name in the LiteLLM config. The key permits only this model. To permit more than one model, use `models` and not `model`. `models` is a list of model names. The key permits each model of the list, and the gateway refuses a call to a different model. The first model of the list is the model of the harness. The list keeps its order: an apply replaces the full list. A model name can be in the list only one time.
 
-- With the bundled gateway, add your models to `gateway.bundled.litellm.modelList`. This value is the LiteLLM `model_list`.
+- With the bundled gateway, add your models to `gateway.bundled.litellm.modelList`. This value is the LiteLLM `model_list`. An item can also have a `zone`: [zones.md](zones.md) tells how an install refuses a route of a different zone (`RouteOutOfZone`).
 - With an existing gateway, add the model to the LiteLLM config of that gateway.
 
 If the model name is not in the LiteLLM config, the gateway refuses the calls.
