@@ -40,6 +40,15 @@ function setState(kind, text) {
 
 const money = (n) => (typeof n === 'number' && Number.isFinite(n)
   ? n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 4 }) : 'Unknown');
+// clip bounds a text to a kit length limit, in code points. The kit refuses a fill with a longer text.
+const clip = (text, max) => {
+  const chars = Array.from(text);
+  return chars.length > max ? `${chars.slice(0, max - 1).join('')}\u2026` : text;
+};
+// The kit limits: a table cell, a table name or a card title, and a card summary.
+const CELL = 500;
+const TITLE = 120;
+const SUMMARY = 1000;
 const time = (t) => (t ? new Date(t).toISOString().replace('.000Z', 'Z') : '');
 
 function todayUTC() {
@@ -82,7 +91,7 @@ function showRuns(items) {
   show(runTable, 'table', {
     label: 'Runs', columns: RUN_COLUMNS,
     rows: items.map((r) => fill('table-row', {
-      cells: [r.namespace, r.name, r.phase ?? 'Unknown', (r.models ?? []).join(', '), money(r.budget),
+      cells: [r.namespace, r.name, r.phase ?? 'Unknown', clip((r.models ?? []).join(', '), CELL), money(r.budget),
         money(r.spend), money(r.remainingBudget), time(r.startedAt), time(r.completedAt)],
     })),
   });
@@ -109,14 +118,14 @@ function showDetail() {
   ].map(([label, value]) => fill('fact', { label, value }));
   const models = (run.models ?? []).join(', ') || 'none';
   const summary = `Namespace ${run.namespace}. Run ID ${run.id}. Models: ${models}. Created ${time(run.createdAt)}.`;
-  const data = { title: run.name, summary, facts };
+  const data = { title: clip(run.name, TITLE), summary: clip(summary, SUMMARY), facts };
   const card = parent.firstElementChild;
   if (card) show(card, 'card', data);
   else kit.mount('card', data, { parent });
 }
 
 function spendRows(items, empty) {
-  return items.map((g) => fill('table-row', { cells: [g.labelValue || empty, money(g.spend)] }));
+  return items.map((g) => fill('table-row', { cells: [clip(g.labelValue || empty, CELL), money(g.spend)] }));
 }
 
 function clearData() {
@@ -137,7 +146,7 @@ async function refresh() {
     if (current !== generation) return;
     showRuns(runItems);
     show(labelTable, 'table', {
-      label: `Spend by ${label}`, columns: ['Label value', 'Spend'], rows: spendRows(labelItems, 'No value'),
+      label: clip(`Spend by ${label}`, TITLE), columns: ['Label value', 'Spend'], rows: spendRows(labelItems, 'No value'),
     });
     show(namespaceTable, 'table', {
       label: 'Spend by namespace', columns: ['Namespace', 'Spend'], rows: spendRows(namespaceItems, ''),
