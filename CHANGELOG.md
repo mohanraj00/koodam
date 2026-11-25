@@ -6,6 +6,7 @@ This file records the changes for each Koodam version. The newest version is fir
 
 ### Agents
 
+- Add the [read-only spend API](docs/spend-api.md) for Agent runs and spend by label. The binary `spend-api` serves `/v1/runs`, `/v1/spend` and `/v1/openapi.json` ([#397](https://github.com/mohanraj00/koodam/pull/397), [#393](https://github.com/mohanraj00/koodam/pull/393), [#394](https://github.com/mohanraj00/koodam/pull/394), [#395](https://github.com/mohanraj00/koodam/pull/395), [#396](https://github.com/mohanraj00/koodam/pull/396), [#398](https://github.com/mohanraj00/koodam/pull/398)).
 - Export [Prometheus metrics](docs/metrics.md) for Agent counts, run time, spend and budgets
   ([#413](https://github.com/mohanraj00/koodam/pull/413)).
 
