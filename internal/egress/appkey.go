@@ -47,14 +47,16 @@ var keyPrefixBytes = []byte(keyPrefix)
 const (
 	// maxKeyTexts is the number of key texts that the proxy examines.
 	maxKeyTexts = 16
-	// maxKeyBytes is the total length of the header values, the query values and the path that
-	// the proxy examines. The scan reads each value some times, in each form of keyScan.value.
-	// Thus a limit for each value does not limit the work of a call with many values.
+	// maxKeyBytes is the total length of the headers (the names and the values), the raw query
+	// and the path that the proxy examines. The scan reads each value some times, in each form
+	// of keyScan.value, and each header and each query pair uses time. Thus the limit is for
+	// all the text of the call, and the proxy examines no text of a call over the limit.
 	maxKeyBytes = 64 << 10
 )
 
-// ReasonKeyScanLimit tells that the model call has more key texts, or more text in its values, than
-// the proxy examines. The proxy refuses such a call, because a key can be in the part that it
+// ReasonKeyScanLimit tells that the model call has more key texts, or more text in its headers,
+// its query and its path, than the proxy examines, or a query value with an escape that is not
+// valid. The proxy refuses such a call, because a key can be in the part that it
 // did not examine.
 const ReasonKeyScanLimit = "KeyScanLimit"
 
@@ -69,6 +71,15 @@ const ReasonKeyScanLimit = "KeyScanLimit"
 func (p *Proxy) appKeyReason(r *http.Request, sp *Span) string {
 	if p.AppKeyOwner == nil {
 		return ""
+	}
+	n := len(r.URL.RawQuery) + len(r.URL.Path)
+	for name, values := range r.Header {
+		for _, v := range values {
+			n += len(name) + len(v)
+		}
+	}
+	if n > maxKeyBytes {
+		return ReasonKeyScanLimit
 	}
 	s := newKeyScan(p.AppKeyOwner, sp)
 	for _, values := range r.Header {
@@ -95,8 +106,6 @@ type keyScan struct {
 	// buf has the decoded base64 text of one value. The scan uses it again for each value.
 	buf   []byte
 	texts int
-	// bytes is the total length of the values that the scan examined.
-	bytes int
 	// out tells that the call has the key of an AppVersion and the pod is not of that AppVersion.
 	out bool
 	// limit tells that the call is over a limit of the scan. The scan stops then.
@@ -132,12 +141,8 @@ func (s *keyScan) text(key string) {
 //   - The base64 text of each of these, after the removal of the word "Basic ". A pass-through
 //     endpoint of the gateway can read the key from such text.
 func (s *keyScan) value(v string) {
-	if s.limit {
-		return
-	}
-	if s.bytes += len(v); s.bytes > maxKeyBytes {
-		// The scan does not examine more text, and a key can be in it.
-		s.limit = true
+	// A value that is not longer than the prefix cannot hold a key in one of these forms.
+	if s.limit || len(v) <= len(keyPrefix) {
 		return
 	}
 	scanKeys(v, s.found)
@@ -167,21 +172,19 @@ func (s *keyScan) basic(v string) {
 
 // query examines the value of each pair of a raw query. It does not make a map of the query,
 // so a long query uses no memory in the scan. ReverseProxy removes each pair that the query
-// parser refuses before the gateway gets the call. The scan examines such a pair also.
+// parser refuses before the gateway gets the call. The scan examines such a pair also. But it
+// stops at a value with an escape that is not valid, and the proxy refuses the call.
 func (s *keyScan) query(raw string) {
 	for raw != "" && !s.limit {
 		var pair string
 		pair, raw, _ = strings.Cut(raw, "&")
 		_, v, _ := strings.Cut(pair, "=")
 		if strings.ContainsAny(v, "%+") {
-			// The text with no escape is not longer than v.
-			if s.bytes+len(v) > maxKeyBytes {
-				s.limit = true
-				return
-			}
 			u, err := url.QueryUnescape(v)
 			if err != nil {
-				continue
+				// The scan stops, so a call with many such values uses no more time.
+				s.limit = true
+				return
 			}
 			v = u
 		}

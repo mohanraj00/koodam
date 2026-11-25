@@ -81,7 +81,7 @@ The proxy does not decrypt TLS. For `connect` and `tls`, the span has the host a
 | `TenantTokenExpired` | `denied` | The tenant token is at its end time or after it. |
 | `TenantLabelNotASCII` | `denied` | The tenant label of the token cannot be the value of a header. |
 | `AppKeyOutOfPod` | `denied` | An `llm` call has the gateway key of an AppVersion, and the pod is not a pod of that AppVersion. |
-| `KeyScanLimit` | `denied` | An `llm` call has more key texts than the proxy examines, or its header values, its query values and its path are together too long. |
+| `KeyScanLimit` | `denied` | An `llm` call has more key texts than the proxy examines, or its headers, its query and its path are together too long, or a query value has an escape that is not valid. |
 
 A reader must accept other reason text. The reason is for people, and new reasons can come in the same version.
 

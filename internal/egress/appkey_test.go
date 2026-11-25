@@ -309,6 +309,15 @@ func TestKeyScanLimits(t *testing.T) {
 		"a query value with an escape over the maximum length, then the key of the App": {
 			query: "?a=%2D" + atLimit + "&key=" + key, reason: ReasonKeyScanLimit},
 		"a path over the maximum length": {query: "/" + atLimit, reason: ReasonKeyScanLimit},
+		"a header name over the maximum length": {
+			header: map[string]string{strings.Repeat("X", maxKeyBytes): "x"}, reason: ReasonKeyScanLimit},
+		"query pairs with no value, together over the maximum length": {
+			query: "?" + strings.Repeat("&", maxKeyBytes), reason: ReasonKeyScanLimit},
+		"query values with a bad escape, together over the maximum length": {
+			query: "?a=%" + strings.Repeat("&a=%", maxKeyBytes/4), reason: ReasonKeyScanLimit},
+		"a query value with a bad escape": {query: "?a=%zz", reason: ReasonKeyScanLimit},
+		"a query value with a bad escape, then the key of the App": {
+			query: "?a=%&key=" + key, reason: ReasonKeyScanLimit},
 	}
 	for name, c := range cases {
 		t.Run(name, func(t *testing.T) {
@@ -330,16 +339,29 @@ func TestKeyScanLimits(t *testing.T) {
 	}
 }
 
-// The limit of the text is for the values of one call together, at the byte.
-func TestKeyScanCountsTheTextOfEachValue(t *testing.T) {
-	half := strings.Repeat("x", maxKeyBytes/2)
-	s := newKeyScan(func(string) (string, string, bool) { return "", "", false }, &Span{})
-	s.value(half)
-	if s.query("a=" + half[1:] + "&b=x"); s.limit {
-		t.Fatal("The scan is at its limit with the maximum length of text.")
+// The limit of the text is for the header names, the header values, the raw query and the path
+// of one call together, at the byte.
+func TestKeyScanCountsAllTheTextOfACall(t *testing.T) {
+	p := &Proxy{AppKeyOwner: func(string) (string, string, bool) { return "", "", false }}
+	quarter := strings.Repeat("x", maxKeyBytes/4)
+	r := &http.Request{
+		Header: http.Header{quarter: {quarter[1:]}},
+		URL:    &url.URL{Path: "/" + quarter, RawQuery: "&a=" + quarter[4:] + "&"},
 	}
-	if s.value("x"); !s.limit {
-		t.Error("The scan is not at its limit with more text than the maximum length.")
+	if reason := p.appKeyReason(r, &Span{}); reason != "" {
+		t.Fatalf("The reason is %q with the maximum length of text.", reason)
+	}
+	for name, more := range map[string]func(){
+		"header name":  func() { r.Header = http.Header{quarter + "x": {quarter[1:]}} },
+		"header value": func() { r.Header = http.Header{quarter: {quarter}} },
+		"query":        func() { r.URL.RawQuery += "&" },
+		"path":         func() { r.URL.Path += "/" },
+	} {
+		saved, savedURL := r.Header, *r.URL
+		if more(); p.appKeyReason(r, &Span{}) != ReasonKeyScanLimit {
+			t.Errorf("%s: the scan is not at its limit with more text than the maximum length.", name)
+		}
+		r.Header, r.URL = saved, &savedURL
 	}
 }
 
@@ -355,8 +377,8 @@ func TestKeyScanOfALongQueryAllocatesLittle(t *testing.T) {
 		raw, sp := q.String(), &Span{}
 		allocs := testing.AllocsPerRun(5, func() {
 			s := newKeyScan(owner, sp)
-			if s.query(raw); !s.limit {
-				t.Errorf("%s: the scan is not at its limit.", name)
+			if s.query(raw); s.limit != (name == "key texts") {
+				t.Errorf("%s: the limit state of the scan is %v.", name, s.limit)
 			}
 		})
 		if allocs > 4*maxKeyTexts {
