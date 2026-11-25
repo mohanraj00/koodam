@@ -25,8 +25,15 @@ import (
 	rbacv1 "k8s.io/api/rbac/v1"
 )
 
+// The values that many tests set.
+const (
+	setApps        = "apps.enabled=true"
+	setTenantClaim = "apps.claimCheck.tenantClaim=tenant"
+)
+
 // The chart installs the App parts only if apps.enabled is true. The default install has no App
 // CRD, no App grant and no App controller.
+
 func TestAppsOnlyIfEnabled(t *testing.T) {
 	const flag, role = "--apps-enabled", "koodam-app-manager-role"
 	off, err := helmTemplate(t, "")
@@ -40,7 +47,7 @@ func TestAppsOnlyIfEnabled(t *testing.T) {
 		}
 	}
 
-	on, err := helmTemplate(t, "", "apps.enabled=true")
+	on, err := helmTemplate(t, "", setApps)
 	if err != nil {
 		t.Fatalf("helm template failed: %v\n%s", err, on)
 	}
@@ -81,7 +88,7 @@ func TestAppsWithEgressProxy(t *testing.T) {
 	}
 	// The proxy gives an App pod an identity only in a named namespace, so the chart refuses the
 	// Apps with the proxy and no namespace.
-	apps := slices.Concat(set, []string{"apps.enabled=true", "apps.ingressNamespaces={gateway-system,edge}"})
+	apps := slices.Concat(set, []string{setApps, "apps.ingressNamespaces={gateway-system,edge}"})
 	if out, err := helmTemplate(t, "", apps...); err == nil ||
 		!strings.Contains(out, "workspace.networkPolicy.namespaces must have each namespace of the Apps") {
 		t.Errorf("the Apps with the proxy and no namespace are accepted: %v", err)
@@ -107,12 +114,12 @@ func TestAppsWithEgressProxy(t *testing.T) {
 // and the JWKS file, and a new JWKS starts the manager again.
 func TestAppClaimCheck(t *testing.T) {
 	const flag, jwks = "--app-claim-issuer", `{"keys":[{"kty":"EC"}]}`
-	set := []string{"apps.enabled=true", "apps.claimCheck.issuer=https://issuer.example.com",
-		"apps.claimCheck.audience=shop", "apps.claimCheck.tenantClaim=tenant"}
+	set := []string{setApps, "apps.claimCheck.issuer=https://issuer.example.com",
+		"apps.claimCheck.audience=shop", setTenantClaim}
 	// The claim check needs the egress proxy.
 	const proxy = "egressProxy: {enabled: true, clusterIP: 10.96.0.50, networkPolicy: {enabled: false}}\n" +
 		"workspace: {networkPolicy: {namespaces: [shop]}}\n"
-	off, err := helmTemplate(t, "", "apps.enabled=true")
+	off, err := helmTemplate(t, "", setApps)
 	if err != nil || strings.Contains(off, flag) || strings.Contains(off, "app-claim-jwks") {
 		t.Fatalf("the install with no issuer has the claim check: %v", err)
 	}
@@ -154,14 +161,14 @@ func TestAppTenantToken(t *testing.T) {
 	const values = "egressProxy: {enabled: true, clusterIP: 10.96.0.50, networkPolicy: {enabled: false}}\n" +
 		"workspace: {networkPolicy: {namespaces: [shop, bank]}}\n" +
 		"apps:\n  claimCheck:\n    jwks: '{\"keys\":[{\"kty\":\"EC\"}]}'\n"
-	base := []string{"apps.enabled=true", "apps.claimCheck.issuer=https://issuer.example.com", "apps.claimCheck.audience=shop"}
+	base := []string{setApps, "apps.claimCheck.issuer=https://issuer.example.com", "apps.claimCheck.audience=shop"}
 	for name, c := range map[string]struct {
 		set []string
 		on  bool
 	}{
-		"a tenant claim":                     {[]string{"apps.claimCheck.tenantClaim=tenant"}, true},
+		"a tenant claim":                     {[]string{setTenantClaim}, true},
 		"no tenant claim":                    {nil, false},
-		"a tenant claim with the switch off": {[]string{"apps.claimCheck.tenantClaim=tenant", "apps.claimCheck.tenantToken=false"}, false},
+		"a tenant claim with the switch off": {[]string{setTenantClaim, "apps.claimCheck.tenantToken=false"}, false},
 	} {
 		t.Run(name, func(t *testing.T) {
 			out, err := helmTemplate(t, values, append(base, c.set...)...)
@@ -195,7 +202,7 @@ func TestAppTenantToken(t *testing.T) {
 		})
 	}
 	// With no Apps, the proxy has no tenant token flag and no AppVersion rule.
-	out := render(t, proxyValues, "workspace.networkPolicy.namespaces={dev-a}", "apps.claimCheck.tenantClaim=tenant",
+	out := render(t, proxyValues, "workspace.networkPolicy.namespaces={dev-a}", setTenantClaim,
 		"apps.claimCheck.issuer=https://issuer.example.com")
 	if strings.Contains(out, "--tenant-tokens") || strings.Contains(out, "appversions") {
 		t.Error("the install with no Apps has the tenant token of the proxy")

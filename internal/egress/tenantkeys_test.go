@@ -17,7 +17,6 @@ limitations under the License.
 package egress
 
 import (
-	"context"
 	"crypto/ed25519"
 	"testing"
 
@@ -60,8 +59,7 @@ func TestTenantKeysWatch(t *testing.T) {
 		// The proxy does not watch this namespace, so its AppVersion gives no key.
 		appVersion("other", appV1, tenanttoken.PublicText(other)))
 	keys := NewTenantKeys()
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	ctx := t.Context()
 	if err := keys.Watch(ctx, client, 0, ns, metav1.NamespaceAll); err != nil {
 		t.Fatal(err)
 	}
