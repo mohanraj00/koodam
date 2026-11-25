@@ -76,15 +76,15 @@ type fakeKey struct {
 
 type fixture struct {
 	*api
-	runKeys  []fakeKey
-	keyIndex map[string]int
-	master   string
+	runKeys       []fakeKey
+	keyIndex      map[string]int
+	master, token string
 }
 
 func newFixture(t testing.TB, count int) fixture {
 	t.Helper()
 	f := fixture{
-		master:  rand.Text(),
+		master: rand.Text(), token: rand.Text(),
 		runKeys: make([]fakeKey, max(1, count)), keyIndex: make(map[string]int, count),
 	}
 	items := make([]corev1alpha1.Agent, count)
@@ -110,11 +110,15 @@ func newFixture(t testing.TB, count int) fixture {
 			Status: corev1alpha1.AgentStatus{KeyHash: hash, KeyAlias: "run-alias", CostGroup: "saved"},
 		}
 	}
-	l, err := newLiteLLM("http://litellm.example", f.master)
+	handler, err := New(Config{
+		Kube: agentReader{items: items}, Namespace: testNamespace,
+		GatewayURL: "http://litellm.example", MasterKey: f.master, Timeout: 2 * time.Second,
+		StaticTokens: []string{f.token},
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	f.api = &api{kube: agentReader{items: items}, namespace: testNamespace, gateway: l}
+	f.api = handler.(*api)
 	return f
 }
 
