@@ -24,6 +24,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -45,19 +46,50 @@ import (
 
 	corev1alpha1 "github.com/mohanraj00/koodam/api/v1alpha1"
 	"github.com/mohanraj00/koodam/internal/appclaim"
+	"github.com/mohanraj00/koodam/internal/egress"
 	"github.com/mohanraj00/koodam/test/utils"
 )
 
-// appServer is the app of the test. It answers each GET with the name of its AppVersion.
+// otherTenant is the label of a tenant that sends no request to the app.
+const otherTenant = "other-tenant"
+
+// appServer is the app of the test. It answers each GET with the name of its AppVersion. For the
+// path /model, it makes a model call and answers with the status of that call. The body and a
+// header of the model call have the label of a different tenant, in each field from which the
+// gateway can read a customer. With the query "token", the call has the tenant token of the
+// request.
 const appServer = `
-import http.server, os
+import http.server, json, os, urllib.error, urllib.request
+OTHER = "` + otherTenant + `"
 class H(http.server.BaseHTTPRequestHandler):
     def do_GET(self):
         body = os.environ["KOODAM_APP_VERSION"].encode()
+        if self.path.startswith("/model"):
+            body = self.model().encode()
         self.send_response(200)
         self.send_header("Content-Length", str(len(body)))
         self.end_headers()
         self.wfile.write(body)
+    def model(self):
+        data = json.dumps({"model": os.environ["KOODAM_GATEWAY_MODEL"], "input": "hi", "user": OTHER,
+            "metadata": {"user_id": OTHER}, "litellm_metadata": {"user": OTHER},
+            "safety_identifier": OTHER}).encode()
+        with open(os.environ["KOODAM_GATEWAY_KEY_FILE"]) as f:
+            key = f.read().strip()
+        headers = {"Content-Type": "application/json", "Authorization": "Bearer " + key,
+            "x-litellm-customer-id": OTHER, "x-litellm-end-user-id": OTHER}
+        if "token" in self.path:
+            headers["Koodam-Tenant-Token"] = self.headers.get("Koodam-Tenant-Token", "")
+        req = urllib.request.Request(os.environ["KOODAM_GATEWAY_URL"] + "/v1/responses", data=data, headers=headers)
+        # The gateway address is the egress proxy. The call uses no proxy variable.
+        opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+        try:
+            with opener.open(req, timeout=30) as r:
+                return str(r.status)
+        except urllib.error.HTTPError as e:
+            return (str(e.code) + " " + (e.headers.get("Koodam-Reason") or "")).strip()
+        except Exception as e:
+            return "error " + type(e).__name__
     def log_message(self, *args):
         pass
 http.server.ThreadingHTTPServer(("", 8080), H).serve_forever()
@@ -347,6 +379,92 @@ var _ = Describe("Thin App", Ordered, Label("app"), func() {
 
 		By("checking the sample for credentials and writing it")
 		Expect(utils.WriteSamples(dir, map[string][]byte{utils.AppSpanSample: lines}, token, masterKey)).To(Succeed())
+	})
+
+	// The gateway must count a model call for the tenant of the request, not for a label that
+	// the code in a pod sends (#415). The test is the proof for the pinned gateway image.
+	It("counts a model call only on the tenant of the token", func() {
+		// claimToken signs each claim for this tenant.
+		const tenant, forger = "team-e2e", "tenant-forge"
+		// get sends one request with the signed claim to the path of the version v1.
+		get := func(path string) string {
+			req, err := http.NewRequest(http.MethodGet, strings.TrimSuffix(localURL, "/")+path, nil)
+			Expect(err).NotTo(HaveOccurred())
+			req.Header.Set(corev1alpha1.AppVersionHeader, v1)
+			req.Header.Set("Authorization", "Bearer "+token)
+			resp, err := httpClient.Do(req)
+			if err != nil {
+				return err.Error()
+			}
+			defer func() { _ = resp.Body.Close() }()
+			body, _ := io.ReadAll(resp.Body)
+			return fmt.Sprintf("%d %s", resp.StatusCode, body)
+		}
+		// count gives the successful model calls that the gateway has for a customer.
+		count := func(customer string) int {
+			const layout = "2006-01-02 15:04:05"
+			q := url.Values{"end_user": {customer}, "status_filter": {"success"}, "page": {"1"}, "page_size": {"1"},
+				"start_date": {time.Now().Add(-time.Hour).UTC().Format(layout)},
+				"end_date":   {time.Now().Add(time.Hour).UTC().Format(layout)}}
+			req, err := http.NewRequestWithContext(ctx, http.MethodGet, gatewayURL+"/spend/logs/v2?"+q.Encode(), nil)
+			Expect(err).NotTo(HaveOccurred())
+			req.Header.Set("Authorization", "Bearer "+masterKey)
+			resp, err := httpClient.Do(req)
+			if err != nil {
+				return -1
+			}
+			defer func() { _ = resp.Body.Close() }()
+			var logs struct {
+				Total *int `json:"total"`
+			}
+			if resp.StatusCode != http.StatusOK || json.NewDecoder(resp.Body).Decode(&logs) != nil || logs.Total == nil {
+				return -1
+			}
+			return *logs.Total
+		}
+
+		By("making a model call from the app with the tenant token of the request")
+		calls := 0
+		Eventually(func() string {
+			out := get("/model?token")
+			if out == "200 200" {
+				calls++
+			}
+			return out
+		}, 2*time.Minute, 2*time.Second).Should(Equal("200 200"), "The model call with the tenant token did not work.")
+
+		By("refusing a model call of the app with no tenant token")
+		Expect(get("/model")).To(Equal("200 403 " + egress.ReasonTenantTokenMissing))
+
+		By("reading the count of the gateway for the tenant of the token and for the tenant of the body")
+		Eventually(func() int { return count(tenant) }, 3*time.Minute, 2*time.Second).Should(Equal(calls),
+			"The gateway did not count the model call on the tenant of the token.")
+		Expect(count(otherTenant)).To(BeZero(), "The gateway counted a call on the tenant of the body.")
+
+		By("making a model call from an Agent pod with the label of the tenant")
+		a := sampleAgent(forger, "sleep 900")
+		a.Namespace = appNS
+		Expect(k8s.Create(ctx, a)).To(Succeed())
+		DeferCleanup(func() { _ = k8s.Delete(ctx, a) })
+		pod := ""
+		Eventually(func(g Gomega) {
+			pods := &corev1.PodList{}
+			g.Expect(k8s.List(ctx, pods, client.InNamespace(appNS), client.MatchingLabels{agentLabel: forger})).To(Succeed())
+			g.Expect(pods.Items).To(HaveLen(1))
+			g.Expect(pods.Items[0].Status.Phase).To(Equal(corev1.PodRunning))
+			pod = pods.Items[0].Name
+		}, 3*time.Minute, time.Second).Should(Succeed(), "The Agent pod does not run.")
+		curl := `curl -sS -o /dev/null -w '%{http_code}' --max-time 30 -H "Authorization: Bearer $OPENAI_API_KEY" ` +
+			`-H 'Content-Type: application/json' -H 'x-litellm-customer-id: ` + tenant + `' ` +
+			`-d '{"model":"` + mockModel + `","messages":[{"role":"user","content":"hi"}],"user":"` + tenant + `"}' ` +
+			`"$OPENAI_BASE_URL/chat/completions"`
+		Eventually(func() string {
+			out, _ := utils.Run(exec.Command("kubectl", "exec", "-n", appNS, pod, "--", "sh", "-c", curl))
+			return out
+		}, time.Minute, 2*time.Second).Should(Equal("200"), "The model call of the Agent pod did not work.")
+		Eventually(func() int { return count(egress.NoTenantCustomer) }, 3*time.Minute, 2*time.Second).
+			Should(BeNumerically(">=", 1), "The gateway did not count the Agent call on the reserved customer.")
+		Expect(count(tenant)).To(Equal(calls), "The gateway counted the Agent call on the tenant.")
 	})
 
 	It("drains a retiring version and then revokes its key", func() {
