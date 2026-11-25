@@ -100,7 +100,8 @@ zone:
 - The proxy refuses the host before the name lookup. Thus it sends no DNS query and no byte to a host of a different zone.
 - A host is a DNS name, or `*.` and a DNS name. The pattern `*.zone-b.example.net` is for each name below `zone-b.example.net`, not for `zone-b.example.net`. An exact name wins against a pattern, and the longest pattern wins against a shorter pattern.
 - A host with no entry follows the usual egress rules. The list is not a list of permitted hosts.
-- An IP address has no declared zone. The transparent TLS listener refuses a connection with no server name, but a CONNECT to an IP address passes the zone check.
+- An IP address has no declared zone, and the proxy cannot find the host of an address. If the list has a host of a zone that is not the zone of the install, the proxy refuses each call to an IP address with the reason `EgressOutOfZone`. A host name with a number as its last label is also an address. If the list has no such host, a call to an IP address follows the usual egress rules.
+- The check uses the name of the call. A name with no entry passes the check, also if it has the same address as a host of a different zone. Put each name of an endpoint of a different zone in the list.
 - With `zone.name`, each egress span has the field `zone`: the zone of the install.
 
 The Agent ingress span of [ingress-spans.md](ingress-spans.md) has no zone field, because no proxy writes this span.

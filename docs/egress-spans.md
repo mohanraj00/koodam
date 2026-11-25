@@ -68,7 +68,7 @@ The proxy does not decrypt TLS. For `connect` and `tls`, the span has the host a
 | `port` | `denied` | The port is not in the permitted ports. |
 | `address` | `denied` | The name resolves to a private, loopback, link-local or metadata address. |
 | `identity` | `denied` | The proxy found no pod, or more than 1 pod, with the source IP. |
-| `EgressOutOfZone` | `denied` | The host has a declared zone (`zone.egressHosts`) that is not the zone of the install. [zones.md](zones.md) has the rules. |
+| `EgressOutOfZone` | `denied` | The host has a declared zone (`zone.egressHosts`) that is not the zone of the install, or the host is an IP address and the list has a host of a different zone. [zones.md](zones.md) has the rules. |
 | `not a proxy request` | `denied` | The request is not a CONNECT, an absolute URL or an `/llm/` path. |
 | `no TLS ClientHello` | `denied` | The first bytes in a tunnel are not a TLS ClientHello. |
 | `the SNI is not the CONNECT host` | `denied` | The SNI is not the name of the CONNECT request. |
