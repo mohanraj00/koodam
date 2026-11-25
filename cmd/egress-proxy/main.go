@@ -37,6 +37,7 @@ import (
 	"time"
 
 	"golang.org/x/net/netutil"
+	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/kubernetes"
 	ctrl "sigs.k8s.io/controller-runtime"
 
@@ -75,6 +76,10 @@ func run() error {
 	clusterDomain := flag.String("cluster-domain", "cluster.local", "the cluster domain")
 	tlsListen := flag.String("tls-listen", ":8443", "the address of the transparent TLS listener")
 	httpListen := flag.String("http-listen", ":8080", "the address of the transparent HTTP listener")
+	tenantTokens := flag.Bool("tenant-tokens", false,
+		"accept a model call of an App pod only with a tenant token of its AppVersion, and give each "+
+			"model call of a different pod the reserved customer. The proxy then reads the AppVersions "+
+			"of the named namespaces")
 	idle := flag.Duration("idle-timeout", egress.DefaultIdle,
 		"the time limit with no bytes on a tunnel, a request body or a response")
 	flag.Parse()
@@ -125,7 +130,21 @@ func run() error {
 	}
 	pods := egress.NewPodIndex()
 	synced := make(chan error, 1)
-	go func() { synced <- pods.Watch(ctx, cs, 0, list(*namespaces)...) }()
+	go func() {
+		err := pods.Watch(ctx, cs, 0, list(*namespaces)...)
+		if err == nil && *tenantTokens {
+			// The keys are in sync before the first call. With no key, the proxy refuses a model
+			// call of an App pod.
+			var dyn dynamic.Interface
+			if dyn, err = dynamic.NewForConfig(cfg); err == nil {
+				keys := egress.NewTenantKeys()
+				if err = keys.Watch(ctx, dyn, 0, list(*namespaces)...); err == nil {
+					p.TenantKey = keys.Key
+				}
+			}
+		}
+		synced <- err
+	}()
 	select {
 	case err := <-synced:
 		if err != nil {
@@ -133,7 +152,7 @@ func run() error {
 		}
 	case <-time.After(*syncTimeout):
 		// For example, the RBAC refuses the pod watch. A restart shows the problem.
-		return errors.New("the pod caches did not sync in the time limit")
+		return errors.New("the pod caches or the AppVersion caches did not sync in the time limit")
 	}
 	p.Identify = pods.Identify
 

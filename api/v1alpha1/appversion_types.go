@@ -333,6 +333,13 @@ type AppVersionStatus struct {
 	// +optional
 	CostGroup string `json:"costGroup,omitempty"`
 
+	// TenantTokenKey is the public key of the tenant token of the version. The claim check
+	// container of each pod signs the tenant token with the private key. The egress proxy reads
+	// this field, and it accepts a model call of a pod of the version only with a token that
+	// this key verifies. With no tenant token, the field is empty.
+	// +optional
+	TenantTokenKey string `json:"tenantTokenKey,omitempty"`
+
 	// Evidence is the evidence record of the gate. The controller writes it one time, after it
 	// accepts the report of the gate Job. A later Job of the same version cannot change it. A
 	// version with no spec.gate has no record.
