@@ -117,6 +117,19 @@ func keyLocations(key string) map[string]struct {
 		// The decoder of the gateway ignores a pad character in the first half of a group.
 		"Authorization, base64 with a pad character in a group start": {
 			header: h(authorization, "Basic "+basic[:8]+"="+basic[8:13]+"=="+basic[13:])},
+		// The decoder of Python 3.13 ignores a pad character at each position.
+		"Authorization, base64 with a pad character in the second half of a group": {
+			header: h(authorization, "Basic "+basic[:7]+"="+basic[7:])},
+		"Authorization, base64 with 2 pad characters in a group": {
+			header: h(authorization, "Basic "+basic[:6]+"=="+basic[6:])},
+		"Authorization, Bearer and Basic and base64": {header: h(authorization, "Bearer Basic "+basic)},
+		"x-api-key, base64 with no word":             {header: h("x-api-key", basic)},
+		// The gateway puts the word Bearer before the key of a WebSocket, and then it removes
+		// the word at each position.
+		"api-key, a divided key":                {header: h("api-key", key[:half]+"Bearer "+key[half:])},
+		"Sec-WebSocket-Protocol, a divided key": {header: h("Sec-WebSocket-Protocol", "openai-insecure-api-key."+key[:half]+"Bearer "+key[half:])},
+		"the path":                              {query: "/" + key},
+		"the path, with an escape":              {query: "/" + strings.Replace(key, "-", "%2D", 1)},
 		"Authorization, base64 with data after the end": {
 			header: h(authorization, "Basic "+base64.StdEncoding.EncodeToString([]byte(key+":"))+"0000")},
 		"Authorization, an AWS credential with Bearer": {
@@ -186,7 +199,7 @@ func TestAppKeyInItsPodPasses(t *testing.T) {
 				}
 			}
 			// ReverseProxy removes a query pair that is not valid. The key pair stays.
-			if c.query != "" && got.URL.Query().Get("key") != key {
+			if strings.HasPrefix(c.query, "?") && got.URL.Query().Get("key") != key {
 				t.Error("The gateway call has a different key in the query.")
 			}
 		})
@@ -228,11 +241,32 @@ func TestScanKeysAgreesWithNewKeyValue(t *testing.T) {
 	}
 }
 
-// basicText gives the same text as the standard decoder for standard base64 text.
-func TestBasicTextDecodesStandardBase64(t *testing.T) {
+// basicText gives the same text as the standard decoder for standard base64 text. For text with
+// a pad character in the middle, the 2 behaviors are different. The expected texts are the
+// results of the decoder of Python 3.12 (with stop) and of Python 3.13 (with no stop).
+func TestBasicText(t *testing.T) {
 	for _, text := range []string{"", "a", "ab", "abc", "abcd", "sk-kd-00:x\x00\xff"} {
-		if got := basicText(base64.StdEncoding.EncodeToString([]byte(text))); got != text {
-			t.Errorf("The decode of %q gives %q.", text, got)
+		for _, stop := range []bool{true, false} {
+			if got := string(basicText(nil, base64.StdEncoding.EncodeToString([]byte(text)), stop)); got != text {
+				t.Errorf("The decode of %q gives %q.", text, got)
+			}
+		}
+	}
+	const full = "ABCEFG"
+	for _, c := range []struct{ text, stop, all string }{
+		{"QUJDRA==", "ABCD", "ABCD"},
+		{"QUJ=DRUZH", "AB", full},
+		{"QU=JDRUZH", full, full},
+		{"=QUJDRUZH", full, full},
+		{"QUJDRU==ZH", "ABCE", full},
+		{"QUJDRUZ=H", "ABCEF", full},
+		{"QUJDRUZ=HQUJD", "ABCEF", "ABCEFGABC"},
+		{"QU==JDRUZH", "A", full},
+		{"QU=-=JDRUZH", "A", full},
+		{"QUJD RUZH\n", full, full},
+	} {
+		if stop, all := string(basicText(nil, c.text, true)), string(basicText(nil, c.text, false)); stop != c.stop || all != c.all {
+			t.Errorf("The decode of %q gives %q and %q.", c.text, stop, all)
 		}
 	}
 }
@@ -249,7 +283,7 @@ func TestKeyScanLimits(t *testing.T) {
 		return "?" + q.String()[1:]
 	}
 	half := len(key) / 2
-	long := strings.Repeat("x", maxKeyValue)
+	atLimit := strings.Repeat("x", maxKeyValue)
 	cases := map[string]struct {
 		query  string
 		header map[string]string
@@ -259,13 +293,15 @@ func TestKeyScanLimits(t *testing.T) {
 		"more key texts than the maximum": {query: texts(maxKeyTexts + 1), reason: ReasonKeyScanLimit},
 		"the key of the App after the maximum number of key texts": {
 			query: texts(maxKeyTexts) + "&key=" + key, reason: ReasonKeyScanLimit},
-		"a long value with no key word": {header: map[string]string{"X-Long": long}},
-		"a long value with a key word":  {header: map[string]string{authorization: "Bearer " + long}, reason: ReasonKeyScanLimit},
-		"a divided key in a long value": {header: map[string]string{
+		"a value of the maximum length":   {header: map[string]string{"X-Long": atLimit}},
+		"a value over the maximum length": {header: map[string]string{"X-Long": atLimit + "x"}, reason: ReasonKeyScanLimit},
+		"a divided key in a value over the maximum length": {header: map[string]string{
 			authorization: "Bearer " + key[:half] + strings.Repeat("Bearer ", maxKeyValue/7) + key[half:]}, reason: ReasonKeyScanLimit},
-		"a long query value with no escape":          {query: "?a=" + long},
-		"a long query value with an escape":          {query: "?a=%2D" + long, reason: ReasonKeyScanLimit},
-		"the key of the App with a long query value": {query: "?a=%2D" + long + "&key=" + key, reason: ReasonAppKeyOutOfPod},
+		"a query value of the maximum length":   {query: "?a=" + atLimit},
+		"a query value over the maximum length": {query: "?a=" + atLimit + "x", reason: ReasonKeyScanLimit},
+		"a query value with an escape over the maximum length, then the key of the App": {
+			query: "?a=%2D" + atLimit + "&key=" + key, reason: ReasonKeyScanLimit},
+		"a path over the maximum length": {query: "/" + atLimit, reason: ReasonKeyScanLimit},
 	}
 	for name, c := range cases {
 		t.Run(name, func(t *testing.T) {
@@ -287,22 +323,24 @@ func TestKeyScanLimits(t *testing.T) {
 	}
 }
 
-// The scan of a long query with many key texts makes no map of the query. It makes only the
-// hashes of the first key texts.
+// The scan of a long query makes no map of the query and no copy of each value. It makes the
+// hashes of the first key texts, and then it stops.
 func TestKeyScanOfALongQueryAllocatesLittle(t *testing.T) {
-	var q strings.Builder
-	for i := 0; q.Len() < 1<<20; i++ {
-		fmt.Fprintf(&q, "a=%s%06x&", keyPrefix, i)
-	}
-	raw, sp := q.String(), &Span{}
 	owner := func(string) (string, string, bool) { return "", "", false }
-	allocs := testing.AllocsPerRun(5, func() {
-		s := newKeyScan(owner, sp)
-		if s.query(raw); !s.limit {
-			t.Error("The scan must be at its limit.")
+	for name, value := range map[string]string{"key texts": keyPrefix + "%06x", "base64 text": "QUJDRUZHQUJDRUZH%06x"} {
+		var q strings.Builder
+		for i := 0; q.Len() < 1<<20; i++ {
+			fmt.Fprintf(&q, "a="+value+"&", i)
 		}
-	})
-	if allocs > 4*maxKeyTexts {
-		t.Errorf("The scan made %.0f allocations.", allocs)
+		raw, sp := q.String(), &Span{}
+		allocs := testing.AllocsPerRun(5, func() {
+			s := newKeyScan(owner, sp)
+			if s.query(raw); s.limit != (name == "key texts") {
+				t.Errorf("%s: the limit state of the scan is %v.", name, s.limit)
+			}
+		})
+		if allocs > 4*maxKeyTexts {
+			t.Errorf("%s: the scan made %.0f allocations.", name, allocs)
+		}
 	}
 }
