@@ -135,7 +135,7 @@ type TenantQuotaStatus struct {
 	// +optional
 	Spend string `json:"spend,omitempty"`
 
-	// ObservedTime is the time of the last read of the use from the gateway.
+	// ObservedTime is the time when the controller last wrote a change of the status.
 	// +optional
 	ObservedTime *metav1.Time `json:"observedTime,omitempty"`
 }

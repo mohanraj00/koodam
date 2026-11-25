@@ -80,6 +80,7 @@ func sourceIndex() []sourceRoute {
 		{path: "internal/controller/workspace_controller.go", role: RoleBase},
 		{path: "internal/controller/app_controller.go", role: RoleApp},
 		{path: "internal/controller/appversion_controller.go", role: RoleApp},
+		{path: "internal/controller/tenantquota_controller.go", role: RoleApp},
 	}
 }
 

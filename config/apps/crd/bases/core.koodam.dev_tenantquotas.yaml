@@ -210,8 +210,8 @@ spec:
                 - type
                 x-kubernetes-list-type: map
               observedTime:
-                description: ObservedTime is the time of the last read of the use
-                  from the gateway.
+                description: ObservedTime is the time when the controller last wrote
+                  a change of the status.
                 format: date-time
                 type: string
               periodEnd:

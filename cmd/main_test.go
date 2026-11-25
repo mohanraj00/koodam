@@ -27,6 +27,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/mohanraj00/koodam/internal/controller"
 )
@@ -164,5 +165,14 @@ func TestCheckClaimPolicy(t *testing.T) {
 	}
 	if err := checkClaimPolicy(on, proxy); err != nil {
 		t.Errorf("The claim check with the egress proxy is refused: %v", err)
+	}
+}
+
+// setupApps refuses a read interval of the tenant use below 1 second before it uses the manager.
+func TestSetupAppsInterval(t *testing.T) {
+	quotas := &controller.TenantQuotaReconciler{Interval: time.Millisecond}
+	err := setupApps(nil, &controller.AppVersionReconciler{}, quotas)
+	if err == nil || !strings.Contains(err.Error(), "--tenant-usage-interval") {
+		t.Errorf("got %v", err)
 	}
 }

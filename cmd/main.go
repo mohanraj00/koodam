@@ -135,6 +135,26 @@ func loadClaim(c controller.AppClaimCheck, jwksFile string) (controller.AppClaim
 	return c, nil
 }
 
+// setupApps adds the App controllers to the manager. It refuses a read interval of the tenant
+// use below 1 second.
+func setupApps(mgr ctrl.Manager, versions *controller.AppVersionReconciler,
+	quotas *controller.TenantQuotaReconciler) error {
+	if quotas.Interval < time.Second {
+		return errors.New("the flag --tenant-usage-interval must be 1s or more")
+	}
+	if err := versions.SetupWithManager(mgr); err != nil {
+		return fmt.Errorf("appversion: %w", err)
+	}
+	if err := quotas.SetupWithManager(mgr); err != nil {
+		return fmt.Errorf("tenantquota: %w", err)
+	}
+	apps := &controller.AppReconciler{Client: mgr.GetClient(), APIReader: mgr.GetAPIReader()}
+	if err := apps.SetupWithManager(mgr); err != nil {
+		return fmt.Errorf("app: %w", err)
+	}
+	return nil
+}
+
 // checkClaimPolicy refuses the App claim check if the controller cannot make the NetworkPolicy
 // of a version. With no policy, a pod of the cluster can call the app container with no claim.
 func checkClaimPolicy(c controller.AppClaimCheck, e controller.EgressProxy) error {
@@ -197,7 +217,7 @@ func main() {
 	var gatewayURL, gatewayKeyFile, agentGatewayURL, installerImage, nookkuImage, workspaceImage string
 	var testKeySingleGateway bool
 	var testKeyRevokeWait time.Duration
-	var keyGrace time.Duration
+	var keyGrace, tenantUsageInterval time.Duration
 	var egress controller.EgressProxy
 	var egressPodLabels, appIngressNamespaces, claimJWKSFile string
 	var claim controller.AppClaimCheck
@@ -270,6 +290,8 @@ func main() {
 	flag.BoolVar(&appsEnabled, "apps-enabled", false,
 		"If set, the manager runs the App and AppVersion controllers. The App CRDs and the App role in config/apps "+
 			"must be installed first.")
+	flag.DurationVar(&tenantUsageInterval, "tenant-usage-interval", controller.DefaultTenantUsageInterval,
+		"The time between 2 reads of the use of a tenant from the gateway. It is 1s or more.")
 	flag.BoolVar(&agentIngressEnabled, "agent-ingress-enabled", false,
 		"If set, the controller provisions a new Agent that sets spec.ingressPort. Do not set it before the "+
 			"protected install of the Agent ingress is complete. An Agent with a stored status.keyHash can "+
@@ -466,7 +488,7 @@ func main() {
 		os.Exit(1)
 	}
 	if appsEnabled {
-		if err := (&controller.AppVersionReconciler{
+		err := setupApps(mgr, &controller.AppVersionReconciler{
 			Client:            mgr.GetClient(),
 			Scheme:            mgr.GetScheme(),
 			APIReader:         mgr.GetAPIReader(),
@@ -475,13 +497,9 @@ func main() {
 			Egress:            egress,
 			IngressNamespaces: ingressNamespaces,
 			Claim:             claim,
-		}).SetupWithManager(mgr); err != nil {
-			setupLog.Error(err, "Failed to create controller", "controller", "appversion")
-			os.Exit(1)
-		}
-		if err := (&controller.AppReconciler{Client: mgr.GetClient(), APIReader: mgr.GetAPIReader()}).
-			SetupWithManager(mgr); err != nil {
-			setupLog.Error(err, "Failed to create controller", "controller", "app")
+		}, &controller.TenantQuotaReconciler{Client: mgr.GetClient(), Customers: gw, Interval: tenantUsageInterval})
+		if err != nil {
+			setupLog.Error(err, "Failed to create the App controllers")
 			os.Exit(1)
 		}
 	}

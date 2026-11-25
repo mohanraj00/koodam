@@ -40,12 +40,15 @@ rules:
   - apps/status
   - appversions/finalizers
   - appversions/status
+  - tenantquotas/finalizers
+  - tenantquotas/status
   verbs:
   - update
 - apiGroups:
   - core.koodam.dev
   resources:
   - appversions
+  - tenantquotas
   verbs:
   - get
   - list
