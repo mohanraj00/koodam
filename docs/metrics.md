@@ -10,6 +10,7 @@ Use HTTP only for local debugging. Set `--metrics-secure=false` and bind to `127
 Each scrape lists Agents in the manager cache with a 5-second time limit. The run and money metrics show the Agents
 that exist at scrape time. When an Agent is deleted, its values leave the totals. For a replicated controller,
 query one scrape target for the run and money metrics. If the list fails, the collector emits only the error counter.
+The collector skips each sample it cannot create and increases the error counter by 1 for each skipped sample.
 
 | Metric | Type | Labels | Example PromQL |
 |---|---|---|---|

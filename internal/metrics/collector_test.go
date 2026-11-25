@@ -43,7 +43,7 @@ const (
 	nsA       = "alpha"
 	nsB       = "beta"
 	nsLabel   = "namespace"
-	errorText = `# HELP koodam_metrics_scrape_errors_total Number of failed Agent lists during a metrics scrape.
+	errorText = `# HELP koodam_metrics_scrape_errors_total Number of failed Agent lists and skipped metric samples.
 # TYPE koodam_metrics_scrape_errors_total counter
 koodam_metrics_scrape_errors_total %d
 `
@@ -121,6 +121,29 @@ koodam_agent_budget_usd{model="model-b",namespace="beta"} 0
 `
 	compareMetrics(t, registry, want+fmt.Sprintf(errorText, 0))
 	checkLabels(t, registry)
+
+	t.Run("invalid model label", func(t *testing.T) {
+		invalidReader := interceptor.NewClient(reader, interceptor.Funcs{
+			List: func(ctx context.Context, c client.WithWatch, list client.ObjectList, opts ...client.ListOption) error {
+				if err := c.List(ctx, list, opts...); err != nil {
+					return err
+				}
+				// Add the invalid value after the fake client reads the list from JSON.
+				agents := list.(*corev1alpha1.AgentList)
+				for i := range agents.Items {
+					agent := &agents.Items[i]
+					if agent.Name == a.Name {
+						agent.Status.Usage.Models = append(agent.Status.Usage.Models, corev1alpha1.ModelUsage{
+							Model: "\xff", Spend: "1",
+						})
+						break
+					}
+				}
+				return nil
+			},
+		})
+		compareMetrics(t, testRegistry(invalidReader), want+fmt.Sprintf(errorText, 1))
+	})
 
 	for _, agent := range []*corev1alpha1.Agent{a, b, c, d, e} {
 		if err := reader.Delete(t.Context(), agent); err != nil {

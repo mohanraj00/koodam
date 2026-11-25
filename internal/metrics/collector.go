@@ -53,7 +53,7 @@ func NewCollector(reader client.Reader) *Collector {
 		reader: reader,
 		scrapeErrors: prometheus.NewCounter(prometheus.CounterOpts{
 			Name: "koodam_metrics_scrape_errors_total",
-			Help: "Number of failed Agent lists during a metrics scrape.",
+			Help: "Number of failed Agent lists and skipped metric samples.",
 		}),
 	}
 }
@@ -100,17 +100,24 @@ func (c *Collector) Collect(ch chan<- prometheus.Metric) {
 		runs[key] = stats
 		addCosts(agent, spend, budgets)
 	}
+	send := func(metric prometheus.Metric, err error) {
+		if err != nil {
+			c.scrapeErrors.Inc()
+			return
+		}
+		ch <- metric
+	}
 	for key, stats := range runs {
-		ch <- prometheus.MustNewConstMetric(runsDesc, prometheus.GaugeValue, float64(stats.count), key[:]...)
+		send(prometheus.NewConstMetric(runsDesc, prometheus.GaugeValue, float64(stats.count), key[:]...))
 		if stats.durationCount > 0 {
-			ch <- prometheus.MustNewConstSummary(durationDesc, stats.durationCount, stats.durationSum, nil, key[:]...)
+			send(prometheus.NewConstSummary(durationDesc, stats.durationCount, stats.durationSum, nil, key[:]...))
 		}
 	}
 	for key, value := range spend {
-		ch <- prometheus.MustNewConstMetric(spendDesc, prometheus.GaugeValue, value, key[:]...)
+		send(prometheus.NewConstMetric(spendDesc, prometheus.GaugeValue, value, key[:]...))
 	}
 	for key, value := range budgets {
-		ch <- prometheus.MustNewConstMetric(budgetDesc, prometheus.GaugeValue, value, key[:]...)
+		send(prometheus.NewConstMetric(budgetDesc, prometheus.GaugeValue, value, key[:]...))
 	}
 }
 
