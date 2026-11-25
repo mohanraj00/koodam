@@ -20,6 +20,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"maps"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -32,13 +33,18 @@ const (
 	testTenant   = "team a/b"
 	otherBudget  = "operator-budget"
 	pathBudgetUp = "/budget/update"
+	// The LiteLLM field names that the fake uses more than one time.
+	fieldBudgetID = "budget_id"
+	fieldSpend    = "spend"
+	fieldMax      = "max_budget"
+	fieldDuration = "budget_duration"
 )
 
 // customerFake is a small LiteLLM with budgets and customers, as v1.104.2 answers.
 type customerFake struct {
 	mu        sync.Mutex
 	budgets   map[string]map[string]any
-	customers map[string]map[string]any // user_id -> {"budget_id": ..., "spend": ...}
+	customers map[string]map[string]any // user_id -> {fieldBudgetID: ..., fieldSpend: ...}
 	calls     []string
 	logQuery  map[string]string
 	total     any
@@ -78,10 +84,10 @@ func (f *customerFake) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 		_ = json.NewEncoder(w).Encode(rows)
 	case "/budget/new":
-		id := b["budget_id"].(string)
+		id := b[fieldBudgetID].(string)
 		if _, ok := f.budgets[id]; ok || f.raceBudget {
 			f.raceBudget = false
-			f.budgets[id] = map[string]any{"budget_id": id, "budget_duration": "7d", "budget_reset_at": f.resetAt}
+			f.budgets[id] = map[string]any{fieldBudgetID: id, fieldDuration: "7d", "budget_reset_at": f.resetAt}
 			fail(http.StatusBadRequest, `{"detail":{"error":"Budget with id '`+id+`' already exists."}}`)
 			return
 		}
@@ -90,10 +96,8 @@ func (f *customerFake) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		_, _ = w.Write([]byte(`{}`))
 	case pathBudgetUp:
 		// LiteLLM answers 200 with null for a budget that does not exist.
-		if row, ok := f.budgets[b["budget_id"].(string)]; ok {
-			for k, v := range b {
-				row[k] = v
-			}
+		if row, ok := f.budgets[b[fieldBudgetID].(string)]; ok {
+			maps.Copy(row, b)
 		}
 		_, _ = w.Write([]byte(`null`))
 	case "/budget/delete":
@@ -106,8 +110,8 @@ func (f *customerFake) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			fail(http.StatusNotFound, `{"error":{"message":"End User Id=`+id+` does not exist in db","type":"not_found","param":"end_user_id","code":"404"}}`)
 			return
 		}
-		out := map[string]any{"user_id": id, "spend": c["spend"], "budget_id": c["budget_id"]}
-		if bid, ok := c["budget_id"].(string); ok {
+		out := map[string]any{"user_id": id, fieldSpend: c[fieldSpend], fieldBudgetID: c[fieldBudgetID]}
+		if bid, ok := c[fieldBudgetID].(string); ok {
 			out["litellm_budget_table"] = f.budgets[bid]
 		}
 		_ = json.NewEncoder(w).Encode(out)
@@ -116,15 +120,15 @@ func (f *customerFake) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		if _, ok := f.customers[id]; ok || f.raceCustomer {
 			f.raceCustomer = false
 			if !ok {
-				f.customers[id] = map[string]any{"spend": 0.5}
+				f.customers[id] = map[string]any{fieldSpend: 0.5}
 			}
 			fail(http.StatusBadRequest, `{"error":{"message":"Customer already exists, passed user_id=`+id+`.","type":"bad_request","param":"user_id","code":"400"}}`)
 			return
 		}
-		f.customers[id] = map[string]any{"spend": 0.0, "budget_id": b["budget_id"]}
+		f.customers[id] = map[string]any{fieldSpend: 0.0, fieldBudgetID: b[fieldBudgetID]}
 		_, _ = w.Write([]byte(`{}`))
 	case "/customer/update":
-		f.customers[b["user_id"].(string)]["budget_id"] = b["budget_id"]
+		f.customers[b["user_id"].(string)][fieldBudgetID] = b[fieldBudgetID]
 		_, _ = w.Write([]byte(`{}`))
 	case "/customer/delete":
 		id := b["user_ids"].([]any)[0].(string)
@@ -177,8 +181,8 @@ func TestSetCustomer(t *testing.T) {
 		t.Fatal(err)
 	}
 	b := f.budgets[id]
-	if b["max_budget"] != 2.5 || b["budget_duration"] != "1d" || b["rpm_limit"] != 300.0 ||
-		f.customers[testTenant]["budget_id"] != id {
+	if b[fieldMax] != 2.5 || b[fieldDuration] != "1d" || b["rpm_limit"] != 300.0 ||
+		f.customers[testTenant][fieldBudgetID] != id {
 		t.Errorf("budget %v, customer %v", b, f.customers[testTenant])
 	}
 	// The same spec writes nothing.
@@ -193,7 +197,7 @@ func TestSetCustomer(t *testing.T) {
 	if err := l.SetCustomer(ctx, CustomerSpec{ID: testTenant, Period: time.Hour}); err != nil {
 		t.Fatal(err)
 	}
-	if b["max_budget"] != nil || b["rpm_limit"] != nil || b["budget_duration"] != "1h" || f.count(pathBudgetUp) != 1 {
+	if b[fieldMax] != nil || b["rpm_limit"] != nil || b[fieldDuration] != "1h" || f.count(pathBudgetUp) != 1 {
 		t.Errorf("budget after the change: %v", b)
 	}
 	for _, bad := range []CustomerSpec{{Period: time.Hour}, {ID: "a"}, {ID: "a", Period: time.Hour, Budget: -1},
@@ -211,17 +215,17 @@ func TestSetCustomerExisting(t *testing.T) {
 	ctx := context.Background()
 	spec := CustomerSpec{ID: testTenant, Budget: 1, Period: time.Hour}
 	for name, row := range map[string]map[string]any{
-		"no budget":    {"spend": 0.75},
-		"other budget": {"spend": 0.75, "budget_id": otherBudget},
+		"no budget":    {fieldSpend: 0.75},
+		"other budget": {fieldSpend: 0.75, fieldBudgetID: otherBudget},
 	} {
 		f := newCustomerFake()
-		f.budgets[otherBudget] = map[string]any{"budget_id": otherBudget, "max_budget": 9.0}
+		f.budgets[otherBudget] = map[string]any{fieldBudgetID: otherBudget, fieldMax: 9.0}
 		f.customers[testTenant] = row
 		if err := customerClient(t, f).SetCustomer(ctx, spec); err != nil {
 			t.Fatalf("%s: %v", name, err)
 		}
-		if row["budget_id"] != customerBudgetID(testTenant) || row["spend"] != 0.75 ||
-			f.budgets[otherBudget]["max_budget"] != 9.0 || len(f.budgets[otherBudget]) != 2 {
+		if row[fieldBudgetID] != customerBudgetID(testTenant) || row[fieldSpend] != 0.75 ||
+			f.budgets[otherBudget][fieldMax] != 9.0 || len(f.budgets[otherBudget]) != 2 {
 			t.Errorf("%s: customer %v, other budget %v", name, row, f.budgets[otherBudget])
 		}
 	}
@@ -232,7 +236,7 @@ func TestSetCustomerExisting(t *testing.T) {
 		t.Fatal(err)
 	}
 	b := f.budgets[customerBudgetID(testTenant)]
-	if b["budget_duration"] != "1h" || b["max_budget"] != 1.0 || f.customers[testTenant]["budget_id"] != b["budget_id"] {
+	if b[fieldDuration] != "1h" || b[fieldMax] != 1.0 || f.customers[testTenant][fieldBudgetID] != b[fieldBudgetID] {
 		t.Errorf("after the race: budget %v, customer %v", b, f.customers[testTenant])
 	}
 }
@@ -245,14 +249,14 @@ func TestCustomerUsage(t *testing.T) {
 		t.Fatalf("missing customer: %v", err)
 	}
 	// A customer with no Koodam budget has no period.
-	f.customers[testTenant] = map[string]any{"spend": 0.1}
+	f.customers[testTenant] = map[string]any{fieldSpend: 0.1}
 	if _, err := l.CustomerUsage(ctx, testTenant); !errors.Is(err, ErrCustomerNotFound) {
 		t.Fatalf("customer with no budget: %v", err)
 	}
 	if err := l.SetCustomer(ctx, CustomerSpec{ID: testTenant, Budget: 1, Period: 24 * time.Hour}); err != nil {
 		t.Fatal(err)
 	}
-	f.customers[testTenant]["spend"], f.total = 0.25, 7
+	f.customers[testTenant][fieldSpend], f.total = 0.25, 7
 	u, err := l.CustomerUsage(ctx, testTenant)
 	want := CustomerUsage{Spend: 0.25, Requests: 7, PeriodEnd: time.Date(2026, 11, 26, 0, 0, 0, 0, time.UTC)}
 	if err != nil || u != want {
@@ -267,9 +271,9 @@ func TestCustomerUsage(t *testing.T) {
 	for name, change := range map[string]func(){
 		"no total":       func() { f.total = nil },
 		"negative total": func() { f.total = -1 },
-		"bad period":     func() { f.total = 1; f.budgets[customerBudgetID(testTenant)]["budget_duration"] = "1mo" },
+		"bad period":     func() { f.total = 1; f.budgets[customerBudgetID(testTenant)][fieldDuration] = "1mo" },
 		"no reset time": func() {
-			f.budgets[customerBudgetID(testTenant)]["budget_duration"] = "1d"
+			f.budgets[customerBudgetID(testTenant)][fieldDuration] = "1d"
 			delete(f.budgets[customerBudgetID(testTenant)], "budget_reset_at")
 		},
 	} {

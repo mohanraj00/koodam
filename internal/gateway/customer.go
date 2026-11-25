@@ -124,7 +124,7 @@ func parseBudgetDuration(v string) (time.Duration, bool) {
 	}
 	unit, ok := units[v[len(v)-1]]
 	n, err := strconv.ParseInt(v[:len(v)-1], 10, 64)
-	if !ok || err != nil || n < 1 || n > int64(math.MaxInt64/int64(unit)) {
+	if !ok || err != nil || n < 1 || n > math.MaxInt64/int64(unit) {
 		return 0, false
 	}
 	return time.Duration(n) * unit, true
