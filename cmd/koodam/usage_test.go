@@ -369,9 +369,10 @@ func TestUsageByArguments(t *testing.T) {
 		args []string
 		want string
 	}{
-		{[]string{"--by", "user"}, `--by "user" is not known: the only key is cost-group`},
-		{[]string{"--by="}, `--by "" is not known: the only key is cost-group`},
+		{[]string{"--by", "user"}, `--by "user" is not known: the keys are cost-group and tenant`},
+		{[]string{"--by="}, `--by "" is not known: the keys are cost-group and tenant`},
 		{[]string{"--by", "cost-group", wsName}, "koodam usage --by takes no WORKSPACE argument"},
+		{[]string{byFlag, byTenant, wsName}, "koodam usage --by takes no WORKSPACE argument"},
 		{nil, "accepts 1 arg(s), received 0"},
 		{[]string{wsName, "extra"}, "accepts 1 arg(s), received 2"},
 	} {
