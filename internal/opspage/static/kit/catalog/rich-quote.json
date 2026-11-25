@@ -1,0 +1,13 @@
+{
+  "name": "rich-quote",
+  "description": "A quote node of rich text: a list of paragraph nodes.",
+  "data": {
+    "paragraphs": {
+      "type": "list",
+      "required": true,
+      "max_items": 20,
+      "items": {"type": "component", "label": "Paragraph", "name": "rich-paragraph"}
+    }
+  },
+  "tokens": ["color.text", "color.text-muted", "color.border", "space.1", "space.2", "type.body", "space.3"]
+}

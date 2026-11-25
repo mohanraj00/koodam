@@ -1,0 +1,25 @@
+{
+  "name": "form-card",
+  "description": "A long form in sections that shows each field as a label and a value. A person edits one field in place and sends the changes as one action.",
+  "data": {
+    "title": {"type": "text", "required": true, "min_length": 1, "size": "title"},
+    "sections": {
+      "type": "list",
+      "required": true,
+      "max_items": 10,
+      "items": {"type": "component", "label": "Section", "name": "form-section"}
+    },
+    "submit_label": {"type": "text", "required": true, "min_length": 1, "size": "short"}
+  },
+  "states": ["+disabled", "+confirm", "+pending", "+done", "+error"],
+  "tokens": [
+    "color.surface", "color.text", "color.text-muted", "color.border", "color.accent", "color.on-accent",
+    "color.danger", "color.focus", "space.1", "space.2", "space.3", "space.4", "radius.2", "type.body", "type.caption",
+    "type.weight-strong", "motion.fast"
+  ],
+  "accessibility": {
+    "role": "form",
+    "name": {"field": "title"},
+    "keyboard": ["Tab", "Shift+Tab", "Enter", "Space", "Escape", "ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight"]
+  }
+}

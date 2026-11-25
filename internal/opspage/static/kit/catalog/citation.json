@@ -1,0 +1,14 @@
+{
+  "name": "citation",
+  "description": "The source of a claim: a source name, a locator as text, an optional quote and an open button.",
+  "slots": {"citation": {"required": false}},
+  "data": {
+    "quote": {"type": "text", "max_length": 500}
+  },
+  "states": ["+empty", "+refused"],
+  "tokens": [
+    "color.text", "color.text-muted", "color.border", "space.1", "space.2", "space.3", "radius.2", "type.body",
+    "type.caption"
+  ],
+  "accessibility": {"role": "group", "name": {"text": "Citation"}, "keyboard": ["Tab", "Shift+Tab", "Enter", "Space"]}
+}

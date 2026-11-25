@@ -1,0 +1,15 @@
+{
+  "name": "data-grid-row",
+  "description": "One row of a data grid: a key, a header label and one cell for each column.",
+  "data": {
+    "key": {"type": "text", "required": true, "min_length": 1, "size": "short"},
+    "label": {"type": "text", "required": true, "min_length": 1, "size": "line"},
+    "cells": {
+      "type": "list",
+      "required": true,
+      "max_items": 30,
+      "items": {"type": "component", "label": "Cell", "names": ["text-cell", "number-cell", "date-cell", "choice-cell"]}
+    }
+  },
+  "tokens": ["color.text", "color.border", "color.surface", "type.body", "type.weight-strong"]
+}

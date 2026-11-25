@@ -1,0 +1,31 @@
+{
+  "name": "choice-field",
+  "kind": "primitive",
+  "description": "A labeled group of choices. A person selects one choice. The value must be one of the choices.",
+  "ai_content": false,
+  "data": {
+    "name": {"type": "text", "size": "short"},
+    "label": {"type": "text", "required": true, "min_length": 1, "size": "line"},
+    "value": {"type": "text", "size": "line", "editable": true},
+    "choices": {
+      "type": "list",
+      "required": true,
+      "max_items": 20,
+      "items": {"type": "text", "label": "Choice", "min_length": 1, "size": "line"}
+    },
+    "hint": {"type": "text", "size": "summary"},
+    "error": {"type": "text", "size": "summary"},
+    "disabled": {"type": "boolean"},
+    "typed": {"type": "boolean"}
+  },
+  "states": ["+disabled", "+error"],
+  "tokens": [
+    "color.surface", "color.text", "color.text-muted", "color.border", "color.focus", "color.danger", "space.1",
+    "space.2", "radius.1", "type.body", "type.caption", "motion.fast"
+  ],
+  "accessibility": {
+    "role": "group",
+    "name": {"field": "label"},
+    "keyboard": ["Tab", "Shift+Tab", "ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight", "Space"]
+  }
+}

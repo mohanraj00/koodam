@@ -1,0 +1,14 @@
+{
+  "name": "chart-series",
+  "description": "A named series in a chart. Values follow the category order. The chart checks that the value count equals the category count.",
+  "data": {
+    "label": {"type": "text", "label": "Series label", "required": true, "min_length": 1, "size": "line"},
+    "values": {
+      "type": "list",
+      "required": true,
+      "max_items": 50,
+      "items": {"type": "number", "label": "Value", "minimum": -1000000000000, "maximum": 1000000000000}
+    }
+  },
+  "tokens": []
+}
