@@ -46,7 +46,7 @@ func main() {
 	rules := clientcmd.NewDefaultClientConfigLoadingRules()
 	listen := flag.String("listen", "127.0.0.1:8080", "The HTTP listen address.")
 	flag.StringVar(&rules.ExplicitPath, "kubeconfig", "", "The path to the kubeconfig file.")
-	flag.StringVar(&c.Namespace, "namespace", "", "The Agent namespace. Defaults to the Kubernetes client namespace.")
+	namespaces := flag.String("namespace", "", "The Agent namespaces, separated by commas. Defaults to the Kubernetes client namespace.")
 	flag.StringVar(&c.GatewayURL, "gateway-url", "", "The LiteLLM gateway URL.")
 	flag.DurationVar(&c.Timeout, "request-timeout", 5*time.Second, "The time limit of a request.")
 	masterFile := flag.String("master-key-file", "", "The file with the LiteLLM master key.")
@@ -69,6 +69,9 @@ func main() {
 	}
 	c.MasterKey = strings.TrimSpace(string(master))
 
+	if *namespaces != "" {
+		c.Namespaces = strings.Split(*namespaces, ",")
+	}
 	if err := setupKube(&c, rules); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(2)
@@ -113,11 +116,12 @@ func setupKube(c *spendapi.Config, rules *clientcmd.ClientConfigLoadingRules) er
 	if err != nil {
 		return errors.New("the Kubernetes client configuration is not valid")
 	}
-	if c.Namespace == "" {
-		c.Namespace, _, err = cc.Namespace()
+	if len(c.Namespaces) == 0 {
+		namespace, _, err := cc.Namespace()
 		if err != nil {
 			return errors.New("the Kubernetes client namespace is not available")
 		}
+		c.Namespaces = []string{namespace}
 	}
 	scheme := runtime.NewScheme()
 	if err := corev1alpha1.AddToScheme(scheme); err != nil {

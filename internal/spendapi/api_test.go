@@ -158,7 +158,7 @@ func TestKubernetesErrors(t *testing.T) {
 
 func TestNewRefusesBadConfig(t *testing.T) {
 	good := Config{
-		Kube: agentReader{}, Namespace: testNamespace, GatewayURL: "http://litellm.example",
+		Kube: agentReader{}, Namespaces: []string{testNamespace}, GatewayURL: "http://litellm.example",
 		MasterKey: "master", Timeout: time.Second, StaticTokens: []string{"token"},
 	}
 	if _, err := New(good); err != nil {
@@ -166,7 +166,10 @@ func TestNewRefusesBadConfig(t *testing.T) {
 	}
 	for i, change := range []func(*Config){
 		func(c *Config) { c.Kube = nil },
-		func(c *Config) { c.Namespace = "Not_A_Label" },
+		func(c *Config) { c.Namespaces = []string{"Not_A_Label"} },
+		func(c *Config) { c.Namespaces = nil },
+		func(c *Config) { c.Namespaces = []string{testNamespace, testNamespace} },
+		func(c *Config) { c.Namespaces = make([]string, maxNamespaces+1) },
 		func(c *Config) { c.Timeout = 0 },
 		func(c *Config) { c.MasterKey = "" },
 		func(c *Config) { c.StaticTokens = nil },

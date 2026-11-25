@@ -24,6 +24,7 @@ import (
 	"net/http"
 	"net/url"
 	"strconv"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -51,20 +52,26 @@ type agentReader struct {
 func (l agentReader) List(_ context.Context, target client.ObjectList, options ...client.ListOption) error {
 	list := target.(*corev1alpha1.AgentList)
 	opts := (&client.ListOptions{}).ApplyOptions(options)
-	if opts.Namespace != testNamespace || opts.Limit < 1 || opts.Limit > maxPage {
+	if opts.Namespace == "" || opts.Limit < 1 || opts.Limit > maxPage {
 		return fmt.Errorf("incorrect Kubernetes list options")
+	}
+	var items []corev1alpha1.Agent
+	for _, item := range l.items {
+		if item.Namespace == opts.Namespace {
+			items = append(items, item)
+		}
 	}
 	start := 0
 	if opts.Continue != "" {
 		var err error
 		start, err = strconv.Atoi(opts.Continue)
-		if err != nil || start < 0 || start > len(l.items) {
+		if err != nil || start < 0 || start > len(items) {
 			return errCursor
 		}
 	}
-	end := min(start+int(opts.Limit), len(l.items))
-	list.Items = l.items[start:end]
-	if end < len(l.items) {
+	end := min(start+int(opts.Limit), len(items))
+	list.Items = items[start:end]
+	if end < len(items) {
 		list.Continue = strconv.Itoa(end)
 	}
 	return nil
@@ -111,7 +118,7 @@ func newFixture(t testing.TB, count int) fixture {
 		}
 	}
 	handler, err := New(Config{
-		Kube: agentReader{items: items}, Namespace: testNamespace,
+		Kube: agentReader{items: items}, Namespaces: []string{testNamespace},
 		GatewayURL: "http://litellm.example", MasterKey: f.master, Timeout: 2 * time.Second,
 		StaticTokens: []string{f.token},
 	})
@@ -174,7 +181,7 @@ func TestRunSpend(t *testing.T) {
 	f := newFixture(t, 2)
 	f.kube.(agentReader).items[1].Status.RunID = "run-1"
 	f.serveGateway(t)
-	p, err := f.runs(t.Context(), 1, "")
+	p, err := f.runs(t.Context(), f.namespaces, 1, "")
 	if err != nil || len(p.Items) != 1 || p.NextCursor == "" {
 		t.Fatal("want one run and a cursor")
 	}
@@ -183,7 +190,7 @@ func TestRunSpend(t *testing.T) {
 		spendOf(a.amounts) != 0.75 || *a.Budget != 2 || a.RemainingBudget == nil || *a.RemainingBudget != 1.25 {
 		t.Fatal("the run does not match the Agent, the spend and the budget")
 	}
-	p, err = f.runs(t.Context(), 1, p.NextCursor)
+	p, err = f.runs(t.Context(), f.namespaces, 1, p.NextCursor)
 	if err != nil || len(p.Items) != 1 || p.Items[0].ID != "run-1" || spendOf(p.Items[0].amounts) != 1 ||
 		p.NextCursor != "" {
 		t.Fatal("the second page does not have the last run")
@@ -199,7 +206,7 @@ func TestRunSpendWhenKeyIsMissing(t *testing.T) {
 		w.WriteHeader(http.StatusNotFound)
 		_, _ = fmt.Fprintf(w, `{"error":{"type":"not_found_error","param":"key","message":%q}}`, f.runKeys[0].hash)
 	})
-	p, err := f.runs(t.Context(), maxPage, "")
+	p, err := f.runs(t.Context(), f.namespaces, maxPage, "")
 	if err != nil || len(p.Items) != 3 || spendOf(p.Items[0].amounts) != 3 ||
 		p.Items[0].RemainingBudget == nil || *p.Items[0].RemainingBudget != 0 ||
 		p.Items[1].Spend != nil || p.Items[1].RemainingBudget != nil || spendOf(p.Items[2].amounts) != 0 {
@@ -211,12 +218,12 @@ func TestRunErrors(t *testing.T) {
 	f := newFixture(t, 1)
 	f.serveGateway(t)
 	for _, cursor := range []string{"bad!", encodeCursor(runsPath+":other", "0"), encodeCursor("/v1/x:sample", "0")} {
-		if _, err := f.runs(t.Context(), 1, cursor); !errors.Is(err, errCursor) {
+		if _, err := f.runs(t.Context(), f.namespaces, 1, cursor); !errors.Is(err, errCursor) {
 			t.Fatalf("runs accepted the cursor %q", cursor)
 		}
 	}
 	f.kube.(agentReader).items[0].Status.KeyHash = "not-a-hash"
-	if _, err := f.runs(t.Context(), 1, ""); !errors.Is(err, errGateway) {
+	if _, err := f.runs(t.Context(), f.namespaces, 1, ""); !errors.Is(err, errGateway) {
 		t.Fatal("runs accepted a bad key hash")
 	}
 }
@@ -260,7 +267,7 @@ func TestPeriodSpend(t *testing.T) {
 	items[3].CreationTimestamp = metav1.NewTime(time.Date(2026, 2, 1, 0, 0, 0, 0, time.UTC))
 	f.serveGateway(t)
 	team := testPeriodOf(t, "team")
-	p, err := f.spend(t.Context(), team, 1, "")
+	p, err := f.spend(t.Context(), f.namespaces, team, 1, "")
 	if err != nil || p.From != testFrom || p.To != testTo || p.GroupBy != "label:team" || len(p.Items) != 1 ||
 		p.Items[0].LabelValue != items[0].Name || spendOf(p.Items[0].amounts) != 1.75 || p.NextCursor == "" {
 		t.Fatal("the first period page does not match the spend")
@@ -269,16 +276,16 @@ func TestPeriodSpend(t *testing.T) {
 		t.Fatal("the period has undeclared budgets")
 	}
 	next := p.NextCursor
-	p, err = f.spend(t.Context(), team, 1, next)
+	p, err = f.spend(t.Context(), f.namespaces, team, 1, next)
 	if err != nil || len(p.Items) != 1 || p.Items[0].LabelValue != "red" || spendOf(p.Items[0].amounts) != 1.25 ||
 		p.NextCursor != "" {
 		t.Fatal("the second period page does not match the spend")
 	}
-	p, err = f.spend(t.Context(), testPeriodOf(t, costGroupLabel), maxPage, "")
+	p, err = f.spend(t.Context(), f.namespaces, testPeriodOf(t, costGroupLabel), maxPage, "")
 	if err != nil || len(p.Items) != 1 || p.Items[0].LabelValue != "saved" || spendOf(p.Items[0].amounts) != 3 {
 		t.Fatal("the period does not use the saved cost group")
 	}
-	if _, err := f.spend(t.Context(), testPeriodOf(t, "project"), 1, next); !errors.Is(err, errCursor) {
+	if _, err := f.spend(t.Context(), f.namespaces, testPeriodOf(t, "project"), 1, next); !errors.Is(err, errCursor) {
 		t.Fatal("the period accepted a cursor of another query")
 	}
 }
@@ -286,7 +293,7 @@ func TestPeriodSpend(t *testing.T) {
 func TestPeriodWithNoKey(t *testing.T) {
 	f := newFixture(t, 1)
 	f.kube.(agentReader).items[0].Status.KeyHash = ""
-	p, err := f.spend(t.Context(), testPeriodOf(t, "team"), maxPage, "")
+	p, err := f.spend(t.Context(), f.namespaces, testPeriodOf(t, "team"), maxPage, "")
 	if err != nil || len(p.Items) != 1 || spendOf(p.Items[0].amounts) != 0 {
 		t.Fatal("a group with no key does not have zero spend")
 	}
@@ -311,11 +318,45 @@ func TestPeriodErrors(t *testing.T) {
 	useGateway(t, f.gateway, func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusInternalServerError)
 	})
-	if _, err := f.spend(t.Context(), testPeriodOf(t, "team"), 1, ""); !errors.Is(err, errGateway) {
+	if _, err := f.spend(t.Context(), f.namespaces, testPeriodOf(t, "team"), 1, ""); !errors.Is(err, errGateway) {
 		t.Fatal("the period accepted a gateway error")
 	}
 	f.kube.(agentReader).items[0].Status.KeyHash = "not-a-hash"
-	if _, err := f.spend(t.Context(), testPeriodOf(t, "team"), 1, ""); !errors.Is(err, errGateway) {
+	if _, err := f.spend(t.Context(), f.namespaces, testPeriodOf(t, "team"), 1, ""); !errors.Is(err, errGateway) {
 		t.Fatal("the period accepted a bad key hash")
+	}
+}
+
+func TestRunsAndSpendAcrossNamespaces(t *testing.T) {
+	f := newFixture(t, 3)
+	f.serveGateway(t)
+	f.kube.(agentReader).items[2].Namespace = "other"
+	f.namespaces = []string{testNamespace, "other"}
+	var seen []string
+	for cursor, n := "", 0; n == 0 || cursor != ""; n++ {
+		p, err := f.runs(t.Context(), f.namespaces, 1, cursor)
+		if err != nil || len(p.Items) != 1 || n > 2 {
+			t.Fatal("want one run on each of 3 pages", err)
+		}
+		seen, cursor = append(seen, p.Items[0].Namespace), p.NextCursor
+	}
+	if strings.Join(seen, ",") != "sample,sample,other" {
+		t.Fatalf("the pages give the namespaces %v", seen)
+	}
+	p, err := f.runs(t.Context(), f.namespaces, 2, "")
+	if err != nil || len(p.Items) != 2 || p.NextCursor == "" {
+		t.Fatal("a full page at the end of a namespace needs a cursor for the next namespace")
+	}
+	// A cursor can name only a namespace of the scope.
+	if _, err := f.runs(t.Context(), f.namespaces[:1], 1, p.NextCursor); !errors.Is(err, errCursor) {
+		t.Fatal("a cursor of a different scope was accepted")
+	}
+	forged := encodeCursor(runsPath+":"+testNamespace, "other/")
+	if _, err := f.runs(t.Context(), f.namespaces[:1], 1, forged); !errors.Is(err, errCursor) {
+		t.Fatal("a cursor with a namespace outside the scope was accepted")
+	}
+	g, err := f.spend(t.Context(), f.namespaces, testPeriodOf(t, "team"), maxPage, "")
+	if err != nil || len(g.Items) != 3 || g.Items[2].LabelValue != "agent-002" {
+		t.Fatal("the period spend does not include the two namespaces")
 	}
 }

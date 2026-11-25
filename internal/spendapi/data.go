@@ -54,29 +54,51 @@ type page[T any] struct {
 	NextCursor string `json:"nextCursor,omitempty"`
 }
 
-func (a *api) agents(ctx context.Context, limit int, cursor string) (*corev1alpha1.AgentList, error) {
+func (a *api) agents(ctx context.Context, namespace string, limit int, cursor string) (*corev1alpha1.AgentList, error) {
 	list := &corev1alpha1.AgentList{}
-	err := a.kube.List(ctx, list, client.InNamespace(a.namespace), client.Limit(limit), client.Continue(cursor))
+	err := a.kube.List(ctx, list, client.InNamespace(namespace), client.Limit(limit), client.Continue(cursor))
 	return list, err
 }
 
-func (a *api) runs(ctx context.Context, limit int, cursor string) (page[run], error) {
+// runs reads the namespaces in order. A cursor holds a namespace and its Kubernetes position.
+func (a *api) runs(ctx context.Context, namespaces []string, limit int, cursor string) (page[run], error) {
 	var result page[run]
-	scope := runsPath + ":" + a.namespace
+	scope := runsPath + ":" + strings.Join(namespaces, ",")
 	position, err := decodeCursor(scope, cursor)
 	if err != nil {
 		return result, err
 	}
-	agents, err := a.agents(ctx, limit, position)
-	if err != nil {
-		return result, err
+	start, next := 0, ""
+	if position != "" {
+		namespace, rest, _ := strings.Cut(position, "/")
+		// The caller can change a cursor, so permit only a namespace in its scope.
+		if start = slices.Index(namespaces, namespace); start < 0 {
+			return result, errCursor
+		}
+		position = rest
 	}
-	result.Items = make([]run, len(agents.Items))
-	if agents.Continue != "" {
-		result.NextCursor = encodeCursor(scope, agents.Continue)
+	var agents []corev1alpha1.Agent
+	for i := start; i < len(namespaces); i++ {
+		if len(agents) == limit {
+			next = namespaces[i] + "/"
+			break
+		}
+		list, err := a.agents(ctx, namespaces[i], limit-len(agents), position)
+		if err != nil {
+			return result, err
+		}
+		agents, position = append(agents, list.Items...), ""
+		if list.Continue != "" {
+			next = namespaces[i] + "/" + list.Continue
+			break
+		}
 	}
-	err = parallel(ctx, len(agents.Items), func(ctx context.Context, i int) error {
-		agent := &agents.Items[i]
+	result.Items = make([]run, len(agents))
+	if next != "" {
+		result.NextCursor = encodeCursor(scope, next)
+	}
+	err = parallel(ctx, len(agents), func(ctx context.Context, i int) error {
+		agent := &agents[i]
 		cost, err := a.runAmounts(ctx, agent)
 		id := agent.Status.RunID
 		if id == "" {
@@ -156,14 +178,14 @@ type periodPage struct {
 	page[group]
 }
 
-func (a *api) spend(ctx context.Context, p period, limit int, cursor string) (periodPage, error) {
+func (a *api) spend(ctx context.Context, namespaces []string, p period, limit int, cursor string) (periodPage, error) {
 	result := periodPage{From: p.from.Format(time.DateOnly), To: p.to.Format(time.DateOnly), GroupBy: "label:" + p.label}
-	scope := strings.Join([]string{spendPath, a.namespace, result.From, result.To, result.GroupBy}, ":")
+	scope := strings.Join([]string{spendPath, strings.Join(namespaces, ","), result.From, result.To, result.GroupBy}, ":")
 	position, err := decodeCursor(scope, cursor)
 	if err != nil {
 		return result, err
 	}
-	keys, err := a.groupKeys(ctx, p, position, cursor != "")
+	keys, err := a.groupKeys(ctx, namespaces, p, position, cursor != "")
 	if err != nil {
 		return result, err
 	}
@@ -177,11 +199,13 @@ func (a *api) spend(ctx context.Context, p period, limit int, cursor string) (pe
 }
 
 // groupKeys lists the Agents in pages. Save only the group names and the key hashes.
-func (a *api) groupKeys(ctx context.Context, p period, after string, continued bool) (map[string][]string, error) {
+func (a *api) groupKeys(
+	ctx context.Context, namespaces []string, p period, after string, continued bool,
+) (map[string][]string, error) {
 	keys := map[string][]string{}
 	end := p.to.AddDate(0, 0, 1)
-	for cursor := ""; ; {
-		agents, err := a.agents(ctx, maxPage, cursor)
+	for n, cursor := 0, ""; n < len(namespaces); {
+		agents, err := a.agents(ctx, namespaces[n], maxPage, cursor)
 		if err != nil {
 			return nil, err
 		}
@@ -198,11 +222,11 @@ func (a *api) groupKeys(ctx context.Context, p period, after string, continued b
 			}
 			keys[label] = append(keys[label], agent.Status.KeyHash)
 		}
-		cursor = agents.Continue
-		if cursor == "" {
-			return keys, nil
+		if cursor = agents.Continue; cursor == "" {
+			n++
 		}
 	}
+	return keys, nil
 }
 
 func (a *api) groupSpend(ctx context.Context, p period, names []string, keys map[string][]string) ([]group, error) {
