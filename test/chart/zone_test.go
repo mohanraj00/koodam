@@ -179,6 +179,61 @@ func TestZoneEgressHosts(t *testing.T) {
 	}
 }
 
+// The admission policies of the zone are only in an install with a zone and the Apps.
+func TestZonePlacementPolicy(t *testing.T) {
+	const placement, storage = "name: koodam-zone-placement", "name: koodam-zone-storage"
+	const selector = "- key: kubernetes.io/metadata.name"
+	const apps = "apps: {enabled: true}\n"
+	for name, values := range map[string]string{"no zone": apps, "no Apps": "zone: {name: zone-a}\n"} {
+		out, err := helmTemplate(t, values)
+		if err != nil || strings.Contains(out, placement) || strings.Contains(out, storage) {
+			t.Errorf("%s: the install has a zone policy: %v", name, err)
+		}
+	}
+	// With no namespaces, the placement policy is for each namespace, and there is no storage policy.
+	all, err := helmTemplate(t, apps+"zone: {name: zone-a}\n")
+	if err != nil {
+		t.Fatalf("helm template failed: %v\n%s", err, all)
+	}
+	if strings.Count(all, placement) != 2 || strings.Contains(all, storage) || strings.Contains(all, selector) ||
+		!strings.Contains(all, `expression: "[\"zone-a\"]"`) {
+		t.Error("the install with a zone and no namespaces does not have only the placement policy for the zone name")
+	}
+	scoped, err := helmTemplate(t, apps+"zone: {name: zone-a, namespaces: [team-1], storageClasses: [near-disk], "+
+		"topologyValues: [eu-west-1, eu-west-1a]}\n")
+	if err != nil {
+		t.Fatalf("helm template failed: %v\n%s", err, scoped)
+	}
+	for _, s := range []string{`expression: "[\"eu-west-1\",\"eu-west-1a\"]"`, `expression: "[\"near-disk\"]"`,
+		`values: ["koodam-system","team-1"]`,
+		"ZonePlacement: the storage class of the volume claim is not in the zone zone-a."} {
+		if !strings.Contains(scoped, s) {
+			t.Errorf("the install with the zone values does not have %q", s)
+		}
+	}
+	if strings.Count(scoped, placement) != 2 || strings.Count(scoped, storage) != 2 ||
+		strings.Count(scoped, selector) != 2 {
+		t.Error("the install with the zone values does not have 2 policies with 2 bindings for its namespaces")
+	}
+	const persistent = "gateway: {bundled: {postgres: {persistence: {enabled: true, storageClassName: far-disk}}}}\n"
+	const needZone, labelValue = "need zone.name and apps.enabled", "must be a label value"
+	for name, tc := range map[string][2]string{
+		"classes with no zone":       {apps + "zone: {storageClasses: [near-disk]}\n", needZone},
+		"values with no Apps":        {"zone: {name: zone-a, topologyValues: [eu-west-1]}\n", needZone},
+		"classes with no namespaces": {apps + "zone: {name: zone-a, storageClasses: [near-disk]}\n", "needs zone.namespaces"},
+		"a value with a quote":       {apps + "zone: {name: zone-a, topologyValues: ['a\"] || true || [\"']}\n", labelValue},
+		"a value that is a number":   {apps + "zone: {name: zone-a, topologyValues: [7]}\n", labelValue},
+		"a class with a quote": {apps + "zone: {name: zone-a, namespaces: [team-1], storageClasses: [\"a'\"]}\n",
+			"must be the name of a StorageClass"},
+		"a database of a different class": {apps + persistent + "zone: {name: zone-a, namespaces: [team-1], " +
+			"storageClasses: [near-disk]}\n", "must be in zone.storageClasses"},
+	} {
+		if out, err := helmTemplate(t, tc[0]); err == nil || !strings.Contains(out, tc[1]) {
+			t.Errorf("%s is accepted: %v", name, err)
+		}
+	}
+}
+
 // The App CRDs and the admission policy of the AppVersion are for the full cluster. The second
 // install of a cluster does not render them, and it has no other object for the full cluster
 // with a name that the first install has.

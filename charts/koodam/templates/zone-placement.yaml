@@ -1,0 +1,167 @@
+{{- /*
+The admission policies of the zone. They refuse an AppVersion with a node placement for a
+different zone, and a volume claim with a storage class that is not of the zone. Each refusal
+has a message that starts with "ZonePlacement". docs/zones.md has the rules.
+
+The policies are for the namespaces of the install (zone.namespaces and the release namespace).
+With no zone.namespaces, the AppVersion policy is for each namespace. The storage policy needs
+zone.namespaces, because it must not refuse the volume claims of other software.
+*/ -}}
+{{- $zone := .Values.zone.name -}}
+{{- $classes := .Values.zone.storageClasses | default list -}}
+{{- $values := .Values.zone.topologyValues | default list -}}
+{{- if and (or $classes $values) (not (and $zone .Values.apps.enabled)) }}
+{{- fail "zone.storageClasses and zone.topologyValues need zone.name and apps.enabled, because the admission policy of the zone is for the AppVersions of an install with a zone." }}
+{{- end }}
+{{- if and $zone .Values.apps.enabled }}
+{{- $fullname := include "koodam.fullname" . -}}
+{{- if not $values }}
+{{- $values = list $zone }}
+{{- end }}
+{{- range $i, $v := $values }}
+{{- if not (and (kindIs "string" $v) (regexMatch "^[A-Za-z0-9]([-A-Za-z0-9_.]{0,61}[A-Za-z0-9])?$" $v)) }}
+{{- fail (printf "zone.topologyValues[%d] must be a label value: letters, digits, \"-\", \"_\" and \".\", with 63 characters at most." $i) }}
+{{- end }}
+{{- end }}
+{{- range $i, $c := $classes }}
+{{- if not (and (kindIs "string" $c) (le (len $c) 253) (regexMatch "^[a-z0-9]([-a-z0-9.]*[a-z0-9])?$" $c)) }}
+{{- fail (printf "zone.storageClasses[%d] must be the name of a StorageClass." $i) }}
+{{- end }}
+{{- end }}
+{{- if and $classes (not .Values.zone.namespaces) }}
+{{- fail "zone.storageClasses needs zone.namespaces, because the storage policy must not refuse the volume claims of other software in the cluster." }}
+{{- end }}
+{{- $pg := .Values.gateway.bundled.postgres.persistence }}
+{{- if and $classes (eq .Values.gateway.mode "bundled") $pg.enabled (not (has $pg.storageClassName $classes)) }}
+{{- fail "gateway.bundled.postgres.persistence.storageClassName must be in zone.storageClasses, because the database of the gateway is in the zone of the install." }}
+{{- end }}
+{{- $namespaces := prepend (.Values.zone.namespaces | default list) .Release.Namespace | uniq }}
+{{- $pod := "object.spec.template.podTemplate.spec" }}
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicy
+metadata:
+  name: {{ $fullname }}-zone-placement
+  labels:
+    {{- include "koodam.labels" . | nindent 4 }}
+spec:
+  failurePolicy: Fail
+  matchConstraints:
+    resourceRules:
+    - apiGroups: ["core.koodam.dev"]
+      apiVersions: ["v1alpha1"]
+      operations: ["CREATE", "UPDATE"]
+      resources: ["appversions"]
+  variables:
+  # sameTemplate is true for an update that does not change spec.template. Thus an AppVersion
+  # from before this policy can still lose its finalizer.
+  - name: sameTemplate
+    expression: "request.operation == 'UPDATE' && object.spec.template == oldObject.spec.template"
+  - name: hasPod
+    expression: "has({{ $pod }})"
+  # keys are the node labels of a zone or a region.
+  - name: keys
+    expression: >-
+      ['topology.kubernetes.io/zone', 'topology.kubernetes.io/region',
+      'failure-domain.beta.kubernetes.io/zone', 'failure-domain.beta.kubernetes.io/region']
+  # permitted has the values of these labels on the nodes of the zone (zone.topologyValues).
+  - name: permitted
+    expression: {{ toJson $values | quote }}
+  # classes has the storage classes of the zone (zone.storageClasses).
+  - name: classes
+    expression: {{ toJson $classes | quote }}
+  - name: hasNodeAffinity
+    expression: "variables.hasPod && has({{ $pod }}.affinity) && has({{ $pod }}.affinity.nodeAffinity)"
+  validations:
+  - expression: >-
+      variables.sameTemplate || !variables.hasPod || !has({{ $pod }}.nodeSelector) ||
+      {{ $pod }}.nodeSelector.all(k, !(k in variables.keys) || {{ $pod }}.nodeSelector[k] in variables.permitted)
+    message: {{ printf "ZonePlacement: the node selector of the pod template has a zone or a region that is not in the zone %s." $zone | quote }}
+    reason: Forbidden
+  # A term of a different operator than In, for example NotIn, cannot show that the node is in
+  # the zone. Thus the policy refuses it for a zone or region label.
+  - expression: >-
+      variables.sameTemplate || !variables.hasNodeAffinity ||
+      !has({{ $pod }}.affinity.nodeAffinity.requiredDuringSchedulingIgnoredDuringExecution) ||
+      {{ $pod }}.affinity.nodeAffinity.requiredDuringSchedulingIgnoredDuringExecution.nodeSelectorTerms.all(t,
+      !has(t.matchExpressions) || t.matchExpressions.all(e, !(e.key in variables.keys) ||
+      (e.operator == 'In' && has(e.values) && e.values.all(v, v in variables.permitted))))
+    message: {{ printf "ZonePlacement: the necessary node affinity of the pod template has a zone or a region that is not in the zone %s." $zone | quote }}
+    reason: Forbidden
+  - expression: >-
+      variables.sameTemplate || !variables.hasNodeAffinity ||
+      !has({{ $pod }}.affinity.nodeAffinity.preferredDuringSchedulingIgnoredDuringExecution) ||
+      {{ $pod }}.affinity.nodeAffinity.preferredDuringSchedulingIgnoredDuringExecution.all(p,
+      !has(p.preference.matchExpressions) || p.preference.matchExpressions.all(e, !(e.key in variables.keys) ||
+      (e.operator == 'In' && has(e.values) && e.values.all(v, v in variables.permitted))))
+    message: {{ printf "ZonePlacement: the preferred node affinity of the pod template has a zone or a region that is not in the zone %s." $zone | quote }}
+    reason: Forbidden
+  {{- if $classes }}
+  - expression: >-
+      variables.sameTemplate || !variables.hasPod || !has({{ $pod }}.volumes) ||
+      {{ $pod }}.volumes.all(v, !has(v.ephemeral) || !has(v.ephemeral.volumeClaimTemplate) ||
+      (has(v.ephemeral.volumeClaimTemplate.spec.storageClassName) &&
+      v.ephemeral.volumeClaimTemplate.spec.storageClassName in variables.classes))
+    message: {{ printf "ZonePlacement: a volume claim of the pod template has a storage class that is not in the zone %s." $zone | quote }}
+    reason: Forbidden
+  {{- end }}
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicyBinding
+metadata:
+  name: {{ $fullname }}-zone-placement
+  labels:
+    {{- include "koodam.labels" . | nindent 4 }}
+spec:
+  policyName: {{ $fullname }}-zone-placement
+  validationActions: ["Deny"]
+  {{- if .Values.zone.namespaces }}
+  matchResources:
+    namespaceSelector:
+      matchExpressions:
+      - key: kubernetes.io/metadata.name
+        operator: In
+        values: {{ toJson $namespaces }}
+  {{- end }}
+{{- if $classes }}
+---
+# The storage policy refuses a new PersistentVolumeClaim of the install namespaces with a storage
+# class that is not of the zone. It also applies to the claims of a Workspace.
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicy
+metadata:
+  name: {{ $fullname }}-zone-storage
+  labels:
+    {{- include "koodam.labels" . | nindent 4 }}
+spec:
+  failurePolicy: Fail
+  matchConstraints:
+    resourceRules:
+    - apiGroups: [""]
+      apiVersions: ["v1"]
+      operations: ["CREATE"]
+      resources: ["persistentvolumeclaims"]
+  variables:
+  - name: classes
+    expression: {{ toJson $classes | quote }}
+  validations:
+  - expression: "has(object.spec.storageClassName) && object.spec.storageClassName in variables.classes"
+    message: {{ printf "ZonePlacement: the storage class of the volume claim is not in the zone %s." $zone | quote }}
+    reason: Forbidden
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicyBinding
+metadata:
+  name: {{ $fullname }}-zone-storage
+  labels:
+    {{- include "koodam.labels" . | nindent 4 }}
+spec:
+  policyName: {{ $fullname }}-zone-storage
+  validationActions: ["Deny"]
+  matchResources:
+    namespaceSelector:
+      matchExpressions:
+      - key: kubernetes.io/metadata.name
+        operator: In
+        values: {{ toJson $namespaces }}
+{{- end }}
+{{- end }}

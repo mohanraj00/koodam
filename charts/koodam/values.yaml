@@ -292,6 +292,16 @@ zone:
   #     models.zone-b.example.com: zone-b
   #     "*.zone-b.example.net": zone-b
   egressHosts: {}
+  # The values of the node labels topology.kubernetes.io/zone and topology.kubernetes.io/region
+  # on the nodes of the zone. An admission policy refuses an AppVersion with a node selector or
+  # a node affinity for a different value (ZonePlacement). Empty: only the value of zone.name is
+  # permitted. It needs zone.name and apps.enabled.
+  topologyValues: []
+  # The storage classes of the zone. With items, an admission policy refuses a new
+  # PersistentVolumeClaim of the install namespaces, and a volume claim of an AppVersion pod
+  # template, with a different storage class (ZonePlacement). Empty: no storage check. It needs
+  # zone.name, zone.namespaces and apps.enabled.
+  storageClasses: []
 
 # The tenants of the Apps. A TenantQuota gives one tenant label its quota and its rate limit.
 # The controller reads the use of each tenant from the gateway. defaultQuota and refuseUnknown

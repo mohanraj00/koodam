@@ -27,7 +27,7 @@ A tenant of #193 has no zone of its own. A tenant label is known only in the ins
 | Ingress of an App | The claim check compares the zone claim of the caller with the zone of the install | `ZoneMismatch` | yes |
 | Model route | The route list of the gateway has only the routes of the zone | `RouteOutOfZone` | yes |
 | Egress | The egress proxy refuses a host with a different declared zone | `EgressOutOfZone` | yes |
-| Placement | An admission policy examines the node placement and the storage class of an AppVersion | `ZonePlacement` | no |
+| Placement | An admission policy examines the node placement and the storage class of an AppVersion | `ZonePlacement` | yes |
 
 Each refusal has one typed reason. The reason is in the response and in the span or the log of the component that refuses.
 
@@ -107,12 +107,32 @@ The Agent ingress span of [ingress-spans.md](ingress-spans.md) has no zone field
 
 ### Placement
 
-The controller does not examine the nodes. A ValidatingAdmissionPolicy refuses an AppVersion at admission with a message that starts with `ZonePlacement`:
+The controller does not examine the nodes. With `zone.name` and `apps.enabled`, the chart adds a ValidatingAdmissionPolicy with the name `<release>-koodam-zone-placement`. It refuses an AppVersion at admission with the status 403 and a message that starts with `ZonePlacement`.
 
-- The pod template has a node selector or a node affinity for `topology.kubernetes.io/zone` or `topology.kubernetes.io/region` with a value that is not in `zone.topologyValues`. The default of `zone.topologyValues` is the zone name.
-- The pod template has a volume claim with a storage class that is not in `zone.storageClasses`.
+```yaml
+zone:
+  name: zone-a
+  namespaces: [zone-a-apps]
+  topologyValues: [eu-west-1, eu-west-1a, eu-west-1b]
+  storageClasses: [zone-a-disk]
+```
 
-The policy applies in the namespaces of the install (`zone.namespaces`).
+The node placement:
+
+- The policy examines the node selector and the node affinity of the pod template, for the node labels `topology.kubernetes.io/zone` and `topology.kubernetes.io/region`. It also examines the 2 old labels `failure-domain.beta.kubernetes.io/zone` and `failure-domain.beta.kubernetes.io/region`.
+- `zone.topologyValues` has the values of these labels on the nodes of the zone. With an empty list, the only permitted value is the zone name.
+- A node selector for one of these labels must have a permitted value.
+- A node affinity term for one of these labels must have the operator `In` and only permitted values. The policy refuses each other operator, for example `NotIn`, because such a term does not show that the node is in the zone. This rule applies to the necessary terms and to the preferred terms.
+- A pod template with no term for these labels is accepted. The policy does not put the pod on a node of the zone.
+
+The storage, only with items in `zone.storageClasses`:
+
+- The policy refuses a pod template with an ephemeral volume claim that has no storage class or a storage class that is not in the list.
+- A second policy, `<release>-koodam-zone-storage`, refuses a new PersistentVolumeClaim with no storage class or a storage class that is not in the list. It also applies to the volume claims of a Workspace. It does not change a claim that exists.
+- `zone.storageClasses` needs `zone.namespaces`, because the storage policy must not refuse the volume claims of other software in the cluster.
+- With the bundled gateway and `gateway.bundled.postgres.persistence.enabled`, the chart refuses a storage class of the database that is not in the list.
+
+The policies apply in the namespaces of the install: `zone.namespaces` and the release namespace. With no `zone.namespaces`, the placement policy applies in each namespace. The checks of an AppVersion apply to a create and to a change of `spec.template` only. Thus an AppVersion from before the policy can still lose its finalizer.
 
 ## Two installs in one cluster
 
@@ -161,4 +181,6 @@ Remove the installs in the reverse order: the second install first. If you remov
 
 - The zone is a declared name. Koodam does not prove where a node, a disk, a model provider or an egress host is.
 - The cluster role of each manager is for the full cluster. `zone.namespaces` limits what the manager reads. It is not an RBAC limit.
+- A pod template with no node selector for a zone can run on each node of the cluster. In a cluster with nodes of 2 zones, also use a control of the cluster, for example a node selector for each namespace.
+- The placement policy does not examine `spec.nodeName` and the node of a volume that exists.
 - An install does not move a workload or its data to a different zone.
