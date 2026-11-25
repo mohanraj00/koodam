@@ -19,6 +19,7 @@ package controller
 import (
 	"context"
 	"errors"
+	"fmt"
 	"math"
 	"strconv"
 	"strings"
@@ -108,7 +109,7 @@ func (r *TenantQuotaReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 		if werr := r.writeStatus(ctx, q, old); werr != nil {
 			return ctrl.Result{}, werr
 		}
-		return ctrl.Result{}, err
+		return ctrl.Result{}, tenantGatewayError(err)
 	}
 	r.setUsage(ctx, q, usage)
 	r.setReady(q, metav1.ConditionTrue, reasonTenantSynced, "The gateway has the customer of the tenant with the limits of the spec.")
@@ -166,7 +167,7 @@ func (r *TenantQuotaReconciler) release(ctx context.Context, q, owner *corev1alp
 	}
 	if owner == nil {
 		if err := r.Customers.DeleteCustomer(ctx, q.Spec.Tenant); err != nil {
-			return err
+			return tenantGatewayError(err)
 		}
 		logf.FromContext(ctx).Info("Deleted the gateway customer of a tenant", "tenant", q.Spec.Tenant)
 	}
@@ -189,6 +190,19 @@ func (r *TenantQuotaReconciler) sync(ctx context.Context, q *corev1alpha1.Tenant
 		return gateway.CustomerUsage{}, err
 	}
 	return r.Customers.CustomerUsage(ctx, q.Spec.Tenant)
+}
+
+// errTenantGateway is the error of a gateway call that failed, with no text of the gateway.
+var errTenantGateway = errors.New("a call to the gateway failed")
+
+// tenantGatewayError gives back the error that a reconcile returns for a gateway error. The text
+// of a gateway error can have data of the gateway, and controller-runtime writes a returned error
+// to the manager log. Thus the result has fixed text and, for an HTTP answer, the status.
+func tenantGatewayError(err error) error {
+	if he, ok := errors.AsType[*gateway.HTTPError](err); ok {
+		return fmt.Errorf("%w: HTTP %d", errTenantGateway, he.Status)
+	}
+	return errTenantGateway
 }
 
 // tenantCustomer gives back the gateway customer of a TenantQuota.
