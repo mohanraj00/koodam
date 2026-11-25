@@ -115,6 +115,7 @@ The quota for each period is in the gateway. The gateway has one customer for ea
 - The app sends the tenant label of the header `Koodam-Tenant` as the `user` field of each model call. Then the gateway counts the call for the customer. A call with no `user` field is not in the count of a tenant.
 - The gateway refuses a model call of a customer at its budget with the error type `budget_exceeded`. This is the refusal `TenantQuotaExceeded` of the gateway. It refuses a call above the rate with the status 429.
 - The spend is the count of the gateway for the current period. The requests are the successful model calls of the tenant label in the spend log, from the start of that period.
+- The gateway stops the count of the spend log at a maximum (`SPEND_LOGS_PAGINATION_COUNT_CAP` in LiteLLM), and then it sets the flag `total_is_capped`. The client gives this flag with the count. A count with the flag is a minimum, not an exact count.
 - Koodam owns one LiteLLM budget for each tenant label, with the ID `kd-tenant-` and a hash of the label. It changes no other budget. A customer that the gateway already has keeps its spend when it gets this budget.
 - The tenant label is in the URL of 2 read calls to the gateway, so it can be in the access log of the gateway. The label is not a credential.
 
@@ -126,6 +127,7 @@ The TenantQuota controller runs with `apps.enabled`. For each `TenantQuota` it d
 2. It makes the gateway customer of the tenant label with the limits of the spec. After a change of the spec, it sets the limits again.
 3. Each 30 seconds, it reads the spend and the requests of the current period from the gateway and writes them to the status. The manager flag `--tenant-usage-interval` changes this time. The controller writes the status only if a value changed.
 4. It sets the condition `QuotaExceeded`. The status is `True` with the reason `TenantQuotaExceeded` when the requests or the spend are at the limit of the spec or above it. A new period of the gateway sets it back to `False` with the reason `WithinQuota`.
+5. If the gateway stopped the count of the requests at its maximum, and this count is below `spec.requests`, the status is `Unknown` with the reason `RequestCountCapped`. The `requests` of the status are then a minimum. A spend at its limit still gives `True`.
 
 - Each change of `QuotaExceeded` goes to the log of the manager, with the typed reason, the tenant label, the requests and the spend.
 - The condition `Ready` is `False` with the reason `GatewayError` while a gateway call fails. The message is fixed text. `QuotaExceeded` then keeps its last value.

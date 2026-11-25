@@ -44,7 +44,8 @@ const (
 const (
 	// maxTenantRate is the largest rate and the largest burst of a tenant.
 	maxTenantRate = 1_000_000
-	// maxTenantBuckets is the count of buckets that starts a removal of the full buckets.
+	// maxTenantBuckets is the smallest count of buckets that starts a removal of the full
+	// buckets.
 	maxTenantBuckets = 4096
 	// maxLimitsFile is the largest limits file. A ConfigMap has 1 MiB at most.
 	maxLimitsFile = 1 << 20
@@ -77,10 +78,18 @@ type TenantLimits struct {
 // ParseTenantLimits reads a limits file. It refuses an unknown field, a rate that is not from 0
 // to maxTenantRate, and a rate with a burst that is not from 1 to maxTenantRate.
 func ParseTenantLimits(data []byte) (*TenantLimits, error) {
+	// The JSON value null decodes to limits with no field. Only an object can be a limits file.
+	if body := bytes.TrimSpace(data); len(body) == 0 || body[0] != '{' {
+		return nil, errors.New("the tenant limits are not one JSON object of the known fields")
+	}
 	dec := json.NewDecoder(bytes.NewReader(data))
 	dec.DisallowUnknownFields()
 	var l TenantLimits
-	if err := dec.Decode(&l); err != nil || dec.More() {
+	if err := dec.Decode(&l); err != nil {
+		return nil, errors.New("the tenant limits are not one JSON object of the known fields")
+	}
+	// Only the end of the data can follow the object. A second value or a delimiter is an error.
+	if _, err := dec.Token(); err != io.EOF {
 		return nil, errors.New("the tenant limits are not one JSON object of the known fields")
 	}
 	valid := func(t TenantLimit) bool {
@@ -115,6 +124,12 @@ type Tenants struct {
 	limits  atomic.Pointer[TenantLimits]
 	mu      sync.Mutex
 	buckets map[string]*bucket
+	// removed is the latest time of a bucket that removeIdle removed. A new bucket starts at
+	// this time or later.
+	removed time.Time
+	// removeAt is the count of buckets that starts the next removal, if it is more than
+	// maxTenantBuckets.
+	removeAt int
 }
 
 // Load reads the limits file. If the file is not valid, the last valid limits stay.
@@ -168,17 +183,28 @@ func (t *Tenants) Allow(tenant string, now time.Time) (reason string, wait time.
 		if t.buckets == nil {
 			t.buckets = map[string]*bucket{}
 		}
-		if len(t.buckets) >= maxTenantBuckets {
+		if len(t.buckets) >= max(t.removeAt, maxTenantBuckets) {
 			t.removeIdle(limits, now)
+			// A removal examines all the buckets with the lock. The next removal starts at two
+			// times the count of the buckets in use. Thus the work of the removals stays in
+			// proportion to the count of new buckets, also if no bucket is full.
+			t.removeAt = 2 * len(t.buckets)
 		}
+		// A request with an older time can make the bucket again after a removal. The bucket
+		// then starts at the time of the removal, and it adds no token for the time before.
 		b = &bucket{tokens: size, last: now}
+		if t.removed.After(now) {
+			b.last = t.removed
+		}
 		t.buckets[tenant] = b
 	}
-	// A clock that goes back adds no token.
+	// The requests of one tenant can come with times that are not in order, and a clock can go
+	// back. An older time adds no token, and it does not move the time of the bucket back. Thus
+	// the bucket adds the tokens of a time range one time only.
 	if d := now.Sub(b.last); d > 0 {
 		b.tokens += d.Seconds() * limit.Rate
+		b.last = now
 	}
-	b.last = now
 	// A smaller burst after a reload also makes the bucket smaller.
 	b.tokens = math.Min(b.tokens, size)
 	if b.tokens < 1 {
@@ -191,8 +217,8 @@ func (t *Tenants) Allow(tenant string, now time.Time) (reason string, wait time.
 }
 
 // removeIdle removes each bucket that is full at this time, and each bucket of a tenant with no
-// rate limit. A full bucket has the same state as a new bucket, so the removal changes no
-// answer. The caller holds the lock.
+// rate limit. A full bucket has the same state as a new bucket that starts at the time of the
+// removal, so the removal changes no answer. The caller holds the lock.
 func (t *Tenants) removeIdle(limits *TenantLimits, now time.Time) {
 	for name, b := range t.buckets {
 		limit, known := limits.Tenants[name]
@@ -201,6 +227,11 @@ func (t *Tenants) removeIdle(limits *TenantLimits, now time.Time) {
 		}
 		if limit.Rate <= 0 || b.tokens+now.Sub(b.last).Seconds()*limit.Rate >= float64(limit.Burst) {
 			delete(t.buckets, name)
+			for _, at := range []time.Time{now, b.last} {
+				if at.After(t.removed) {
+					t.removed = at
+				}
+			}
 		}
 	}
 }

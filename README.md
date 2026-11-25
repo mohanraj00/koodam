@@ -45,7 +45,7 @@ These limits are open:
 - The controller has no watch on NetworkPolicy, so it restores a deleted policy at the next reconcile ([#359](https://github.com/mohanraj00/koodam/issues/359)).
 - A valid signed approval record is not proof of the current selection ([#364](https://github.com/mohanraj00/koodam/issues/364)).
 - The gate and the signed claim check do not work together ([#354](https://github.com/mohanraj00/koodam/issues/354)).
-- The plugin preset for Nookku in the harness pod copies the pinned Nookku 0.5.9 files from a data image that you give with `--nookku-image`. No published data image exists yet, so with no flag an Agent with `nookku` fails and a Workspace reports `NoNookkuImage`. The proofs with a real harness are not done ([#83](https://github.com/mohanraj00/koodam/issues/83)).
+- The plugin preset for Nookku in the harness pod copies the pinned Nookku 0.6.0 files from a data image that you give with `--nookku-image`. No published data image exists yet, so with no flag an Agent with `nookku` fails and a Workspace reports `NoNookkuImage`. The proofs with a real harness are not done ([#83](https://github.com/mohanraj00/koodam/issues/83)).
 
 The `nookku` plugin field gives the pod a Nookku test folder: `/koodam/nookku-tests` in an Agent pod and `/home/dev/nookku-tests` in a Workspace pod. Koodam does not install Nookku. [docs/nookku-preset.md](docs/nookku-preset.md) has the rules.
 
@@ -70,6 +70,8 @@ A Workspace is a pod with a home on a PVC. I connect to it over SSH and run the 
 - [Tenants](docs/tenants.md): the `TenantQuota` resource, with a quota and a rate limit for each tenant of an App.
 - [App ingress spans](docs/app-ingress-spans.md): the contract of the spans at the App ingress.
 - [Release checklist](docs/release-checklist.md): the steps before a tag.
+- [Security](SECURITY.md): how to report a security problem, the supported versions and the response goal.
+- [Threat model](docs/threat-model.md): the threats, the control and the test for each threat, and the risks that stay.
 - [Traced egress](docs/traced-egress.md): the egress proxy, the spans and `koodam trace`.
 - [Architecture](docs/architecture.md): the controller, the gateway, the Workspace pod, the PVC home and the tunnel.
 - [Bring your Claude Code to Kubernetes, not a new agent platform](https://mohanraj00.github.io/tech/introducing-koodam/): the blog post. Why I built Koodam, and a day with a Workspace.
