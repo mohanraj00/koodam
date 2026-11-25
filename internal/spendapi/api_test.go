@@ -97,6 +97,11 @@ func TestServeRunsAndSpend(t *testing.T) {
 		t.Fatal("the period does not match the spend")
 	}
 	f.call(t, http.MethodHead, testPeriod+costGroupLabel, f.token, http.StatusOK)
+	g = decode[periodPage](t, f.call(t, http.MethodGet, strings.TrimSuffix(testPeriod, "label:")+byNamespace,
+		f.token, http.StatusOK))
+	if len(g.Items) != 1 || g.GroupBy != byNamespace || g.Items[0].LabelValue != testNamespace {
+		t.Fatal("the period spend by namespace does not match")
+	}
 }
 
 func TestMethodsAndQueries(t *testing.T) {

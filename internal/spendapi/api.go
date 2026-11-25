@@ -234,7 +234,7 @@ func (a *api) list(ctx context.Context, w http.ResponseWriter, r *http.Request, 
 	} else {
 		p, ok := parsePeriod(q)
 		if !ok {
-			reply(w, r, http.StatusBadRequest, problem{"Use UTC dates and groupBy=label:<name>."})
+			reply(w, r, http.StatusBadRequest, problem{"Use UTC dates and groupBy=label:<name> or groupBy=namespace."})
 			return
 		}
 		result, err = a.spend(ctx, namespaces, p, limit, q.Get("cursor"))

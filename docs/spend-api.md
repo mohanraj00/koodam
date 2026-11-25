@@ -90,7 +90,8 @@ spend data.
 
 `GET /v1/runs` gives the retained Agent runs, one namespace after the other, in the order of
 `-namespace`. Each item has the run ID, name, namespace, creation time
-and declared budget. The API reads the lifetime spend of the key from LiteLLM. If LiteLLM no longer
+and declared budget. It also has the phase, the models, and the start and end times of the run Job,
+when the Agent has them. The API reads the lifetime spend of the key from LiteLLM. If LiteLLM no longer
 has the key, the API uses the spend saved in the Agent status, if available. An Agent with no key
 and no saved usage has zero spend. If the key is missing and the spend is unknown, the API omits
 `spend` and `remainingBudget`.
@@ -109,6 +110,8 @@ The API sums daily spend from LiteLLM for the keys of retained Agents that exist
 end of the range. A group includes the Agents of all the namespaces of the caller. A group can have zero spend. Deleted Agent objects are outside the report.
 The report uses the dates of gateway calls. The gateway can remove older spend logs.
 The API uses the open-source LiteLLM spend endpoint and groups the results in Koodam.
+
+Use `groupBy=namespace` to group by the Agent namespace. Then `labelValue` holds the namespace.
 
 For `koodam.dev/cost-group`, the API uses the group that the controller saved when it made the key.
 For other label names, such as `team`, it uses the current Agent label. An Agent with no group
