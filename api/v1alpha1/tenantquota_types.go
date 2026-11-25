@@ -66,6 +66,7 @@ type TenantQuotaSpec struct {
 	// +kubebuilder:validation:MinLength=1
 	// +kubebuilder:validation:MaxLength=253
 	// +kubebuilder:validation:XValidation:rule="self == oldSelf",message="spec.tenant is immutable."
+	// +kubebuilder:validation:XValidation:rule="bytes(self).size() <= 253",message="spec.tenant must be 253 bytes or less in UTF-8."
 	Tenant string `json:"tenant"`
 
 	// AppRef is the App that the rate limit and the claim check refusals apply to. With no

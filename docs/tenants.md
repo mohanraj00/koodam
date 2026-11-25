@@ -31,7 +31,7 @@ spec:
 
 | Field | Rule |
 |---|---|
-| `tenant` | Necessary. The tenant label of the signed claim, with 1 to 253 characters. You cannot change it after create. |
+| `tenant` | Necessary. The tenant label of the signed claim, with 1 to 253 characters and a maximum of 253 bytes in UTF-8. You cannot change it after create. |
 | `appRef.name` | Optional. The App that the rate limit and the claim check refusals apply to. With no value, they apply to each App of the namespace. |
 | `period` | `Hour` or `Day`. The default is `Day`. The gateway sets the start of each period. |
 | `requests` | Optional. The maximum count of model calls of the tenant in one period. The minimum is 1. |

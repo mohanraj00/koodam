@@ -142,6 +142,8 @@ spec:
                 x-kubernetes-validations:
                 - message: spec.tenant is immutable.
                   rule: self == oldSelf
+                - message: spec.tenant must be 253 bytes or less in UTF-8.
+                  rule: bytes(self).size() <= 253
             required:
             - tenant
             type: object
