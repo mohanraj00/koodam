@@ -55,7 +55,7 @@ func TestParseTenantLimits(t *testing.T) {
 		}
 	}
 	for _, doc := range []string{
-		``, `[]`, `null`, ` null `, `{} {}`, `{"other":1}`,
+		``, `[]`, `null`, ` null `, `{} {}`, `{}}`, `{}]`, `{} x`, `{"other":1}`,
 		`{"default":{"rate":-1,"burst":1}}`,
 		`{"default":{"rate":1}}`,
 		`{"default":{"burst":3}}`,
@@ -218,6 +218,33 @@ func TestTenantsSmallRateAndRemoval(t *testing.T) {
 	}
 	if reason, _ := tenants.Allow("busy", later); reason != ReasonTenantRateLimited {
 		t.Errorf("a bucket in use lost its state: %q", reason)
+	}
+}
+
+// A request with an older time makes a removed bucket again. The tenant does not get the tokens
+// of the time before the removal a second time.
+func TestTenantsRemovalKeepsTheTime(t *testing.T) {
+	tenants := mustLimits(t, `{"default":{"rate":1,"burst":1}}`)
+	start := time.Unix(100, 0)
+	later := start.Add(time.Second)
+	accepted := 0
+	if reason, _ := tenants.Allow("late", start); reason == "" {
+		accepted++
+	}
+	for i := range maxTenantBuckets - 1 {
+		tenants.Allow("idle-"+string(rune('a'+i%26))+strings.Repeat("x", i/26), start)
+	}
+	tenants.Allow("next", later)
+	if tenants.buckets["late"] != nil {
+		t.Fatal("the removal kept a full bucket")
+	}
+	for _, at := range []time.Time{start, later, later} {
+		if reason, _ := tenants.Allow("late", at); reason == "" {
+			accepted++
+		}
+	}
+	if accepted != 2 {
+		t.Errorf("got %d accepted requests in 1 second for rate 1 and burst 1, want 2", accepted)
 	}
 }
 

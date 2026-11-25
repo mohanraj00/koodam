@@ -84,7 +84,11 @@ func ParseTenantLimits(data []byte) (*TenantLimits, error) {
 	dec := json.NewDecoder(bytes.NewReader(data))
 	dec.DisallowUnknownFields()
 	var l TenantLimits
-	if err := dec.Decode(&l); err != nil || dec.More() {
+	if err := dec.Decode(&l); err != nil {
+		return nil, errors.New("the tenant limits are not one JSON object of the known fields")
+	}
+	// Only the end of the data can follow the object. A second value or a delimiter is an error.
+	if _, err := dec.Token(); err != io.EOF {
 		return nil, errors.New("the tenant limits are not one JSON object of the known fields")
 	}
 	valid := func(t TenantLimit) bool {
@@ -119,6 +123,9 @@ type Tenants struct {
 	limits  atomic.Pointer[TenantLimits]
 	mu      sync.Mutex
 	buckets map[string]*bucket
+	// removed is the latest time of a bucket that removeIdle removed. A new bucket starts at
+	// this time or later.
+	removed time.Time
 }
 
 // Load reads the limits file. If the file is not valid, the last valid limits stay.
@@ -175,7 +182,12 @@ func (t *Tenants) Allow(tenant string, now time.Time) (reason string, wait time.
 		if len(t.buckets) >= maxTenantBuckets {
 			t.removeIdle(limits, now)
 		}
+		// A request with an older time can make the bucket again after a removal. The bucket
+		// then starts at the time of the removal, and it adds no token for the time before.
 		b = &bucket{tokens: size, last: now}
+		if t.removed.After(now) {
+			b.last = t.removed
+		}
 		t.buckets[tenant] = b
 	}
 	// The requests of one tenant can come with times that are not in order, and a clock can go
@@ -197,8 +209,8 @@ func (t *Tenants) Allow(tenant string, now time.Time) (reason string, wait time.
 }
 
 // removeIdle removes each bucket that is full at this time, and each bucket of a tenant with no
-// rate limit. A full bucket has the same state as a new bucket, so the removal changes no
-// answer. The caller holds the lock.
+// rate limit. A full bucket has the same state as a new bucket that starts at the time of the
+// removal, so the removal changes no answer. The caller holds the lock.
 func (t *Tenants) removeIdle(limits *TenantLimits, now time.Time) {
 	for name, b := range t.buckets {
 		limit, known := limits.Tenants[name]
@@ -207,6 +219,11 @@ func (t *Tenants) removeIdle(limits *TenantLimits, now time.Time) {
 		}
 		if limit.Rate <= 0 || b.tokens+now.Sub(b.last).Seconds()*limit.Rate >= float64(limit.Burst) {
 			delete(t.buckets, name)
+			for _, at := range []time.Time{now, b.last} {
+				if at.After(t.removed) {
+					t.removed = at
+				}
+			}
 		}
 	}
 }
