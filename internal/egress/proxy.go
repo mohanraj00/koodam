@@ -353,9 +353,9 @@ func (p *Proxy) llm(w http.ResponseWriter, r *http.Request, sp *Span) {
 	if sp.Port == "" {
 		sp.Port = map[string]string{schemeHTTP: "80", "https": "443"}[p.Gateway.Scheme]
 	}
-	if !p.appKeyInPod(r, sp) {
-		w.Header().Set(ReasonHeader, ReasonAppKeyOutOfPod)
-		p.deny(w, sp, ReasonAppKeyOutOfPod)
+	if reason := p.appKeyReason(r, sp); reason != "" {
+		w.Header().Set(ReasonHeader, reason)
+		p.deny(w, sp, reason)
 		return
 	}
 	tenant, ok := p.tenantOf(w, r, sp)

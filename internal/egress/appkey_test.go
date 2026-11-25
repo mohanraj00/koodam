@@ -19,6 +19,7 @@ package egress
 import (
 	"crypto/ed25519"
 	"encoding/base64"
+	"fmt"
 	"maps"
 	"net/http"
 	"net/http/httptest"
@@ -233,5 +234,75 @@ func TestBasicTextDecodesStandardBase64(t *testing.T) {
 		if got := basicText(base64.StdEncoding.EncodeToString([]byte(text))); got != text {
 			t.Errorf("The decode of %q gives %q.", text, got)
 		}
+	}
+}
+
+// The scan of one call has limits. The proxy refuses a call over a limit, because a key can be
+// in the part that it did not examine.
+func TestKeyScanLimits(t *testing.T) {
+	key, hash := newKey(t)
+	texts := func(n int) string {
+		var q strings.Builder
+		for i := range n {
+			fmt.Fprintf(&q, "&a=%s%02x", keyPrefix, i)
+		}
+		return "?" + q.String()[1:]
+	}
+	half := len(key) / 2
+	long := strings.Repeat("x", maxKeyValue)
+	cases := map[string]struct {
+		query  string
+		header map[string]string
+		reason string
+	}{
+		"the maximum number of key texts": {query: texts(maxKeyTexts)},
+		"more key texts than the maximum": {query: texts(maxKeyTexts + 1), reason: ReasonKeyScanLimit},
+		"the key of the App after the maximum number of key texts": {
+			query: texts(maxKeyTexts) + "&key=" + key, reason: ReasonKeyScanLimit},
+		"a long value with no key word": {header: map[string]string{"X-Long": long}},
+		"a long value with a key word":  {header: map[string]string{authorization: "Bearer " + long}, reason: ReasonKeyScanLimit},
+		"a divided key in a long value": {header: map[string]string{
+			authorization: "Bearer " + key[:half] + strings.Repeat("Bearer ", maxKeyValue/7) + key[half:]}, reason: ReasonKeyScanLimit},
+		"a long query value with no escape":          {query: "?a=" + long},
+		"a long query value with an escape":          {query: "?a=%2D" + long, reason: ReasonKeyScanLimit},
+		"the key of the App with a long query value": {query: "?a=%2D" + long + "&key=" + key, reason: ReasonAppKeyOutOfPod},
+	}
+	for name, c := range cases {
+		t.Run(name, func(t *testing.T) {
+			pu, sink, calls := keyProxy(t, hash, fromAgent)
+			resp := keyCall(t, pu, c.query, c.header)
+			sp := sink.next(t)
+			if c.reason == "" {
+				if resp.StatusCode != http.StatusOK || sp.Result != ResultOK || len(*calls) != 1 {
+					t.Errorf("status %d, span result %q, reason %q", resp.StatusCode, sp.Result, sp.Reason)
+				}
+				return
+			}
+			if resp.StatusCode != http.StatusForbidden || resp.Header.Get(ReasonHeader) != c.reason ||
+				sp.Result != ResultDenied || sp.Reason != c.reason || len(*calls) != 0 {
+				t.Errorf("status %d, header %q, span result %q, reason %q", resp.StatusCode,
+					resp.Header.Get(ReasonHeader), sp.Result, sp.Reason)
+			}
+		})
+	}
+}
+
+// The scan of a long query with many key texts makes no map of the query. It makes only the
+// hashes of the first key texts.
+func TestKeyScanOfALongQueryAllocatesLittle(t *testing.T) {
+	var q strings.Builder
+	for i := 0; q.Len() < 1<<20; i++ {
+		fmt.Fprintf(&q, "a=%s%06x&", keyPrefix, i)
+	}
+	raw, sp := q.String(), &Span{}
+	owner := func(string) (string, string, bool) { return "", "", false }
+	allocs := testing.AllocsPerRun(5, func() {
+		s := newKeyScan(owner, sp)
+		if s.query(raw); !s.limit {
+			t.Error("The scan must be at its limit.")
+		}
+	})
+	if allocs > 4*maxKeyTexts {
+		t.Errorf("The scan made %.0f allocations.", allocs)
 	}
 }
