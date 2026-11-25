@@ -4,6 +4,12 @@ This file records the changes for each Koodam version. The newest version is fir
 
 ## Unreleased
 
+### Agents
+
+- Add the [read-only spend API](docs/spend-api.md) for Agent runs and spend by label. The binary `spend-api` serves `/v1/runs`, `/v1/spend` and `/v1/openapi.json` ([#397](https://github.com/mohanraj00/koodam/pull/397), [#393](https://github.com/mohanraj00/koodam/pull/393), [#394](https://github.com/mohanraj00/koodam/pull/394), [#395](https://github.com/mohanraj00/koodam/pull/395), [#396](https://github.com/mohanraj00/koodam/pull/396), [#398](https://github.com/mohanraj00/koodam/pull/398)).
+- Export [Prometheus metrics](docs/metrics.md) for Agent counts, run time, spend and budgets
+  ([#413](https://github.com/mohanraj00/koodam/pull/413)).
+
 ### Apps
 
 - **Changed from v0.4.0.** With a tenant claim (`apps.claimCheck.tenantClaim`), each model call of an App pod now needs the header `Koodam-Tenant-Token`. The claim check container gives this signed token to the app with each request of a tenant, and the app must send it with each model call. The egress proxy refuses a model call of an App pod with no valid token (status 403, with the typed reason in `Koodam-Reason`), and it sets the customer of the gateway call to the tenant of the token. Thus the code in an App pod cannot select the tenant of a model call. With this value on, each model call of an Agent pod or a Workspace pod gets the reserved customer `koodam-no-tenant`. No tenant can have this label: the claim check refuses a claim with it (`ReservedTenant`, 403), and the gateway client makes no customer limits for it. The new chart value `apps.claimCheck.tenantToken` (default `true`) sets this; `false` gives the behavior of v0.4.0. The proxy gets `get`, `list` and `watch` on `appversions` in each App namespace, to read the public key of the token from the status. [docs/tenants.md](docs/tenants.md#the-tenant-token) has the flow and the limits ([#415](https://github.com/mohanraj00/koodam/issues/415)).
