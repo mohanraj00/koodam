@@ -109,7 +109,7 @@ other than 2 does not block the harness. A hook that cannot start Nookku fails i
 
 ## Nookku files
 
-Koodam pins Nookku 0.5.9 in `internal/evidence/nookku.pin`, the same pin as the evidence gate. The
+Koodam pins Nookku 0.6.0 in `internal/evidence/nookku.pin`, the same pin as the evidence gate. The
 Nookku data image (`images/nookku`) has these files, and no shell and no Python:
 
 - `/nookku/share/lib`: the content of the wheel. The build refuses a wheel with a different SHA-256.
