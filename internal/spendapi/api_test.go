@@ -29,12 +29,14 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
+	"github.com/mohanraj00/koodam/docs"
 	"github.com/mohanraj00/koodam/internal/appclaim"
 )
 
@@ -99,11 +101,24 @@ func TestServeRunsAndSpend(t *testing.T) {
 
 func TestMethodsAndQueries(t *testing.T) {
 	f := newFixture(t, 0)
-	for _, path := range []string{runsPath, spendPath, "/v2/runs"} {
+	w := f.call(t, http.MethodGet, specPath, f.token, http.StatusOK)
+	var spec struct {
+		OpenAPI string                                `json:"openapi"`
+		Paths   map[string]map[string]json.RawMessage `json:"paths"`
+	}
+	if w.Body.String() != docs.SpendOpenAPI || json.Unmarshal(w.Body.Bytes(), &spec) != nil ||
+		!strings.HasPrefix(spec.OpenAPI, "3.") {
+		t.Fatal("want the published OpenAPI 3 document")
+	}
+	f.call(t, http.MethodHead, specPath, f.token, http.StatusOK)
+	for _, path := range []string{runsPath, spendPath, specPath, "/v2/runs"} {
 		for _, method := range []string{http.MethodPost, http.MethodPut, http.MethodDelete, http.MethodOptions} {
 			w := f.call(t, method, path, "", http.StatusMethodNotAllowed)
 			if w.Header().Get("Allow") != "GET, HEAD" {
 				t.Fatal("the Allow header does not list the read methods")
+			}
+			if _, ok := spec.Paths[path][strings.ToLower(method)]; !ok && path != "/v2/runs" {
+				t.Fatalf("the OpenAPI document does not list the 405 response of %s %s", method, path)
 			}
 		}
 		f.call(t, http.MethodGet, path, "", http.StatusUnauthorized)

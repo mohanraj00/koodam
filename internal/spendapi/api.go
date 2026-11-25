@@ -33,6 +33,7 @@ import (
 	"k8s.io/apimachinery/pkg/util/validation"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
+	"github.com/mohanraj00/koodam/docs"
 	"github.com/mohanraj00/koodam/internal/appclaim"
 )
 
@@ -40,6 +41,7 @@ const (
 	maxPage   = 100
 	runsPath  = "/v1/runs"
 	spendPath = "/v1/spend"
+	specPath  = "/v1/openapi.json"
 )
 
 var errCursor = errors.New("the page cursor is not valid")
@@ -133,6 +135,12 @@ func (a *api) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	switch r.URL.Path {
+	case specPath:
+		if r.Method == http.MethodGet {
+			_, _ = w.Write([]byte(docs.SpendOpenAPI))
+		} else {
+			w.WriteHeader(http.StatusOK)
+		}
 	case runsPath, spendPath:
 		a.list(ctx, w, r)
 	default:
