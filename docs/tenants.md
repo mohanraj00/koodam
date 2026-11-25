@@ -5,7 +5,8 @@ A tenant is a client group of an App. The tenant label comes from the signed cla
 ## What is active
 
 - The `TenantQuota` API is in `main`. The chart installs its CRD with `apps.enabled=true`.
-- No controller reads a `TenantQuota` at this time. The rate limit, the gateway quota, the status and the default for an unknown tenant come in later changes of [#193](https://github.com/mohanraj00/koodam/issues/193).
+- The claim check container can refuse a tenant from a limits file. See "The refusals of the claim check".
+- No controller reads a `TenantQuota` at this time, so no pod gets a limits file. The gateway quota, the status and the default for an unknown tenant come in later changes of [#193](https://github.com/mohanraj00/koodam/issues/193).
 
 ## The TenantQuota spec
 
@@ -52,12 +53,19 @@ The gateway has one customer for each tenant label of the install. Thus use one 
 | `spend` | The spend of the tenant in the current period. |
 | `observedTime` | The time of the last read of the use from the gateway. |
 
-## The typed reasons
+## The refusals of the claim check
 
-Each refusal of a tenant has one of these reasons:
+The claim check container `koodam-claim` reads the limits of the tenants from a file, and it reads the file again each 10 seconds. A file that is not valid keeps the last valid limits. The container does not start with a file that is not valid.
 
-| Reason | Meaning |
-|---|---|
-| `TenantRateLimited` | The tenant sent more requests than its rate limit. |
-| `TenantQuotaExceeded` | The tenant has no more quota in the current period. |
-| `UnknownTenant` | No `TenantQuota` names the tenant label, and the install refuses such a tenant. |
+The check examines a request after it verified the signed claim:
+
+| Reason | Status | Condition |
+|---|---|---|
+| `UnknownTenant` | `403` | The file does not name the tenant label, and the file refuses an unknown tenant. |
+| `TenantQuotaExceeded` | `429` | The file marks the tenant at its limit of the current period. |
+| `TenantRateLimited` | `429` | The token bucket of the tenant is empty. The header `Retry-After` gives the seconds until the next token. |
+
+- The answer has the reason in the header `Koodam-Reason` and in the body. The app container does not get a refused request.
+- The ingress span of the request has the reason as its `outcome`, with the caller label and the tenant label ([app-ingress-spans.md](app-ingress-spans.md)).
+- Each pod has its own token bucket for each tenant. A refused request uses no token, and the limit of one tenant has no effect on a different tenant.
+- A request with no tenant label has no tenant limit. This occurs only if the claim check has no tenant claim.
