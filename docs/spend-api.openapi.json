@@ -61,7 +61,7 @@
       ],
       "get": {
         "operationId": "listSpend",
-        "summary": "List period spend by Agent label.",
+        "summary": "List period spend by Agent label or namespace.",
         "responses": {
           "200": {
             "description": "OK",
@@ -168,7 +168,7 @@
         "name": "groupBy",
         "in": "query",
         "required": true,
-        "description": "Group by label:<name>. Use a Kubernetes label name.",
+        "description": "Group by label:<name>, with a Kubernetes label name, or by namespace.",
         "schema": {"type": "string", "example": "label:koodam.dev/cost-group"}
       }
     },
@@ -220,6 +220,10 @@
           "name": {"type": "string"},
           "namespace": {"type": "string"},
           "createdAt": {"type": "string", "format": "date-time"},
+          "phase": {"type": "string", "description": "Pending, Running, Succeeded or Failed. Absent before the first status."},
+          "models": {"type": "array", "items": {"type": "string"}, "description": "The gateway models of the run."},
+          "startedAt": {"type": "string", "format": "date-time", "description": "The start time of the run Job."},
+          "completedAt": {"type": "string", "format": "date-time", "description": "The end time of the run Job."},
           "spend": {"type": "number", "format": "double", "description": "Spend in USD."},
           "budget": {"type": "number", "format": "double", "description": "Declared budget in USD."},
           "remainingBudget": {
@@ -244,7 +248,7 @@
         "type": "object",
         "required": ["labelValue", "spend"],
         "properties": {
-          "labelValue": {"type": "string"},
+          "labelValue": {"type": "string", "description": "The label value, or the namespace for groupBy=namespace."},
           "spend": {"type": "number", "format": "double", "description": "Spend in USD."},
           "budget": {
             "type": "number",

@@ -27,6 +27,7 @@ import (
 	"sync"
 	"time"
 
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/validation"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
@@ -42,11 +43,23 @@ type amounts struct {
 }
 
 type run struct {
-	ID        string    `json:"id"`
-	Name      string    `json:"name"`
-	Namespace string    `json:"namespace"`
-	CreatedAt time.Time `json:"createdAt"`
+	ID          string     `json:"id"`
+	Name        string     `json:"name"`
+	Namespace   string     `json:"namespace"`
+	CreatedAt   time.Time  `json:"createdAt"`
+	Phase       string     `json:"phase,omitempty"`
+	Models      []string   `json:"models,omitempty"`
+	StartedAt   *time.Time `json:"startedAt,omitempty"`
+	CompletedAt *time.Time `json:"completedAt,omitempty"`
 	amounts
+}
+
+func utc(t *metav1.Time) *time.Time {
+	if t == nil {
+		return nil
+	}
+	u := t.UTC()
+	return &u
 }
 
 type page[T any] struct {
@@ -104,8 +117,14 @@ func (a *api) runs(ctx context.Context, namespaces []string, limit int, cursor s
 		if id == "" {
 			id = string(agent.UID)
 		}
+		models := agent.Spec.Models
+		if agent.Spec.Model != "" {
+			models = []string{agent.Spec.Model}
+		}
 		result.Items[i] = run{
 			ID: id, Name: agent.Name, Namespace: agent.Namespace, CreatedAt: agent.CreationTimestamp.UTC(),
+			Phase: string(agent.Status.Phase), Models: models,
+			StartedAt: utc(agent.Status.StartedAt), CompletedAt: utc(agent.Status.CompletedAt),
 			amounts: cost,
 		}
 		return err
@@ -152,18 +171,33 @@ func (a *api) runSpend(ctx context.Context, agent *corev1alpha1.Agent) (*float64
 	return nil, nil
 }
 
+// byNamespace groups the period spend by the Agent namespace in place of a label.
+const byNamespace = "namespace"
+
 type period struct {
 	from, to time.Time
-	label    string
+	// label is a label name, or empty for byNamespace.
+	label string
+}
+
+func (p period) groupBy() string {
+	if p.label == "" {
+		return byNamespace
+	}
+	return "label:" + p.label
 }
 
 func parsePeriod(q url.Values) (period, bool) {
 	from, fromErr := time.Parse(time.DateOnly, q.Get("from"))
 	to, toErr := time.Parse(time.DateOnly, q.Get("to"))
 	label, ok := strings.CutPrefix(q.Get("groupBy"), "label:")
+	if q.Get("groupBy") == byNamespace {
+		label, ok = "", true
+	} else if len(validation.IsQualifiedName(label)) != 0 {
+		ok = false
+	}
 	return period{from: from, to: to, label: label},
-		fromErr == nil && toErr == nil && from.Year() > 0 && to.Year() < 9999 &&
-			!from.After(to) && ok && len(validation.IsQualifiedName(label)) == 0
+		fromErr == nil && toErr == nil && from.Year() > 0 && to.Year() < 9999 && !from.After(to) && ok
 }
 
 type group struct {
@@ -179,7 +213,7 @@ type periodPage struct {
 }
 
 func (a *api) spend(ctx context.Context, namespaces []string, p period, limit int, cursor string) (periodPage, error) {
-	result := periodPage{From: p.from.Format(time.DateOnly), To: p.to.Format(time.DateOnly), GroupBy: "label:" + p.label}
+	result := periodPage{From: p.from.Format(time.DateOnly), To: p.to.Format(time.DateOnly), GroupBy: p.groupBy()}
 	scope := strings.Join([]string{spendPath, strings.Join(namespaces, ","), result.From, result.To, result.GroupBy}, ":")
 	position, err := decodeCursor(scope, cursor)
 	if err != nil {
@@ -214,8 +248,11 @@ func (a *api) groupKeys(
 				continue
 			}
 			label := agent.Labels[p.label]
-			if p.label == costGroupLabel {
+			switch p.label {
+			case costGroupLabel:
 				label = agent.Status.CostGroup
+			case "":
+				label = agent.Namespace
 			}
 			if continued && label <= after {
 				continue

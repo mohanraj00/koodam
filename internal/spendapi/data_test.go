@@ -308,6 +308,7 @@ func TestParsePeriod(t *testing.T) {
 		"from=2026-01-01&to=2026-01-31&groupBy=team", "from=2026-01-01&to=2026-01-31&groupBy=label:a/b/c",
 		"from=2026-01-01&to=2026-01-31&groupBy=label:", "from=0000-01-01&to=2026-01-31&groupBy=label:team",
 		"from=2026-01-01&to=9999-12-31&groupBy=label:team", "from=2026-1-1&to=2026-01-31&groupBy=label:team",
+		"from=2026-01-01&to=2026-01-31&groupBy=Namespace", "from=2026-01-01&to=2026-01-31&groupBy=namespace:",
 	} {
 		q, err := url.ParseQuery(query)
 		if _, ok := parsePeriod(q); err != nil || ok {
@@ -333,8 +334,8 @@ func TestPeriodErrors(t *testing.T) {
 func TestRunsAndSpendAcrossNamespaces(t *testing.T) {
 	f := newFixture(t, 3)
 	f.serveGateway(t)
-	f.kube.(agentReader).items[2].Namespace = "other"
-	f.namespaces = []string{testNamespace, "other"}
+	f.kube.(agentReader).items[2].Namespace = otherNamespace
+	f.namespaces = []string{testNamespace, otherNamespace}
 	var seen []string
 	for cursor, n := "", 0; n == 0 || cursor != ""; n++ {
 		p, err := f.runs(t.Context(), f.namespaces, 1, cursor)
@@ -354,12 +355,51 @@ func TestRunsAndSpendAcrossNamespaces(t *testing.T) {
 	if _, err := f.runs(t.Context(), f.namespaces[:1], 1, p.NextCursor); !errors.Is(err, errCursor) {
 		t.Fatal("a cursor of a different scope was accepted")
 	}
-	forged := encodeCursor(runsPath+":"+testNamespace, "other/")
+	forged := encodeCursor(runsPath+":"+testNamespace, otherNamespace+"/")
 	if _, err := f.runs(t.Context(), f.namespaces[:1], 1, forged); !errors.Is(err, errCursor) {
 		t.Fatal("a cursor with a namespace outside the scope was accepted")
 	}
 	g, err := f.spend(t.Context(), f.namespaces, testPeriodOf(t, "team"), maxPage, "")
 	if err != nil || len(g.Items) != 3 || g.Items[2].LabelValue != "agent-002" {
 		t.Fatal("the period spend does not include the two namespaces")
+	}
+	g, err = f.spend(t.Context(), f.namespaces, period{from: g0(t, testFrom), to: g0(t, testTo)}, maxPage, "")
+	if err != nil || g.GroupBy != byNamespace || len(g.Items) != 2 ||
+		g.Items[0].LabelValue != otherNamespace || spendOf(g.Items[0].amounts) != 1.25 ||
+		g.Items[1].LabelValue != testNamespace || spendOf(g.Items[1].amounts) != 1.75 {
+		t.Fatalf("the spend by namespace is %+v", g.Items)
+	}
+}
+
+func g0(t *testing.T, date string) time.Time {
+	t.Helper()
+	d, err := time.Parse(time.DateOnly, date)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return d
+}
+
+func TestRunFields(t *testing.T) {
+	f := newFixture(t, 2)
+	f.serveGateway(t)
+	items := f.kube.(agentReader).items
+	start := metav1.NewTime(time.Date(2026, 1, 2, 3, 4, 5, 0, time.FixedZone("plus2", 7200)))
+	items[0].Spec.Model = "model-a"
+	items[0].Status.Phase, items[0].Status.StartedAt, items[0].Status.CompletedAt =
+		corev1alpha1.AgentSucceeded, &start, &start
+	items[1].Spec.Models = []string{"model-b", "model-c"}
+	p, err := f.runs(t.Context(), f.namespaces, maxPage, "")
+	if err != nil || len(p.Items) != 2 {
+		t.Fatal(err)
+	}
+	a, b := p.Items[0], p.Items[1]
+	if a.Phase != "Succeeded" || strings.Join(a.Models, ",") != "model-a" ||
+		a.StartedAt == nil || a.StartedAt.Location() != time.UTC || !a.StartedAt.Equal(start.Time) ||
+		a.CompletedAt == nil || !a.CompletedAt.Equal(start.Time) {
+		t.Fatalf("the first run is %+v", a)
+	}
+	if b.Phase != "" || strings.Join(b.Models, ",") != "model-b,model-c" || b.StartedAt != nil || b.CompletedAt != nil {
+		t.Fatalf("the second run is %+v", b)
 	}
 }
