@@ -66,7 +66,7 @@ var _ = Describe("TenantQuota CRD", func() {
 
 	It("accepts each limit", func() {
 		q := newQuota(func(s *corev1alpha1.TenantQuotaSpec) {
-			s.AppRef = &corev1alpha1.AppReference{Name: "shop"}
+			s.AppRef = &corev1alpha1.AppReference{Name: "store"}
 			s.Period = corev1alpha1.TenantQuotaPeriodHour
 			s.Requests = new(int64(100))
 			s.Spend = new(resource.MustParse("2500m"))
@@ -103,7 +103,7 @@ var _ = Describe("TenantQuota CRD", func() {
 		Expect(create(q)).To(Succeed())
 		q.Spec.Requests = new(int64(5))
 		Expect(k8sClient.Update(ctx, q)).To(Succeed())
-		q.Spec.Tenant = "other"
+		q.Spec.Tenant = "globex"
 		err := k8sClient.Update(ctx, q)
 		Expect(apierrors.IsInvalid(err)).To(BeTrue(), "the error is not Invalid: %v", err)
 		Expect(err.Error()).To(ContainSubstring("spec.tenant is immutable."))
@@ -112,11 +112,11 @@ var _ = Describe("TenantQuota CRD", func() {
 	It("keeps the use in the status subresource", func() {
 		q := newQuota(nil)
 		Expect(create(q)).To(Succeed())
-		q.Status.Requests, q.Status.Spend = 7, "0.25"
+		q.Status.Requests, q.Status.Spend = 7, "0.125"
 		Expect(k8sClient.Status().Update(ctx, q)).To(Succeed())
 		got := &corev1alpha1.TenantQuota{}
 		Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(q), got)).To(Succeed())
 		Expect(got.Status.Requests).To(Equal(int64(7)))
-		Expect(got.Status.Spend).To(Equal("0.25"))
+		Expect(got.Status.Spend).To(Equal(q.Status.Spend))
 	})
 })
