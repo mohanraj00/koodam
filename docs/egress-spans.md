@@ -38,6 +38,7 @@ The egress proxy writes 1 JSON line to its stdout for each call from an Agent po
 | `app` | string | no | The value of the pod label `koodam.dev/app`. Only for an App pod. |
 | `appVersion` | string | no | The value of the pod label `koodam.dev/app-version`. Only for an App pod. |
 | `claimed` | boolean | no | `true` if the pod sent an `X-Koodam-Run` or `X-Koodam-User` header. The span does not hold the value. |
+| `zone` | string | no | The zone of the install (`zone.name`). It is not the zone of the host. An install with no zone has no such field. |
 
 "Always" means that the field is in each span. A field that is not always there is not in the line when it is empty.
 
@@ -67,6 +68,7 @@ The proxy does not decrypt TLS. For `connect` and `tls`, the span has the host a
 | `port` | `denied` | The port is not in the permitted ports. |
 | `address` | `denied` | The name resolves to a private, loopback, link-local or metadata address. |
 | `identity` | `denied` | The proxy found no pod, or more than 1 pod, with the source IP. |
+| `EgressOutOfZone` | `denied` | The host has a declared zone (`zone.egressHosts`) that is not the zone of the install. [zones.md](zones.md) has the rules. |
 | `not a proxy request` | `denied` | The request is not a CONNECT, an absolute URL or an `/llm/` path. |
 | `no TLS ClientHello` | `denied` | The first bytes in a tunnel are not a TLS ClientHello. |
 | `the SNI is not the CONNECT host` | `denied` | The SNI is not the name of the CONNECT request. |

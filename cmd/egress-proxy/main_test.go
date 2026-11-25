@@ -17,12 +17,15 @@ limitations under the License.
 package main
 
 import (
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"slices"
 	"strings"
 	"sync/atomic"
 	"testing"
+
+	"github.com/mohanraj00/koodam/internal/egress"
 )
 
 func TestList(t *testing.T) {
@@ -48,6 +51,33 @@ func TestProbes(t *testing.T) {
 	ready.Store(true)
 	if code("/readyz") != http.StatusOK {
 		t.Fatal("/readyz is not ready after the sync")
+	}
+}
+
+func TestSetZone(t *testing.T) {
+	const zone = "zone-a"
+	plain := &egress.Proxy{Sink: egress.NewJSONSink(io.Discard)}
+	if err := setZone(plain, "", ""); err != nil || plain.Zone != "" || plain.HostZones != nil {
+		t.Errorf("an install with no zone: %v, %+v", err, plain)
+	}
+	if _, wrapped := plain.Sink.(egress.ZoneSink); wrapped {
+		t.Error("an install with no zone writes a zone to its spans")
+	}
+	p := &egress.Proxy{Sink: egress.NewJSONSink(io.Discard)}
+	if err := setZone(p, zone, "far.example.com=zone-b,*.example.net="+zone); err != nil {
+		t.Fatal(err)
+	}
+	if sink, ok := p.Sink.(egress.ZoneSink); !ok || sink.Zone != zone || p.Zone != zone || p.HostZones.Len() != 2 {
+		t.Errorf("an install with a zone: %+v", p)
+	}
+	for name, tc := range map[string][2]string{
+		"a zone that is not a label": {"Zone_A", ""},
+		"host zones with no zone":    {"", "far.example.com=zone-b"},
+		"a bad host zone":            {zone, "far.example.com"},
+	} {
+		if err := setZone(&egress.Proxy{Sink: egress.NewJSONSink(io.Discard)}, tc[0], tc[1]); err == nil {
+			t.Errorf("%s is accepted", name)
+		}
 	}
 }
 

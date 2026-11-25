@@ -37,6 +37,7 @@ import (
 	"time"
 
 	"golang.org/x/net/netutil"
+	"k8s.io/apimachinery/pkg/util/validation"
 	"k8s.io/client-go/kubernetes"
 	ctrl "sigs.k8s.io/controller-runtime"
 
@@ -77,6 +78,9 @@ func run() error {
 	httpListen := flag.String("http-listen", ":8080", "the address of the transparent HTTP listener")
 	idle := flag.Duration("idle-timeout", egress.DefaultIdle,
 		"the time limit with no bytes on a tunnel, a request body or a response")
+	zone := flag.String("zone", "", "the zone of the install, in each span. Empty: the install has no zone")
+	hostZones := flag.String("host-zones", "",
+		"the declared zone of egress hosts, as host=zone pairs separated by commas. A host can start with *.")
 	flag.Parse()
 
 	var dns *egress.Resolver
@@ -93,6 +97,9 @@ func run() error {
 		HTTPPorts:    list(*httpPorts),
 		ConnectPorts: list(*connectPorts),
 		Idle:         *idle,
+	}
+	if err := setZone(p, *zone, *hostZones); err != nil {
+		return err
 	}
 	if *gateway != "" {
 		u, err := parseGateway(*gateway)
@@ -233,6 +240,28 @@ func firstError(errs <-chan error) error {
 	default:
 		return nil
 	}
+}
+
+// setZone gives the zone of the install and the declared zone of the egress hosts to the proxy.
+// With a zone, each span has the zone. The declared zones need the zone of the install, because
+// the proxy has no zone to compare them with.
+func setZone(p *egress.Proxy, zone, hostZones string) error {
+	if zone != "" {
+		if errs := validation.IsDNS1123Label(zone); len(errs) > 0 {
+			return fmt.Errorf("--zone is not valid: %s", strings.Join(errs, "; "))
+		}
+	}
+	hosts, err := egress.ParseHostZones(hostZones)
+	if err != nil {
+		return fmt.Errorf("--host-zones: %w", err)
+	}
+	if hosts.Len() > 0 && zone == "" {
+		return errors.New("--host-zones needs --zone")
+	}
+	if zone != "" {
+		p.Zone, p.HostZones, p.Sink = zone, hosts, egress.ZoneSink{Sink: p.Sink, Zone: zone}
+	}
+	return nil
 }
 
 // parseGateway returns the /llm/ target. The URL is a flag value, so it must hold no credential.

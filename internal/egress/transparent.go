@@ -137,8 +137,11 @@ func (p *Proxy) transparentTLS(ctx context.Context, client net.Conn) {
 	upstream, err := p.dial(ctx, host, port)
 	if err != nil {
 		sp.Result, sp.Reason = ResultError, reasonUpstream
-		if errors.Is(err, errDenied) {
+		switch {
+		case errors.Is(err, errDenied):
 			sp.Result, sp.Reason = ResultDenied, reasonAddress
+		case errors.Is(err, errOutOfZone):
+			sp.Result, sp.Reason = ResultDenied, ReasonOutOfZone
 		}
 		return
 	}
