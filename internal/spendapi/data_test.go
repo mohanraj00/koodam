@@ -42,6 +42,9 @@ const (
 	testNamespace = "sample"
 	testFrom      = "2026-01-01"
 	testTo        = "2026-01-31"
+	testGateway   = "http://litellm.example"
+	testAudience  = "spend"
+	firstAgent    = "agent-000"
 )
 
 type agentReader struct {
@@ -119,7 +122,7 @@ func newFixture(t testing.TB, count int) fixture {
 	}
 	handler, err := New(Config{
 		Kube: agentReader{items: items}, Namespaces: []string{testNamespace},
-		GatewayURL: "http://litellm.example", MasterKey: f.master, Timeout: 2 * time.Second,
+		GatewayURL: testGateway, MasterKey: f.master, Timeout: 2 * time.Second,
 		StaticTokens: []string{f.token},
 	})
 	if err != nil {
@@ -186,7 +189,7 @@ func TestRunSpend(t *testing.T) {
 		t.Fatal("want one run and a cursor")
 	}
 	a := p.Items[0]
-	if a.ID != "agent-000" || a.Name != "agent-000" || a.Namespace != testNamespace || a.CreatedAt.Month() != 1 ||
+	if a.ID != firstAgent || a.Name != firstAgent || a.Namespace != testNamespace || a.CreatedAt.Month() != 1 ||
 		spendOf(a.amounts) != 0.75 || *a.Budget != 2 || a.RemainingBudget == nil || *a.RemainingBudget != 1.25 {
 		t.Fatal("the run does not match the Agent, the spend and the budget")
 	}

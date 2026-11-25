@@ -24,7 +24,61 @@ The `-caller-claim` flag defaults to `sub`. Set `-tenant-claim` to require a ten
 These claims identify the caller. All permitted callers have the same access to this server.
 A missing or invalid token gets status 401.
 
+## Viewer review
+
+For people, use `-viewer-review` in place of the issuer flags and the local token file. The caller
+sends a Kubernetes token, for example from `kubectl create token` or an OIDC ID token that the API
+server accepts. For each request, the server does these steps:
+
+1. It sends a TokenReview to the API server. If the API server does not accept the token, the
+   response has status 401.
+2. It sends one SubjectAccessReview for `list` on `agents.core.koodam.dev` in each namespace of
+   `-namespace`, with the user, the groups, the UID and the extra values of the token.
+3. It reads only the namespaces where the review permits the caller. If there is no such namespace,
+   the response has status 403. If a review fails, the response has status 502.
+
+The server never impersonates the caller. It reads the Agents with its own identity, and it never
+returns or logs the token. Set `-viewer-audience` to require a token audience. The API server must
+then accept the token for that audience. The server does no cache of the reviews, so a change of the
+RBAC of a caller applies to the next request.
+
+The identity of the server needs `create` on `tokenreviews` and `subjectaccessreviews`. The built-in
+ClusterRole `system:auth-delegator` has the same rules. This manifest gives the rules to the service
+account `spend-api` in the namespace `koodam-system`. Change the names for your cluster.
+
+```yaml
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: koodam-spend-api-viewer-review
+rules:
+  - apiGroups: ["authentication.k8s.io"]
+    resources: ["tokenreviews"]
+    verbs: ["create"]
+  - apiGroups: ["authorization.k8s.io"]
+    resources: ["subjectaccessreviews"]
+    verbs: ["create"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: koodam-spend-api-viewer-review
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: koodam-spend-api-viewer-review
+subjects:
+  - kind: ServiceAccount
+    name: spend-api
+    namespace: koodam-system
+```
+
+The server also needs `list` on `agents.core.koodam.dev` in each namespace of `-namespace`.
+
+## Local tokens and limits
+
 For a local run, use `-static-token-file` with one token per line in place of the issuer flags.
+Give one of `-jwks-file`, `-static-token-file` or `-viewer-review`.
 The default listen address is `127.0.0.1:8080`. Set `-listen` for a different address.
 Use HTTPS at the ingress when clients connect over a network.
 Use `-request-timeout` to set the time limit for the Kubernetes and gateway reads of each request.

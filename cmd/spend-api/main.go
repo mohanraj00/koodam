@@ -33,6 +33,7 @@ import (
 	"k8s.io/apimachinery/pkg/api/meta"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
+	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/tools/clientcmd"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
@@ -56,9 +57,12 @@ func main() {
 	flag.StringVar(&c.Claims.TenantClaim, "tenant-claim", "", "The claim with the tenant label.")
 	jwksFile := flag.String("jwks-file", "", "The file with the JWKS of the issuer.")
 	staticFile := flag.String("static-token-file", "", "The file with local bearer tokens, one per line.")
+	viewers := flag.Bool("viewer-review", false,
+		"Check Kubernetes tokens with TokenReview and show only the namespaces where the caller can list Agents.")
+	viewerAudience := flag.String("viewer-audience", "", "A token audience that the API server must accept, for -viewer-review.")
 	flag.Parse()
 
-	if err := loadAuth(&c, *jwksFile, *staticFile); err != nil {
+	if err := loadAuth(&c, *jwksFile, *staticFile, *viewers, *viewerAudience); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(2)
 	}
@@ -87,9 +91,22 @@ func main() {
 	}
 }
 
-func loadAuth(c *spendapi.Config, jwksFile, staticFile string) error {
-	if (jwksFile == "") == (staticFile == "") {
-		return errors.New("give one of -jwks-file or -static-token-file")
+func loadAuth(c *spendapi.Config, jwksFile, staticFile string, viewers bool, audience string) error {
+	if !oneOf(jwksFile != "", staticFile != "", viewers) {
+		return errors.New("give one of -jwks-file, -static-token-file or -viewer-review")
+	}
+	if audience != "" && !viewers {
+		return errors.New("-viewer-audience needs -viewer-review")
+	}
+	if viewers {
+		if c.Claims.Issuer != "" || c.Claims.Audience != "" || c.Claims.TenantClaim != "" {
+			return errors.New("-viewer-review cannot be used with issuer settings")
+		}
+		c.Viewers = &spendapi.Viewers{}
+		if audience != "" {
+			c.Viewers.Audiences = []string{audience}
+		}
+		return nil
 	}
 	if staticFile != "" {
 		if c.Claims.Issuer != "" || c.Claims.Audience != "" || c.Claims.TenantClaim != "" {
@@ -110,6 +127,16 @@ func loadAuth(c *spendapi.Config, jwksFile, staticFile string) error {
 	return err
 }
 
+func oneOf(set ...bool) bool {
+	n := 0
+	for _, s := range set {
+		if s {
+			n++
+		}
+	}
+	return n == 1
+}
+
 func setupKube(c *spendapi.Config, rules *clientcmd.ClientConfigLoadingRules) error {
 	cc := clientcmd.NewNonInteractiveDeferredLoadingClientConfig(rules, &clientcmd.ConfigOverrides{})
 	cfg, err := cc.ClientConfig()
@@ -122,6 +149,14 @@ func setupKube(c *spendapi.Config, rules *clientcmd.ClientConfigLoadingRules) er
 			return errors.New("the Kubernetes client namespace is not available")
 		}
 		c.Namespaces = []string{namespace}
+	}
+	if c.Viewers != nil {
+		clients, err := kubernetes.NewForConfig(cfg)
+		if err != nil {
+			return errors.New("the Kubernetes review client could not start")
+		}
+		c.Viewers.Tokens = clients.AuthenticationV1().TokenReviews()
+		c.Viewers.Access = clients.AuthorizationV1().SubjectAccessReviews()
 	}
 	scheme := runtime.NewScheme()
 	if err := corev1alpha1.AddToScheme(scheme); err != nil {
