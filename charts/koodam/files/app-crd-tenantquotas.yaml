@@ -1,0 +1,238 @@
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  annotations:
+    controller-gen.kubebuilder.io/version: v0.22.0
+  name: tenantquotas.core.koodam.dev
+spec:
+  group: core.koodam.dev
+  names:
+    kind: TenantQuota
+    listKind: TenantQuotaList
+    plural: tenantquotas
+    singular: tenantquota
+  scope: Namespaced
+  versions:
+  - additionalPrinterColumns:
+    - jsonPath: .spec.tenant
+      name: Tenant
+      type: string
+    - jsonPath: .spec.appRef.name
+      name: App
+      type: string
+    - jsonPath: .status.requests
+      name: Requests
+      type: integer
+    - jsonPath: .status.spend
+      name: Spend
+      type: string
+    - jsonPath: .status.conditions[?(@.type=="QuotaExceeded")].status
+      name: Exceeded
+      type: string
+    - jsonPath: .metadata.creationTimestamp
+      name: Age
+      type: date
+    name: v1alpha1
+    schema:
+      openAPIV3Schema:
+        description: TenantQuota is the quota and the rate limit of one tenant of
+          the Apps of a namespace.
+        properties:
+          apiVersion:
+            description: |-
+              APIVersion defines the versioned schema of this representation of an object.
+              Servers should convert recognized schemas to the latest internal value, and
+              may reject unrecognized values.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#resources
+            type: string
+          kind:
+            description: |-
+              Kind is a string value representing the REST resource this object represents.
+              Servers may infer this from the endpoint the client submits requests to.
+              Cannot be updated.
+              In CamelCase.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds
+            type: string
+          metadata:
+            type: object
+          spec:
+            description: spec defines the desired state of TenantQuota
+            properties:
+              appRef:
+                description: |-
+                  AppRef is the App that the rate limit and the claim check refusals apply to. With no
+                  value, they apply to each App of the namespace.
+                properties:
+                  name:
+                    description: Name is the name of the App.
+                    maxLength: 253
+                    minLength: 1
+                    type: string
+                required:
+                - name
+                type: object
+              period:
+                default: Day
+                description: |-
+                  Period is the length of one quota period: Hour or Day. The gateway sets the start of
+                  each period.
+                enum:
+                - Hour
+                - Day
+                type: string
+              rateLimit:
+                description: |-
+                  RateLimit is the rate limit of the tenant at the ingress of the App. With no value, the
+                  tenant has no rate limit.
+                properties:
+                  burst:
+                    description: |-
+                      Burst is the count of requests that the tenant can send at one time. With no value, it
+                      is the rate, with a minimum of 1.
+                    format: int32
+                    maximum: 1000000
+                    minimum: 1
+                    type: integer
+                  requestsPerSecond:
+                    anyOf:
+                    - type: integer
+                    - type: string
+                    description: |-
+                      RequestsPerSecond is the rate that the tenant can keep, for example "5" or "500m". It
+                      must be more than zero.
+                    pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                    x-kubernetes-int-or-string: true
+                    x-kubernetes-validations:
+                    - message: requestsPerSecond must be more than zero
+                      rule: quantity(string(self)).isGreaterThan(quantity('0'))
+                    - message: requestsPerSecond must be 1000000 or less
+                      rule: quantity(string(self)).compareTo(quantity('1000000'))
+                        <= 0
+                required:
+                - requestsPerSecond
+                type: object
+              requests:
+                description: |-
+                  Requests is the maximum count of model calls of the tenant in one period. With no value,
+                  the count has no limit.
+                format: int64
+                minimum: 1
+                type: integer
+              spend:
+                anyOf:
+                - type: integer
+                - type: string
+                description: |-
+                  Spend is the maximum spend of the tenant in one period, in the currency of the gateway
+                  price table. It must be more than zero. With no value, the spend has no limit.
+                pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                x-kubernetes-int-or-string: true
+                x-kubernetes-validations:
+                - message: spend must be more than zero
+                  rule: quantity(string(self)).isGreaterThan(quantity('0'))
+              tenant:
+                description: |-
+                  Tenant is the tenant label of the signed claim. You cannot change it after create. The
+                  gateway has one customer for each tenant label of the install, so use one TenantQuota for
+                  each tenant label.
+                maxLength: 253
+                minLength: 1
+                type: string
+                x-kubernetes-validations:
+                - message: spec.tenant is immutable.
+                  rule: self == oldSelf
+            required:
+            - tenant
+            type: object
+          status:
+            description: status defines the observed state of TenantQuota
+            properties:
+              conditions:
+                description: 'Conditions are the conditions of the TenantQuota: Ready
+                  and QuotaExceeded.'
+                items:
+                  description: Condition contains details for one aspect of the current
+                    state of this API Resource.
+                  properties:
+                    lastTransitionTime:
+                      description: |-
+                        lastTransitionTime is the last time the condition transitioned from one status to another.
+                        This should be when the underlying condition changed.  If that is not known, then using the time when the API field changed is acceptable.
+                      format: date-time
+                      type: string
+                    message:
+                      description: |-
+                        message is a human readable message indicating details about the transition.
+                        This may be an empty string.
+                      maxLength: 32768
+                      type: string
+                    observedGeneration:
+                      description: |-
+                        observedGeneration represents the .metadata.generation that the condition was set based upon.
+                        For instance, if .metadata.generation is currently 12, but the .status.conditions[x].observedGeneration is 9, the condition is out of date
+                        with respect to the current state of the instance.
+                      format: int64
+                      minimum: 0
+                      type: integer
+                    reason:
+                      description: |-
+                        reason contains a programmatic identifier indicating the reason for the condition's last transition.
+                        Producers of specific condition types may define expected values and meanings for this field,
+                        and whether the values are considered a guaranteed API.
+                        The value should be a CamelCase string.
+                        This field may not be empty.
+                      maxLength: 1024
+                      minLength: 1
+                      pattern: ^[A-Za-z]([A-Za-z0-9_,:]*[A-Za-z0-9_])?$
+                      type: string
+                    status:
+                      description: status of the condition, one of True, False, Unknown.
+                      enum:
+                      - "True"
+                      - "False"
+                      - Unknown
+                      type: string
+                    type:
+                      description: type of condition in CamelCase or in foo.example.com/CamelCase.
+                      maxLength: 316
+                      pattern: ^([a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*/)?(([A-Za-z0-9][-A-Za-z0-9_.]*)?[A-Za-z0-9])$
+                      type: string
+                  required:
+                  - lastTransitionTime
+                  - message
+                  - reason
+                  - status
+                  - type
+                  type: object
+                type: array
+                x-kubernetes-list-map-keys:
+                - type
+                x-kubernetes-list-type: map
+              observedTime:
+                description: ObservedTime is the time of the last read of the use
+                  from the gateway.
+                format: date-time
+                type: string
+              periodEnd:
+                description: PeriodEnd is the time when the gateway starts the next
+                  period of the tenant.
+                format: date-time
+                type: string
+              requests:
+                description: Requests is the count of model calls of the tenant in
+                  the current period.
+                format: int64
+                type: integer
+              spend:
+                description: Spend is the spend of the tenant in the current period,
+                  as a decimal number.
+                type: string
+            type: object
+        required:
+        - spec
+        type: object
+    served: true
+    storage: true
+    subresources:
+      status: {}

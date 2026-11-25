@@ -88,6 +88,7 @@ func kindIndex() []route {
 		{kind: "Workspace", plural: "workspaces", dir: baseCRDDir},
 		{kind: "App", plural: "apps", dir: appCRDDir},
 		{kind: "AppVersion", plural: "appversions", dir: appCRDDir},
+		{kind: "TenantQuota", plural: "tenantquotas", dir: appCRDDir},
 	}
 }
 
