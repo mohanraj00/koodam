@@ -9,7 +9,8 @@ Send an `Authorization: Bearer` header on each GET or HEAD, including the OpenAP
 Build with `go build ./cmd/spend-api`. Run the binary with an identity that has `list` on
 `agents.core.koodam.dev` in each namespace. The server uses the current kubeconfig or the pod's service
 account. Set `-namespace` to select the namespaces, separated by commas, for example `team-a,team-b`.
-The limit is 64 namespaces. The default is the namespace of the Kubernetes client. Each caller with a
+The server refuses a list that is longer than the `maxNamespaces` constant in
+`internal/spendapi/api.go`. The default is the namespace of the Kubernetes client. Each caller with a
 valid claim can read all the namespaces that the server uses.
 
 ```sh
