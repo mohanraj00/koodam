@@ -110,11 +110,16 @@ If the token is not valid, the app gets the status `403` from the proxy. The hea
 | `TenantTokenExpired` | The token is at its end time or after it. |
 | `TenantTokenNoKey` | The status of the AppVersion has no key. The controller writes the key before it makes the pods. |
 | `TenantLabelNotASCII` | The tenant label cannot be the value of a header. |
+| `AppKeyOutOfPod` | The model call has the gateway key of an AppVersion, and the pod is not a pod of that AppVersion. |
 
 - An app can make a model call only for a request with a tenant label. A model call with no request of a tenant gets the refusal `TenantTokenMissing`.
 - A tenant label must have only visible ASCII characters, with no space at its start or end.
 - Each model call of an Agent pod or a Workspace pod gets the reserved customer `koodam-no-tenant`. Thus the code in these pods cannot make the gateway count a call for a tenant.
 - No tenant can have the label `koodam-no-tenant`. The claim check refuses a claim with this label (`ReservedTenant`), the egress proxy refuses a token with it, and the gateway client makes no customer limits for it. Limits on this customer would stop the model calls of each Agent and each Workspace.
+- The proxy refuses the gateway key of an AppVersion in a model call of a different pod (`AppKeyOutOfPod`). An App pod can send its key to an Agent pod or a Workspace pod. Without this check, that pod can make a model call with the key of the App and with no tenant.
+  - The proxy reads the hash of the key from the status of the AppVersion, and it makes the hash of each key text in the call.
+  - It examines each header and each query value of the call. These include `Authorization`, `x-litellm-api-key`, `API-Key`, `x-api-key`, `x-goog-api-key`, `Ocp-Apim-Subscription-Key`, `litellm_user_api_key`, `Sec-WebSocket-Protocol` and the query value `key`.
+  - It finds a key after the words `Bearer`, `bearer` and `Basic`, in an AWS credential, and in the base64 text of a `Basic` value.
 - The gateway does not get the token, and no span has the token or the tenant label.
 
 This is a change from v0.4.0 for an install with a tenant claim: the app must send the header `Koodam-Tenant-Token` with each model call. With `apps.claimCheck.tenantToken=false`, the install has the behavior of v0.4.0.
@@ -125,4 +130,8 @@ The tenant token has these limits:
 - A principal that can create pods or read Secrets in the namespace of the App can read the seed. It can then sign a token for each tenant label in that namespace.
 - The proxy finds the pod of a call from the source IP and the pod labels. A principal that can change the labels of a pod can change the identity of the pod.
 - The proxy must be on the path of each model call. A gateway of the mode `existing` at a public address, or an `extraEgress` rule that opens the gateway, lets a pod call the gateway directly. The gateway then trusts the label that the pod sends.
+- The key check of the proxy is defense in depth. It is not a full bind of the key to the pod:
+  - A pod that calls the gateway directly, as in the limit before this one, can use the key of an App.
+  - The check finds a key in the locations and the forms that the gateway version of the chart reads. A different gateway version or a different gateway configuration can read a key from a different location.
+  - An app can make a model call for a different pod. Such a call needs a tenant token, so the gateway counts it for a tenant that sent a request in the life of the token.
 - After the loss of the Secret of the seed, the version gets a new key and new pods. The proxy refuses the model calls of the old pods with `TenantTokenInvalid` until they stop.

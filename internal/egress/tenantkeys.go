@@ -41,13 +41,42 @@ var AppVersions = schema.GroupVersionResource{Group: "core.koodam.dev", Version:
 // TenantKeys has the public key of the tenant token of each AppVersion. The keys come from the
 // status of the AppVersions, which only the controller writes. No data of a pod gives a key.
 // Its methods are safe for concurrent use.
+//
+// It also has the hash of the gateway key of each AppVersion, from the same status.
 type TenantKeys struct {
 	mu   sync.RWMutex
 	keys map[string]ed25519.PublicKey
+	// hashes has the gateway key hash of each AppVersion. owners has the AppVersion of each hash.
+	hashes map[string]string
+	owners map[string][2]string
 }
 
 // NewTenantKeys returns an empty set of keys.
-func NewTenantKeys() *TenantKeys { return &TenantKeys{keys: map[string]ed25519.PublicKey{}} }
+func NewTenantKeys() *TenantKeys {
+	return &TenantKeys{keys: map[string]ed25519.PublicKey{}, hashes: map[string]string{}, owners: map[string][2]string{}}
+}
+
+// KeyOwner gives the AppVersion that has the gateway key with this hash. It is the AppKeyOwner
+// function of a Proxy.
+func (k *TenantKeys) KeyOwner(keyHash string) (namespace, appVersion string, ok bool) {
+	k.mu.RLock()
+	defer k.mu.RUnlock()
+	owner, ok := k.owners[keyHash]
+	return owner[0], owner[1], ok
+}
+
+// setHash replaces the gateway key hash of an AppVersion. An empty hash removes it. The caller
+// has the lock.
+func (k *TenantKeys) setHash(namespace, version, hash string) {
+	name := namespace + "/" + version
+	if old, ok := k.hashes[name]; ok && k.owners[old] == [2]string{namespace, version} {
+		delete(k.owners, old)
+	}
+	delete(k.hashes, name)
+	if hash != "" {
+		k.hashes[name], k.owners[hash] = hash, [2]string{namespace, version}
+	}
+}
 
 // Key gives the public key of an AppVersion. It is the TenantKey function of a Proxy. With no
 // valid key in the status of the AppVersion, ok is false, and the proxy refuses the call.
@@ -58,14 +87,16 @@ func (k *TenantKeys) Key(namespace, appVersion string) (key ed25519.PublicKey, o
 	return key, ok
 }
 
-// set takes the key from the status of the AppVersion. An AppVersion with no valid key has no
-// entry.
+// set takes the key and the gateway key hash from the status of the AppVersion. An AppVersion
+// with no valid key has no key entry.
 func (k *TenantKeys) set(u *unstructured.Unstructured) {
 	text, _, _ := unstructured.NestedString(u.Object, "status", "tenantTokenKey")
 	key, err := tenanttoken.PublicKey(text)
+	hash, _, _ := unstructured.NestedString(u.Object, "status", "keyHash")
 	name := u.GetNamespace() + "/" + u.GetName()
 	k.mu.Lock()
 	defer k.mu.Unlock()
+	k.setHash(u.GetNamespace(), u.GetName(), hash)
 	if err != nil {
 		delete(k.keys, name)
 		return
@@ -77,6 +108,7 @@ func (k *TenantKeys) remove(namespace, name string) {
 	k.mu.Lock()
 	defer k.mu.Unlock()
 	delete(k.keys, namespace+"/"+name)
+	k.setHash(namespace, name, "")
 }
 
 // Watch fills the keys from one informer on the AppVersions of each named namespace. Only the

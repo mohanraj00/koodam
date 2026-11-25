@@ -78,8 +78,9 @@ func run() error {
 	httpListen := flag.String("http-listen", ":8080", "the address of the transparent HTTP listener")
 	tenantTokens := flag.Bool("tenant-tokens", false,
 		"accept a model call of an App pod only with a tenant token of its AppVersion, and give each "+
-			"model call of a different pod the reserved customer. The proxy then reads the AppVersions "+
-			"of the named namespaces")
+			"model call of a different pod the reserved customer. Refuse the gateway key of an "+
+			"AppVersion from a pod of a different owner. The proxy then reads the AppVersions of the "+
+			"named namespaces")
 	idle := flag.Duration("idle-timeout", egress.DefaultIdle,
 		"the time limit with no bytes on a tunnel, a request body or a response")
 	flag.Parse()
@@ -140,6 +141,7 @@ func run() error {
 				keys := egress.NewTenantKeys()
 				if err = keys.Watch(ctx, dyn, 0, list(*namespaces)...); err == nil {
 					p.TenantKey = keys.Key
+					p.AppKeyOwner = keys.KeyOwner
 				}
 			}
 		}
