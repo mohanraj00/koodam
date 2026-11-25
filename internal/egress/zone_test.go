@@ -103,7 +103,7 @@ func TestHostZonesZone(t *testing.T) {
 func zoned(lookups *atomic.Int32, zone string) func(*Proxy) {
 	return func(p *Proxy) {
 		p.Zone = zone
-		p.HostZones = &HostZones{exact: map[string]string{farHost: zoneFar, testHost: zoneHere}, below: map[string]string{}}
+		p.HostZones, _ = ParseHostZones(farHost + "=" + zoneFar + "," + testHost + "=" + zoneHere)
 		p.Sink = ZoneSink{Sink: p.Sink, Zone: zone}
 		p.Resolve = func(context.Context, string) ([]netip.Addr, error) {
 			lookups.Add(1)
@@ -136,6 +136,11 @@ func TestOutOfZoneRefused(t *testing.T) {
 		"plain HTTP": {http.MethodGet, "http://" + net.JoinHostPort(farHost, upPort) + "/"},
 		"upper case": {http.MethodGet, "http://" + net.JoinHostPort(strings.ToUpper(farHost)+".", upPort) + "/"},
 		"CONNECT":    {http.MethodConnect, net.JoinHostPort(farHost, upPort)},
+		// The proxy cannot find the zone of an address, and the list has a host of a different zone.
+		"an IP address":            {http.MethodGet, "http://" + net.JoinHostPort(loopback, upPort) + "/"},
+		"CONNECT to an IP address": {http.MethodConnect, net.JoinHostPort(loopback, upPort)},
+		"CONNECT to IPv6":          {http.MethodConnect, net.JoinHostPort("::1", upPort)},
+		"a number as the host":     {http.MethodGet, "http://2130706433:" + upPort + "/"},
 	} {
 		pu, sink := start(t, false, upPort, nil, zoned(&lookups, zoneHere))
 		c, err := net.Dial("tcp", pu.Host)
@@ -186,14 +191,21 @@ func TestInZonePasses(t *testing.T) {
 	}))
 	defer up.Close()
 	upPort := port(t, up.URL)
-	for name, tc := range map[string]struct{ zone, host string }{
-		"a host of the install zone":          {zoneHere, testHost},
-		"a host with no zone":                 {zoneHere, "plain.example.net"},
-		"an IP address":                       {zoneHere, loopback},
-		"a far host in an install of no zone": {"", farHost},
+	for name, tc := range map[string]struct{ zone, host, hosts string }{
+		"a host of the install zone":             {zoneHere, testHost, ""},
+		"a host with no zone":                    {zoneHere, "plain.example.net", ""},
+		"a far host in an install of no zone":    {"", farHost, ""},
+		"an IP address in an install of no zone": {"", loopback, ""},
+		// With no host of a different zone in the list, an address cannot be such a host.
+		"an IP address with no far host": {zoneHere, loopback, testHost + "=" + zoneHere},
+		"an IP address with no list":     {zoneHere, loopback, ","},
 	} {
 		var lookups atomic.Int32
-		pu, sink := start(t, false, upPort, nil, zoned(&lookups, tc.zone))
+		pu, sink := start(t, false, upPort, nil, zoned(&lookups, tc.zone), func(p *Proxy) {
+			if tc.hosts != "" {
+				p.HostZones = mustHostZones(t, tc.hosts)
+			}
+		})
 		c := &http.Client{Transport: &http.Transport{Proxy: http.ProxyURL(pu)}}
 		resp, err := c.Get("http://" + net.JoinHostPort(tc.host, upPort) + "/")
 		if err != nil {
@@ -203,5 +215,24 @@ func TestInZonePasses(t *testing.T) {
 		if sp := sink.next(t); resp.StatusCode != http.StatusOK || sp.Result != ResultOK || sp.Zone != tc.zone {
 			t.Errorf("%s: status %d, span %+v", name, resp.StatusCode, sp)
 		}
+	}
+}
+
+func TestIsAddress(t *testing.T) {
+	for host, want := range map[string]bool{
+		"192.0.2.7": true, "192.0.2.7.": true, "::1": true, "[2001:db8::1]": true, "fe80::1%eth0": true,
+		"2130706433": true, "0x7f000001": true, "0x7f.1": true, "example.1": true, "127.1": true,
+		"example.com": false, "1.example.com": false, "a1": false, "1a": false, "x0x1": false, "": false,
+	} {
+		if got := isAddress(host); got != want {
+			t.Errorf("%q: got %v, want %v", host, got, want)
+		}
+	}
+	var none *HostZones
+	if none.hasOther(zoneHere) || mustHostZones(t, "a.example=zone-a").hasOther(zoneHere) {
+		t.Error("a list with no host of a different zone has such a host")
+	}
+	if !mustHostZones(t, "a.example=zone-b").hasOther(zoneHere) || !mustHostZones(t, "a.example=zone-a,*.b.example=zone-b").hasOther(zoneHere) {
+		t.Error("a list with a host of a different zone has no such host")
 	}
 }
