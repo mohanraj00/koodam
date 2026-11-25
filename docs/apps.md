@@ -4,7 +4,7 @@ An `App` is an application that serves clients. Each `AppVersion` of the App is 
 
 ## Install
 
-Set `apps.enabled=true` in the chart. The chart then installs the `App` and `AppVersion` CRDs, the App role and the admission policy of the AppVersion, and the manager runs the App controllers. Helm keeps the App CRDs on an uninstall.
+Set `apps.enabled=true` in the chart. The chart then installs the `App`, `AppVersion` and `TenantQuota` CRDs, the App role and the admission policy of the AppVersion, and the manager runs the App controllers. Helm keeps the App CRDs on an uninstall.
 
 An endpoint of an App needs a Gateway API implementation in the cluster, with the `HTTPRoute` of the standard channel. The chart does not install one. Koodam has no router: the Gateway API implementation moves the traffic. The kind test of this repository uses Envoy Gateway.
 
@@ -195,6 +195,10 @@ The check protects a version only if the version has its NetworkPolicy. The poli
 The JWKS has public keys only. The manager refuses a JWKS with private or symmetric key material, because it copies the document into an annotation of each App pod.
 
 The kubelet sends the probes of the `app` container directly to that container, with no claim.
+
+## Tenants
+
+A `TenantQuota` gives one tenant label of the signed claim a quota for each period and a rate limit. [tenants.md](tenants.md) has the API and the state of the work.
 
 ## Retire a version
 

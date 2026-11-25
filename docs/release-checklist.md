@@ -7,3 +7,4 @@ Do these steps before the owner approves a tag. [STANDARD.md](STANDARD.md) has t
 3. Check that the README, [test-keys.md](test-keys.md) and [nookku.md](nookku.md) say which parts are active and which are not.
 4. Move the `Unreleased` section of [CHANGELOG.md](../CHANGELOG.md) under the new version.
 5. Run `make check`.
+6. Review [threat-model.md](threat-model.md). Check that each named test exists, change each open PR row to the test file on `main` when that PR merges, and set the review date.

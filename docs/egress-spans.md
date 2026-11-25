@@ -75,8 +75,24 @@ The proxy does not decrypt TLS. For `connect` and `tls`, the span has the host a
 | `idle` | `error` | No byte moved for the idle limit (`--idle-timeout`, 10 minutes by default). The proxy stopped the call. |
 | `upstream` | `error` | The proxy could not connect to the target, or the target failed. |
 | `hello timeout` | `error` | The pod sent no ClientHello in the time limit. |
+| `TenantTokenNoKey` | `denied` | The proxy has no tenant token key for the AppVersion of the pod. |
+| `TenantTokenMissing` | `denied` | An `llm` call of an App pod has no tenant token. |
+| `TenantTokenInvalid` | `denied` | The tenant token is not a token of the AppVersion of the pod: it has a false signature, or it is not a token. |
+| `TenantTokenExpired` | `denied` | The tenant token is at its end time or after it. |
+| `TenantLabelNotASCII` | `denied` | The tenant label of the token cannot be the value of a header. |
 
 A reader must accept other reason text. The reason is for people, and new reasons can come in the same version.
+
+## The tenant token
+
+The proxy can bind each `llm` call of an App pod to a tenant. Then it accepts such a call only with a tenant token in the header `Koodam-Tenant-Token`. The claim check container of the pod signs this token for the tenant of each request, with a short life.
+
+- The proxy gets the public key of the token for the AppVersion of the pod. The key does not come from the pod.
+- The proxy examines the signature and the end time of the token. If the token is not valid, the pod gets `403` with the typed reason in the header `Koodam-Reason`.
+- For a valid token, the proxy sets the header `x-litellm-customer-id` of the gateway call to the tenant label of the token. It removes the headers `x-litellm-customer-id` and `x-litellm-end-user-id` that the pod sent. The gateway reads these headers before each field of the body, so it counts the call for the tenant of the token.
+- The gateway does not get the token, and no span has the token or the tenant label.
+- A tenant label in the header must have only visible ASCII characters, with no space at its start or end.
+- A pod that is not an App pod has no tenant, and its `llm` calls do not change.
 
 ## What a span holds from the pod
 

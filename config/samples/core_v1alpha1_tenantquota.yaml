@@ -1,0 +1,18 @@
+# The App CRDs are not in the default install. Apply config/apps/crd first.
+apiVersion: core.koodam.dev/v1alpha1
+kind: TenantQuota
+metadata:
+  labels:
+    app.kubernetes.io/name: koodam
+    app.kubernetes.io/managed-by: kustomize
+  name: tenantquota-sample
+spec:
+  tenant: acme
+  appRef:
+    name: app-sample
+  period: Day
+  requests: 10000
+  spend: "5"
+  rateLimit:
+    requestsPerSecond: "5"
+    burst: 10
