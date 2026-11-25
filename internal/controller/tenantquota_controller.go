@@ -50,6 +50,7 @@ const (
 	reasonTenantDuplicate = "DuplicateTenant"
 	reasonTenantGateway   = "GatewayError"
 	reasonTenantWithin    = "WithinQuota"
+	reasonTenantCapped    = "RequestCountCapped"
 )
 
 // TenantQuotaReconciler makes the gateway customer of each tenant label and writes the use of
@@ -230,8 +231,16 @@ func (r *TenantQuotaReconciler) setUsage(ctx context.Context, q *corev1alpha1.Te
 	q.Status.Spend = strconv.FormatFloat(math.Round(u.Spend*1e6)/1e6, 'f', -1, 64)
 	q.Status.PeriodEnd = &metav1.Time{Time: u.PeriodEnd.Truncate(time.Second)}
 	var limits []string
-	if q.Spec.Requests != nil && u.Requests >= *q.Spec.Requests {
-		limits = append(limits, "requests")
+	// A count that the gateway stopped at its maximum is a minimum. At the limit or above it, the
+	// tenant is at the limit. Below the limit, the count cannot show the state of the tenant.
+	capped := false
+	if q.Spec.Requests != nil {
+		switch {
+		case u.Requests >= *q.Spec.Requests:
+			limits = append(limits, "requests")
+		case u.RequestsCapped:
+			capped = true
+		}
 	}
 	if q.Spec.Spend != nil && u.Spend >= q.Spec.Spend.AsApproximateFloat64() {
 		limits = append(limits, "spend")
@@ -239,9 +248,14 @@ func (r *TenantQuotaReconciler) setUsage(ctx context.Context, q *corev1alpha1.Te
 	cond := metav1.Condition{Type: corev1alpha1.TenantQuotaExceeded, Status: metav1.ConditionFalse,
 		Reason: reasonTenantWithin, Message: "The tenant is below each limit of the current period.",
 		ObservedGeneration: q.Generation}
-	if len(limits) > 0 {
+	switch {
+	case len(limits) > 0:
 		cond.Status, cond.Reason = metav1.ConditionTrue, corev1alpha1.ReasonTenantQuotaExceeded
 		cond.Message = "The tenant is at this limit of the current period: " + strings.Join(limits, ", ") + "."
+	case capped:
+		cond.Status, cond.Reason = metav1.ConditionUnknown, reasonTenantCapped
+		cond.Message = "The gateway stopped the count of the requests at its maximum, below the limit of the spec. " +
+			"The requests of the status are a minimum."
 	}
 	if meta.SetStatusCondition(&q.Status.Conditions, cond) {
 		logf.FromContext(ctx).Info("The quota state of a tenant changed", "reason", cond.Reason,

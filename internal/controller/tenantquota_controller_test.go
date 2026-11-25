@@ -194,6 +194,23 @@ var _ = Describe("TenantQuota Controller", func() {
 		Entry("above the 2 limits", gateway.CustomerUsage{Requests: 11, Spend: 1.5}, true, "requests, spend"),
 	)
 
+	It("gives no mark for a capped count below the request limit", func() {
+		const tenant = "tq-capped"
+		q := newQuota("capped", tenant, func(s *corev1alpha1.TenantQuotaSpec) { s.Requests = new(int64(10)) })
+		gw.usage[tenant] = gateway.CustomerUsage{Requests: 9, RequestsCapped: true, PeriodEnd: periodEnd}
+		got, _, err := run(q)
+		Expect(err).NotTo(HaveOccurred())
+		c := cond(got, corev1alpha1.TenantQuotaExceeded)
+		Expect(c.Status).To(Equal(metav1.ConditionUnknown))
+		Expect(c.Reason).To(Equal("RequestCountCapped"))
+		Expect(got.Status.Requests).To(Equal(int64(9)))
+		// A capped count at the limit is sufficient for the mark.
+		gw.usage[tenant] = gateway.CustomerUsage{Requests: 10, RequestsCapped: true, PeriodEnd: periodEnd}
+		got, _, err = run(got)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(cond(got, corev1alpha1.TenantQuotaExceeded).Status).To(Equal(metav1.ConditionTrue))
+	})
+
 	It("gives a tenant with no limit a customer with a day period and no mark", func() {
 		const tenant = "tq-open"
 		got, _, err := run(newQuota("open", tenant, nil))

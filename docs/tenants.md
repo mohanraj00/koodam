@@ -96,6 +96,7 @@ The TenantQuota controller runs with `apps.enabled`. For each `TenantQuota` it d
 2. It makes the gateway customer of the tenant label with the limits of the spec. After a change of the spec, it sets the limits again.
 3. Each 30 seconds, it reads the spend and the requests of the current period from the gateway and writes them to the status. The manager flag `--tenant-usage-interval` changes this time. The controller writes the status only if a value changed.
 4. It sets the condition `QuotaExceeded`. The status is `True` with the reason `TenantQuotaExceeded` when the requests or the spend are at the limit of the spec or above it. A new period of the gateway sets it back to `False` with the reason `WithinQuota`.
+5. If the gateway stopped the count of the requests at its maximum, and this count is below `spec.requests`, the status is `Unknown` with the reason `RequestCountCapped`. The `requests` of the status are then a minimum. A spend at its limit still gives `True`.
 
 - Each change of `QuotaExceeded` goes to the log of the manager, with the typed reason, the tenant label, the requests and the spend.
 - The condition `Ready` is `False` with the reason `GatewayError` while a gateway call fails. The message is fixed text. `QuotaExceeded` then keeps its last value.
