@@ -78,7 +78,7 @@ With `apps.claimCheck.tenantClaim`, the controller writes one ConfigMap for each
 
 - The file has each `TenantQuota` of the namespace of the version that applies to its App: a `TenantQuota` with no `appRef`, or with the `appRef` of the App. A tenant label of a different App or a different namespace is an unknown tenant for the version.
 - Each pod gets the rate divided by `spec.replicas` of the version. The burst of a pod is the burst divided by the replicas, to the next full number, with a minimum of 1. Thus the sum of the bursts can be more than the burst of the tenant.
-- The file has the mark of the condition `QuotaExceeded`. While the mark is set, the claim check refuses each request of the tenant with `TenantQuotaExceeded`.
+- The file has the mark of the condition `QuotaExceeded`. While the mark is set, the claim check refuses each request of the tenant with `TenantQuotaExceeded`. Only the status `True` sets the mark. The status `Unknown` (the reason `RequestCountCapped`) sets no mark.
 - A change of a `TenantQuota`, of its mark or of `spec.replicas` changes the ConfigMap. The kubelet then updates the file in the pods, and the check container reads it again. This can take more than 1 minute. The pods do not start again.
 - A ConfigMap has a maximum of 1 MiB. This is space for some thousand tenants of one App.
 - Without a tenant claim, the claim check has no tenant label, and a pod gets no limits file.
