@@ -215,7 +215,7 @@ func fakeViewers() *spendapi.Viewers {
 func main() {
 	listen := flag.String("listen", "127.0.0.1:8080", "the address of the page and the API")
 	flag.Parse()
-	ex, err := newExample(time.Now().UTC())
+	ex, err := newExample(time.Now().UTC().Truncate(time.Second))
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
