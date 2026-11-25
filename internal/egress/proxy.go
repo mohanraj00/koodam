@@ -90,7 +90,7 @@ const ReasonHeader = "Koodam-Reason"
 // NoTenantCustomer is the customer of a model call of a pod that is not an App pod, when the
 // proxy examines tenant tokens. It is a reserved label: no tenant can have it. Thus the code in
 // an Agent pod or a Workspace pod cannot make the gateway count its call for a tenant.
-const NoTenantCustomer = "koodam-no-tenant"
+const NoTenantCustomer = tenanttoken.NoTenant
 
 // customerHeaders are the headers from which the gateway reads the customer of a model call.
 // The gateway reads them before each field of the body. The proxy sets the first one.

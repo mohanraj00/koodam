@@ -66,6 +66,7 @@ The check examines a request after it verified the signed claim:
 | `UnknownTenant` | `403` | The file does not name the tenant label, and the file refuses an unknown tenant. |
 | `TenantQuotaExceeded` | `429` | The file marks the tenant at its limit of the current period. |
 | `TenantRateLimited` | `429` | The token bucket of the tenant is empty. The header `Retry-After` gives the seconds until the next token. |
+| `ReservedTenant` | `403` | The claim has the reserved label `koodam-no-tenant`. The check refuses it also with no limits file. |
 
 - The answer has the reason in the header `Koodam-Reason` and in the body. The app container does not get a refused request.
 - The ingress span of the request has the reason as its `outcome`, with the caller label and the tenant label ([app-ingress-spans.md](app-ingress-spans.md)).
@@ -112,7 +113,8 @@ If the token is not valid, the app gets the status `403` from the proxy. The hea
 
 - An app can make a model call only for a request with a tenant label. A model call with no request of a tenant gets the refusal `TenantTokenMissing`.
 - A tenant label must have only visible ASCII characters, with no space at its start or end.
-- Each model call of an Agent pod or a Workspace pod gets the reserved customer `koodam-no-tenant`. Thus the code in these pods cannot make the gateway count a call for a tenant. Do not use this label for a tenant.
+- Each model call of an Agent pod or a Workspace pod gets the reserved customer `koodam-no-tenant`. Thus the code in these pods cannot make the gateway count a call for a tenant.
+- No tenant can have the label `koodam-no-tenant`. The claim check refuses a claim with this label (`ReservedTenant`), the egress proxy refuses a token with it, and the gateway client makes no customer limits for it. Limits on this customer would stop the model calls of each Agent and each Workspace.
 - The gateway does not get the token, and no span has the token or the tenant label.
 
 This is a change from v0.4.0 for an install with a tenant claim: the app must send the header `Koodam-Tenant-Token` with each model call. With `apps.claimCheck.tenantToken=false`, the install has the behavior of v0.4.0.
