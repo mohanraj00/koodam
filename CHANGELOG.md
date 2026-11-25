@@ -7,6 +7,7 @@ This file records the changes for each Koodam version. The newest version is fir
 ### Nookku preset
 
 - Give the init containers `koodam-nookku-python` and `koodam-nookku-files` fixed requests (10m CPU, 16Mi memory) and limits (100m CPU, 64Mi memory). The Python check also gets a `PATH` of the harness container from a ConfigMap key or a field of the pod. A `PATH` from a Secret or a resource is not copied, and [docs/nookku-preset.md](docs/nookku-preset.md) states the limits ([#371](https://github.com/mohanraj00/koodam/pull/371)).
+- Build and push the Nookku data image `ghcr.io/mohanraj00/koodam-nookku` on each release tag, with the same tag rules as the controller image. The job summary shows the digest. Add the chart value `nookku.image`. If it is set, the chart passes `--nookku-image` to the controller, and the reference must have a digest. The default is empty, and then the chart passes no flag ([#372](https://github.com/mohanraj00/koodam/pull/372)).
 
 ## v0.4.0 (2026-11-20)
 

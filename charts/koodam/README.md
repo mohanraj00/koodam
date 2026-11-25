@@ -162,12 +162,24 @@ helm install koodam charts/koodam -n koodam-system -f charts/koodam/values-bundl
   --set image.tag=<tag> --set workspace.image.tag=<tag>
 ```
 
+## The Nookku data image
+
+The nookku plugin of a harness needs the Nookku data image ([docs/nookku-preset.md](../../docs/nookku-preset.md)). The image job pushes `ghcr.io/mohanraj00/koodam-nookku` on each release tag, and the job summary shows its digest. Set `nookku.image` to the reference with this digest. The chart then passes it to the controller with the flag `--nookku-image`:
+
+```sh
+helm install koodam charts/koodam -n koodam-system -f charts/koodam/values-bundled.yaml \
+  --set nookku.image=ghcr.io/mohanraj00/koodam-nookku@sha256:<digest>
+```
+
+The reference must end with `@sha256:` and 64 lower-case hex characters. If not, the chart fails. The default is empty. Then the chart passes no flag, and a harness with the nookku plugin gets no Nookku files.
+
 ## Values
 
 | Value | Default | Description |
 | --- | --- | --- |
 | `image.repository`, `image.tag` | `ghcr.io/mohanraj00/koodam`, empty | The controller image. If the tag is empty, the chart uses the chart `appVersion`. |
 | `workspace.image.repository`, `workspace.image.tag` | `ghcr.io/mohanraj00/koodam-workspace`, empty | The image for a Workspace with no `spec.image`. If the tag is empty, the chart uses the chart `appVersion`. |
+| `nookku.image` | empty | The Nookku data image, with a digest. If it is set, the chart passes `--nookku-image`. See [The Nookku data image](#the-nookku-data-image). |
 | `workspace.networkPolicy.namespaces` | empty | The namespaces that get a NetworkPolicy for the Workspace pods. With `egressProxy.enabled`, the policy is default-deny egress, and the Agent pods get one too. See [The Workspace network](../../docs/profiles.md#the-workspace-network). |
 | `workspace.networkPolicy.dns.namespace`, `.podLabels` | `kube-system`, `k8s-app: kube-dns` | The DNS pods that the Workspace pods can reach on port 53. |
 | `workspace.networkPolicy.publicInternet` | `true` | If `true`, the Workspace pods can reach each public address. |
