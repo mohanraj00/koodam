@@ -133,6 +133,24 @@ func TestZoneRoutes(t *testing.T) {
 		!strings.Contains(own, "openai/route-a") {
 		t.Errorf("the install with only its own routes: %v", err)
 	}
+	// The mock route is a route of the install. Its model name is not in the refusal list, also
+	// if only a route of a different zone has the same name.
+	mock, err := helmTemplate(t, routes+"zone: {name: zone-a}\n",
+		"gateway.bundled.mock.enabled=true", "gateway.bundled.mock.modelName=model-b")
+	if err != nil {
+		t.Fatalf("helm template failed: %v\n%s", err, mock)
+	}
+	for _, s := range []string{`model: "openai/model-b"`, `value: "[\"odd,name\"]"`} {
+		if !strings.Contains(mock, s) {
+			t.Errorf("the install with the mock route does not have %q", s)
+		}
+	}
+	// With the mock name as the only name of a different zone, the gateway has no hook.
+	only, err := helmTemplate(t, "zone: {name: zone-a}\ngateway: {bundled: {mock: {enabled: true, modelName: model-b}, "+
+		"litellm: {modelList: [{model_name: model-b, zone: zone-b, litellm_params: {model: openai/route-other}}]}}}\n")
+	if err != nil || strings.Contains(only, hookKey) || strings.Contains(only, listEnv) {
+		t.Errorf("the install with only the mock name out of the zone has the hook: %v", err)
+	}
 	for name, tc := range map[string][2]string{
 		"zone not a string": {"[{model_name: model-a, zone: 7}]", "modelList[0].zone must be a string"},
 		"no model name":     {"[{zone: zone-b}]", "modelList[0].model_name is necessary"},

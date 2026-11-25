@@ -76,6 +76,7 @@ gateway:
 - An item with no zone is a route that the operator permits in each zone.
 - A call for a model name that only items of a different zone have gets the status 403. The message starts with `RouteOutOfZone`. Here, `model-b` gets this refusal in the install of `zone-a`.
 - If a model name has an item of the install zone and an item of a different zone, the gateway uses only the item of the install zone.
+- The mock route of `gateway.bundled.mock` is a route of the install. A call for its model name gets no `RouteOutOfZone`, also if an item of a different zone has the same name.
 - The gateway writes one JSON line to its log for each refusal: `{"kind": "gateway-zone", "outcome": "RouteOutOfZone", "zone": "zone-a", "model": "model-b"}`. The line has no key and no request data.
 - The gateway examines the key before the zone. Thus a key that does not permit the model name gets the usual key refusal of the gateway, not `RouteOutOfZone`.
 
