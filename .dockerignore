@@ -20,3 +20,10 @@
 !images/nookku/fetch.py
 !images/nookku/nookku
 !images/nookku/plugin.sha256
+
+# Re-include the OpenAPI document that the package docs embeds for the spend API
+!docs/spend-api.openapi.json
+
+# Re-include the page files and the kit pin that the package internal/opspage embeds for spend-api
+!internal/opspage/mugham.pin.json
+!internal/opspage/static/**

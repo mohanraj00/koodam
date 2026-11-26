@@ -61,11 +61,13 @@ const (
 type TenantQuotaSpec struct {
 	// Tenant is the tenant label of the signed claim. You cannot change it after create. The
 	// gateway has one customer for each tenant label of the install, so use one TenantQuota for
-	// each tenant label.
+	// each tenant label. The label koodam-no-tenant is reserved for the model calls with no
+	// tenant, and a tenant cannot have it.
 	// +required
 	// +kubebuilder:validation:MinLength=1
 	// +kubebuilder:validation:MaxLength=253
 	// +kubebuilder:validation:XValidation:rule="self == oldSelf",message="spec.tenant is immutable."
+	// +kubebuilder:validation:XValidation:rule="self != 'koodam-no-tenant'",message="spec.tenant must not be the reserved label koodam-no-tenant."
 	// +kubebuilder:validation:XValidation:rule="bytes(self).size() <= 253",message="spec.tenant must be 253 bytes or less in UTF-8."
 	Tenant string `json:"tenant"`
 

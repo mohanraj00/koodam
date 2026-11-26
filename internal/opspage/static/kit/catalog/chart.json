@@ -1,0 +1,35 @@
+{
+  "name": "chart",
+  "description": "An SVG chart with a table view. Categories and series must not be empty. Each series has one value per category. Stacks keep positive and negative totals separate. Arrow keys move through points in series order and wrap at each end. A new fill resets the point and closes the table.",
+  "data": {
+    "title": {"type": "text", "label": "Chart title", "required": true, "min_length": 1, "size": "title"},
+    "type": {"type": "enum", "label": "Chart type", "required": true, "values": ["bar", "line", "stacked_bar"]},
+    "categories": {
+      "type": "list",
+      "label": "Categories or dates as text",
+      "required": true,
+      "max_items": 50,
+      "items": {"type": "text", "label": "Category", "min_length": 1, "size": "line"}
+    },
+    "series": {
+      "type": "list",
+      "label": "Data series",
+      "required": true,
+      "max_items": 6,
+      "items": {"type": "component", "name": "chart-series"}
+    },
+    "units": {"type": "text", "label": "Value units", "required": true, "min_length": 1, "size": "short"},
+    "x_label": {"type": "text", "label": "Horizontal axis label", "required": true, "min_length": 1, "size": "line"},
+    "y_label": {"type": "text", "label": "Vertical axis label", "required": true, "min_length": 1, "size": "line"}
+  },
+  "states": ["+refused"],
+  "tokens": [
+    "color.text", "color.text-muted", "color.border", "color.surface", "color.focus", "space.2", "space.3", "type.body",
+    "type.caption", "type.weight-strong"
+  ],
+  "accessibility": {
+    "role": "group",
+    "name": {"field": "title"},
+    "keyboard": ["Tab", "Shift+Tab", "Enter", "Space", "ArrowRight", "ArrowLeft", "ArrowDown", "ArrowUp"]
+  }
+}

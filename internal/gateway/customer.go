@@ -28,6 +28,8 @@ import (
 	"net/url"
 	"strconv"
 	"time"
+
+	"github.com/mohanraj00/koodam/internal/tenanttoken"
 )
 
 // CustomerSpec is the gateway customer of one tenant label. The gateway counts each model call
@@ -59,6 +61,10 @@ type CustomerUsage struct {
 // ErrCustomerNotFound is the CustomerUsage error when the gateway has no customer, or the
 // customer has no budget period.
 var ErrCustomerNotFound = errors.New("gateway: customer not found")
+
+// ErrReservedCustomer is the SetCustomer error for the reserved tenant label of the model calls
+// with no tenant.
+var ErrReservedCustomer = errors.New("gateway: the customer ID is the reserved label of the calls with no tenant")
 
 // Customers is a model gateway with a customer for each tenant label.
 type Customers interface {
@@ -180,6 +186,11 @@ func (l *LiteLLM) SetCustomer(ctx context.Context, s CustomerSpec) error {
 	if s.ID == "" || s.Period < time.Second || s.Budget < 0 || math.IsNaN(s.Budget) || math.IsInf(s.Budget, 0) ||
 		s.RequestsPerMinute < 0 {
 		return errors.New("litellm: a customer ID, a period of 1s or more and limits of 0 or more are required")
+	}
+	// The egress proxy gives this label to each model call with no tenant. Limits on it would
+	// stop the model calls of each Agent and each Workspace of the install.
+	if s.ID == tenanttoken.NoTenant {
+		return ErrReservedCustomer
 	}
 	budgetID := customerBudgetID(s.ID)
 	var rows []budgetRow

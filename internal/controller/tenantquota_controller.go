@@ -37,6 +37,7 @@ import (
 
 	corev1alpha1 "github.com/mohanraj00/koodam/api/v1alpha1"
 	"github.com/mohanraj00/koodam/internal/gateway"
+	"github.com/mohanraj00/koodam/internal/tenanttoken"
 )
 
 const (
@@ -48,6 +49,7 @@ const (
 
 	reasonTenantSynced    = "Synced"
 	reasonTenantDuplicate = "DuplicateTenant"
+	reasonTenantReserved  = "ReservedTenant"
 	reasonTenantGateway   = "GatewayError"
 	reasonTenantWithin    = "WithinQuota"
 	reasonTenantCapped    = "RequestCountCapped"
@@ -80,6 +82,9 @@ func (r *TenantQuotaReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 	if err := r.Get(ctx, req.NamespacedName, q); err != nil {
 		return ctrl.Result{}, client.IgnoreNotFound(err)
 	}
+	if q.Spec.Tenant == tenanttoken.NoTenant {
+		return ctrl.Result{}, r.reserved(ctx, q)
+	}
 	owner, err := r.owner(ctx, q.Spec.Tenant)
 	if err != nil {
 		return ctrl.Result{}, err
@@ -93,15 +98,12 @@ func (r *TenantQuotaReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 		controllerutil.AddFinalizer(q, tenantQuotaFinalizer)
 		return ctrl.Result{}, r.Update(ctx, q)
 	}
-	old := q.Status.DeepCopy()
 	if owner == nil || owner.UID != q.UID {
 		// The gateway has one customer for each tenant label. An older TenantQuota has this label.
-		q.Status = corev1alpha1.TenantQuotaStatus{Conditions: q.Status.Conditions}
-		meta.RemoveStatusCondition(&q.Status.Conditions, corev1alpha1.TenantQuotaExceeded)
-		r.setReady(q, metav1.ConditionFalse, reasonTenantDuplicate,
+		return ctrl.Result{}, r.noEffect(ctx, q, reasonTenantDuplicate,
 			"An older TenantQuota of the install has this tenant label. This TenantQuota has no effect.")
-		return ctrl.Result{}, r.writeStatus(ctx, q, old)
 	}
+	old := q.Status.DeepCopy()
 	usage, err := r.sync(ctx, q)
 	if err != nil {
 		// The message is fixed text, because a gateway error can have data of the gateway. The
@@ -122,6 +124,32 @@ func (r *TenantQuotaReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 		interval = DefaultTenantUsageInterval
 	}
 	return ctrl.Result{RequeueAfter: interval}, nil
+}
+
+// reserved is the reconcile of a TenantQuota with the reserved label. The API refuses such an
+// object, but an object can be older than that rule. The gateway customer of this label counts
+// each model call with no tenant. Thus the controller makes no gateway call for the object: it
+// sets no limits, and a delete of the object does not delete the customer.
+func (r *TenantQuotaReconciler) reserved(ctx context.Context, q *corev1alpha1.TenantQuota) error {
+	if controllerutil.RemoveFinalizer(q, tenantQuotaFinalizer) {
+		// The update starts the next reconcile.
+		return r.Update(ctx, q)
+	}
+	if !q.DeletionTimestamp.IsZero() {
+		return nil
+	}
+	return r.noEffect(ctx, q, reasonTenantReserved,
+		"The tenant label is reserved for the model calls with no tenant. This TenantQuota has no effect.")
+}
+
+// noEffect writes the status of a TenantQuota that has no effect: no use, no condition
+// QuotaExceeded, and Ready=False with the reason.
+func (r *TenantQuotaReconciler) noEffect(ctx context.Context, q *corev1alpha1.TenantQuota, reason, message string) error {
+	old := q.Status.DeepCopy()
+	q.Status = corev1alpha1.TenantQuotaStatus{Conditions: q.Status.Conditions}
+	meta.RemoveStatusCondition(&q.Status.Conditions, corev1alpha1.TenantQuotaExceeded)
+	r.setReady(q, metav1.ConditionFalse, reason, message)
+	return r.writeStatus(ctx, q, old)
 }
 
 // owner gives back the TenantQuota that has the tenant label in the gateway: the oldest one that

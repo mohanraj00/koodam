@@ -17,24 +17,253 @@ limitations under the License.
 package spendapi
 
 import (
+	"context"
+	"crypto/sha256"
+	"crypto/subtle"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"net/http"
+	"net/url"
+	"slices"
+	"strconv"
+	"strings"
+	"time"
 
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/util/validation"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+
+	"github.com/mohanraj00/koodam/docs"
+	"github.com/mohanraj00/koodam/internal/appclaim"
 )
 
 const (
-	maxPage  = 100
-	runsPath = "/v1/runs"
+	maxPage = 100
+	// maxNamespaces limits the reviews and the reads of one request.
+	maxNamespaces = 64
+	runsPath      = "/v1/runs"
+	spendPath     = "/v1/spend"
+	specPath      = "/v1/openapi.json"
 )
 
 var errCursor = errors.New("the page cursor is not valid")
 
+// Config sets the data scope, the gateway connection and the caller check.
+// Configure one caller check: the issuer keys, the local tokens or the viewer reviews.
+type Config struct {
+	Kube       client.Reader
+	Namespaces []string
+	GatewayURL string
+	MasterKey  string
+	Timeout    time.Duration
+
+	Claims       appclaim.Config
+	Keys         *appclaim.KeySet
+	StaticTokens []string
+	Viewers      *Viewers
+}
+
 type api struct {
-	kube      client.Reader
-	namespace string
-	gateway   *liteLLM
+	kube       client.Reader
+	namespaces []string
+	viewers    *Viewers
+	gateway    *liteLLM
+	timeout    time.Duration
+	claims     appclaim.Config
+	keys       *appclaim.KeySet
+	tokens     [][sha256.Size]byte
+}
+
+// New makes a read-only handler. One instance serves a fixed list of namespaces.
+func New(c Config) (http.Handler, error) {
+	if c.Kube == nil || !validNamespaces(c.Namespaces) || c.Timeout <= 0 {
+		return nil, errors.New("a Kubernetes client, 1 to 64 different namespaces and a positive request time limit are necessary")
+	}
+	l, err := newLiteLLM(c.GatewayURL, c.MasterKey)
+	if err != nil {
+		return nil, err
+	}
+	checks := 0
+	for _, set := range []bool{c.Keys != nil, len(c.StaticTokens) != 0, c.Viewers != nil} {
+		if set {
+			checks++
+		}
+	}
+	if checks != 1 {
+		return nil, errors.New("configure one of the issuer keys, the local tokens or the viewer reviews")
+	}
+	if c.Keys != nil {
+		if err := c.Claims.Valid(); err != nil {
+			return nil, err
+		}
+	}
+	if c.Viewers != nil && !c.Viewers.valid() {
+		return nil, errors.New("the viewer reviews need a TokenReview client, a SubjectAccessReview client and no empty audience")
+	}
+	a := &api{
+		kube: c.Kube, namespaces: slices.Clone(c.Namespaces), viewers: c.Viewers,
+		gateway: l, timeout: c.Timeout, claims: c.Claims, keys: c.Keys,
+	}
+	a.tokens = make([][sha256.Size]byte, 0, len(c.StaticTokens))
+	for _, token := range c.StaticTokens {
+		if token == "" || strings.ContainsAny(token, " \r\n\t") {
+			return nil, errors.New("a local token is empty or contains white space")
+		}
+		a.tokens = append(a.tokens, sha256.Sum256([]byte(token)))
+	}
+	return a, nil
+}
+
+func validNamespaces(namespaces []string) bool {
+	if len(namespaces) == 0 || len(namespaces) > maxNamespaces {
+		return false
+	}
+	for i, namespace := range namespaces {
+		if len(validation.IsDNS1123Label(namespace)) != 0 || slices.Contains(namespaces[:i], namespace) {
+			return false
+		}
+	}
+	return true
+}
+
+// bearer uses the same header rules as the App claim check.
+func bearer(r *http.Request) (string, bool) {
+	headers := r.Header.Values("Authorization")
+	if len(headers) != 1 {
+		return "", false
+	}
+	scheme, token, ok := strings.Cut(headers[0], " ")
+	return token, ok && token != "" && strings.EqualFold(scheme, "Bearer")
+}
+
+// scope gives the namespaces that the caller can read, or the HTTP status of the refusal.
+func (a *api) scope(ctx context.Context, r *http.Request) ([]string, int, problem) {
+	token, ok := bearer(r)
+	if !ok || (a.viewers == nil && !a.authorized(token)) {
+		return nil, http.StatusUnauthorized, problem{"A valid bearer token is necessary."}
+	}
+	if a.viewers == nil {
+		return a.namespaces, http.StatusOK, problem{}
+	}
+	user, err := a.viewers.user(ctx, token)
+	if errors.Is(err, errNotAuthenticated) {
+		return nil, http.StatusUnauthorized, problem{"A valid bearer token is necessary."}
+	}
+	var namespaces []string
+	if err == nil {
+		namespaces, err = a.viewers.allowed(ctx, user, a.namespaces)
+	}
+	switch {
+	case ctx.Err() != nil:
+		return nil, http.StatusGatewayTimeout, problem{"The request time limit expired."}
+	case err != nil:
+		return nil, http.StatusBadGateway, problem{"The Kubernetes access review is not available."}
+	case len(namespaces) == 0:
+		return nil, http.StatusForbidden, problem{"The caller cannot list Agents in a namespace of this server."}
+	}
+	return namespaces, http.StatusOK, problem{}
+}
+
+func (a *api) authorized(token string) bool {
+	if a.keys != nil {
+		_, err := a.claims.Verify(a.keys, token, time.Now())
+		return err == nil
+	}
+	sum := sha256.Sum256([]byte(token))
+	var match int
+	for _, want := range a.tokens {
+		match |= subtle.ConstantTimeCompare(sum[:], want[:])
+	}
+	return match == 1
+}
+
+func (a *api) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	ctx, cancel := context.WithTimeout(r.Context(), a.timeout)
+	defer cancel()
+	w.Header().Set("Cache-Control", "no-store")
+	w.Header().Set("Content-Type", "application/json")
+	if r.Method != http.MethodGet && r.Method != http.MethodHead {
+		w.Header().Set("Allow", "GET, HEAD")
+		reply(w, r, http.StatusMethodNotAllowed, problem{"Use GET or HEAD."})
+		return
+	}
+	namespaces, status, refusal := a.scope(ctx, r)
+	if status != http.StatusOK {
+		if status == http.StatusUnauthorized {
+			w.Header().Set("WWW-Authenticate", "Bearer")
+		}
+		reply(w, r, status, refusal)
+		return
+	}
+	switch r.URL.Path {
+	case specPath:
+		if r.Method == http.MethodGet {
+			_, _ = w.Write([]byte(docs.SpendOpenAPI))
+		} else {
+			w.WriteHeader(http.StatusOK)
+		}
+	case runsPath, spendPath:
+		a.list(ctx, w, r, namespaces)
+	default:
+		reply(w, r, http.StatusNotFound, problem{"This path does not exist."})
+	}
+}
+
+type problem struct {
+	Error string `json:"error"`
+}
+
+func reply(w http.ResponseWriter, r *http.Request, status int, body any) {
+	w.WriteHeader(status)
+	if r.Method != http.MethodHead {
+		_ = json.NewEncoder(w).Encode(body)
+	}
+}
+
+func (a *api) list(ctx context.Context, w http.ResponseWriter, r *http.Request, namespaces []string) {
+	q, err := url.ParseQuery(r.URL.RawQuery)
+	limit, valid := pageLimit(q)
+	if err != nil || !valid {
+		reply(w, r, http.StatusBadRequest, problem{"Use a valid query and a limit from 1 to 100."})
+		return
+	}
+	var result any
+	if r.URL.Path == runsPath {
+		result, err = a.runs(ctx, namespaces, limit, q.Get("cursor"))
+	} else {
+		p, ok := parsePeriod(q)
+		if !ok {
+			reply(w, r, http.StatusBadRequest, problem{"Use UTC dates and groupBy=label:<name> or groupBy=namespace."})
+			return
+		}
+		result, err = a.spend(ctx, namespaces, p, limit, q.Get("cursor"))
+	}
+	switch {
+	case ctx.Err() != nil:
+		reply(w, r, http.StatusGatewayTimeout, problem{"The request time limit expired."})
+	case err == nil:
+		reply(w, r, http.StatusOK, result)
+	case errors.Is(err, errCursor) || apierrors.IsBadRequest(err):
+		reply(w, r, http.StatusBadRequest, problem{"The page cursor is not valid."})
+	case apierrors.IsResourceExpired(err):
+		reply(w, r, http.StatusGone, problem{"The page cursor expired. Start again with no cursor."})
+	default:
+		reply(w, r, http.StatusBadGateway, problem{"The spend data is not available."})
+	}
+}
+
+func pageLimit(q url.Values) (int, bool) {
+	for _, values := range q {
+		if len(values) != 1 {
+			return 0, false
+		}
+	}
+	if !q.Has("limit") {
+		return maxPage, true
+	}
+	n, err := strconv.Atoi(q.Get("limit"))
+	return n, err == nil && n > 0 && n <= maxPage
 }
 
 // A cursor keeps a position with the query that gave it to the caller.

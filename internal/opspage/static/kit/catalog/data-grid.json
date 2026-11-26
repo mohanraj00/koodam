@@ -1,0 +1,31 @@
+{
+  "name": "data-grid",
+  "description": "An editable grid with column headers, row headers and typed cells. A person moves between the cells with the keyboard and edits a cell in place. Each saved change goes to the application as one action, and the cell shows a text marker until the receipt comes back. The kit computes no formula.",
+  "data": {
+    "label": {"type": "text", "required": true, "min_length": 1, "size": "title"},
+    "columns": {
+      "type": "list",
+      "required": true,
+      "max_items": 30,
+      "items": {"type": "component", "label": "Column", "name": "data-grid-column"}
+    },
+    "rows": {
+      "type": "list",
+      "required": true,
+      "max_items": 200,
+      "items": {"type": "component", "label": "Row", "name": "data-grid-row"}
+    }
+  },
+  "states": ["+empty", "+disabled", "+pending", "+error", "+refused"],
+  "tokens": [
+    "color.text", "color.text-muted", "color.surface", "color.border", "color.danger", "space.1", "space.2", "space.3",
+    "radius.1", "type.body", "type.caption", "type.weight-strong"
+  ],
+  "accessibility": {
+    "role": "group",
+    "name": {"field": "label"},
+    "keyboard": [
+      "Tab", "Shift+Tab", "Enter", "Escape", "ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight", "Home", "End"
+    ]
+  }
+}
