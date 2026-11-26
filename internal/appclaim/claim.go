@@ -80,6 +80,14 @@ type Config struct {
 	// TenantClaim is the name of the claim with the tenant label. If it is empty, the check
 	// reads no tenant label.
 	TenantClaim string
+	// Zone is the zone of the install. If it is empty, the install has no zone.
+	Zone string
+	// ZoneClaim is the name of the claim with the zone of the caller. If it is empty, the check
+	// reads no zone.
+	ZoneClaim string
+	// RequireZoneClaim refuses a token with no zone claim. If it is false, the check accepts
+	// such a token.
+	RequireZoneClaim bool
 }
 
 // Valid gives back an error if a necessary value is empty.
@@ -87,11 +95,22 @@ func (c Config) Valid() error {
 	if c.Issuer == "" || c.Audience == "" || c.CallerClaim == "" {
 		return errors.New("the issuer, the audience and the caller claim are necessary")
 	}
+	if c.ZoneClaim != "" && c.Zone == "" {
+		return errors.New("the zone claim needs the zone of the install")
+	}
+	if c.RequireZoneClaim && c.ZoneClaim == "" {
+		return errors.New("a necessary zone claim needs the name of the zone claim")
+	}
 	return nil
 }
 
 // Identity has the labels of a caller from a valid claim.
-type Identity struct{ Caller, Tenant string }
+type Identity struct {
+	Caller, Tenant string
+	// ZoneMismatch shows that the zone of the claim is not the zone of the install. The claim is
+	// valid, so the check knows the caller, but it does not send the request to the app.
+	ZoneMismatch bool
+}
 
 // KeySet has the public keys of the issuer.
 type KeySet struct{ keys []publicKey }
@@ -269,7 +288,22 @@ func (c Config) claims(payload []byte, now time.Time) (Identity, error) {
 			return Identity{}, RefusedTenant
 		}
 	}
+	if c.ZoneClaim != "" {
+		id.ZoneMismatch = c.zoneMismatch(set)
+	}
 	return id, nil
+}
+
+// zoneMismatch examines the zone claim. A claim that is there must be the zone of the install.
+// A claim that is not a label, for example a number or null, is a different zone. A token with
+// no zone claim is a mismatch only if the claim is necessary.
+func (c Config) zoneMismatch(set map[string]json.RawMessage) bool {
+	raw, has := set[c.ZoneClaim]
+	if !has {
+		return c.RequireZoneClaim
+	}
+	zone, ok := label(raw)
+	return !ok || zone != c.Zone
 }
 
 // text reads a JSON string.

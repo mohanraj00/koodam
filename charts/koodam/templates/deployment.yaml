@@ -64,6 +64,9 @@ spec:
         - --agent-gateway-url={{ . }}
         {{- end }}
         - --key-grace={{ .Values.keyGrace }}
+        {{- if and .Values.zone.requireClaim (not (and $claim .Values.apps.claimCheck.zoneClaim)) }}
+        {{- fail "zone.requireClaim needs apps.enabled, apps.claimCheck.issuer and apps.claimCheck.zoneClaim, because the claim check reads no zone without them." }}
+        {{- end }}
         {{- with .Values.zone.name }}
         {{- if not (regexMatch "^[a-z0-9]([-a-z0-9]{0,61}[a-z0-9])?$" .) }}
         {{- fail "zone.name must be a DNS label: lower case letters, digits and \"-\", with 63 characters at most." }}
@@ -132,6 +135,15 @@ spec:
         - {{ printf "--app-claim-caller-claim=%s" .callerClaim | quote }}
         - {{ printf "--app-claim-tenant-claim=%s" .tenantClaim | quote }}
         - "--app-claim-tenant-token={{ if and .tenantClaim .tenantToken }}true{{ else }}false{{ end }}"
+        {{- with .zoneClaim }}
+        {{- if not $.Values.zone.name }}
+        {{- fail "apps.claimCheck.zoneClaim needs zone.name, because the claim check compares the claim with the zone of the install." }}
+        {{- end }}
+        - {{ printf "--app-claim-zone-claim=%s" . | quote }}
+        {{- end }}
+        {{- if $.Values.zone.requireClaim }}
+        - --app-claim-require-zone
+        {{- end }}
         - --app-claim-jwks-file=/etc/koodam/app-claim/jwks.json
         {{- end }}
         {{- end }}

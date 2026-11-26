@@ -52,6 +52,11 @@ const (
 // operator configures it. If Issuer is empty, the pods have no check container.
 type AppClaimCheck struct {
 	Issuer, Audience, CallerClaim, TenantClaim string
+	// Zone is the zone of the install. ZoneClaim is the claim with the zone of the caller. With
+	// a zone claim, the check refuses a caller of a different zone.
+	Zone, ZoneClaim string
+	// RequireZoneClaim refuses a token with no zone claim.
+	RequireZoneClaim bool
 	// JWKS is the JWKS document of the issuer.
 	JWKS string
 	// Image is the image with /app-claim-check.
@@ -94,6 +99,22 @@ func (c AppClaimCheck) listenPorts(app []corev1.ContainerPort, pod *corev1.PodSp
 		next++
 	}
 	return out
+}
+
+// zoneArgs gives back the zone flags of the check container. An install with no zone has none,
+// so its pod template does not change.
+func (c AppClaimCheck) zoneArgs() []string {
+	if c.Zone == "" {
+		return nil
+	}
+	args := []string{"--zone", c.Zone}
+	if c.ZoneClaim != "" {
+		args = append(args, "--zone-claim", c.ZoneClaim)
+	}
+	if c.RequireZoneClaim {
+		args = append(args, "--zone-require-claim")
+	}
+	return args
 }
 
 // claimPorts gives back the ports of the check container of the pod. If the check is off or the
@@ -139,6 +160,7 @@ func (c AppClaimCheck) add(tmpl *corev1.PodTemplateSpec, av *corev1alpha1.AppVer
 	args := []string{"--issuer", c.Issuer, "--audience", c.Audience, "--caller-claim", c.CallerClaim,
 		"--tenant-claim", c.TenantClaim, "--jwks-file", claimDir + "/jwks.json",
 		"--app", av.Spec.AppRef.Name, "--version", av.Name}
+	args = append(args, c.zoneArgs()...)
 	for i, p := range app {
 		args = append(args, "--route", fmt.Sprintf("%d=%d", listen[i].ContainerPort, p.ContainerPort))
 	}

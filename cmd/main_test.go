@@ -162,10 +162,18 @@ func TestLoadClaim(t *testing.T) {
 	if c, err := loadClaim(full, good); err != nil || c.JWKS != jwks {
 		t.Errorf("valid configuration: %v", err)
 	}
-	noAudience, noImage := full, full
+	noAudience, noImage, noZone, noZoneClaim := full, full, full, full
 	noAudience.Audience, noImage.Image = "", ""
+	noZone.ZoneClaim, noZoneClaim.Zone, noZoneClaim.RequireZoneClaim = "zone", "zone-a", true
+	withZone := noZoneClaim
+	withZone.ZoneClaim = noZone.ZoneClaim
+	if c, err := loadClaim(withZone, good); err != nil || c.Zone != withZone.Zone || !c.RequireZoneClaim {
+		t.Errorf("valid configuration with a zone: %v", err)
+	}
 	for name, err := range map[string]error{
-		"no audience": second(loadClaim(noAudience, good)), "no image": second(loadClaim(noImage, good)),
+		"zone claim and no zone": second(loadClaim(noZone, good)),
+		"necessary and no claim": second(loadClaim(noZoneClaim, good)),
+		"no audience":            second(loadClaim(noAudience, good)), "no image": second(loadClaim(noImage, good)),
 		"no file": second(loadClaim(full, "")), "no key": second(loadClaim(full, bad)),
 		"private key": second(loadClaim(full, private)),
 	} {

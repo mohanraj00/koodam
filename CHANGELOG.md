@@ -26,6 +26,7 @@ This file records the changes for each Koodam version. The newest version is fir
 - Give each AppVersion pod the limits file of its tenants. With `apps.claimCheck.tenantClaim`, the controller writes the ConfigMap `kd-<version>-tenants` with each `TenantQuota` that applies to the App: the rate and the burst divided by the replicas of all the versions of the App with a weight, and the mark of a tenant at its quota. A change needs no new pods. The chart values `tenants.defaultQuota.rateLimit` and `tenants.refuseUnknown` set the limit or the refusal (`UnknownTenant`) of a tenant label with no `TenantQuota`, and `tenants.usageInterval` sets the read interval of the use ([#383](https://github.com/mohanraj00/koodam/pull/383)).
 - Add `koodam usage --by tenant`. It shows the requests and the spend of each tenant of the Apps of a namespace in the current period, from the status of the `TenantQuota` objects, with a total line ([#384](https://github.com/mohanraj00/koodam/pull/384)).
 - Add the chart values `zone.name`, `zone.namespaces` and `apps.sharedResources`, and the design file `docs/zones.md` ([#385](https://github.com/mohanraj00/koodam/pull/385)).
+- Refuse a caller of a different zone in the claim check. With `apps.claimCheck.zoneClaim`, a request with a zone claim that is not `zone.name` gets the status 403 and the reason `ZoneMismatch`. `zone.requireClaim` also refuses a token with no zone claim. Each ingress span of an install with a zone has the field `zone` ([#386](https://github.com/mohanraj00/koodam/pull/386)).
 
 ### Nookku preset
 
