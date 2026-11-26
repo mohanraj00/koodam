@@ -270,6 +270,10 @@ func invalid(a *corev1alpha1.Agent) string {
 	if !inCeiling(a.Spec.Rules) {
 		return "A rule is not in the agent-ceiling ClusterRole."
 	}
+	// A budget of zero or less would give a reservation that adds room to the period budget.
+	if a.Spec.Budget.Sign() <= 0 {
+		return "spec.budget must be more than zero."
+	}
 	// The CRD has this rule. The controller reads the first model, so it does the check again.
 	if (a.Spec.Model == "") == (len(a.Spec.Models) == 0) || slices.Contains(a.Spec.Models, "") {
 		return "Set spec.model or spec.models, and not the two."

@@ -242,6 +242,21 @@ var _ = Describe("SpendBudget ledger", func() {
 		Expect(b.Status.Spend).To(Equal("6"))
 	})
 
+	It("fails a run with a budget of zero or less, and reserves nothing", func() {
+		newRun(ledgerRun1, "-5000")
+		newRun(ledgerRun2, "0")
+		reconcileRun(ledgerRun1)
+		reconcileRun(ledgerRun2)
+		for _, name := range []string{ledgerRun1, ledgerRun2} {
+			a := run(name)
+			Expect(a.Status.Phase).To(Equal(corev1alpha1.AgentFailed))
+			Expect(meta.FindStatusCondition(a.Status.Conditions, condProvisioned).Message).
+				To(Equal("spec.budget must be more than zero."))
+		}
+		Expect(budget().Status.Reservations).To(BeEmpty())
+		Expect(gw.created).To(BeEmpty())
+	})
+
 	It("does not hold the other runs behind a run with a budget above the limit", func() {
 		newRun(ledgerHuge, "11")
 		newRun(ledgerNext, "2")

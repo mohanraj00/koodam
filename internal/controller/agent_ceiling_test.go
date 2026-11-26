@@ -25,6 +25,7 @@ import (
 
 	rbacv1 "k8s.io/api/rbac/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"sigs.k8s.io/yaml"
@@ -75,7 +76,7 @@ func TestInvalid(t *testing.T) {
 		{strings.Repeat("n", 61), nil, true},
 	} {
 		a := &corev1alpha1.Agent{ObjectMeta: metav1.ObjectMeta{Name: c.name},
-			Spec: corev1alpha1.AgentSpec{Rules: c.rules, Model: "m1"}}
+			Spec: corev1alpha1.AgentSpec{Rules: c.rules, Model: "m1", Budget: resource.MustParse("1")}}
 		if got := invalid(a) != ""; got != c.bad {
 			t.Errorf("%s: invalid is %v, want %v", c.name, got, c.bad)
 		}
@@ -90,7 +91,8 @@ func TestInvalid(t *testing.T) {
 			t.Errorf("%s: invalid is false, want true", name)
 		}
 	}
-	if invalid(&corev1alpha1.Agent{Spec: corev1alpha1.AgentSpec{Models: []string{"a", "b"}}}) != "" {
+	if invalid(&corev1alpha1.Agent{Spec: corev1alpha1.AgentSpec{Models: []string{"a", "b"},
+		Budget: resource.MustParse("1")}}) != "" {
 		t.Error("a models list is invalid, want valid")
 	}
 }
