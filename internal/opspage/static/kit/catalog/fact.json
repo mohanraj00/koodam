@@ -1,0 +1,9 @@
+{
+  "name": "fact",
+  "description": "A label and a value in a card.",
+  "data": {
+    "label": {"type": "text", "required": true, "size": "short"},
+    "value": {"type": "text", "required": true, "size": "summary"}
+  },
+  "tokens": ["color.text", "color.text-muted", "type.body", "type.caption"]
+}

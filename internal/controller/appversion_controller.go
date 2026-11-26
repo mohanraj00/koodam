@@ -319,11 +319,16 @@ func (r *AppVersionReconciler) apply(ctx context.Context, av *corev1alpha1.AppVe
 	// from an earlier template can be without the claim check.
 	applied := false
 	if deploy != nil && !renewErr {
-		// The record of the start is in the status before the first object exists.
-		if !meta.IsStatusConditionTrue(av.Status.Conditions, condStarted) {
+		// The record of the start is in the status before the first object exists. The public
+		// key of the tenant token is also in the status before a pod gets the seed, because the
+		// egress proxy refuses a model call of a version with no key.
+		started := meta.IsStatusConditionTrue(av.Status.Conditions, condStarted)
+		if !started {
 			meta.SetStatusCondition(&av.Status.Conditions, metav1.Condition{Type: condStarted,
 				Status: metav1.ConditionTrue, Reason: condStarted,
 				Message: "The controller started to make the objects of the version.", ObservedGeneration: av.Generation})
+		}
+		if !started || av.Status.TenantTokenKey != old.TenantTokenKey {
 			if err := r.writeStatus(ctx, av, old); err != nil {
 				return ctrl.Result{}, err
 			}
@@ -466,10 +471,15 @@ func (r *AppVersionReconciler) template(ctx context.Context, av *corev1alpha1.Ap
 		if err == nil {
 			return deploy, nil
 		}
-		if !isInvalidTemplate(err) {
+		switch {
+		case errors.Is(err, errTokenSecret):
+			msg, reason = "A Secret with the name of the tenant token key is not from this AppVersion, "+
+				"or it has no valid seed.", reasonNameConflict
+		case isInvalidTemplate(err):
+			msg, reason = err.Error(), reasonInvalidPodTemplate
+		default:
 			return nil, err
 		}
-		msg, reason = err.Error(), reasonInvalidPodTemplate
 	}
 	return nil, r.wait(ctx, av, old, reason, msg)
 }
@@ -863,9 +873,26 @@ func (r *AppVersionReconciler) deployment(ctx context.Context, av *corev1alpha1.
 			}
 		}
 	}
+	if r.Claim.tokenEnabled() {
+		if err := checkTokenNames(&tmpl); err != nil {
+			return nil, err
+		}
+	}
 	if err := r.Claim.add(&tmpl, av, ports); err != nil {
 		return nil, err
 	}
+	// The Secret of the tenant token key comes after each check of the template, so that a
+	// template that is not valid makes no Secret. The public key goes to the status of the
+	// version, where the egress proxy reads it. This is the only change of av in this function.
+	tokenKey := ""
+	if r.Claim.tokenEnabled() {
+		if tokenKey, err = r.tenantTokenKey(ctx, av); err != nil {
+			return nil, err
+		}
+		// The check container is the first init container.
+		addToken(&tmpl, &tmpl.Spec.InitContainers[0], av, tokenKey)
+	}
+	av.Status.TenantTokenKey = tokenKey
 	r.Egress.apply(&tmpl.Spec, av.Namespace)
 	hash, err := templateHash(tmpl)
 	if err != nil {

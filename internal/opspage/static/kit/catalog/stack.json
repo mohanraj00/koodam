@@ -1,0 +1,13 @@
+{
+  "name": "stack",
+  "kind": "primitive",
+  "description": "A labeled group that puts its child elements in one column or one row.",
+  "ai_content": false,
+  "data": {
+    "label": {"type": "text", "required": true, "min_length": 1, "size": "line"},
+    "direction": {"type": "enum", "values": ["column", "row"]},
+    "gap": {"type": "enum", "values": ["small", "medium", "large"]}
+  },
+  "tokens": ["space.1", "space.2", "space.4"],
+  "accessibility": {"role": "group", "name": {"field": "label"}}
+}

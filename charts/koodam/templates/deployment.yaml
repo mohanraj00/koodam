@@ -134,6 +134,7 @@ spec:
         - {{ printf "--app-claim-audience=%s" (required "apps.claimCheck.audience is necessary with an issuer." .audience) | quote }}
         - {{ printf "--app-claim-caller-claim=%s" .callerClaim | quote }}
         - {{ printf "--app-claim-tenant-claim=%s" .tenantClaim | quote }}
+        - "--app-claim-tenant-token={{ if and .tenantClaim .tenantToken }}true{{ else }}false{{ end }}"
         {{- with .zoneClaim }}
         {{- if not $.Values.zone.name }}
         {{- fail "apps.claimCheck.zoneClaim needs zone.name, because the claim check compares the claim with the zone of the install." }}

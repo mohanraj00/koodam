@@ -47,6 +47,7 @@ The claim check container `koodam-claim` of an App pod writes 1 JSON line to its
 | `TenantRateLimited` | `429` | The claim is valid, and the tenant sent more requests than its rate limit. |
 | `TenantQuotaExceeded` | `429` | The claim is valid, and the tenant is at its quota of the current period. |
 | `UnknownTenant` | `403` | The claim is valid, no `TenantQuota` names the tenant label, and the install refuses such a tenant. |
+| `ReservedTenant` | `403` | The claim is valid, and its tenant label is the reserved label `koodam-no-tenant`. |
 
 A reader must accept other outcome words. New outcomes can come in the same version.
 

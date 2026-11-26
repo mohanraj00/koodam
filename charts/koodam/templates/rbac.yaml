@@ -45,6 +45,17 @@ roleRef:
   name: {{ $fullname }}-agent-ceiling
 subjects:
 {{ include "koodam.subject" . }}
+---
+# Read access to the SpendBudget of a namespace. Bind it to the users of a namespace with a
+# RoleBinding. The chart has no write role for SpendBudget, and this role has no aggregate label.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ $fullname }}-spendbudget-viewer
+  labels:
+    {{- include "koodam.labels" . | nindent 4 }}
+rules:
+{{ include "koodam.rules" (dict "ctx" . "file" "files/spendbudget-viewer-role.yaml") }}
 {{- if .Values.leaderElection }}
 ---
 # The leader election rules, in the release namespace only.

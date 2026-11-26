@@ -19,6 +19,7 @@ package controller
 import (
 	"context"
 	"errors"
+	"fmt"
 	"math"
 	"strconv"
 	"strings"
@@ -36,6 +37,7 @@ import (
 
 	corev1alpha1 "github.com/mohanraj00/koodam/api/v1alpha1"
 	"github.com/mohanraj00/koodam/internal/gateway"
+	"github.com/mohanraj00/koodam/internal/tenanttoken"
 )
 
 const (
@@ -47,8 +49,10 @@ const (
 
 	reasonTenantSynced    = "Synced"
 	reasonTenantDuplicate = "DuplicateTenant"
+	reasonTenantReserved  = "ReservedTenant"
 	reasonTenantGateway   = "GatewayError"
 	reasonTenantWithin    = "WithinQuota"
+	reasonTenantCapped    = "RequestCountCapped"
 )
 
 // TenantQuotaReconciler makes the gateway customer of each tenant label and writes the use of
@@ -78,6 +82,9 @@ func (r *TenantQuotaReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 	if err := r.Get(ctx, req.NamespacedName, q); err != nil {
 		return ctrl.Result{}, client.IgnoreNotFound(err)
 	}
+	if q.Spec.Tenant == tenanttoken.NoTenant {
+		return ctrl.Result{}, r.reserved(ctx, q)
+	}
 	owner, err := r.owner(ctx, q.Spec.Tenant)
 	if err != nil {
 		return ctrl.Result{}, err
@@ -91,15 +98,12 @@ func (r *TenantQuotaReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 		controllerutil.AddFinalizer(q, tenantQuotaFinalizer)
 		return ctrl.Result{}, r.Update(ctx, q)
 	}
-	old := q.Status.DeepCopy()
 	if owner == nil || owner.UID != q.UID {
 		// The gateway has one customer for each tenant label. An older TenantQuota has this label.
-		q.Status = corev1alpha1.TenantQuotaStatus{Conditions: q.Status.Conditions}
-		meta.RemoveStatusCondition(&q.Status.Conditions, corev1alpha1.TenantQuotaExceeded)
-		r.setReady(q, metav1.ConditionFalse, reasonTenantDuplicate,
+		return ctrl.Result{}, r.noEffect(ctx, q, reasonTenantDuplicate,
 			"An older TenantQuota of the install has this tenant label. This TenantQuota has no effect.")
-		return ctrl.Result{}, r.writeStatus(ctx, q, old)
 	}
+	old := q.Status.DeepCopy()
 	usage, err := r.sync(ctx, q)
 	if err != nil {
 		// The message is fixed text, because a gateway error can have data of the gateway. The
@@ -108,7 +112,7 @@ func (r *TenantQuotaReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 		if werr := r.writeStatus(ctx, q, old); werr != nil {
 			return ctrl.Result{}, werr
 		}
-		return ctrl.Result{}, err
+		return ctrl.Result{}, tenantGatewayError(err)
 	}
 	r.setUsage(ctx, q, usage)
 	r.setReady(q, metav1.ConditionTrue, reasonTenantSynced, "The gateway has the customer of the tenant with the limits of the spec.")
@@ -120,6 +124,32 @@ func (r *TenantQuotaReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 		interval = DefaultTenantUsageInterval
 	}
 	return ctrl.Result{RequeueAfter: interval}, nil
+}
+
+// reserved is the reconcile of a TenantQuota with the reserved label. The API refuses such an
+// object, but an object can be older than that rule. The gateway customer of this label counts
+// each model call with no tenant. Thus the controller makes no gateway call for the object: it
+// sets no limits, and a delete of the object does not delete the customer.
+func (r *TenantQuotaReconciler) reserved(ctx context.Context, q *corev1alpha1.TenantQuota) error {
+	if controllerutil.RemoveFinalizer(q, tenantQuotaFinalizer) {
+		// The update starts the next reconcile.
+		return r.Update(ctx, q)
+	}
+	if !q.DeletionTimestamp.IsZero() {
+		return nil
+	}
+	return r.noEffect(ctx, q, reasonTenantReserved,
+		"The tenant label is reserved for the model calls with no tenant. This TenantQuota has no effect.")
+}
+
+// noEffect writes the status of a TenantQuota that has no effect: no use, no condition
+// QuotaExceeded, and Ready=False with the reason.
+func (r *TenantQuotaReconciler) noEffect(ctx context.Context, q *corev1alpha1.TenantQuota, reason, message string) error {
+	old := q.Status.DeepCopy()
+	q.Status = corev1alpha1.TenantQuotaStatus{Conditions: q.Status.Conditions}
+	meta.RemoveStatusCondition(&q.Status.Conditions, corev1alpha1.TenantQuotaExceeded)
+	r.setReady(q, metav1.ConditionFalse, reason, message)
+	return r.writeStatus(ctx, q, old)
 }
 
 // owner gives back the TenantQuota that has the tenant label in the gateway: the oldest one that
@@ -166,7 +196,7 @@ func (r *TenantQuotaReconciler) release(ctx context.Context, q, owner *corev1alp
 	}
 	if owner == nil {
 		if err := r.Customers.DeleteCustomer(ctx, q.Spec.Tenant); err != nil {
-			return err
+			return tenantGatewayError(err)
 		}
 		logf.FromContext(ctx).Info("Deleted the gateway customer of a tenant", "tenant", q.Spec.Tenant)
 	}
@@ -189,6 +219,19 @@ func (r *TenantQuotaReconciler) sync(ctx context.Context, q *corev1alpha1.Tenant
 		return gateway.CustomerUsage{}, err
 	}
 	return r.Customers.CustomerUsage(ctx, q.Spec.Tenant)
+}
+
+// errTenantGateway is the error of a gateway call that failed, with no text of the gateway.
+var errTenantGateway = errors.New("a call to the gateway failed")
+
+// tenantGatewayError gives back the error that a reconcile returns for a gateway error. The text
+// of a gateway error can have data of the gateway, and controller-runtime writes a returned error
+// to the manager log. Thus the result has fixed text and, for an HTTP answer, the status.
+func tenantGatewayError(err error) error {
+	if he, ok := errors.AsType[*gateway.HTTPError](err); ok {
+		return fmt.Errorf("%w: HTTP %d", errTenantGateway, he.Status)
+	}
+	return errTenantGateway
 }
 
 // tenantCustomer gives back the gateway customer of a TenantQuota.
@@ -216,8 +259,16 @@ func (r *TenantQuotaReconciler) setUsage(ctx context.Context, q *corev1alpha1.Te
 	q.Status.Spend = strconv.FormatFloat(math.Round(u.Spend*1e6)/1e6, 'f', -1, 64)
 	q.Status.PeriodEnd = &metav1.Time{Time: u.PeriodEnd.Truncate(time.Second)}
 	var limits []string
-	if q.Spec.Requests != nil && u.Requests >= *q.Spec.Requests {
-		limits = append(limits, "requests")
+	// A count that the gateway stopped at its maximum is a minimum. At the limit or above it, the
+	// tenant is at the limit. Below the limit, the count cannot show the state of the tenant.
+	capped := false
+	if q.Spec.Requests != nil {
+		switch {
+		case u.Requests >= *q.Spec.Requests:
+			limits = append(limits, "requests")
+		case u.RequestsCapped:
+			capped = true
+		}
 	}
 	if q.Spec.Spend != nil && u.Spend >= q.Spec.Spend.AsApproximateFloat64() {
 		limits = append(limits, "spend")
@@ -225,9 +276,14 @@ func (r *TenantQuotaReconciler) setUsage(ctx context.Context, q *corev1alpha1.Te
 	cond := metav1.Condition{Type: corev1alpha1.TenantQuotaExceeded, Status: metav1.ConditionFalse,
 		Reason: reasonTenantWithin, Message: "The tenant is below each limit of the current period.",
 		ObservedGeneration: q.Generation}
-	if len(limits) > 0 {
+	switch {
+	case len(limits) > 0:
 		cond.Status, cond.Reason = metav1.ConditionTrue, corev1alpha1.ReasonTenantQuotaExceeded
 		cond.Message = "The tenant is at this limit of the current period: " + strings.Join(limits, ", ") + "."
+	case capped:
+		cond.Status, cond.Reason = metav1.ConditionUnknown, reasonTenantCapped
+		cond.Message = "The gateway stopped the count of the requests at its maximum, below the limit of the spec. " +
+			"The requests of the status are a minimum."
 	}
 	if meta.SetStatusCondition(&q.Status.Conditions, cond) {
 		logf.FromContext(ctx).Info("The quota state of a tenant changed", "reason", cond.Reason,

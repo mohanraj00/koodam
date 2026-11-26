@@ -1,0 +1,23 @@
+{
+  "name": "rich-text",
+  "description": "Rich text as a tree of typed nodes: paragraphs, headings, lists, code blocks and quotes. A fill gives data only, never markup. The kit makes each element from a fixed list. Page code sets the link schemes and the first heading level.",
+  "data": {
+    "blocks": {
+      "type": "list",
+      "required": true,
+      "max_items": 100,
+      "items": {
+        "type": "component",
+        "label": "Block",
+        "names": ["rich-paragraph", "rich-heading", "rich-list", "rich-code", "rich-quote"]
+      }
+    },
+    "clamp": {"type": "integer", "label": "Initial lines", "minimum": 1, "maximum": 20}
+  },
+  "states": ["+empty", "+refused"],
+  "tokens": [
+    "color.text", "color.text-muted", "color.surface", "color.border", "color.accent", "color.focus", "space.1",
+    "space.2", "space.3", "space.4", "radius.1", "type.body", "type.caption", "type.weight-strong"
+  ],
+  "accessibility": {"keyboard": ["Tab", "Shift+Tab", "Enter", "Space", "Escape"]}
+}

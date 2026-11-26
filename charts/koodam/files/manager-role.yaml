@@ -74,6 +74,7 @@ rules:
   - agents/finalizers
   - agents/status
   - profiles/status
+  - spendbudgets/status
   - testkeys/finalizers
   - testkeys/status
   - workspaces/finalizers
@@ -84,6 +85,7 @@ rules:
   - core.koodam.dev
   resources:
   - profiles
+  - spendbudgets
   verbs:
   - get
   - list
