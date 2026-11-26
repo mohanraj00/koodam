@@ -1,0 +1,27 @@
+{
+  "name": "date-field",
+  "kind": "primitive",
+  "description": "A labeled date input as YYYY-MM-DD. A person edits the date. The input refuses a date that does not exist or that is outside the range.",
+  "ai_content": false,
+  "data": {
+    "name": {"type": "text", "size": "short"},
+    "label": {"type": "text", "required": true, "min_length": 1, "size": "line"},
+    "value": {"type": "date", "editable": true},
+    "earliest": {"type": "date"},
+    "latest": {"type": "date"},
+    "hint": {"type": "text", "size": "summary"},
+    "error": {"type": "text", "size": "summary"},
+    "disabled": {"type": "boolean"},
+    "typed": {"type": "boolean"}
+  },
+  "states": ["+disabled", "+error"],
+  "tokens": [
+    "color.surface", "color.text", "color.text-muted", "color.border", "color.focus", "color.danger", "space.1",
+    "space.2", "radius.1", "type.body", "type.caption", "motion.fast"
+  ],
+  "accessibility": {
+    "role": "textbox",
+    "name": {"field": "label"},
+    "keyboard": ["Tab", "Shift+Tab", "ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight", "Space"]
+  }
+}

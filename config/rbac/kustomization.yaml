@@ -29,6 +29,8 @@ resources:
 - profile_admin_role.yaml
 - profile_editor_role.yaml
 - profile_viewer_role.yaml
+- spendbudget_admin_role.yaml
+- spendbudget_viewer_role.yaml
 - agent_admin_role.yaml
 - agent_editor_role.yaml
 - agent_viewer_role.yaml

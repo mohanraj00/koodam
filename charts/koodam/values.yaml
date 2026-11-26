@@ -257,6 +257,13 @@ apps:
     # The claim with the tenant label. The app container gets it in the header Koodam-Tenant. If
     # it is empty, the check reads no tenant label.
     tenantClaim: ""
+    # With a tenant claim, bind each model call of an App pod to the tenant of a request. The
+    # check container gives the app a signed token in the header Koodam-Tenant-Token, with a life
+    # of 10 minutes. The app must send this header with each model call, or the egress proxy
+    # refuses the call. The proxy also gives each model call of an Agent pod and a Workspace pod
+    # the reserved customer koodam-no-tenant. If false, the gateway counts a model call for the
+    # tenant label that the code in the pod sends, and that code is not trusted.
+    tenantToken: true
     # The JWKS document of the issuer, as text. It has public keys only: the manager refuses a
     # document with private or symmetric key material. A change of this value starts the manager
     # again, and then each AppVersion gets new pods.

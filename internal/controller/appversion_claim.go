@@ -56,6 +56,9 @@ type AppClaimCheck struct {
 	JWKS string
 	// Image is the image with /app-claim-check.
 	Image string
+	// TenantToken makes the check container sign a tenant token for the tenant of each request.
+	// It has an effect only with a tenant claim.
+	TenantToken bool
 	// Tenants is the configuration for a tenant label with no TenantQuota.
 	Tenants AppTenantLimits
 }

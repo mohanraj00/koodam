@@ -27,6 +27,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/mohanraj00/koodam/internal/tenanttoken"
 )
 
 const (
@@ -48,6 +50,7 @@ type customerFake struct {
 	calls     []string
 	logQuery  map[string]string
 	total     any
+	capped    bool
 	// raceBudget and raceCustomer make the first create fail as if a second writer made the row.
 	raceBudget, raceCustomer bool
 	// wrongRoute makes each customer path answer with the 404 of a wrong route.
@@ -143,7 +146,7 @@ func (f *customerFake) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		for k, v := range r.URL.Query() {
 			f.logQuery[k] = v[0]
 		}
-		_ = json.NewEncoder(w).Encode(map[string]any{"total": f.total, "data": []any{}})
+		_ = json.NewEncoder(w).Encode(map[string]any{"total": f.total, "total_is_capped": f.capped, "data": []any{}})
 	default:
 		fail(http.StatusNotFound, routeNotFound)
 	}
@@ -194,8 +197,14 @@ func TestSetCustomer(t *testing.T) {
 		t.Errorf("the same spec made %d writes", got-writes)
 	}
 	// A spec with no limit removes the limits with a JSON null, and an hour uses the unit h.
+	links := f.count("/customer/update")
 	if err := l.SetCustomer(ctx, CustomerSpec{ID: testTenant, Period: time.Hour}); err != nil {
 		t.Fatal(err)
+	}
+	// A budget change also writes the link of the customer, because only that write removes the
+	// customer from the cache of the gateway.
+	if got := f.count("/customer/update") - links; got != 1 || f.calls[len(f.calls)-1] != "/customer/update" {
+		t.Errorf("a budget change made %d customer updates, and the last call was %s", got, f.calls[len(f.calls)-1])
 	}
 	if b[fieldMax] != nil || b["rpm_limit"] != nil || b[fieldDuration] != "1h" || f.count(pathBudgetUp) != 1 {
 		t.Errorf("budget after the change: %v", b)
@@ -268,6 +277,12 @@ func TestCustomerUsage(t *testing.T) {
 		q["page_size"] != "1" || q["end_date"] <= time.Now().UTC().Format(spendLogTime) {
 		t.Errorf("spend log query %v", q)
 	}
+	// The gateway stops the count at its maximum. The count is then a minimum, and the flag shows it.
+	f.total, f.capped = 10000, true
+	if u, err := l.CustomerUsage(ctx, testTenant); err != nil || u.Requests != 10000 || !u.RequestsCapped {
+		t.Fatalf("capped usage %+v, error %v", u, err)
+	}
+	f.capped = false
 	for name, change := range map[string]func(){
 		"no total":       func() { f.total = nil },
 		"negative total": func() { f.total = -1 },
@@ -333,5 +348,16 @@ func TestBudgetDuration(t *testing.T) {
 		if _, ok := parseBudgetDuration(bad); ok {
 			t.Errorf("%q is accepted", bad)
 		}
+	}
+}
+
+// Limits on the reserved label would stop each model call with no tenant. The client refuses the
+// label before a call to the gateway.
+func TestSetCustomerRefusesTheReservedLabel(t *testing.T) {
+	f := newCustomerFake()
+	err := customerClient(t, f).SetCustomer(context.Background(),
+		CustomerSpec{ID: tenanttoken.NoTenant, Budget: 1, Period: time.Hour})
+	if !errors.Is(err, ErrReservedCustomer) || len(f.calls) != 0 {
+		t.Fatalf("error %v, %d gateway calls", err, len(f.calls))
 	}
 }

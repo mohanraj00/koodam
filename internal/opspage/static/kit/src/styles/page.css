@@ -1,0 +1,110 @@
+/* The default page style of the kit. A page links src/tokens/tokens.css first, then this file.
+   Each color, type size and space comes from a token, so a theme of the tokens also changes this style.
+   The style reaches only the page. It cannot select a node in the shadow root of a kit element.
+   docs/guides/theme.md tells how a page uses this style, and how a page uses its own style instead. */
+
+*, *::before, *::after { box-sizing: border-box; }
+
+:root { color-scheme: light dark; -webkit-text-size-adjust: 100%; text-size-adjust: 100%; }
+:root[data-mu-theme="light"] { color-scheme: light; }
+:root[data-mu-theme="dark"] { color-scheme: dark; }
+
+body {
+  margin: 0; min-height: 100vh;
+  background: var(--mu-color-page); color: var(--mu-color-text); font: var(--mu-type-body);
+}
+
+/* The page width. The header, the content and the footer have the same width and the same side space. */
+body > header, body > main, body > footer {
+  padding-inline: max(var(--mu-space-4), calc(50% - var(--mu-size-page) / 2));
+}
+
+/* The page header: a bar with the page name, an optional short text and optional links. */
+body > header {
+  display: flex; flex-wrap: wrap; align-items: baseline; gap: var(--mu-space-1) var(--mu-space-4);
+  padding-block: var(--mu-space-3);
+  background: var(--mu-color-surface); border-block-end: 1px solid var(--mu-color-border-subtle);
+}
+body > header h1 { font: var(--mu-type-heading-3); letter-spacing: 0; }
+body > header p { color: var(--mu-color-text-muted); }
+body > header nav { display: flex; flex-wrap: wrap; gap: var(--mu-space-1) var(--mu-space-4); margin-inline-start: auto; }
+
+body > main { padding-block: var(--mu-space-5) var(--mu-space-6); }
+body > footer {
+  padding-block: var(--mu-space-4); font: var(--mu-type-caption); color: var(--mu-color-text-muted);
+  border-block-start: 1px solid var(--mu-color-border-subtle);
+}
+
+/* The spacing. Each block has no margin of its own. A block gets space only from the block before it. */
+h1, h2, h3, h4, p, ul, ol, dl, dd, pre, blockquote, figure, table, hr { margin: 0; }
+:where(main, section, article, aside) > * + * { margin-block-start: var(--mu-space-4); }
+:where(main, section, article, aside) > :where(h2, h3) { margin-block-start: var(--mu-space-6); }
+:where(main, section, article, aside) > :where(h2, h3):first-child { margin-block-start: 0; }
+:where(main, section, article, aside) > :where(h2, h3, h4) + * { margin-block-start: var(--mu-space-2); }
+:where(main, section, article, aside) > :where(h1) + * { margin-block-start: var(--mu-space-3); }
+
+/* The headings and the text. A line of text stays short enough to read. */
+h1 { font: var(--mu-type-heading-1); letter-spacing: -0.02em; }
+h2 { font: var(--mu-type-heading-2); letter-spacing: -0.01em; }
+h3 { font: var(--mu-type-heading-3); }
+h4 { font: var(--mu-type-body); font-weight: var(--mu-type-weight-strong); }
+h1, h2, h3, h4 { text-wrap: balance; }
+main > p, main > ul, main > ol, main > blockquote { max-inline-size: 72ch; }
+ul, ol { padding-inline-start: var(--mu-space-5); }
+strong, b, th, dt { font-weight: var(--mu-type-weight-strong); }
+small { font: var(--mu-type-caption); color: var(--mu-color-text-muted); }
+hr { border: 0; border-block-start: 1px solid var(--mu-color-border-subtle); }
+blockquote {
+  padding-inline-start: var(--mu-space-4); color: var(--mu-color-text-muted);
+  border-inline-start: 3px solid var(--mu-color-border-subtle);
+}
+
+/* Links. The underline stays, so that color is not the only signal. */
+a {
+  color: var(--mu-color-accent); text-decoration-thickness: 1px; text-underline-offset: 0.18em;
+  transition: text-decoration-thickness var(--mu-motion-fast);
+}
+a:hover { text-decoration-thickness: 2px; }
+
+/* Code. */
+code, kbd, samp, pre { font: var(--mu-type-code); }
+:not(pre) > code, kbd {
+  padding: 0 var(--mu-space-1); background: var(--mu-color-surface);
+  border: 1px solid var(--mu-color-border-subtle); border-radius: var(--mu-radius-1);
+}
+pre {
+  padding: var(--mu-space-3) var(--mu-space-4); overflow-x: auto; tab-size: 2;
+  background: var(--mu-color-surface); border: 1px solid var(--mu-color-border-subtle); border-radius: var(--mu-radius-2);
+}
+
+/* A plain table of the page. The kit table is mu-table. */
+table { border-collapse: collapse; }
+th, td { padding: var(--mu-space-2) var(--mu-space-3); text-align: start; border-block-end: 1px solid var(--mu-color-border-subtle); }
+
+/* The plain controls of the page. A kit element styles its own controls. */
+button, input, select, textarea { font: inherit; color: inherit; }
+button, select {
+  min-height: 2.75rem; min-width: 2.75rem; padding: 0 var(--mu-space-3); cursor: pointer;
+  background: var(--mu-color-surface); border: 1px solid var(--mu-color-border); border-radius: var(--mu-radius-2);
+  transition: border-color var(--mu-motion-fast);
+}
+button:hover, select:hover { border-color: var(--mu-color-text); }
+button[aria-pressed="true"] { border-color: var(--mu-color-accent); box-shadow: inset 0 0 0 1px var(--mu-color-accent); }
+button:disabled, select:disabled { cursor: default; color: var(--mu-color-text-muted); border-style: dashed; }
+label { font: var(--mu-type-caption); }
+:focus-visible { outline: 2px solid var(--mu-color-focus); outline-offset: 2px; }
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { transition: none !important; animation: none !important; scroll-behavior: auto !important; }
+}
+
+@media (forced-colors: active) {
+  body, body > header, pre, :not(pre) > code, kbd { background: Canvas; color: CanvasText; }
+  body > header, body > footer, hr, blockquote, pre, :not(pre) > code, kbd, th, td { border-color: CanvasText; }
+  body > header p, body > footer, small, blockquote { color: CanvasText; }
+  a { color: LinkText; }
+  button, select { background: ButtonFace; color: ButtonText; border-color: ButtonText; }
+  button[aria-pressed="true"] { border-color: Highlight; box-shadow: none; outline: 2px solid Highlight; outline-offset: -4px; }
+  button:disabled, select:disabled { color: GrayText; border-color: GrayText; }
+  :focus-visible { outline-color: Highlight; }
+}

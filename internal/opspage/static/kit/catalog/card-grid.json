@@ -1,0 +1,21 @@
+{
+  "name": "card-grid",
+  "description": "A labeled list of cards with optional Expand all and Collapse all controls.",
+  "slots": {"citation": {"required": false}},
+  "data": {
+    "label": {"type": "text", "required": true, "min_length": 1, "size": "line"},
+    "cards": {
+      "type": "list",
+      "required": true,
+      "max_items": 100,
+      "items": {"type": "component", "label": "Card", "name": "card"}
+    },
+    "collapse_controls": {"type": "boolean"}
+  },
+  "states": ["+empty"],
+  "tokens": [
+    "space.2", "space.3", "space.4", "size.column-medium", "color.text-muted", "type.caption", "color.text",
+    "color.border", "radius.2", "type.body", "color.focus"
+  ],
+  "accessibility": {"role": "list", "name": {"field": "label"}, "keyboard": ["Tab", "Enter", "Space"]}
+}
