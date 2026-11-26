@@ -232,8 +232,21 @@ A version keeps one gateway key for its life. To rotate the key, make a new vers
    kubectl rollout status deployment/kd-shop-v3
    ```
 
-3. Add `shop-v3` with a weight to each endpoint of the App, in `spec.endpoints[].versions`. A version gets its weight only after it has its key, so a request never goes to a version with no key. `status.endpoints` of the App shows the weights in effect.
-4. Retire the old version:
+   If the version has `spec.gate`, also wait for its gate run to pass. The condition `Evidence` becomes `True` only with the reason `Passed`:
+
+   ```sh
+   kubectl wait appversion/shop-v3 --for=condition=Evidence --timeout=30m
+   ```
+
+   If the gate fails, stop here. Do not do steps 3 and 4. The old version keeps the traffic and its key.
+
+3. Add `shop-v3` with a weight to each endpoint of the App, in `spec.endpoints[].versions`. A version gets its weight only after it has its key, so a request never goes to a version with no key. Then make sure that `status.endpoints[].weights` of the App shows a weight above 0 for `shop-v3` in each endpoint:
+
+   ```sh
+   kubectl get app shop -o jsonpath='{range .status.endpoints[*]}{.name}{": "}{.weights}{"\n"}{end}'
+   ```
+
+4. Retire the old version only after step 3. A retiring version gets no new session, so if the new version has the weight 0 in effect, new sessions have no backend:
 
    ```sh
    kubectl patch appversion shop-v2 --type=merge -p '{"spec":{"lifecycle":"Retiring"}}'
@@ -252,7 +265,7 @@ Rules:
 - The retiring version keeps its key in the drain time, so it counts for `spec.maxLiveVersions`. The App needs 2 or more, which is the default.
 - In the drain time, the 2 versions each have a `budgetPerDay`. Thus the spend of that day can be the sum of the 2 budgets.
 - A client that sends the version header of the old version stays on it until the end of the drain time. After the block, its model calls fail. Set `spec.drainSeconds` to the longest session.
-- A version with an evidence gate gets traffic only after its gate run passes, and the old version keeps the traffic until then.
+- A version with an evidence gate gets traffic only after its gate run passes. The old version keeps the traffic until then only if you do not retire it. Thus do step 4 after the gate passes and the new version has its weight.
 - The new version gets new pods. An app that reads the key file one time at its start is correct, because a key never changes in a pod.
 
 A rotation in one version, with no new pods, is tracked in [#441](https://github.com/mohanraj00/koodam/issues/441).
