@@ -1,6 +1,6 @@
 # Evidence gate
 
-Status: the gate of an AppVersion is built (#342), with Nookku 0.5.9. [apps.md](apps.md) has the use. The seam test with the pinned release and the kind test are in `main` (#343). The approval source of a paused run is #190, #246 and #344. Of that source, only the offline verifier (#344) is in `main`. No controller calls the verifier, and no resource carries an approval record.
+Status: the gate of an AppVersion is built (#342). The pin is Nookku 0.6.0 (#373). [apps.md](apps.md) has the use. The seam test with the pinned release and the kind test are in `main` (#343). The approval source of a paused run is #190, #246 and #344. Of that source, only the offline verifier (#344) is in `main`. No controller calls the verifier, and no resource carries an approval record.
 
 An evidence gate holds a rollout, or a paused run, until the controller gets a valid evidence record. One gate design serves 2 sources:
 
@@ -20,7 +20,7 @@ The format is the gate run of Nookku SPEC.md section 7.15, with the seal of sect
 | `result.json` | The aggregate verdict, the subject, the reasons and the result of each test. | `v: 1` |
 | `seal.json` and its copy | The SHA-256 of each file of the gate folder. | `v: 1` |
 
-The build uses Nookku 0.5.9 (tag `v0.5.9`). This release has section 7.15 and the gate cases in `conformance/gate/`.
+The build uses Nookku 0.6.0 (tag `v0.6.0`). This release has section 7.15 and the gate cases in `conformance/gate/`. Release 0.6.0 does not change a record version. A test in `result.json` can have the optional key `persona`, and the verify program does not read the tests. Nookku 0.6.0 verifies a result of 0.5.9 with no `persona` key.
 
 These facts of the Nookku format control the design:
 
@@ -179,9 +179,9 @@ A paused Agent uses the same gate. Its subject is the run identity and the outpu
 
 The seam test proves that Koodam reads the Nookku format of the pinned release.
 
-- **Pin.** `internal/evidence/nookku.pin` pins Nookku 0.5.9 by its version, by the SHA-256 of its wheel and by the commit of its tag. The seam job and the kind test read this file. To use a new release, change the 3 values together. Nookku has the Apache-2.0 licence.
+- **Pin.** `internal/evidence/nookku.pin` pins Nookku 0.6.0 by its version, by the SHA-256 of its wheel and by the commit of its tag. The seam job and the kind test read this file. To use a new release, change the 3 values together. Nookku has the Apache-2.0 licence.
 - **Report parser.** A Go unit test for the parser of the report: a `pass`, a `fail`, exit code 2, a report that is not JSON, an unknown key, a verdict that does not agree with the exit code, and a wrong subject.
-- **Seam.** The CI job `seam` installs the pinned wheel, and `pip` refuses a wheel with a different SHA-256. It gets `conformance/gate/` of the pinned commit. A case there has the records of each test, and not a sealed gate folder. Thus `internal/evidence/testdata/seam_case.py` makes a sealed gate folder from a case with the functions of the pinned package. The test `TestSeam` then runs the fixed verify program on the folder and gives the report to the Go parser. Cases: a `pass`, a `fail`, a missing test, a `result.json` that changed after the seal, and a subject that does not match. The expected reason of each case is in the test. If the pinned release writes a format version of `result.json` that the parser does not know, the test fails and names the version that the parser knows.
+- **Seam.** The CI job `seam` installs the pinned wheel, and `pip` refuses a wheel with a different SHA-256. It gets `conformance/gate/` of the pinned commit. A case there has the records of each test, and not a sealed gate folder. Thus `internal/evidence/testdata/seam_case.py` makes a sealed gate folder from a case with the functions of the pinned package. The test `TestSeam` then runs the fixed verify program on the folder and gives the report to the Go parser. Cases: a `pass`, a `fail`, a missing test, a persona set with one persona that fails, a second message that passes, a second message that is late, a `result.json` that changed after the seal, and a subject that does not match. Nookku 0.6.0 added the cases `persona_set`, `second_message_pass` and `second_message_late`, so `seam_case.py` writes the key `during` of a script message, the key `second_messages` of `findings.json` and the persona copy in `inputs/`. The expected reason of each case is in the test. If the pinned release writes a format version of `result.json` that the parser does not know, the test fails and names the version that the parser knows.
 - **envtest.** An AppVersion with `spec.gate`: the Job spec (no token, read-only mounts, fixed argv), each state of the table from a fake pod status, and the weight 0 in effect until `Passed`.
 - **kind.** `test/e2e/gate_test.go` builds a gate image from the pinned release, with one gate that passes and one that fails. The test checks the condition, the record, the weights in effect and the weights of the HTTPRoute. The gate image is in `test/e2e/testdata/gate`.
 

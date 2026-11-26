@@ -1,0 +1,25 @@
+{
+  "name": "editable-form",
+  "description": "A form with up to 20 fields of text, long text, numbers, dates and choices. A person edits the values and submits them as one action, with the type of each edit of a typed field.",
+  "data": {
+    "title": {"type": "text", "required": true, "min_length": 1, "size": "title"},
+    "fields": {
+      "type": "list",
+      "required": true,
+      "max_items": 20,
+      "items": {
+        "type": "component",
+        "label": "Field",
+        "names": ["field", "long-text-field", "number-field", "date-field", "choice-field"]
+      }
+    },
+    "submit_label": {"type": "text", "required": true, "min_length": 1, "size": "short"}
+  },
+  "states": ["+disabled", "+confirm", "+pending", "+done", "+error"],
+  "tokens": [
+    "color.surface", "color.text", "color.text-muted", "color.border", "color.accent", "color.on-accent",
+    "color.danger", "color.focus", "space.1", "space.2", "space.3", "space.4", "radius.2", "type.body", "type.caption",
+    "type.weight-strong", "motion.fast"
+  ],
+  "accessibility": {"role": "form", "name": {"field": "title"}, "keyboard": ["Tab", "Shift+Tab", "Enter", "Space"]}
+}

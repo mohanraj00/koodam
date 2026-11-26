@@ -22,6 +22,7 @@ package main
 
 import (
 	"context"
+	"crypto/ed25519"
 	"errors"
 	"flag"
 	"fmt"
@@ -35,6 +36,7 @@ import (
 	"time"
 
 	"github.com/mohanraj00/koodam/internal/appclaim"
+	"github.com/mohanraj00/koodam/internal/tenanttoken"
 )
 
 // routes is a list of "listen=upstream" port pairs.
@@ -64,6 +66,10 @@ func main() {
 	reload := flag.Duration("jwks-reload", time.Minute, "The time between 2 reads of the JWKS file.")
 	limitsFile := flag.String("tenants-file", "", "The file with the limits of the tenants. Empty: a tenant has no limit.")
 	limitsReload := flag.Duration("tenants-reload", 10*time.Second, "The time between 2 reads of the tenant limits file.")
+	tokenKeyFile := flag.String("tenant-token-key-file", "",
+		"The file with the seed of the tenant token key. Empty: the app gets no tenant token.")
+	tokenLife := flag.Duration("tenant-token-life", 10*time.Minute,
+		"The time from the start of a request to the end time of its tenant token.")
 	app := flag.String("app", "", "The App name in each span.")
 	version := flag.String("version", "", "The AppVersion name in each span.")
 	flag.Var(&pairs, "route", "A listen=upstream port pair. Use the flag one time for each port.")
@@ -84,6 +90,19 @@ func main() {
 			os.Exit(2)
 		}
 	}
+	// The check starts only with a valid key. Thus a pod never serves a tenant with no token
+	// because of a bad file. The message does not have the content of the file.
+	var tokenKey ed25519.PrivateKey
+	if *tokenKeyFile != "" {
+		seed, err := os.ReadFile(*tokenKeyFile)
+		if err == nil {
+			tokenKey, err = tenanttoken.PrivateKey(seed)
+		}
+		if err != nil || *tokenLife <= 0 {
+			fmt.Fprintln(os.Stderr, "The tenant token key or the tenant token life is not valid.")
+			os.Exit(2)
+		}
+	}
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGTERM, syscall.SIGINT)
 	defer stop()
 	// A file that is not valid keeps the last valid keys or limits.
@@ -101,7 +120,7 @@ func main() {
 		srv := &http.Server{
 			Addr: ":" + strconv.Itoa(p[0]), ReadHeaderTimeout: 10 * time.Second, MaxHeaderBytes: 64 << 10,
 			Handler: &appclaim.Check{Config: cfg, Keys: keys, Next: appclaim.Upstream(p[1]), Spans: spans,
-				Tenants: tenants, App: *app, Version: *version},
+				Tenants: tenants, TokenKey: tokenKey, TokenLife: *tokenLife, App: *app, Version: *version},
 		}
 		// Bind the ports in order before the first request. Then a bound last port shows that the
 		// check owns all its ports, and the startup probe of the container uses that port.

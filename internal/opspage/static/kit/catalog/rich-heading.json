@@ -1,0 +1,14 @@
+{
+  "name": "rich-heading",
+  "description": "A heading node of rich text. The level is relative to the first heading level that page code sets. A heading cannot skip a level.",
+  "data": {
+    "level": {"type": "integer", "required": true, "minimum": 1, "maximum": 3},
+    "content": {
+      "type": "list",
+      "required": true,
+      "max_items": 50,
+      "items": {"type": "component", "label": "Inline node", "names": ["rich-span", "rich-link"]}
+    }
+  },
+  "tokens": ["color.text", "color.text-muted", "color.border", "space.1", "space.2", "type.body", "type.weight-strong"]
+}

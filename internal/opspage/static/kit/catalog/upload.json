@@ -1,0 +1,23 @@
+{
+  "name": "upload",
+  "description": "A control that takes files from a person, with a file picker or a drop. Page code binds the tool, the accepted types, the size limit and the file count. The control checks each file before a request. The application sends each file with its own transport. Done shows only after the receipt.",
+  "data": {
+    "label": {"type": "text", "required": true, "min_length": 1, "size": "line"},
+    "help": {"type": "text", "label": "Help text", "min_length": 1, "size": "summary"},
+    "accept": {
+      "type": "list",
+      "label": "Accepted types",
+      "max_items": 20,
+      "items": {"type": "text", "label": "Accepted type", "min_length": 2, "size": "line"}
+    },
+    "max_size": {"type": "integer", "label": "Size limit in bytes", "minimum": 1, "maximum": 1000000000},
+    "max_files": {"type": "integer", "label": "File count", "minimum": 1, "maximum": 20}
+  },
+  "states": ["+disabled", "+pending", "+done", "+error", "+refused"],
+  "tokens": [
+    "color.text", "color.text-muted", "color.surface", "color.border", "color.accent", "color.on-accent",
+    "color.danger", "space.1", "space.2", "space.3", "radius.1", "radius.2", "type.body", "type.caption",
+    "type.weight-strong"
+  ],
+  "accessibility": {"role": "group", "name": {"field": "label"}, "keyboard": ["Tab", "Shift+Tab", "Enter", "Space"]}
+}

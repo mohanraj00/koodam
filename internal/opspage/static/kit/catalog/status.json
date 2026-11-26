@@ -1,0 +1,14 @@
+{
+  "name": "status",
+  "description": "One state with short text. The application or service gives the state. Pending has a dashed border, Passed a solid border, Failed a double border and Unknown a dotted border. Each state shows its label as text.",
+  "data": {
+    "state": {"type": "enum", "required": true, "values": ["pending", "passed", "failed", "unknown"]},
+    "text": {"type": "text", "required": true, "min_length": 1, "size": "summary"}
+  },
+  "states": ["+refused"],
+  "tokens": [
+    "color.text", "color.text-muted", "color.border", "space.1", "space.2", "space.3", "radius.2", "type.body",
+    "type.caption", "type.weight-strong"
+  ],
+  "accessibility": {"role": "group", "name": {"field": "text"}}
+}

@@ -35,7 +35,7 @@ const (
 func report(exit string, verdict string, changes ...string) string {
 	fields := map[string]string{"v": "1", "exit": exit, "gate": `"` + testGate + `"`,
 		"subject": `"` + testSubject + `"`, "verdict": `"` + verdict + `"`, "sha256": `"` + testSHA + `"`,
-		"format": "1", "nookku": `"0.5.9"`}
+		"format": "1", "nookku": `"0.6.0"`}
 	for i := 0; i+1 < len(changes); i += 2 {
 		fields[changes[i]] = changes[i+1]
 	}
