@@ -47,6 +47,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/healthz"
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
+	"sigs.k8s.io/controller-runtime/pkg/metrics"
 	"sigs.k8s.io/controller-runtime/pkg/metrics/filters"
 	metricsserver "sigs.k8s.io/controller-runtime/pkg/metrics/server"
 	"sigs.k8s.io/controller-runtime/pkg/webhook"
@@ -55,6 +56,7 @@ import (
 	"github.com/mohanraj00/koodam/internal/appclaim"
 	"github.com/mohanraj00/koodam/internal/controller"
 	"github.com/mohanraj00/koodam/internal/gateway"
+	runmetrics "github.com/mohanraj00/koodam/internal/metrics"
 	// +kubebuilder:scaffold:imports
 )
 
@@ -328,6 +330,9 @@ func main() {
 	flag.StringVar(&claim.CallerClaim, "app-claim-caller-claim", "sub", "The claim with the caller label.")
 	flag.StringVar(&claim.TenantClaim, "app-claim-tenant-claim", "",
 		"The claim with the tenant label. If it is empty, the check reads no tenant label.")
+	flag.BoolVar(&claim.TenantToken, "app-claim-tenant-token", true,
+		"With a tenant claim, the check container signs a tenant token for the tenant of each request. "+
+			"The egress proxy then needs --tenant-tokens.")
 	flag.StringVar(&claim.ZoneClaim, "app-claim-zone-claim", "",
 		"The claim with the zone of the caller. With it, the check refuses a caller of a zone that is not --zone.")
 	flag.BoolVar(&claim.RequireZoneClaim, "app-claim-require-zone", false,
@@ -470,6 +475,10 @@ func main() {
 	})
 	if err != nil {
 		setupLog.Error(err, "Failed to start manager")
+		os.Exit(1)
+	}
+	if err := metrics.Registry.Register(runmetrics.NewCollector(mgr.GetCache())); err != nil {
+		setupLog.Error(err, "Failed to register Agent metrics")
 		os.Exit(1)
 	}
 

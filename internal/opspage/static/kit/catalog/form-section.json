@@ -1,0 +1,15 @@
+{
+  "name": "form-section",
+  "description": "A titled section of a form card with up to 40 lines.",
+  "data": {
+    "title": {"type": "text", "required": true, "min_length": 1, "size": "line"},
+    "lines": {
+      "type": "list",
+      "required": true,
+      "max_items": 40,
+      "items": {"type": "component", "label": "Line", "name": "form-line"}
+    }
+  },
+  "tokens": ["color.text", "color.border", "space.2", "space.3", "type.body", "type.weight-strong"],
+  "accessibility": {"role": "group", "name": {"field": "title"}}
+}

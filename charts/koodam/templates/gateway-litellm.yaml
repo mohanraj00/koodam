@@ -1,7 +1,8 @@
 {{- /*
 koodam.litellmRoutes sorts gateway.bundled.litellm.modelList by the zone of the install. It gives
 back a JSON object. "in" has the items for the route list, without the key "zone". "out" has the
-model names that only items of a different zone have. An item with no zone is in each zone. An
+model names that only items of a different zone have. The model name of the enabled mock route
+is not in "out". An item with no zone is in each zone. An
 install with no zone makes no zone check, so each item is in its route list.
 */ -}}
 {{- define "koodam.litellmRoutes" -}}
@@ -27,6 +28,10 @@ install with no zone makes no zone check, so each item is in its route list.
 {{- else -}}
 {{- $outNames = append $outNames $m.model_name -}}
 {{- end -}}
+{{- end -}}
+{{- /* The mock route is a route of the install, so its model name is not out of the zone. */ -}}
+{{- if .Values.gateway.bundled.mock.enabled -}}
+{{- $inNames = append $inNames .Values.gateway.bundled.mock.modelName -}}
 {{- end -}}
 {{- $out := list -}}
 {{- range $outNames | uniq -}}

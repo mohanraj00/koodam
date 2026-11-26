@@ -135,13 +135,18 @@ spec:
                 description: |-
                   Tenant is the tenant label of the signed claim. You cannot change it after create. The
                   gateway has one customer for each tenant label of the install, so use one TenantQuota for
-                  each tenant label.
+                  each tenant label. The label koodam-no-tenant is reserved for the model calls with no
+                  tenant, and a tenant cannot have it.
                 maxLength: 253
                 minLength: 1
                 type: string
                 x-kubernetes-validations:
                 - message: spec.tenant is immutable.
                   rule: self == oldSelf
+                - message: spec.tenant must not be the reserved label koodam-no-tenant.
+                  rule: self != 'koodam-no-tenant'
+                - message: spec.tenant must be 253 bytes or less in UTF-8.
+                  rule: bytes(self).size() <= 253
             required:
             - tenant
             type: object

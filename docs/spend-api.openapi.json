@@ -1,0 +1,273 @@
+{
+  "openapi": "3.0.3",
+  "info": {
+    "title": "Koodam Spend API",
+    "description": "Each path accepts GET and HEAD. Other methods get status 405 with an Allow header.",
+    "version": "1"
+  },
+  "security": [
+    {
+      "bearerAuth": []
+    }
+  ],
+  "paths": {
+    "/v1/runs": {
+      "parameters": [
+        {"$ref": "#/components/parameters/Limit"},
+        {"$ref": "#/components/parameters/Cursor"}
+      ],
+      "get": {
+        "operationId": "listRuns",
+        "summary": "List Agent runs and their spend and budgets.",
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {"application/json": {"schema": {"$ref": "#/components/schemas/RunPage"}}}
+          },
+          "401": {"$ref": "#/components/responses/Unauthorized"},
+          "403": {"$ref": "#/components/responses/Forbidden"},
+          "400": {"$ref": "#/components/responses/BadRequest"},
+          "410": {"$ref": "#/components/responses/ExpiredCursor"},
+          "502": {"$ref": "#/components/responses/UpstreamFailure"},
+          "504": {"$ref": "#/components/responses/Timeout"}
+        }
+      },
+      "head": {
+        "operationId": "headRuns",
+        "summary": "Check the status of the run list without a body.",
+        "responses": {
+          "200": {"description": "OK"},
+          "401": {"description": "A valid token is necessary."},
+          "403": {"description": "The caller cannot list Agents in a namespace of this server."},
+          "400": {"description": "The query is not valid."},
+          "410": {"description": "The cursor expired."},
+          "502": {"description": "An upstream read failed."},
+          "504": {"description": "The request time limit expired."}
+        }
+      },
+      "post": {"summary": "Not allowed.", "security": [], "responses": {"405": {"$ref": "#/components/responses/MethodNotAllowed"}}},
+      "put": {"summary": "Not allowed.", "security": [], "responses": {"405": {"$ref": "#/components/responses/MethodNotAllowed"}}},
+      "patch": {"summary": "Not allowed.", "security": [], "responses": {"405": {"$ref": "#/components/responses/MethodNotAllowed"}}},
+      "delete": {"summary": "Not allowed.", "security": [], "responses": {"405": {"$ref": "#/components/responses/MethodNotAllowed"}}},
+      "options": {"summary": "Not allowed.", "security": [], "responses": {"405": {"$ref": "#/components/responses/MethodNotAllowed"}}}
+    },
+    "/v1/spend": {
+      "parameters": [
+        {"$ref": "#/components/parameters/Limit"},
+        {"$ref": "#/components/parameters/Cursor"},
+        {"$ref": "#/components/parameters/From"},
+        {"$ref": "#/components/parameters/To"},
+        {"$ref": "#/components/parameters/GroupBy"}
+      ],
+      "get": {
+        "operationId": "listSpend",
+        "summary": "List period spend by Agent label or namespace.",
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {"application/json": {"schema": {"$ref": "#/components/schemas/PeriodPage"}}}
+          },
+          "401": {"$ref": "#/components/responses/Unauthorized"},
+          "403": {"$ref": "#/components/responses/Forbidden"},
+          "400": {"$ref": "#/components/responses/BadRequest"},
+          "410": {"$ref": "#/components/responses/ExpiredCursor"},
+          "502": {"$ref": "#/components/responses/UpstreamFailure"},
+          "504": {"$ref": "#/components/responses/Timeout"}
+        }
+      },
+      "head": {
+        "operationId": "headSpend",
+        "summary": "Check the status of the period spend list without a body.",
+        "responses": {
+          "200": {"description": "OK"},
+          "401": {"description": "A valid token is necessary."},
+          "403": {"description": "The caller cannot list Agents in a namespace of this server."},
+          "400": {"description": "The query is not valid."},
+          "410": {"description": "The cursor expired."},
+          "502": {"description": "An upstream read failed."},
+          "504": {"description": "The request time limit expired."}
+        }
+      },
+      "post": {"summary": "Not allowed.", "security": [], "responses": {"405": {"$ref": "#/components/responses/MethodNotAllowed"}}},
+      "put": {"summary": "Not allowed.", "security": [], "responses": {"405": {"$ref": "#/components/responses/MethodNotAllowed"}}},
+      "patch": {"summary": "Not allowed.", "security": [], "responses": {"405": {"$ref": "#/components/responses/MethodNotAllowed"}}},
+      "delete": {"summary": "Not allowed.", "security": [], "responses": {"405": {"$ref": "#/components/responses/MethodNotAllowed"}}},
+      "options": {"summary": "Not allowed.", "security": [], "responses": {"405": {"$ref": "#/components/responses/MethodNotAllowed"}}}
+    },
+    "/v1/openapi.json": {
+      "get": {
+        "operationId": "getOpenAPI",
+        "summary": "Read the OpenAPI document.",
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Document"}}}
+          },
+          "401": {"$ref": "#/components/responses/Unauthorized"},
+          "403": {"$ref": "#/components/responses/Forbidden"},
+          "502": {"$ref": "#/components/responses/UpstreamFailure"},
+          "504": {"$ref": "#/components/responses/Timeout"}
+        }
+      },
+      "head": {
+        "operationId": "headOpenAPI",
+        "summary": "Check the status of the OpenAPI document without a body.",
+        "responses": {
+          "200": {"description": "OK"},
+          "401": {"description": "A valid token is necessary."},
+          "403": {"description": "The caller cannot list Agents in a namespace of this server."},
+          "502": {"description": "An upstream read failed."},
+          "504": {"description": "The request time limit expired."}
+        }
+      },
+      "post": {"summary": "Not allowed.", "security": [], "responses": {"405": {"$ref": "#/components/responses/MethodNotAllowed"}}},
+      "put": {"summary": "Not allowed.", "security": [], "responses": {"405": {"$ref": "#/components/responses/MethodNotAllowed"}}},
+      "patch": {"summary": "Not allowed.", "security": [], "responses": {"405": {"$ref": "#/components/responses/MethodNotAllowed"}}},
+      "delete": {"summary": "Not allowed.", "security": [], "responses": {"405": {"$ref": "#/components/responses/MethodNotAllowed"}}},
+      "options": {"summary": "Not allowed.", "security": [], "responses": {"405": {"$ref": "#/components/responses/MethodNotAllowed"}}}
+    }
+  },
+  "components": {
+    "securitySchemes": {
+      "bearerAuth": {
+        "type": "http",
+        "scheme": "bearer",
+        "description": "Use a signed claim, a configured local token or, with the viewer review, a Kubernetes token."
+      }
+    },
+    "parameters": {
+      "Limit": {
+        "name": "limit",
+        "in": "query",
+        "required": false,
+        "description": "Maximum number of items in the page.",
+        "schema": {"type": "integer", "minimum": 1, "maximum": 100, "default": 100}
+      },
+      "Cursor": {
+        "name": "cursor",
+        "in": "query",
+        "required": false,
+        "description": "The nextCursor value from an earlier page of the same query.",
+        "schema": {"type": "string"}
+      },
+      "From": {
+        "name": "from",
+        "in": "query",
+        "required": true,
+        "description": "First UTC date of the period.",
+        "schema": {"type": "string", "format": "date"}
+      },
+      "To": {
+        "name": "to",
+        "in": "query",
+        "required": true,
+        "description": "Last UTC date of the period.",
+        "schema": {"type": "string", "format": "date"}
+      },
+      "GroupBy": {
+        "name": "groupBy",
+        "in": "query",
+        "required": true,
+        "description": "Group by label:<name>, with a Kubernetes label name, or by namespace.",
+        "schema": {"type": "string", "example": "label:koodam.dev/cost-group"}
+      }
+    },
+    "responses": {
+      "MethodNotAllowed": {
+        "description": "Use GET or HEAD.",
+        "headers": {"Allow": {"description": "The permitted methods.", "schema": {"type": "string", "example": "GET, HEAD"}}},
+        "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Problem"}}}
+      },
+      "Unauthorized": {
+        "description": "A valid token is necessary.",
+        "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Problem"}}}
+      },
+      "Forbidden": {
+        "description": "The caller cannot list Agents in a namespace of this server.",
+        "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Problem"}}}
+      },
+      "BadRequest": {
+        "description": "The query is not valid.",
+        "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Problem"}}}
+      },
+      "ExpiredCursor": {
+        "description": "The cursor expired. Start again with no cursor.",
+        "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Problem"}}}
+      },
+      "UpstreamFailure": {
+        "description": "An upstream read failed.",
+        "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Problem"}}}
+      },
+      "Timeout": {
+        "description": "The request time limit expired.",
+        "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Problem"}}}
+      }
+    },
+    "schemas": {
+      "RunPage": {
+        "type": "object",
+        "required": ["items"],
+        "properties": {
+          "items": {"type": "array", "items": {"$ref": "#/components/schemas/Run"}},
+          "nextCursor": {"type": "string", "description": "Use this opaque cursor for the next page."}
+        }
+      },
+      "Run": {
+        "type": "object",
+        "required": ["id", "name", "namespace", "createdAt", "budget"],
+        "properties": {
+          "id": {"type": "string"},
+          "name": {"type": "string"},
+          "namespace": {"type": "string"},
+          "createdAt": {"type": "string", "format": "date-time"},
+          "phase": {"type": "string", "description": "Pending, Running, Succeeded or Failed. Absent before the first status."},
+          "models": {"type": "array", "items": {"type": "string"}, "description": "The gateway models of the run."},
+          "startedAt": {"type": "string", "format": "date-time", "description": "The start time of the run Job."},
+          "completedAt": {"type": "string", "format": "date-time", "description": "The end time of the run Job."},
+          "spend": {"type": "number", "format": "double", "description": "Spend in USD."},
+          "budget": {"type": "number", "format": "double", "description": "Declared budget in USD."},
+          "remainingBudget": {
+            "type": "number",
+            "format": "double",
+            "description": "Budget minus spend in USD, with a minimum of zero."
+          }
+        }
+      },
+      "PeriodPage": {
+        "type": "object",
+        "required": ["from", "to", "groupBy", "items"],
+        "properties": {
+          "from": {"type": "string", "format": "date"},
+          "to": {"type": "string", "format": "date"},
+          "groupBy": {"type": "string"},
+          "items": {"type": "array", "items": {"$ref": "#/components/schemas/Group"}},
+          "nextCursor": {"type": "string", "description": "Use this opaque cursor for the next page."}
+        }
+      },
+      "Group": {
+        "type": "object",
+        "required": ["labelValue", "spend"],
+        "properties": {
+          "labelValue": {"type": "string", "description": "The label value, or the namespace for groupBy=namespace."},
+          "spend": {"type": "number", "format": "double", "description": "Spend in USD."},
+          "budget": {
+            "type": "number",
+            "format": "double",
+            "description": "Absent when no period budget is declared."
+          },
+          "remainingBudget": {
+            "type": "number",
+            "format": "double",
+            "description": "Absent when no period budget is declared."
+          }
+        }
+      },
+      "Problem": {
+        "type": "object",
+        "required": ["error"],
+        "properties": {"error": {"type": "string"}}
+      },
+      "Document": {"type": "object"}
+    }
+  }
+}

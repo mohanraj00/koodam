@@ -1,0 +1,25 @@
+# This rule gives read access to the SpendBudget of a namespace. Bind it to the users of the
+# namespace with a RoleBinding. Koodam has no editor role for SpendBudget: only an admin can
+# change the limit. Do not add an aggregate-to-edit or aggregate-to-admin label to this role.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  labels:
+    app.kubernetes.io/name: koodam
+    app.kubernetes.io/managed-by: kustomize
+  name: spendbudget-viewer-role
+rules:
+- apiGroups:
+  - core.koodam.dev
+  resources:
+  - spendbudgets
+  verbs:
+  - get
+  - list
+  - watch
+- apiGroups:
+  - core.koodam.dev
+  resources:
+  - spendbudgets/status
+  verbs:
+  - get

@@ -1,0 +1,9 @@
+{
+  "name": "rich-span",
+  "description": "An inline text node of rich text, with one optional mark: emphasis, strong or code.",
+  "data": {
+    "text": {"type": "text", "required": true, "min_length": 1, "size": "long"},
+    "mark": {"type": "enum", "values": ["emphasis", "strong", "code"]}
+  },
+  "tokens": ["color.text", "color.border", "radius.1", "type.body", "type.weight-strong"]
+}
