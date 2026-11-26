@@ -162,7 +162,8 @@ func newExample(now time.Time) (*example, error) {
 	}
 	gw := httptest.NewServer(fakeGateway(spend, values))
 	api, err := spendapi.New(spendapi.Config{
-		Kube: agentReader{items: agents, budgets: []corev1alpha1.SpendBudget{exampleBudget(now)}}, Namespaces: namespaces, GatewayURL: gw.URL, MasterKey: masterKey,
+		Kube:       agentReader{items: agents, budgets: []corev1alpha1.SpendBudget{exampleBudget(now)}},
+		Namespaces: namespaces, GatewayURL: gw.URL, MasterKey: masterKey,
 		Timeout: 5 * time.Second, Viewers: fakeViewers(),
 	})
 	if err != nil {
