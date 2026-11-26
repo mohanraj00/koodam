@@ -69,6 +69,7 @@ A Workspace is a pod with a home on a PVC. I connect to it over SSH and run the 
 - [Nookku preset](docs/nookku-preset.md): the `nookku` plugin field and the Nookku test folder.
 - [Evidence gate](docs/evidence-gate.md): the gate of an AppVersion on a sealed Nookku result, and the limits of a signed approval record.
 - [Apps](docs/apps.md): the `App` and `AppVersion` resources, the traffic split and the gate.
+- [Spend budgets](docs/spend-budgets.md): the `SpendBudget` resource, with a spend limit for each period for the Agent runs of a namespace.
 - [Tenants](docs/tenants.md): the `TenantQuota` resource, with a quota and a rate limit for each tenant of an App.
 - [App ingress spans](docs/app-ingress-spans.md): the contract of the spans at the App ingress.
 - [Release checklist](docs/release-checklist.md): the steps before a tag.

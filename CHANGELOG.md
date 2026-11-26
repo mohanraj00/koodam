@@ -10,6 +10,7 @@ This file records the changes for each Koodam version. The newest version is fir
 - Export [Prometheus metrics](docs/metrics.md) for Agent counts, run time, spend and budgets
   ([#413](https://github.com/mohanraj00/koodam/pull/413)).
 - Serve a read-only operations page from `spend-api` at `/`. A viewer mode checks each token with a TokenReview and shows only the namespaces where the viewer can list Agents. The page uses the pinned mugham kit, and [examples/operations-page](examples/operations-page/README.md) runs it with synthetic data ([#13](https://github.com/mohanraj00/koodam/issues/13)).
+- Add the namespaced `SpendBudget` type with its CRD rules. It gives the Agent runs of a namespace a spend limit for each UTC day or month. The name must be `default`. The chart installs the CRD and a read-only viewer role, and it has no write role for users. No controller reads the type in this change. [docs/spend-budgets.md](docs/spend-budgets.md) has the API ([#420](https://github.com/mohanraj00/koodam/issues/420)).
 
 ### Apps
 

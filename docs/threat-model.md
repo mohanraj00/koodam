@@ -123,6 +123,14 @@ A tenant of an App can use more than its quota. A call or a pod can go out of it
   - [#389](https://github.com/mohanraj00/koodam/pull/389): `internal/controller/zone_policy_test.go`, "refuses a node selector for a different zone or region".
 - **Residual risk.** The tenant label comes from the claim, so the issuer must be trusted. An app can use the tenant token of a request for a different model call until the token ends. A principal that can create pods or read Secrets in the namespace of an App can read the seed of the tenant token and sign a token for each tenant label. The proxy trusts the pod labels for the identity of a pod, so a principal that can change pod labels can change that identity. A gateway of the mode `existing` at a public address, or an `extraEgress` rule that opens the gateway, lets a pod call the gateway around the proxy. The key check of the proxy is defense in depth, not a full bind of the gateway key to the pod: an App pod can send its key to a different pod, and that pod can use the key in a call around the proxy, or in a key location that a different gateway version reads. An app can also make the model call itself for a different pod, with a token of a tenant that sent a request in the life of the token. The zone controls apply only to the namespaces of the install. [tenants.md](tenants.md) gives the typed reasons.
 
+## T11. A namespace user raises the period budget of the namespace
+
+A user of a namespace can try to change the `SpendBudget` of the namespace, so that more runs start in the period.
+
+- **Control.** The chart gives no write role for `spendbudgets`, except the role of the manager. The viewer role has only `get`, `list` and `watch`, and no role of the chart has an aggregate label, so the Kubernetes roles `edit` and `admin` get no rule. The API accepts only the name `default`, so a user cannot add a second budget for the namespace.
+- **Test.** `test/chart/spendbudget_test.go`, `TestSpendBudgetRolesOnlyRead`. `internal/controller/spendbudget_crd_test.go`: "refuses an object that is not valid".
+- **Residual risk.** A cluster admin can bind a write role to a namespace user. A role with a wildcard resource, outside the chart, also gives write access. No controller applies the budget in this change ([#128](https://github.com/mohanraj00/koodam/issues/128)).
+
 ## Out of scope
 
 - The security of LiteLLM, PostgreSQL, Kubernetes and the model providers.
