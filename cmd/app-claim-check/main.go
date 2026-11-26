@@ -22,6 +22,7 @@ package main
 
 import (
 	"context"
+	"crypto/ed25519"
 	"errors"
 	"flag"
 	"fmt"
@@ -35,6 +36,7 @@ import (
 	"time"
 
 	"github.com/mohanraj00/koodam/internal/appclaim"
+	"github.com/mohanraj00/koodam/internal/tenanttoken"
 )
 
 // routes is a list of "listen=upstream" port pairs.
@@ -62,6 +64,12 @@ func main() {
 	flag.StringVar(&cfg.TenantClaim, "tenant-claim", "", "The claim with the tenant label. Empty: no tenant label.")
 	jwks := flag.String("jwks-file", "", "The file with the JWKS of the issuer.")
 	reload := flag.Duration("jwks-reload", time.Minute, "The time between 2 reads of the JWKS file.")
+	limitsFile := flag.String("tenants-file", "", "The file with the limits of the tenants. Empty: a tenant has no limit.")
+	limitsReload := flag.Duration("tenants-reload", 10*time.Second, "The time between 2 reads of the tenant limits file.")
+	tokenKeyFile := flag.String("tenant-token-key-file", "",
+		"The file with the seed of the tenant token key. Empty: the app gets no tenant token.")
+	tokenLife := flag.Duration("tenant-token-life", 10*time.Minute,
+		"The time from the start of a request to the end time of its tenant token.")
 	app := flag.String("app", "", "The App name in each span.")
 	version := flag.String("version", "", "The AppVersion name in each span.")
 	flag.Var(&pairs, "route", "A listen=upstream port pair. Use the flag one time for each port.")
@@ -72,23 +80,37 @@ func main() {
 		fmt.Fprintln(os.Stderr, "The configuration is not valid:", err)
 		os.Exit(2)
 	}
+	// The check starts only with valid limits. Thus a pod never serves a tenant with no limit
+	// because of a bad file.
+	var tenants *appclaim.Tenants
+	if *limitsFile != "" {
+		tenants = &appclaim.Tenants{}
+		if err := tenants.Load(*limitsFile); err != nil || *limitsReload <= 0 {
+			fmt.Fprintln(os.Stderr, "The tenant limits are not valid:", err)
+			os.Exit(2)
+		}
+	}
+	// The check starts only with a valid key. Thus a pod never serves a tenant with no token
+	// because of a bad file. The message does not have the content of the file.
+	var tokenKey ed25519.PrivateKey
+	if *tokenKeyFile != "" {
+		seed, err := os.ReadFile(*tokenKeyFile)
+		if err == nil {
+			tokenKey, err = tenanttoken.PrivateKey(seed)
+		}
+		if err != nil || *tokenLife <= 0 {
+			fmt.Fprintln(os.Stderr, "The tenant token key or the tenant token life is not valid.")
+			os.Exit(2)
+		}
+	}
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGTERM, syscall.SIGINT)
 	defer stop()
-	go func() {
-		tick := time.NewTicker(*reload)
-		defer tick.Stop()
-		for {
-			select {
-			case <-ctx.Done():
-				return
-			case <-tick.C:
-				// A file that is not valid keeps the last valid keys.
-				if err := keys.Load(*jwks); err != nil {
-					fmt.Fprintln(os.Stderr, "The JWKS reload failed:", err)
-				}
-			}
-		}
-	}()
+	// A file that is not valid keeps the last valid keys or limits.
+	go every(ctx, *reload, "The JWKS reload failed:", func() error { return keys.Load(*jwks) })
+	if tenants != nil {
+		go every(ctx, *limitsReload, "The reload of the tenant limits failed:",
+			func() error { return tenants.Load(*limitsFile) })
+	}
 
 	spans := appclaim.NewSpanWriter(os.Stdout)
 	failed := make(chan error, len(pairs))
@@ -98,7 +120,7 @@ func main() {
 		srv := &http.Server{
 			Addr: ":" + strconv.Itoa(p[0]), ReadHeaderTimeout: 10 * time.Second, MaxHeaderBytes: 64 << 10,
 			Handler: &appclaim.Check{Config: cfg, Keys: keys, Next: appclaim.Upstream(p[1]), Spans: spans,
-				App: *app, Version: *version},
+				Tenants: tenants, TokenKey: tokenKey, TokenLife: *tokenLife, App: *app, Version: *version},
 		}
 		// Bind the ports in order before the first request. Then a bound last port shows that the
 		// check owns all its ports, and the startup probe of the container uses that port.
@@ -123,5 +145,21 @@ func main() {
 	defer cancel()
 	for _, srv := range servers {
 		_ = srv.Shutdown(end)
+	}
+}
+
+// every calls load after each period until ctx ends. It writes an error of load to stderr.
+func every(ctx context.Context, period time.Duration, message string, load func() error) {
+	tick := time.NewTicker(period)
+	defer tick.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-tick.C:
+			if err := load(); err != nil {
+				fmt.Fprintln(os.Stderr, message, err)
+			}
+		}
 	}
 }

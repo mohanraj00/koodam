@@ -17,10 +17,12 @@ limitations under the License.
 package appclaim
 
 import (
+	"crypto/ed25519"
 	"encoding/json"
 	"errors"
 	"io"
 	"log"
+	"math"
 	"net"
 	"net/http"
 	"net/http/httputil"
@@ -31,6 +33,8 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"github.com/mohanraj00/koodam/internal/tenanttoken"
 )
 
 const (
@@ -38,6 +42,8 @@ const (
 	CallerHeader = "Koodam-Caller"
 	// TenantHeader gives the tenant label of the claim to the app container.
 	TenantHeader = "Koodam-Tenant"
+	// ReasonHeader gives the typed reason of a tenant refusal to the caller.
+	ReasonHeader = "Koodam-Reason"
 	// outcomeOK is the outcome of a request with a valid claim.
 	outcomeOK = "ok"
 	// KindIngress is the kind of each span of the check.
@@ -106,6 +112,13 @@ func (k *Keys) Load(path string) error {
 type Check struct {
 	Config Config
 	Keys   *Keys
+	// Tenants has the limits of the tenants. If it is nil, a tenant has no limit.
+	Tenants *Tenants
+	// TokenKey signs the tenant token of each request with a tenant label. If it is nil, the app
+	// gets no token.
+	TokenKey ed25519.PrivateKey
+	// TokenLife is the time from the start of a request to the end time of its tenant token.
+	TokenLife time.Duration
 	// Next gets the request after the check. The request has no Authorization header.
 	Next http.Handler
 	// Spans gets one span for each request.
@@ -149,6 +162,7 @@ func (c *Check) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	r.Header.Del("Authorization")
 	r.Header.Del(CallerHeader)
 	r.Header.Del(TenantHeader)
+	r.Header.Del(tenanttoken.Header)
 	if err != nil {
 		span.Outcome = string(RefusedSyntax)
 		if refusal, ok := errors.AsType[Refusal](err); ok {
@@ -157,15 +171,47 @@ func (c *Check) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		span.Status = http.StatusUnauthorized
 		w.Header().Set("WWW-Authenticate", "Bearer")
 		http.Error(w, "A valid signed claim is necessary.", http.StatusUnauthorized)
+		return
+	}
+	// The claim is valid, so a tenant refusal has the labels of the claim in its span.
+	span.Caller, span.Tenant = id.Caller, id.Tenant
+	if reason, wait := c.tenantRefusal(id.Tenant, start); reason != "" {
+		span.Outcome, span.Status = reason, http.StatusTooManyRequests
+		if reason == ReasonUnknownTenant || reason == ReasonReservedTenant {
+			span.Status = http.StatusForbidden
+		}
+		if wait > 0 {
+			w.Header().Set("Retry-After", strconv.Itoa(int(math.Ceil(wait.Seconds()))))
+		}
+		w.Header().Set(ReasonHeader, reason)
+		http.Error(w, reason, span.Status)
 	} else {
-		span.Outcome, span.Caller, span.Tenant = outcomeOK, id.Caller, id.Tenant
+		span.Outcome = outcomeOK
 		r.Header.Set(CallerHeader, id.Caller)
 		if id.Tenant != "" {
 			r.Header.Set(TenantHeader, id.Tenant)
+			// The egress proxy accepts a model call of the pod only with this token. Thus the
+			// app cannot make a model call for a tenant that sent no request to it.
+			if c.TokenKey != nil {
+				r.Header.Set(tenanttoken.Header, tenanttoken.Sign(c.TokenKey, id.Tenant, start.Add(c.TokenLife)))
+			}
 		}
 		rec = &statusWriter{ResponseWriter: w, status: http.StatusOK}
 		c.Next.ServeHTTP(rec, r)
 	}
+}
+
+// tenantRefusal gives back the typed reason if the limits refuse the request of the tenant. A
+// request with no tenant label has no tenant limit. It always refuses the reserved label, also
+// with no limits: a request of an App must not share the customer of the calls with no tenant.
+func (c *Check) tenantRefusal(tenant string, now time.Time) (string, time.Duration) {
+	if tenant == tenanttoken.NoTenant {
+		return ReasonReservedTenant, 0
+	}
+	if c.Tenants == nil || tenant == "" {
+		return "", 0
+	}
+	return c.Tenants.Allow(tenant, now)
 }
 
 // Upstream gives back a handler that sends each request to a port of the loopback address. The
@@ -179,9 +225,10 @@ func Upstream(port int) http.Handler {
 			pr.Out.Host = pr.In.Host
 			pr.Out.Header["X-Forwarded-For"] = pr.In.Header["X-Forwarded-For"]
 			pr.SetXForwarded()
-			// A Connection header of the caller can name the labels of the claim, and the proxy then
-			// removes them. Set them again from the request that Check made.
-			for _, h := range []string{CallerHeader, TenantHeader} {
+			// A Connection header of the caller can name the labels of the claim or the tenant
+			// token, and the proxy then removes them. Set them again from the request that Check
+			// made.
+			for _, h := range []string{CallerHeader, TenantHeader, tenanttoken.Header} {
 				if v := pr.In.Header.Get(h); v != "" {
 					pr.Out.Header.Set(h, v)
 				}
