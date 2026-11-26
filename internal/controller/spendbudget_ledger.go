@@ -164,24 +164,35 @@ func (r *AgentReconciler) roll(ctx context.Context, b *corev1alpha1.SpendBudget,
 	if !rebuild {
 		return nil
 	}
+	// The rebuild reads the Agents from the API server. The cache can miss the keyHash of a run that
+	// the controller admitted a moment ago, and the rebuild would then not reserve its budget.
 	list := &corev1alpha1.AgentList{}
-	if err := r.List(ctx, list, client.InNamespace(b.Namespace)); err != nil {
+	if err := r.APIReader.List(ctx, list, client.InNamespace(b.Namespace)); err != nil {
 		return err
 	}
-	slices.SortFunc(list.Items, olderFirst)
+	rebuildLedger(s, list.Items, start, end, maxReservations)
+	return nil
+}
+
+// rebuildLedger counts the runs that have a key in the ledger of the period from start to end. The
+// ledger has a reservation for at most maxRuns active runs. The budget of each other active run is
+// in reserved too, with no reservation, so the limit check counts it until the period ends.
+func rebuildLedger(s *corev1alpha1.SpendBudgetStatus, runs []corev1alpha1.Agent, start, end time.Time,
+	maxRuns int) {
+	slices.SortFunc(runs, olderFirst)
 	var spend, reserved resource.Quantity
-	for _, o := range list.Items {
+	for _, o := range runs {
 		if o.Status.KeyHash == "" {
 			continue
 		}
 		admitted := admittedBudget(&o)
 		// An ended run keeps its reservation until the revoke blocked its key and read its usage.
 		if !agentEnded(&o) || o.Status.RevokedAt == nil {
-			if len(s.Reservations) < maxReservations {
+			if len(s.Reservations) < maxRuns {
 				s.Reservations = append(s.Reservations, corev1alpha1.SpendReservation{
 					RunID: string(o.UID), Agent: o.Name, Budget: decimal(admitted)})
-				reserved.Add(admitted)
 			}
+			reserved.Add(admitted)
 			continue
 		}
 		began := o.CreationTimestamp.Time
@@ -197,7 +208,6 @@ func (r *AgentReconciler) roll(ctx context.Context, b *corev1alpha1.SpendBudget,
 		}
 	}
 	s.Spend, s.Reserved = decimal(spend), decimal(reserved)
-	return nil
 }
 
 // writeLedger writes the status if it changed. A write that does not change the ledger would start

@@ -19,6 +19,7 @@ package controller
 import (
 	"context"
 	"errors"
+	"fmt"
 	"testing"
 	"time"
 
@@ -72,6 +73,39 @@ func TestBudgetPeriod(t *testing.T) {
 			t.Errorf("decimal(%s) = %s, want %s", in, got, want)
 		}
 	}
+}
+
+// A rebuild past the cap of reservations keeps the budget of each active run in reserved.
+func TestRebuildLedgerCap(t *testing.T) {
+	start, end := budgetPeriod(corev1alpha1.SpendPeriodDay, time.Date(2026, time.November, 25, 10, 0, 0, 0, time.UTC))
+	budgets := []string{"1", "2", "3"}
+	runs := make([]corev1alpha1.Agent, 0, len(budgets))
+	for i, b := range budgets {
+		a := corev1alpha1.Agent{}
+		a.Name, a.UID = fmt.Sprintf("run-%d", i), types.UID(fmt.Sprintf("uid-%d", i))
+		a.Status.KeyHash, a.Status.Budget = "hash", b
+		runs = append(runs, a)
+	}
+	s := &corev1alpha1.SpendBudgetStatus{}
+	rebuildLedger(s, runs, start, end, 2)
+	if len(s.Reservations) != 2 || s.Reserved != "6" {
+		t.Errorf("reservations %d, reserved %s; want 2 and 6", len(s.Reservations), s.Reserved)
+	}
+}
+
+// staleAgents is a cache that has not seen the keys of the Agents.
+type staleAgents struct{ client.Client }
+
+func (c staleAgents) List(ctx context.Context, list client.ObjectList, opts ...client.ListOption) error {
+	if err := c.Client.List(ctx, list, opts...); err != nil {
+		return err
+	}
+	if l, ok := list.(*corev1alpha1.AgentList); ok {
+		for i := range l.Items {
+			l.Items[i].Status.KeyHash = ""
+		}
+	}
+	return nil
 }
 
 // The ledger of a SpendBudget. The tests call Reconcile with a fake gateway and a fake clock.
@@ -363,6 +397,18 @@ var _ = Describe("SpendBudget ledger", func() {
 		b := budget()
 		Expect(b.Status.Reserved).To(Equal("0"))
 		Expect(b.Status.Spend).To(Equal("0.25"))
+	})
+
+	It("rebuilds a lost ledger from the API server, not from the cache", func() {
+		newRun(ledgerActive, "6")
+		reconcileRun(ledgerActive)
+		b := budget()
+		b.Status = corev1alpha1.SpendBudgetStatus{}
+		Expect(k8sClient.Status().Update(ctx, b)).To(Succeed())
+		r.Client = staleAgents{k8sClient}
+		newRun(ledgerLater, "6")
+		expectWaits(ledgerLater, reconcileRun(ledgerLater))
+		Expect(budget().Status.Reserved).To(Equal("6"))
 	})
 
 	It("rebuilds a lost ledger from the active runs", func() {
