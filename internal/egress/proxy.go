@@ -20,6 +20,7 @@ package egress
 
 import (
 	"context"
+	"crypto/ed25519"
 	"crypto/tls"
 	"encoding/json"
 	"errors"
@@ -35,6 +36,8 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"github.com/mohanraj00/koodam/internal/tenanttoken"
 )
 
 // The kinds of a span.
@@ -65,6 +68,34 @@ const (
 	reasonIdle     = "idle"
 	reasonUpstream = "upstream"
 )
+
+// The typed reasons of a model call that the proxy refuses because of the tenant token. They
+// are the reason of the span, and the header ReasonHeader of the answer has them.
+const (
+	// ReasonTenantTokenNoKey tells that the proxy has no token key for the AppVersion of the pod.
+	ReasonTenantTokenNoKey = "TenantTokenNoKey"
+	// ReasonTenantTokenMissing tells that the model call of an App pod has no tenant token.
+	ReasonTenantTokenMissing = "TenantTokenMissing"
+	// ReasonTenantTokenInvalid tells that the token is not a token of the pod.
+	ReasonTenantTokenInvalid = "TenantTokenInvalid"
+	// ReasonTenantTokenExpired tells that the token is at its end time or after it.
+	ReasonTenantTokenExpired = "TenantTokenExpired"
+	// ReasonTenantLabelNotASCII tells that the tenant label cannot be the value of a header.
+	ReasonTenantLabelNotASCII = "TenantLabelNotASCII"
+)
+
+// ReasonHeader gives the typed reason of a tenant token refusal, or of an App key refusal, to
+// the caller.
+const ReasonHeader = "Koodam-Reason"
+
+// NoTenantCustomer is the customer of a model call of a pod that is not an App pod, when the
+// proxy examines tenant tokens. It is a reserved label: no tenant can have it. Thus the code in
+// an Agent pod or a Workspace pod cannot make the gateway count its call for a tenant.
+const NoTenantCustomer = tenanttoken.NoTenant
+
+// customerHeaders are the headers from which the gateway reads the customer of a model call.
+// The gateway reads them before each field of the body. The proxy sets the first one.
+var customerHeaders = []string{"X-Litellm-Customer-Id", "X-Litellm-End-User-Id"}
 
 // SpanVersion is the version of the span contract in docs/egress-spans.md. An added field keeps
 // the version. A removed field, a renamed field or a new meaning of a field changes it.
@@ -157,6 +188,16 @@ type Proxy struct {
 	// Identify fills the identity fields of the span before the call. If it returns an error,
 	// the proxy refuses the call.
 	Identify func(r *http.Request, sp *Span) error
+	// TenantKey gives the public key of the tenant token of an AppVersion. If it is not nil, the
+	// proxy accepts a model call of an App pod only with a valid tenant token, and each model call
+	// of a different pod gets the customer NoTenantCustomer. The key must come from a source that
+	// the pod and the users of its namespace cannot write. If it is nil, the proxy examines no
+	// tenant token.
+	TenantKey func(namespace, appVersion string) (ed25519.PublicKey, bool)
+	// AppKeyOwner gives the AppVersion that has the gateway key with this hash. If it is not
+	// nil, the proxy refuses a model call with the key of an AppVersion from a pod that is not a
+	// pod of that AppVersion. The hash must come from the same source as the key of TenantKey.
+	AppKeyOwner func(keyHash string) (namespace, appVersion string, ok bool)
 
 	once      sync.Once
 	direct    http.RoundTripper
@@ -312,13 +353,89 @@ func (p *Proxy) llm(w http.ResponseWriter, r *http.Request, sp *Span) {
 	if sp.Port == "" {
 		sp.Port = map[string]string{schemeHTTP: "80", "https": "443"}[p.Gateway.Scheme]
 	}
+	if reason := p.appKeyReason(r, sp); reason != "" {
+		w.Header().Set(ReasonHeader, reason)
+		p.deny(w, sp, reason)
+		return
+	}
+	tenant, ok := p.tenantOf(w, r, sp)
+	if !ok {
+		return
+	}
 	// The gateway key header passes through. The span has no header.
 	p.reverse(w, r, sp, p.toGateway, func(pr *httputil.ProxyRequest) {
 		root := strings.TrimSuffix(LLMPrefix, "/")
 		pr.Out.URL.Path = strings.TrimPrefix(pr.In.URL.Path, root)
 		pr.Out.URL.RawPath = strings.TrimPrefix(pr.In.URL.RawPath, root)
 		pr.SetURL(p.Gateway)
+		// The gateway never gets the token.
+		pr.Out.Header.Del(tenanttoken.Header)
+		// A Connection header of the pod can name the customer header, and ReverseProxy removes
+		// such a header before this function. Thus the header of the proxy is set here, after
+		// that removal, and the pod cannot remove it.
+		if tenant != "" {
+			for _, h := range customerHeaders {
+				pr.Out.Header.Del(h)
+			}
+			pr.Out.Header.Set(customerHeaders[0], tenant)
+		}
 	})
+}
+
+// tenantOf gives back the tenant label that the gateway call of an App pod must have. It
+// refuses a call with no valid token of the AppVersion of the pod, and ok is then false. The
+// caller sets the customer header of the gateway call to the label, and it removes the customer
+// headers that the pod sent. The gateway reads this header before each field of the body. Thus
+// the gateway counts the call for the tenant of the token, and not for a label that the code in
+// the pod selects. A pod that is not an App pod has no tenant, and its label is the reserved
+// label NoTenantCustomer. If the proxy examines no tenant token, the label is empty, and the
+// call passes with no change.
+func (p *Proxy) tenantOf(w http.ResponseWriter, r *http.Request, sp *Span) (tenant string, ok bool) {
+	if p.TenantKey == nil {
+		return "", true
+	}
+	if sp.App == "" {
+		return NoTenantCustomer, true
+	}
+	token := r.Header.Get(tenanttoken.Header)
+	reason := ""
+	if key, found := p.TenantKey(sp.Namespace, sp.AppVersion); !found {
+		reason = ReasonTenantTokenNoKey
+	} else if token == "" {
+		reason = ReasonTenantTokenMissing
+	} else {
+		var err error
+		tenant, err = tenanttoken.Verify(key, token, time.Now())
+		switch {
+		case errors.Is(err, tenanttoken.ErrExpired):
+			reason = ReasonTenantTokenExpired
+		case err != nil:
+			reason = ReasonTenantTokenInvalid
+		case !headerText(tenant):
+			reason = ReasonTenantLabelNotASCII
+		case tenant == NoTenantCustomer:
+			// No claim can give the reserved label to a tenant.
+			reason = ReasonTenantTokenInvalid
+		}
+	}
+	if reason != "" {
+		w.Header().Set(ReasonHeader, reason)
+		p.deny(w, sp, reason)
+		return "", false
+	}
+	return tenant, true
+}
+
+// headerText is true for a label that a header can hold with no change: visible ASCII
+// characters, with spaces only between them. The gateway removes a space at the start and at
+// the end of the value, and a different character can change on the way to the gateway.
+func headerText(s string) bool {
+	for i := 0; i < len(s); i++ {
+		if s[i] < ' ' || s[i] > '~' {
+			return false
+		}
+	}
+	return s != "" && s == strings.TrimSpace(s)
 }
 
 func (p *Proxy) reverse(w http.ResponseWriter, r *http.Request, sp *Span, rt http.RoundTripper,

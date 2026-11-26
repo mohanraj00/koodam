@@ -1,0 +1,15 @@
+/* The page style of the operations page. It uses only the kit tokens. */
+
+.controls { display: flex; flex-wrap: wrap; align-items: end; gap: var(--mu-space-3); }
+.field { display: flex; flex-direction: column; gap: var(--mu-space-1); }
+.note { color: var(--mu-color-text-muted); font: var(--mu-type-caption); }
+
+input {
+  min-height: 2.75rem; padding: 0 var(--mu-space-3);
+  background: var(--mu-color-surface); border: 1px solid var(--mu-color-border); border-radius: var(--mu-radius-2);
+}
+input#token { min-width: min(100%, 28rem); }
+
+@media (forced-colors: active) {
+  input { background: Field; color: FieldText; border-color: FieldText; }
+}

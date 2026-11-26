@@ -9113,6 +9113,12 @@ spec:
           status:
             description: status defines the observed state of Agent
             properties:
+              budget:
+                description: |-
+                  Budget is the run budget that the key got, as a decimal number. The controller writes it with
+                  keyHash. A later change of spec.budget does not change the key, so the period budget ledger
+                  uses this value.
+                type: string
               completedAt:
                 description: |-
                   CompletedAt is the end time of the run Job. For a failed Job, it is the time of the Failed

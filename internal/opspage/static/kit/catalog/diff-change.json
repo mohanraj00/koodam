@@ -1,0 +1,15 @@
+{
+  "name": "diff-change",
+  "description": "One change of a diff: a label, the kind of the change, and the value before and after.",
+  "ai_content": false,
+  "data": {
+    "label": {"type": "text", "required": true, "min_length": 1, "size": "title"},
+    "change": {"type": "enum", "required": true, "values": ["added", "removed", "changed", "unchanged"]},
+    "before": {"type": "text", "size": "long"},
+    "after": {"type": "text", "size": "long"}
+  },
+  "tokens": [
+    "color.text", "color.text-muted", "color.accent", "color.danger", "space.1", "type.body", "type.caption",
+    "type.weight-strong"
+  ]
+}

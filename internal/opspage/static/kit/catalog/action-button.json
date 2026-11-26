@@ -1,0 +1,15 @@
+{
+  "name": "action-button",
+  "description": "A button for one action. The application binds the tool. The button can ask a person to confirm. It shows done only after the receipt comes back.",
+  "ai_content": false,
+  "data": {
+    "label": {"type": "text", "required": true, "min_length": 1, "size": "short"},
+    "description": {"type": "text", "size": "summary"}
+  },
+  "states": ["+disabled", "+confirm", "+pending", "+done", "+error"],
+  "tokens": [
+    "color.accent", "color.on-accent", "color.text-muted", "color.danger", "color.focus", "space.1", "space.2",
+    "space.3", "radius.2", "type.body", "type.caption", "motion.fast"
+  ],
+  "accessibility": {"role": "button", "name": {"field": "label"}, "keyboard": ["Tab", "Shift+Tab", "Enter", "Space"]}
+}

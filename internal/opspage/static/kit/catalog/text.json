@@ -1,0 +1,17 @@
+{
+  "name": "text",
+  "kind": "primitive",
+  "description": "A run of text. The kit always shows the value as text, never as markup.",
+  "ai_content": false,
+  "data": {
+    "text": {"type": "text", "required": true, "max_length": 10000},
+    "variant": {"type": "enum", "values": ["body", "strong", "caption"]},
+    "clamp": {"type": "integer", "label": "Initial lines", "minimum": 1, "maximum": 20}
+  },
+  "states": ["+empty"],
+  "tokens": [
+    "color.text", "color.text-muted", "type.body", "type.caption", "type.weight-strong", "color.accent", "color.focus",
+    "space.1"
+  ],
+  "accessibility": {"keyboard": ["Tab", "Shift+Tab", "Enter", "Space"]}
+}
