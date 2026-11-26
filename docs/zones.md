@@ -186,6 +186,12 @@ Remove the installs in the reverse order: the second install first. If you remov
 - The zone is a declared name. Koodam does not prove where a node, a disk, a model provider or an egress host is.
 - The cluster role of each manager is for the full cluster. `zone.namespaces` limits what the manager reads. It is not an RBAC limit.
 - A pod template with no node selector for a zone can run on each node of the cluster. In a cluster with nodes of 2 zones, also use a control of the cluster, for example a node selector for each namespace.
-- The placement policy examines the zone labels, the region labels and the node name only. It does not examine a different node label. If such a label is only on the nodes of a different zone, a pod template can select these nodes. The control of the cluster is also necessary for this case.
+- The placement policy is a list of refused placements. It examines the zone labels, the region labels and the node name only. It is not a full control of the node of a pod ([#433](https://github.com/mohanraj00/koodam/issues/433)). The owner of an App can direct a pod to a node of a different zone with a field that the policy does not examine:
+  - a different node label, if it is only on the nodes of a different zone;
+  - a pod affinity or a pod anti-affinity with a `topologyKey`, if a pod with the selected labels is on a node of a different zone;
+  - a toleration for a taint of the nodes of a different zone;
+  - a `schedulerName` of a scheduler that does not apply the node selector.
+
+  The control of the cluster is also necessary for these cases.
 - The placement policy does not examine the node of a volume that exists.
 - An install does not move a workload or its data to a different zone.
