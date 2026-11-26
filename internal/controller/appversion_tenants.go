@@ -30,6 +30,7 @@ import (
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/builder"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/event"
 	"sigs.k8s.io/controller-runtime/pkg/handler"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
 	"sigs.k8s.io/controller-runtime/pkg/predicate"
@@ -106,7 +107,7 @@ func versionReplicas(av *corev1alpha1.AppVersion) int32 {
 
 // appReplicas gives back the number of pods that share the rate of a tenant with the pods of a
 // version: the replicas of the version, and of each other version of its App with a weight above
-// 0 in the spec of an endpoint. A caller can select each such version with the header
+// 0 in the spec of an endpoint and no complete revoke. A caller can select each such version with the header
 // Koodam-App-Version. With a rate for each version, a tenant gets the rate one time for each
 // version. If the replicas are not in proportion to the weights, a tenant gets less than its
 // rate.
@@ -133,12 +134,30 @@ func appReplicas(ctx context.Context, c client.Client, av *corev1alpha1.AppVersi
 		return 0, err
 	}
 	for i := range list.Items {
-		// A version in delete has pods until they stop, so it is in the sum.
-		if v := &list.Items[i]; v.Name != av.Name && v.Spec.AppRef.Name == app.Name && weighted[v.Name] {
+		v := &list.Items[i]
+		if v.Name == av.Name || v.Spec.AppRef.Name != app.Name || !weighted[v.Name] {
+			continue
+		}
+		// A version in delete has pods until they stop, so it is in the sum. After a complete
+		// revoke, a version has no pods, and it can stay in the spec of the App with its weight.
+		if !revokeComplete(v) {
 			total += int64(versionReplicas(v))
 		}
 	}
 	return int32(min(total, math.MaxInt32)), nil
+}
+
+// revokeComplete tells if the controller blocked the key of a version and deleted its Deployment.
+func revokeComplete(av *corev1alpha1.AppVersion) bool {
+	return meta.IsStatusConditionTrue(av.Status.Conditions, corev1alpha1.AppVersionRevoked)
+}
+
+// revokeCompleted tells if an update completed the revoke of a version. The pods of the other
+// versions of the App then share the rate of a tenant without the pods of this version.
+func revokeCompleted(e event.UpdateEvent) bool {
+	was, ok := e.ObjectOld.(*corev1alpha1.AppVersion)
+	is, ok2 := e.ObjectNew.(*corev1alpha1.AppVersion)
+	return ok && ok2 && !revokeComplete(was) && revokeComplete(is)
 }
 
 // limits gives back the limits file of a version. It has each TenantQuota of the namespace that
@@ -285,8 +304,10 @@ func (r *TenantLimitsReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		// Only a change of the spec changes the weights of an App or the replicas of a version.
 		Watches(&corev1alpha1.App{}, handler.EnqueueRequestsFromMapFunc(r.appVersions),
 			builder.WithPredicates(predicate.GenerationChangedPredicate{})).
+		// The end of a revoke is a change of the status.
 		Watches(&corev1alpha1.AppVersion{}, handler.EnqueueRequestsFromMapFunc(r.appVersions),
-			builder.WithPredicates(predicate.GenerationChangedPredicate{})).
+			builder.WithPredicates(predicate.Or(predicate.GenerationChangedPredicate{},
+				predicate.Funcs{UpdateFunc: revokeCompleted}))).
 		Named("tenantlimits").
 		Complete(r)
 }

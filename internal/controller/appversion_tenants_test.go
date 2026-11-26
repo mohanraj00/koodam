@@ -31,6 +31,7 @@ import (
 	"k8s.io/apimachinery/pkg/util/intstr"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
+	"sigs.k8s.io/controller-runtime/pkg/event"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	corev1alpha1 "github.com/mohanraj00/koodam/api/v1alpha1"
@@ -161,7 +162,7 @@ func TestTenantRateIsForAllTheVersionsOfTheApp(t *testing.T) {
 	}
 	app := &corev1alpha1.App{ObjectMeta: metav1.ObjectMeta{Name: limitsApp, Namespace: limitsNS},
 		Spec: corev1alpha1.AppSpec{Endpoints: []corev1alpha1.AppEndpoint{
-			{Name: "front", Versions: weights(map[string]int32{"v1": 90, "v2": 0, "v3": 0})},
+			{Name: "front", Versions: weights(map[string]int32{"v1": 90, "v2": 0, "v3": 0, "v5": 10})},
 			// A weight in one endpoint is sufficient.
 			{Name: "back", Versions: weights(map[string]int32{"v2": 1})},
 		}}}
@@ -169,9 +170,15 @@ func TestTenantRateIsForAllTheVersionsOfTheApp(t *testing.T) {
 	// These versions get no request of the App: no weight, not in the spec, and a different App.
 	v3, v4, other := version("v3", limitsApp, 5), version("v4", limitsApp, 7), version("o1", "search", 11)
 	alone := version("alone", "no-app", 4)
+	// A version with a weight and a complete revoke has no pods. A revoke that started has pods.
+	revoked := func(status metav1.ConditionStatus) []metav1.Condition {
+		return []metav1.Condition{{Type: corev1alpha1.AppVersionRevoked, Status: status, Reason: "Retired"}}
+	}
+	v5 := version("v5", limitsApp, 9)
+	v5.Status.Conditions = revoked(metav1.ConditionTrue)
 	quota := limitsQuota("a", limitsNS, limitsTenantA, limitsRate("10", new(int32(20))))
 	c := fake.NewClientBuilder().WithScheme(ingWorld(t).Scheme()).
-		WithObjects(app, v1, v2, v3, v4, other, alone, &quota).Build()
+		WithObjects(app, v1, v2, v3, v4, v5, other, alone, &quota).Build()
 	claim := AppClaimCheck{Issuer: limitsIssuer, TenantClaim: limitsClaimKey}
 	pod := func(av *corev1alpha1.AppVersion) appclaim.TenantLimit {
 		t.Helper()
@@ -215,15 +222,32 @@ func TestTenantRateIsForAllTheVersionsOfTheApp(t *testing.T) {
 		slices.Sort(out)
 		return out
 	}
-	siblings := []string{"v1", "v2", "v3", "v4"}
+	siblings := []string{"v1", "v2", "v3", "v4", "v5"}
 	if got := names(r.appVersions(t.Context(), app)); !slices.Equal(got, siblings) {
 		t.Errorf("A change of the App gives the versions %v.", got)
 	}
 	if got := names(r.appVersions(t.Context(), v2)); !slices.Equal(got, siblings) {
 		t.Errorf("A change of a version gives the versions %v.", got)
 	}
-	if got := names(r.allVersions(t.Context(), nil)); len(got) != 6 {
+	if got := names(r.allVersions(t.Context(), nil)); len(got) != 7 {
 		t.Errorf("A change of a TenantQuota gives the versions %v.", got)
+	}
+	// Only the end of a revoke is such a change of the status.
+	started, done := version("v6", limitsApp, 1), version("v6", limitsApp, 1)
+	started.Status.Conditions, done.Status.Conditions = revoked(metav1.ConditionFalse), revoked(metav1.ConditionTrue)
+	for name, c := range map[string]struct {
+		was, is *corev1alpha1.AppVersion
+		want    bool
+	}{
+		"the revoke starts":           {v1, started, false},
+		"the revoke is complete":      {started, done, true},
+		"a change after the revoke":   {done, done, false},
+		"a change with no revoke":     {v1, v2, false},
+		"a version with no condition": {v1, done, true},
+	} {
+		if got := revokeCompleted(event.UpdateEvent{ObjectOld: c.was, ObjectNew: c.is}); got != c.want {
+			t.Errorf("%s: revokeCompleted gives %v.", name, got)
+		}
 	}
 }
 
