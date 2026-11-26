@@ -68,6 +68,7 @@ type TenantQuotaSpec struct {
 	// +kubebuilder:validation:MaxLength=253
 	// +kubebuilder:validation:XValidation:rule="self == oldSelf",message="spec.tenant is immutable."
 	// +kubebuilder:validation:XValidation:rule="self != 'koodam-no-tenant'",message="spec.tenant must not be the reserved label koodam-no-tenant."
+	// +kubebuilder:validation:XValidation:rule="bytes(self).size() <= 253",message="spec.tenant must be 253 bytes or less in UTF-8."
 	Tenant string `json:"tenant"`
 
 	// AppRef is the App that the rate limit and the claim check refusals apply to. With no
@@ -100,7 +101,7 @@ type TenantQuotaSpec struct {
 }
 
 // TenantRateLimit is a token bucket. Each pod of an AppVersion has its own bucket, with the
-// rate and the burst divided by the replicas of the version.
+// rate and the burst divided by the pods of all the versions of the App that share the rate.
 type TenantRateLimit struct {
 	// RequestsPerSecond is the rate that the tenant can keep, for example "5" or "500m". It
 	// must be more than zero.

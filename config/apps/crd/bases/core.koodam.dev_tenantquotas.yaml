@@ -145,6 +145,8 @@ spec:
                   rule: self == oldSelf
                 - message: spec.tenant must not be the reserved label koodam-no-tenant.
                   rule: self != 'koodam-no-tenant'
+                - message: spec.tenant must be 253 bytes or less in UTF-8.
+                  rule: bytes(self).size() <= 253
             required:
             - tenant
             type: object

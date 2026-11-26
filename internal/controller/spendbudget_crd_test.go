@@ -87,7 +87,7 @@ var _ = Describe("SpendBudget CRD", func() {
 		b := newBudget(nil)
 		Expect(create(b)).To(Succeed())
 		b.Status.Spend, b.Status.Reserved, b.Status.WaitingRuns = "1.5", "6", 2
-		b.Status.Reservations = []corev1alpha1.SpendReservation{{RunID: "uid-1", Agent: "run-1", Budget: "6"}}
+		b.Status.Reservations = []corev1alpha1.SpendReservation{{RunID: "uid-1", Agent: "agent-1", Budget: "6"}}
 		Expect(k8sClient.Status().Update(ctx, b)).To(Succeed())
 		got := &corev1alpha1.SpendBudget{}
 		Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(b), got)).To(Succeed())
