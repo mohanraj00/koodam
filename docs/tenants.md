@@ -83,6 +83,10 @@ With `apps.claimCheck.tenantClaim`, the controller writes one ConfigMap for each
 - The file has the mark of the condition `QuotaExceeded`. While the mark is set, the claim check refuses each request of the tenant with `TenantQuotaExceeded`. Only the status `True` sets the mark. The status `Unknown` (the reason `RequestCountCapped`) sets no mark.
 - A change of a `TenantQuota`, of its mark or of `spec.replicas` changes the ConfigMap. The kubelet then updates the file in the pods, and the check container reads it again. This can take more than 1 minute. The pods do not start again.
 - A ConfigMap has a maximum of 1 MiB. This is space for some thousand tenants of one App.
+- The mark comes from the gateway count of the tenant, so the mark is only as correct as that count:
+  - With the tenant token, the gateway counts a model call of an App pod only for the tenant of a token. An app can use the token of a tenant for a model call of a different request until the token ends. Thus an app can add to the count of a tenant that sent a request in that time, and to no other count.
+  - With `apps.claimCheck.tenantToken=false`, the code in the pod selects the tenant label of each model call. An app can then fill the quota of a tenant with the calls of a different tenant, and the claim check refuses the requests of the first tenant.
+  - The rate limit of the claim check does not use the gateway count. See "The tenant token" for the other limits.
 - Without a tenant claim, the claim check has no tenant label, and a pod gets no limits file.
 
 ## A tenant with no TenantQuota
