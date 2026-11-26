@@ -63,7 +63,7 @@ func TestBudgetPeriod(t *testing.T) {
 			t.Errorf("%s: got %v to %v, want %v to %v", c.period, start, end, c.start, c.end)
 		}
 	}
-	for in, want := range map[string]string{"6": "6", "6.250": "6.25", "0.000": "0", "1.5": "1.5"} {
+	for in, want := range map[string]string{"6": "6", "6.250": "6.25", "0.000": "0", "2.50": "2.5"} {
 		if got := decimal(resource.MustParse(in)); got != want {
 			t.Errorf("decimal(%s) = %s, want %s", in, got, want)
 		}
@@ -87,7 +87,7 @@ var _ = Describe("SpendBudget ledger", func() {
 		Expect(k8sClient.Create(ctx, n)).To(Succeed())
 		DeferCleanup(func() { Expect(client.IgnoreNotFound(k8sClient.Delete(ctx, n))).To(Succeed()) })
 		ns, clock = n.Name, day1
-		gw = &fakeGateway{runBinding: types.NamespacedName{Namespace: ns, Name: "none"}}
+		gw = &fakeGateway{runBinding: types.NamespacedName{Namespace: ns, Name: "no-binding"}}
 		r = &AgentReconciler{Client: k8sClient, Scheme: k8sClient.Scheme(), APIReader: k8sClient, Gateway: gw,
 			GatewayURL: testGatewayURL, Grace: time.Minute, JobTTL: 3600, Now: func() time.Time { return clock },
 			BudgetRetry: 30 * time.Second}
@@ -102,8 +102,8 @@ var _ = Describe("SpendBudget ledger", func() {
 	newRun := func(name, budget string) {
 		Expect(k8sClient.Create(ctx, &corev1alpha1.Agent{
 			ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: ns},
-			Spec: corev1alpha1.AgentSpec{Image: "registry.k8s.io/pause:3.10", Command: []string{"/pause"},
-				Model: "local-agent", Budget: resource.MustParse(budget), DeadlineSeconds: 600},
+			Spec: corev1alpha1.AgentSpec{Image: "registry.k8s.io/pause:3.10", Command: []string{"/ledger"},
+				Model: "ledger-model", Budget: resource.MustParse(budget), DeadlineSeconds: 600},
 		})).To(Succeed())
 	}
 	reconcileRun := func(name string) reconcile.Result {
