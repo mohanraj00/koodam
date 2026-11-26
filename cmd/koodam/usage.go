@@ -53,11 +53,17 @@ const usageGatewayNote = "note: this Workspace has a gateway key. The gateway sp
 	"kubectl get workspace %s -n %s -o jsonpath='{.status.usage}'. The session files also count the calls " +
 	"through the gateway."
 
+// The keys of koodam usage --by.
+const (
+	byCostGroup = "cost-group"
+	byTenant    = "tenant"
+)
+
 func usageCmd(conn connect) *cobra.Command {
 	var by string
 	cmd := &cobra.Command{
-		Use:   "usage [WORKSPACE] [--by cost-group]",
-		Short: "Show the projected Workspace cost or the Agent gateway spend by cost group",
+		Use:   "usage [WORKSPACE] [--by cost-group|tenant]",
+		Short: "Show the projected Workspace cost, or the gateway spend by cost group or by tenant",
 		Long: "Show the tokens and the projected API cost of the Claude Code and Codex sessions in a Workspace.\n" +
 			"koodam connects with SSH, as koodam ssh test does, and runs a fixed script in the pod. The\n" +
 			"script reads ~/.claude/projects and ~/.codex/sessions and prints only the model names and the\n" +
@@ -67,13 +73,15 @@ func usageCmd(conn connect) *cobra.Command {
 			"are not used. If a Codex session file has more than 1 model, all its tokens go to the last model.\n\n" +
 			"Run koodam ssh setup WORKSPACE first.\n\n" +
 			"With --by cost-group, take no WORKSPACE argument. Read the Agent gateway usage in the\n" +
-			"namespace from the Kubernetes API and group it by status.costGroup. This mode uses no SSH.",
+			"namespace from the Kubernetes API and group it by status.costGroup. This mode uses no SSH.\n\n" +
+			"With --by tenant, take no WORKSPACE argument. Read the use of each tenant of the Apps in\n" +
+			"the namespace from the status of the TenantQuotas. This mode uses no SSH.",
 		Args: func(cmd *cobra.Command, args []string) error {
 			if !cmd.Flags().Changed("by") {
 				return cobra.ExactArgs(1)(cmd, args)
 			}
-			if by != "cost-group" {
-				return fmt.Errorf("--by %q is not known: the only key is cost-group", by)
+			if by != byCostGroup && by != byTenant {
+				return fmt.Errorf("--by %q is not known: the keys are cost-group and tenant", by)
 			}
 			if len(args) != 0 {
 				return fmt.Errorf("koodam usage --by takes no WORKSPACE argument")
@@ -81,7 +89,18 @@ func usageCmd(conn connect) *cobra.Command {
 			return nil
 		},
 		RunE: func(cmd *cobra.Command, args []string) error {
-			if by == "cost-group" {
+			if by == byTenant {
+				e, err := conn()
+				if err != nil {
+					return err
+				}
+				quotas := &corev1alpha1.TenantQuotaList{}
+				if err := e.kube.List(cmd.Context(), quotas, client.InNamespace(e.namespace)); err != nil {
+					return apiError("list the TenantQuotas", err)
+				}
+				return printTenantUsage(cmd.OutOrStdout(), cmd.ErrOrStderr(), quotas.Items, e.namespace)
+			}
+			if by == byCostGroup {
 				e, err := conn()
 				if err != nil {
 					return err
@@ -130,7 +149,7 @@ func usageCmd(conn connect) *cobra.Command {
 			return printUsage(cmd.OutOrStdout(), rows, prices)
 		},
 	}
-	cmd.Flags().StringVar(&by, "by", "", "group the Agent gateway usage by cost-group")
+	cmd.Flags().StringVar(&by, "by", "", "group the gateway usage: cost-group (Agents) or tenant (Apps)")
 	return cmd
 }
 

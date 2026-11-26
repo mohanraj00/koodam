@@ -9,7 +9,7 @@ A tenant is a client group of an App. The tenant label comes from the signed cla
 - With `apps.enabled`, the TenantQuota controller makes the gateway customer of each tenant label and writes the use to the status. See "The gateway customer" and "The controller".
 - With a tenant claim, the tenant token binds each model call of an App pod to the tenant of a request. See "The tenant token".
 - With a tenant claim (`apps.claimCheck.tenantClaim`), each AppVersion pod gets the limits file of its tenants. Then the claim check refuses a tenant above its rate, a tenant at its quota and, if the chart says so, an unknown tenant. See "The limits file" and "A tenant with no TenantQuota".
-- The spend group `tenant` of the spend report comes in a later change of [#193](https://github.com/mohanraj00/koodam/issues/193).
+- `koodam usage --by tenant` shows the use of each tenant of a namespace. See "The spend report".
 
 ## The TenantQuota spec
 
@@ -147,6 +147,16 @@ The TenantQuota controller runs with `apps.enabled`. For each `TenantQuota` it d
 - If 2 or more `TenantQuota` objects of the install name one tenant label, only the oldest one has an effect. Each other one has `Ready=False` with the reason `DuplicateTenant`, and no use in its status. When the oldest one goes, the next one gets the label, and the customer keeps its spend.
 - A `TenantQuota` with the reserved label `koodam-no-tenant` has no effect. The API refuses a new one. For an object that is older than this rule, the controller sets `Ready=False` with the reason `ReservedTenant`. It makes no gateway call for the object, and a delete of the object does not delete the gateway customer. See "The tenant token".
 - A delete of the last `TenantQuota` of a tenant label deletes the gateway customer and its budget first, and then removes the finalizer. While the gateway does not answer, the `TenantQuota` stays.
+
+## The spend report
+
+```sh
+koodam usage --by tenant -n shop
+```
+
+The command shows 1 line for each `TenantQuota` of the namespace that is `Ready`: the tenant label, the App, the requests and the spend of the current period, the mark `EXCEEDED` and the end of the period. It reads the status of the `TenantQuota` objects, so it shows only the tenants of that namespace. [cli.md](cli.md) has the columns.
+
+The gateway counts a tenant label for the full install. Thus the use of a tenant has its model calls through each App of the install, also for a `TenantQuota` with an `appRef`.
 
 ## How exact the limits are
 

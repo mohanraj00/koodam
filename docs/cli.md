@@ -18,6 +18,7 @@
 | `koodam get [NAME]` | Show the phase, the model, the harness, the budget, the spend, the start and end time, and the key alias. |
 | `koodam spend [NAME]` | Show the budget and the gateway usage: the spend, the calls, the failed calls and the tokens. |
 | `koodam usage --by cost-group` | Show the Agent gateway usage for each cost group in the namespace. |
+| `koodam usage --by tenant` | Show the gateway usage of each tenant of the Apps in the namespace. |
 | `koodam logs NAME` | Show the pod log of the Job of the Agent. |
 | `koodam delete NAME` | Delete an Agent. The controller revokes the key before it deletes the Agent. |
 
@@ -103,13 +104,21 @@ To show the Agent gateway usage for each cost group:
 koodam usage --by cost-group -n dev-sample
 ```
 
-With `--by`, give no WORKSPACE argument. The only permitted value of `--by` is `cost-group`. The command lists Agents with your kubeconfig and needs `list` on Agents in the namespace. It uses `-n`, or the namespace of the current context, and uses no SSH.
+With `--by`, give no WORKSPACE argument. The permitted values of `--by` are `cost-group` and `tenant`. With `cost-group`, the command lists Agents with your kubeconfig and needs `list` on Agents in the namespace. It uses `-n`, or the namespace of the current context, and uses no SSH.
 
 The columns are `COST-GROUP`, `RUNS`, `CALLS`, `FAILED`, `INPUT`, `OUTPUT`, `SPEND` and `SOURCE`. Groups are in name order, with `(none)` last, then a total line. Each row says `source: gateway`. `SPEND` is the sum of the spend of each key, in USD with four decimal places. It is not the sum of the model entries.
 
 The group comes from `status.costGroup`, which the controller saved when it made the key. A later change of the Agent label does not move the spend. An empty group shows as `(none)`. An Agent with no `status.usage`, or with a spend that is not a number, is not in the table. A note on stderr gives each count. If no Agent has valid usage, the command shows `No gateway usage in the Agents of namespace <namespace>.`
 
 The table has only Agent usage. It has no AppVersion, TestKey or Workspace spend.
+
+To show the gateway usage of each tenant of the Apps:
+
+```sh
+koodam usage --by tenant -n shop
+```
+
+The command lists the `TenantQuota` objects with your kubeconfig and needs `list` on `tenantquotas` in the namespace. It uses no SSH. The columns are `TENANT`, `APP`, `REQUESTS`, `SPEND`, `EXCEEDED`, `PERIOD-END` and `SOURCE`. The rows are in the order of the tenant label, then a total line. `APP` is `(all)` for a `TenantQuota` with no `appRef`. `REQUESTS` and `SPEND` are the use of the current period in the status of the `TenantQuota`. `EXCEEDED` is `yes`, `no` or `unknown`, from the condition `QuotaExceeded`. It is `unknown` when the gateway stopped the request count below the limit of the spec (the reason `RequestCountCapped`), and `REQUESTS` is then a minimum. A note on stderr gives the count of these rows. A `TenantQuota` that is not `Ready`, or with a spend that is not a number, is not in the table. A note on stderr gives each count. A tenant label with a character that is not printable is in quotes with escapes. [tenants.md](tenants.md) has the rules of the use.
 
 For a Workspace with a gateway key, read the gateway usage in the status:
 
