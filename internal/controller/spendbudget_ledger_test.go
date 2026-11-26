@@ -368,6 +368,39 @@ var _ = Describe("SpendBudget ledger", func() {
 		Expect(budget().Status.Reserved).To(Equal("1"))
 	})
 
+	It("admits a run again if its key hash is from a version before the ledger", func() {
+		newRun(ledgerRun1, "1")
+		gw.createErr = errors.New("the gateway is down")
+		_, err := r.Reconcile(ctx, reconcile.Request{NamespacedName: types.NamespacedName{Namespace: ns, Name: ledgerRun1}})
+		Expect(err).To(HaveOccurred())
+		gw.createErr = nil
+		a := run(ledgerRun1)
+		Expect(a.Status.KeyHash).NotTo(BeEmpty())
+		a.Status.Budget = ""
+		Expect(k8sClient.Status().Update(ctx, a)).To(Succeed())
+		b := budget()
+		b.Status = corev1alpha1.SpendBudgetStatus{}
+		Expect(k8sClient.Status().Update(ctx, b)).To(Succeed())
+
+		By("spec.budget goes above the limit, and the run waits with no key")
+		a = run(ledgerRun1)
+		a.Spec.Budget = resource.MustParse("100")
+		Expect(k8sClient.Update(ctx, a)).To(Succeed())
+		res := reconcileRun(ledgerRun1)
+		Expect(res.RequeueAfter).To(BeNumerically(">", 0))
+		Expect(gw.created).To(BeEmpty())
+
+		By("spec.budget fits, and the key gets the reserved budget")
+		a = run(ledgerRun1)
+		a.Spec.Budget = resource.MustParse("5")
+		Expect(k8sClient.Update(ctx, a)).To(Succeed())
+		reconcileRun(ledgerRun1)
+		Expect(gw.created).To(HaveLen(1))
+		Expect(gw.created[0].Budget).To(Equal(5.0))
+		Expect(run(ledgerRun1).Status.Budget).To(Equal("5"))
+		Expect(budget().Status.Reserved).To(Equal("5"))
+	})
+
 	It("rebuilds a reservation with the budget that the key got", func() {
 		newRun(ledgerActive, "8")
 		reconcileRun(ledgerActive)

@@ -130,7 +130,7 @@ func (r *AgentReconciler) waitingRuns(ctx context.Context, ns string, b *corev1a
 	for _, o := range list.Items {
 		c := meta.FindStatusCondition(o.Status.Conditions, condProvisioned)
 		if c == nil || c.Reason != corev1alpha1.ReasonPeriodBudgetExceeded || agentEnded(&o) ||
-			o.Status.KeyHash != "" || !o.DeletionTimestamp.IsZero() || reservation(b, o.UID) >= 0 {
+			admitted(&o) || !o.DeletionTimestamp.IsZero() || reservation(b, o.UID) >= 0 {
 			continue
 		}
 		out = append(out, o)
@@ -375,6 +375,12 @@ func (r *AgentReconciler) settle(ctx context.Context, a *corev1alpha1.Agent) err
 	b.Status.Spend, b.Status.Reserved = decimal(spend), decimal(reserved)
 	b.Status.Reservations = slices.Delete(b.Status.Reservations, i, i+1)
 	return r.writeLedger(ctx, b, before, r.now())
+}
+
+// admitted is true if the ledger admitted the run. A key hash with no status.budget is from a version
+// before the ledger, and that run goes through the ledger again before its key exists.
+func admitted(a *corev1alpha1.Agent) bool {
+	return a.Status.KeyHash != "" && a.Status.Budget != ""
 }
 
 // admittedBudget is the run budget that the key got. An Agent from a version before status.budget

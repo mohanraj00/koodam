@@ -376,14 +376,23 @@ func (r *AgentReconciler) admit(ctx context.Context, a *corev1alpha1.Agent) erro
 			return err
 		}
 	}
-	if a.Status.KeyHash != "" {
+	if admitted(a) {
 		return nil
 	}
 	after, msg, err := r.reserve(ctx, a)
-	if err != nil || after == 0 {
+	if err != nil {
 		return err
 	}
-	return r.waitForBudget(ctx, a, after, msg)
+	if after > 0 {
+		return r.waitForBudget(ctx, a, after, msg)
+	}
+	if a.Status.KeyHash != "" {
+		// A version before the ledger wrote the key hash, and the key was not made. The ledger
+		// reserved spec.budget now, so the key gets that budget.
+		a.Status.Budget = decimal(a.Spec.Budget)
+		return r.Status().Update(ctx, a)
+	}
+	return nil
 }
 
 func (r *AgentReconciler) provision(ctx context.Context, a *corev1alpha1.Agent) error {
