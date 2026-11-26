@@ -34,9 +34,11 @@ import (
 
 	authenticationv1 "k8s.io/api/authentication/v1"
 	authorizationv1 "k8s.io/api/authorization/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/kubernetes/fake"
 	k8stesting "k8s.io/client-go/testing"
@@ -63,7 +65,23 @@ var namespaces = []string{namespaceA, namespaceB}
 // agentReader lists the synthetic Agents of one namespace, a page at a time.
 type agentReader struct {
 	client.Reader
-	items []corev1alpha1.Agent
+	items   []corev1alpha1.Agent
+	budgets []corev1alpha1.SpendBudget
+}
+
+// Get reads a SpendBudget by its name. The spend API reads no other object with Get.
+func (r agentReader) Get(_ context.Context, key client.ObjectKey, target client.Object, _ ...client.GetOption) error {
+	b, ok := target.(*corev1alpha1.SpendBudget)
+	if !ok {
+		return errors.New("the example reader gets only SpendBudgets")
+	}
+	for _, item := range r.budgets {
+		if item.Namespace == key.Namespace && item.Name == key.Name {
+			item.DeepCopyInto(b)
+			return nil
+		}
+	}
+	return apierrors.NewNotFound(schema.GroupResource{Group: "core.koodam.dev", Resource: "spendbudgets"}, key.Name)
 }
 
 func (r agentReader) List(_ context.Context, target client.ObjectList, options ...client.ListOption) error {
@@ -144,7 +162,7 @@ func newExample(now time.Time) (*example, error) {
 	}
 	gw := httptest.NewServer(fakeGateway(spend, values))
 	api, err := spendapi.New(spendapi.Config{
-		Kube: agentReader{items: agents}, Namespaces: namespaces, GatewayURL: gw.URL, MasterKey: masterKey,
+		Kube: agentReader{items: agents, budgets: []corev1alpha1.SpendBudget{exampleBudget(now)}}, Namespaces: namespaces, GatewayURL: gw.URL, MasterKey: masterKey,
 		Timeout: 5 * time.Second, Viewers: fakeViewers(),
 	})
 	if err != nil {
@@ -153,6 +171,21 @@ func newExample(now time.Time) (*example, error) {
 	}
 	ex.handler, ex.close = opspage.Routes(api), gw.Close
 	return ex, nil
+}
+
+// exampleBudget is the SpendBudget of the first namespace. The ended run has a spend of 1.25, and the
+// running run reserves its budget of 2.
+func exampleBudget(now time.Time) corev1alpha1.SpendBudget {
+	start := now.UTC().Truncate(24 * time.Hour)
+	return corev1alpha1.SpendBudget{
+		ObjectMeta: metav1.ObjectMeta{Name: corev1alpha1.SpendBudgetName, Namespace: namespaceA},
+		Spec:       corev1alpha1.SpendBudgetSpec{PeriodLimits: corev1alpha1.PeriodLimits{Spend: resource.MustParse("10")}},
+		Status: corev1alpha1.SpendBudgetStatus{
+			PeriodStart: &metav1.Time{Time: start}, PeriodEnd: &metav1.Time{Time: start.AddDate(0, 0, 1)},
+			Spend: "1.25", Reserved: "2",
+			Reservations: []corev1alpha1.SpendReservation{{RunID: "run-1", Agent: "triage-issues", Budget: "2"}},
+		},
+	}
 }
 
 // fakeGateway answers the two gateway reads of the spend API. Like the real gateway, its key

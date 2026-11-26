@@ -89,8 +89,8 @@ spend data.
 ## Operations page
 
 The server also serves a read-only operations page at `/`. Open the address of the server in a browser
-and give a bearer token. The page shows the runs, the detail of one run, and the spend in a period by a
-label and by namespace. It reads the API again at the `POLL_MS` interval in
+and give a bearer token. The page shows the runs, the detail of one run, the spend in a period by a
+label and by namespace, and the period budget of each namespace. It reads the API again at the `POLL_MS` interval in
 `internal/opspage/static/page.js`. Use the viewer review mode, so that each
 person sees only the namespaces where that person can list Agents.
 

@@ -7,6 +7,8 @@ const POLL_MS = 30000;
 // A kit table holds up to 500 rows, so read up to 5 pages of 100 items.
 const MAX_PAGES = 5;
 const RUN_COLUMNS = ['Namespace', 'Name', 'Phase', 'Models', 'Budget', 'Spend', 'Remaining', 'Start', 'End'];
+const BUDGET_COLUMNS = ['Namespace', 'Period', 'Period end', 'Limit', 'Spend', 'Reserved', 'Remaining', 'Waiting runs',
+  'Exceeded'];
 const REFUSALS = {
   401: 'The server did not accept the token.',
   403: 'The token cannot list Agents in a namespace of this server.',
@@ -29,6 +31,8 @@ const labelTable = kit.mount('table', { label: 'Spend by label', columns: ['Labe
   { parent: byId('by-label') });
 const namespaceTable = kit.mount('table', { label: 'Spend by namespace', columns: ['Namespace', 'Spend'], rows: [] },
   { parent: byId('by-namespace') });
+const budgetTable = kit.mount('table', { label: 'Period budgets', columns: BUDGET_COLUMNS, rows: [] },
+  { parent: byId('budgets') });
 
 function show(element, name, data) {
   element.fill = kit.outer(name, data);
@@ -128,8 +132,20 @@ function spendRows(items, empty) {
   return items.map((g) => fill('table-row', { cells: [clip(g.labelValue || empty, CELL), money(g.spend)] }));
 }
 
+// showBudgets shows the SpendBudget ledger of each namespace. The list has one item for each namespace at most.
+function showBudgets(items) {
+  show(budgetTable, 'table', {
+    label: 'Period budgets', columns: BUDGET_COLUMNS,
+    rows: items.map((b) => fill('table-row', {
+      cells: [b.namespace, b.period, time(b.periodEnd), money(b.limit), money(b.spend), money(b.reserved),
+        money(b.remaining), String(b.waitingRuns), b.exceeded ? 'Yes' : 'No'],
+    })),
+  });
+}
+
 function clearData() {
   showRuns([]);
+  showBudgets([]);
   show(labelTable, 'table', { label: 'Spend by label', columns: ['Label value', 'Spend'], rows: [] });
   show(namespaceTable, 'table', { label: 'Spend by namespace', columns: ['Namespace', 'Spend'], rows: [] });
 }
@@ -140,11 +156,12 @@ async function refresh() {
   if (!token) return;
   const label = byId('label').value.trim();
   try {
-    const [[runItems, moreRuns], [labelItems, moreLabels], [namespaceItems, moreNamespaces]] = await Promise.all([
-      readAll('v1/runs'), readAll(periodQuery(`label:${label}`)), readAll(periodQuery('namespace')),
+    const [[runItems, moreRuns], [labelItems, moreLabels], [namespaceItems, moreNamespaces], budgets] = await Promise.all([
+      readAll('v1/runs'), readAll(periodQuery(`label:${label}`)), readAll(periodQuery('namespace')), read('v1/budgets'),
     ]);
     if (current !== generation) return;
     showRuns(runItems);
+    showBudgets(budgets.items);
     show(labelTable, 'table', {
       label: clip(`Spend by ${label}`, TITLE), columns: ['Label value', 'Spend'], rows: spendRows(labelItems, 'No value'),
     });
