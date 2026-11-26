@@ -95,6 +95,24 @@ spec:
       (e.operator == 'In' && has(e.values) && e.values.all(v, v in variables.permitted))))
     message: {{ printf "ZonePlacement: the preferred node affinity of the pod template has a zone or a region that is not in the zone %s." $zone | quote }}
     reason: Forbidden
+  # A node name does not show that the node is in the zone. Thus the policy refuses each selection
+  # of a node by its name: nodeName, a matchFields term and the node label kubernetes.io/hostname.
+  - expression: >-
+      variables.sameTemplate || !variables.hasPod ||
+      ((!has({{ $pod }}.nodeName) || {{ $pod }}.nodeName == '') &&
+      (!has({{ $pod }}.nodeSelector) || !('kubernetes.io/hostname' in {{ $pod }}.nodeSelector)) &&
+      (!variables.hasNodeAffinity ||
+      ((!has({{ $pod }}.affinity.nodeAffinity.requiredDuringSchedulingIgnoredDuringExecution) ||
+      {{ $pod }}.affinity.nodeAffinity.requiredDuringSchedulingIgnoredDuringExecution.nodeSelectorTerms.all(t,
+      (!has(t.matchFields) || size(t.matchFields) == 0) &&
+      (!has(t.matchExpressions) || t.matchExpressions.all(e, e.key != 'kubernetes.io/hostname')))) &&
+      (!has({{ $pod }}.affinity.nodeAffinity.preferredDuringSchedulingIgnoredDuringExecution) ||
+      {{ $pod }}.affinity.nodeAffinity.preferredDuringSchedulingIgnoredDuringExecution.all(p,
+      (!has(p.preference.matchFields) || size(p.preference.matchFields) == 0) &&
+      (!has(p.preference.matchExpressions) ||
+      p.preference.matchExpressions.all(e, e.key != 'kubernetes.io/hostname')))))))
+    message: {{ printf "ZonePlacement: the pod template selects a node by its name, and a node name does not show that the node is in the zone %s." $zone | quote }}
+    reason: Forbidden
   {{- if $classes }}
   - expression: >-
       variables.sameTemplate || !variables.hasPod || !has({{ $pod }}.volumes) ||

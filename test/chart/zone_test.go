@@ -224,6 +224,7 @@ func TestZonePlacementPolicy(t *testing.T) {
 	}
 	for _, s := range []string{`expression: "[\"eu-west-1\",\"eu-west-1a\"]"`, `expression: "[\"near-disk\"]"`,
 		`values: ["koodam-system","team-1"]`, `- "--workspace-storage-class=near-disk"`,
+		"ZonePlacement: the pod template selects a node by its name",
 		"ZonePlacement: the storage class of the volume claim is not in the zone zone-a."} {
 		if !strings.Contains(scoped, s) {
 			t.Errorf("the install with the zone values does not have %q", s)
