@@ -18,10 +18,12 @@ with the hook and upstream.py. It sends a planted and a clean text in each reque
 without a stream, and 4 requests that try to turn the hook off. It checks the status, the body that
 the upstream gets and the guard line of each request. It uses no model and no network access.
 
-Usage: python3 hack/guard-image-check/check.py [--image IMAGE] [--action ACTION ...]
-The output has the names of the cases only, not the texts.
+Usage: python3 hack/guard-image-check/check.py [--image IMAGE] [--action ACTION ...] [--results FILE]
+The output has the names of the cases only, not the texts. With --results, the check also writes
+the image identity, the source commit and the result of each case as JSON to FILE.
 """
 import argparse
+import datetime
 import hashlib
 import json
 import pathlib
@@ -154,8 +156,8 @@ def start(image, action, key):
     sys.exit("the gateway image did not start")
 
 
-def run(image, action):
-    """Run the cases of one action and give back the count of failures."""
+def run(image, action, results):
+    """Run the cases of one action, add each result to results, and give back the count of failures."""
     key = "sk-" + secrets.token_hex(16)
     name, url = start(image, action, key)
     cases = []
@@ -192,21 +194,46 @@ def run(image, action):
             ok = status == 200 and len(sent) == 1 and NOTICE not in sent[0]
         ok = ok and outcomes.get(digest) == (OUTCOMES[action] if planted else "clean")
         failures += not ok
+        results.append({"action": action, "case": label, "ok": ok, "status": status,
+                        "upstreamBodies": len(sent), "outcome": outcomes.get(digest)})
         print("%-6s %-5s %s" % (action, "ok" if ok else "FAIL", label))
         if not ok:
             print("       status %d, upstream bodies %d, line %s" % (status, len(sent), outcomes.get(digest)))
     return failures
 
 
+def write_results(path, image, cases, failures):
+    commit = subprocess.run(["git", "rev-parse", "HEAD"], cwd=ROOT, capture_output=True, text=True).stdout.strip()
+    changed = subprocess.run(["git", "status", "--porcelain", "--", ".", ":!docs/results"], cwd=ROOT,
+                             capture_output=True, text=True).stdout.strip()
+    result = {
+        "date_utc": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+        "command": ["python3", "-B", "hack/guard-image-check/check.py", *sys.argv[1:]],
+        "image": image,
+        "image_id": docker("image", "inspect", image, "--format", "{{.Id}}").strip(),
+        "source_commit": commit,
+        "source_changed": bool(changed),
+        "hook_sha256": hashlib.sha256((ROOT / "config/gateway/koodam_guard.py").read_bytes()).hexdigest(),
+        "cases": len(cases),
+        "failures": failures,
+        "results": cases,
+    }
+    pathlib.Path(path).write_text(json.dumps(result, indent=2) + "\n", "utf-8")
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--image", default=None, help="the gateway image (default: the image of the chart)")
     parser.add_argument("--action", action="append", choices=list(OUTCOMES), help="an action (default: all)")
+    parser.add_argument("--results", default=None, help="write the results as JSON to this file")
     args = parser.parse_args()
     image = args.image or image_of_chart()
     print("image " + image)
-    failures = sum(run(image, action) for action in args.action or list(OUTCOMES))
+    cases = []
+    failures = sum(run(image, action, cases) for action in args.action or list(OUTCOMES))
     print("failures %d" % failures)
+    if args.results:
+        write_results(args.results, image, cases, failures)
     return 1 if failures else 0
 
 

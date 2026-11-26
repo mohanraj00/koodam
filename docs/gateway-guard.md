@@ -127,7 +127,7 @@ The hook keeps a bounded cache of the digests that it examined for each key. A b
 
 ### Read the lines
 
-The lines are in the log of the gateway pod, in the namespace of the install. The operator reads them, for example with `kubectl logs` of the gateway Deployment. A reader matches a line to a test by `keyAlias` and `time`. A reader for Nookku is tracked in a Nookku issue that #248 files.
+The lines are in the log of the gateway pod, in the namespace of the install. The operator reads them, for example with `kubectl logs` of the gateway Deployment. A reader matches a line to a test by `keyAlias` and `time`. A reader for Nookku is tracked in [mohanraj00/nookku#700](https://github.com/mohanraj00/nookku/issues/700).
 
 **Protect the lines in the same way as the pod logs.** The line has no content, but a reader can compare the digest of a short text with the digest of a guess, and so confirm the guess.
 
