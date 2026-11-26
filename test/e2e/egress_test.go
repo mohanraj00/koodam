@@ -46,7 +46,11 @@ const proxyIP = "10.96.100.100"
 
 // egressProxyValues gives back the Helm values that turn on the egress proxy in kind. The
 // NetworkPolicy of the proxy permits the endpoint of the API server.
-func egressProxyValues() string {
+func egressProxyValues() string { return egressProxyValuesFor(proxyIP) }
+
+// egressProxyValuesFor gives back the values of the egress proxy with the ClusterIP ip. Each
+// install of one cluster needs its own ClusterIP.
+func egressProxyValuesFor(ip string) string {
 	By("finding the API server endpoint for the proxy NetworkPolicy")
 	eps := &discoveryv1.EndpointSliceList{}
 	Expect(k8s.List(ctx, eps, client.InNamespace("default"),
@@ -67,7 +71,7 @@ func egressProxyValues() string {
       ports:
       - protocol: TCP
         port: %d
-`, proxyIP, ep.Endpoints[0].Addresses[0], *ep.Ports[0].Port)
+`, ip, ep.Endpoints[0].Addresses[0], *ep.Ports[0].Port)
 }
 
 // The traced egress spec upgrades the chart with the egress proxy for the namespace egNS. An Agent

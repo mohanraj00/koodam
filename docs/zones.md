@@ -105,7 +105,7 @@ zone:
 - The check uses the name of the call. A name with no entry passes the check, also if it has the same address as a host of a different zone. Put each name of an endpoint of a different zone in the list.
 - With `zone.name`, each egress span has the field `zone`: the zone of the install.
 
-The Agent ingress span of [ingress-spans.md](ingress-spans.md) has no zone field, because no proxy writes this span.
+The Agent ingress span of [ingress-spans.md](ingress-spans.md) has no zone field, because no proxy writes this span. #390 adds the field.
 
 ### Placement
 
@@ -181,8 +181,21 @@ Remove the installs in the reverse order: the second install first. If you remov
 - The admission policy of the AppVersion goes away with the first install.
 - The App CRDs stay, because Helm keeps them. They keep the ownership annotations of the first release. Helm then refuses `apps.sharedResources=true` in a different release until you change the annotations `meta.helm.sh/release-name` and `meta.helm.sh/release-namespace` of the App CRDs.
 
+## The test
+
+`test/e2e/zones_test.go` is the kind test of the zones and the tenants. It makes the installs `zone-a` and `zone-b` in one kind cluster, each with one App and 2 tenants with a `TenantQuota`. It examines these items in each install:
+
+- One tenant gets `TenantRateLimited`, and the other tenant gets no refusal.
+- One tenant gets `TenantQuotaExceeded` at its quota of the period. The same tenant label of the other install is not at its quota.
+- A claim of the other zone gets the status 403 and `ZoneMismatch`.
+- The model route of the other zone gets the status 403 and `RouteOutOfZone`.
+- `koodam usage --by tenant` shows the use of the tenants of the install only.
+
+The install of the test suite has no `zone.namespaces`, so it reads each namespace. Thus the test stops the manager of that install while the 2 zone installs are in operation.
+
 ## The limits
 
+- An install with no `zone.namespaces` reads each namespace. Do not use such an install in a cluster with a second install.
 - The zone is a declared name. Koodam does not prove where a node, a disk, a model provider or an egress host is.
 - The cluster role of each manager is for the full cluster. `zone.namespaces` limits what the manager reads. It is not an RBAC limit.
 - A pod template with no node selector for a zone can run on each node of the cluster. In a cluster with nodes of 2 zones, also use a control of the cluster, for example a node selector for each namespace.
