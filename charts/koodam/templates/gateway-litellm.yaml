@@ -62,10 +62,17 @@ model_list:
 {{- else -}}
 model_list: []
 {{- end }}
-{{- if $routes.out }}
+{{- if or $routes.out $b.guard.enabled }}
 litellm_settings:
+  callbacks:
+  {{- if $routes.out }}
   # koodam_zone.py refuses a call for a model route of a different zone (RouteOutOfZone).
-  callbacks: koodam_zone.handler
+  - koodam_zone.handler
+  {{- end }}
+  {{- if $b.guard.enabled }}
+  # koodam_guard.py examines the tool replies and the documents (docs/gateway-guard.md).
+  - koodam_guard.handler
+  {{- end }}
 {{- end }}
 general_settings:
   master_key: os.environ/LITELLM_MASTER_KEY
@@ -80,6 +87,28 @@ general_settings:
 {{- if $outOfZone }}
 {{- $zoneHook = .Files.Get "files/litellm-zone-hook.py" }}
 {{- end }}
+{{- $guardHook := "" }}
+{{- $guardPolicy := "" }}
+{{- if $b.guard.enabled }}
+{{- $g := $b.guard }}
+{{- if not (has $g.action (list "record" "mark" "block")) }}
+{{- fail "gateway.bundled.guard.action must be record, mark or block." }}
+{{- end }}
+{{- if or (not (kindIs "slice" $g.sources)) (not $g.sources) }}
+{{- fail "gateway.bundled.guard.sources must be a list of toolResult and document." }}
+{{- end }}
+{{- range $g.sources }}
+{{- if not (has . (list "toolResult" "document")) }}
+{{- fail "gateway.bundled.guard.sources must be a list of toolResult and document." }}
+{{- end }}
+{{- end }}
+{{- /* A values file gives a float64, and --set gives an int64. */}}
+{{- if or (not (or (kindIs "float64" $g.maxBytes) (kindIs "int64" $g.maxBytes) (kindIs "int" $g.maxBytes))) (lt (float64 $g.maxBytes) 1.0) (ne (float64 (int64 $g.maxBytes)) (float64 $g.maxBytes)) }}
+{{- fail "gateway.bundled.guard.maxBytes must be a positive integer." }}
+{{- end }}
+{{- $guardHook = .Files.Get "files/litellm-guard-hook.py" }}
+{{- $guardPolicy = dict "action" $g.action "sources" $g.sources "maxBytes" (int64 $g.maxBytes) | toJson }}
+{{- end }}
 apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -93,6 +122,11 @@ data:
   {{- with $zoneHook }}
   # The source is config/gateway/koodam_zone.py.
   koodam_zone.py: |
+    {{- . | nindent 4 }}
+  {{- end }}
+  {{- with $guardHook }}
+  # The source is config/gateway/koodam_guard.py.
+  koodam_guard.py: |
     {{- . | nindent 4 }}
   {{- end }}
 ---
@@ -116,7 +150,7 @@ spec:
     metadata:
       annotations:
         # Restart LiteLLM when the config changes.
-        checksum/config: {{ printf "%s%s%s" (include "koodam.litellmConfig" .) $zoneHook (join "," $outOfZone) | sha256sum }}
+        checksum/config: {{ printf "%s%s%s%s%s" (include "koodam.litellmConfig" .) $zoneHook (join "," $outOfZone) $guardHook $guardPolicy | sha256sum }}
       labels:
         {{- include "koodam.gatewaySelector" (list . "litellm") | nindent 8 }}
     spec:
@@ -151,10 +185,15 @@ spec:
         - name: KOODAM_OUT_OF_ZONE_MODELS
           value: {{ toJson . | quote }}
         {{- end }}
+        {{- with $guardPolicy }}
+        # The policy of the guard hook: the action, the sources and maxBytes.
+        - name: KOODAM_GUARD_POLICY
+          value: {{ . | quote }}
+        {{- end }}
         {{- range $i, $e := $b.litellm.extraEnvFromSecrets }}
         {{- $item := printf "gateway.bundled.litellm.extraEnvFromSecrets[%d]" $i }}
         {{- $envName := required (printf "%s.name is necessary." $item) $e.name }}
-        {{- if has $envName (list "LITELLM_MASTER_KEY" "POSTGRES_PASSWORD" "DATABASE_URL" "KOODAM_ZONE" "KOODAM_OUT_OF_ZONE_MODELS") }}
+        {{- if has $envName (list "LITELLM_MASTER_KEY" "POSTGRES_PASSWORD" "DATABASE_URL" "KOODAM_ZONE" "KOODAM_OUT_OF_ZONE_MODELS" "KOODAM_GUARD_POLICY") }}
         {{- fail (printf "%s.name must not be %s. The chart sets this variable." $item $envName) }}
         {{- end }}
         - name: {{ $envName | quote }}

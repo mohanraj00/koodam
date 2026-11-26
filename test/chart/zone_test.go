@@ -86,7 +86,7 @@ func TestZoneClaimValues(t *testing.T) {
 // The route list of the gateway has only the model routes of the zone of the install. The zone
 // hook gets the model names that only routes of a different zone have.
 func TestZoneRoutes(t *testing.T) {
-	const hookKey, hookSetting = "koodam_zone.py: |", "callbacks: koodam_zone.handler"
+	const hookKey, hookSetting = "koodam_zone.py: |", "- koodam_zone.handler"
 	const listEnv = "KOODAM_OUT_OF_ZONE_MODELS"
 	const routes = "gateway:\n  bundled:\n    litellm:\n      modelList:\n" +
 		"      - {model_name: model-a, zone: zone-a, litellm_params: {model: openai/route-a}}\n" +

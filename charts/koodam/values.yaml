@@ -122,6 +122,20 @@ gateway:
         capabilities:
           drop:
           - ALL
+    # The guard for instructions in untrusted content (docs/gateway-guard.md). The gateway examines
+    # the tool replies and the documents of each model request with fixed rules, and it writes one
+    # log line for each new block. It is a tripwire for known forms, not a defense. The egress
+    # policy stays the boundary.
+    guard:
+      enabled: false
+      # record: write the line and send the request with no change.
+      # mark: put a fixed notice line before each matched block, then send the request.
+      # block: refuse the request with the status 403 and the reason UntrustedInstruction.
+      action: record
+      # The sources to examine: toolResult and document.
+      sources: [toolResult, document]
+      # The guard examines at most this count of bytes of each block.
+      maxBytes: 65536
     # A model that LiteLLM answers itself (mock_response), with no model server.
     # The cost per token makes the spend more than zero. Use it for tests only.
     mock:

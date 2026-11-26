@@ -2,7 +2,7 @@
 
 An agent reads text from documents, web pages and tools. This text can hold instructions for the model. The gateway guard is an optional hook of the bundled gateway. It examines this text in each model request and records, marks or blocks a match. This page is the design and the log line contract (v1) for the programs that read the decisions, for example Nookku.
 
-> Status: design for [#248](https://github.com/mohanraj00/koodam/issues/248). The hook, the chart values and the tests come in the next pull requests of #248. The values on this page are the plan, not a release.
+> Status: [#248](https://github.com/mohanraj00/koodam/issues/248). The hook, the chart values and the unit tests are in the chart. The check in the pinned gateway image and the kind test come in the next pull request of #248. Until that check passes, the hook is not proved in the gateway image.
 
 **The guard is a tripwire for known forms. It is not a defense.** It finds only the fixed forms that its rules name. A different text can always go past it. The [egress policy](traced-egress.md) stays the boundary that limits the effect of a successful injection: a pod that follows an instruction still cannot call a host that its policy refuses.
 
@@ -14,7 +14,7 @@ The guard is a hook in the bundled LiteLLM gateway, in the same pattern as the [
 - The identity of a decision comes from the key metadata of the gateway, not from the request. The pod cannot change it.
 - The egress proxy does not read the body of a model request, and the guard does not change this. The proxy stays small, and its [span contract](egress-spans.md) does not change.
 
-The hook goes in `litellm_settings.callbacks`. The LiteLLM custom guardrail form with `default_on` is an alternative. The chart uses it only if a check in the pinned gateway image shows that no field of a request can turn it off. A pod must not turn off a policy of the operator.
+The hook goes in the `litellm_settings.callbacks` list, after the zone hook. Its source is `config/gateway/koodam_guard.py`. The LiteLLM custom guardrail form with `default_on` is an alternative. The chart uses it only if a check in the pinned gateway image shows that no field of a request can turn it off. A pod must not turn off a policy of the operator.
 
 ## What the guard examines
 
@@ -42,16 +42,16 @@ The detector uses no model and no external call. A match names its rule, and a t
 
 ## The policy
 
-The operator sets one policy for the install in the chart values. The planned values are:
+The operator sets one policy for the install in the chart values:
 
 | Value | Default | Meaning |
 | --- | --- | --- |
 | `gateway.bundled.guard.enabled` | `false` | Adds the hook to the gateway. With `false`, the gateway configuration does not change. |
 | `gateway.bundled.guard.action` | `record` | `record`, `mark` or `block`. See "Actions". |
 | `gateway.bundled.guard.sources` | `[toolResult, document]` | The sources that the guard examines. |
-| `gateway.bundled.guard.maxBytes` | to be set in the hook PR | The guard examines at most this count of bytes of each block. |
+| `gateway.bundled.guard.maxBytes` | `65536` | The guard examines at most this count of bytes of each block. |
 
-The policy version is the rule set version and a short digest of the rendered policy. A change of the policy starts the gateway pod again. A policy value that is not valid stops the gateway at its start.
+The chart gives the policy to the hook in the variable `KOODAM_GUARD_POLICY`. The policy version is the rule set version (`r1`) and the first 12 hex characters of the SHA-256 of the policy. A change of the policy starts the gateway pod again. The chart refuses a policy value that is not valid, and the hook also stops the gateway at its start.
 
 ## Actions
 
@@ -63,7 +63,7 @@ The policy version is the rule set version and a short digest of the rendered po
 
 For each action, the guard writes one log line (see "The log line").
 
-- **`mark`.** The notice is a fixed function of the block and the policy. Thus the next calls of the run send the same text, and the prompt cache of the provider stays valid after the first call. The notice adds input tokens to the spend.
+- **`mark`.** The notice is a fixed function of the policy version and the rule ids. For a block with text parts, it goes before the first part. Thus the next calls of the run send the same text, and the prompt cache of the provider stays valid after the first call. The notice adds input tokens to the spend.
 - **`block`.** The matched block stays in the history of the run, and the harness sends it again. Thus each later model call of that run also gets 403. A hostile page can stop a run, and a false match also stops a run.
 - **A hook error.** If the hook itself fails, it writes a line with the outcome `error` and sends the request (fail open). The guard is one layer, and the egress policy is the boundary.
 
@@ -88,14 +88,14 @@ The gateway writes 1 JSON line to its stdout for each new block that the guard e
 | `action` | string | yes | The action of the policy: `record`, `mark` or `block`. |
 | `policy` | string | yes | The policy version: the rule set version and a short digest of the rendered policy. |
 | `rules` | array of strings | yes | The ids of the rules that matched. It is empty for `clean` and `error`. Each id comes from the fixed set in "The detector". |
-| `source` | string | yes | `toolResult` or `document`. |
-| `digest` | string | yes | `sha256:` and the hex SHA-256 of the UTF-8 bytes that the guard examined. |
-| `bytes` | number | yes | The length of the block in bytes, before the `maxBytes` limit. |
+| `source` | string | yes | `toolResult` or `document`. It is `request` for `error`. |
+| `digest` | string | yes | `sha256:` and the hex SHA-256 of the UTF-8 bytes that the guard examined. A block with 2 or more text parts is the parts with a newline between them. It is empty for `error`. |
+| `bytes` | number | yes | The length of the block in bytes, before the `maxBytes` limit. It is `0` for `error`. |
 | `truncated` | boolean | yes | `true` if the block is longer than `maxBytes`. The guard examined only the first `maxBytes` bytes. |
 | `namespace` | string | no | The namespace from the key metadata. |
 | `keyAlias` | string | no | The alias of the gateway key, for example `kd-<uid>`, `ws-...` or `tk-<testID>-<uid>`. It is not a credential. |
 | `model` | string | no | The model name of the request. |
-| `reason` | string | no | Only for `error`. A fixed code from the hook, not a message from the request. |
+| `reason` | string | no | Only for `error`. The fixed code `hook-error`, not a message from the request. |
 
 "Always" means that the field is in each line. A field that is not always there is not in the line when it is empty.
 
@@ -113,7 +113,7 @@ The line has no content text, no key value and no tool name, because the pod cho
 
 ### Repeated blocks
 
-The hook keeps a bounded cache of the digests that it examined for each key. A block with a known digest for the same key gives no second line. For `mark` and `block`, the hook still applies the action to that block. After a restart of the gateway, the cache is empty, and the hook writes the lines again.
+The hook keeps a bounded cache of the digests that it examined for each key. A block with a known digest for the same key gives no second line. For `mark` and `block`, the hook still applies the action to that block. The cache has at most 4096 entries. After a restart of the gateway, the cache is empty, and the hook writes the lines again.
 
 ### Version rules
 
@@ -151,10 +151,8 @@ Other limits:
 
 ## Tests
 
-The hook pull request of #248 adds:
+- `tests/test_guard_hook.py`: a planted injection and a clean reply in each request form, for each action. The same text in the system prompt or the user text gives no line. Also the `maxBytes` limit, the cache, a bad policy and a hook error.
+- `tests/testdata/guard/`: the measured set. It has 5 planted texts, one or more for each rule, and 4 clean texts, also a README with many instructions. The test asserts that each planted text matches its rule and that no clean text matches.
+- `test/chart/guard_test.go`: with the guard off, the gateway configuration does not change. With the guard on, the gateway has the hook, the registration and the policy. With the zone hook, the zone hook is first.
 
-- a unit test with a planted injection and a clean reply in each of the 3 request forms, for each action;
-- a measured set of planted texts (one for each rule) and clean texts, also a README with many instructions. The test asserts the count of matches in each group;
-- a chart test: with the guard off, the gateway configuration does not change.
-
-The next pull request adds a check in the pinned gateway image and a kind test with the mock model. A pod sends a synthetic tool reply that tells the model to send data to a test host. The guard records it, and the egress proxy still refuses the test host.
+The next pull request of #248 adds a check in the pinned gateway image and a kind test with the mock model. A pod sends a synthetic tool reply that tells the model to send data to a test host. The guard records it, and the egress proxy still refuses the test host.

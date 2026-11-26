@@ -42,6 +42,10 @@ This file records the changes for each Koodam version. The newest version is fir
 
 - Pin Nookku 0.6.0 in `internal/evidence/nookku.pin`, with the plugin hashes of the tag `v0.6.0` in `images/nookku/plugin.sha256`. The seam test adds the 3 new gate cases of 0.6.0: a persona set, a second message that passes and a second message that is late. The report parser needs no change, because the verify program does not read the tests of `result.json` ([#377](https://github.com/mohanraj00/koodam/pull/377)).
 
+### Gateway
+
+- Add an optional guard hook to the bundled gateway for instructions in untrusted content (`gateway.bundled.guard`, off by default). It examines the tool replies and the documents of each model request with fixed rules, and it records, marks or blocks a match. It writes one log line with the policy version and a digest for each new block, and no content. It is a tripwire for known forms, not a defense. The [gateway guard](docs/gateway-guard.md) page lists what it cannot detect. The gateway `callbacks` setting is now a list ([#248](https://github.com/mohanraj00/koodam/issues/248)).
+
 ## v0.4.0 (2026-11-20)
 
 The API is `v1alpha1` and can change between tags. The App parts are off by default. [Known limits of v0.4.0](#known-limits-of-v040) lists the open limits.
