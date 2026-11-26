@@ -12,7 +12,8 @@ gateway. The program uses the same handlers as the `spend-api` binary:
 
 1. From the repository root, run `go run ./examples/operations-page`.
 2. Open `http://127.0.0.1:8080/` in a browser. To use a different address, add `-listen <host:port>`.
-3. Give the token `example-admin`. The page shows the runs and the spend of the two namespaces.
+3. Give the token `example-admin`. The page shows the runs and the spend of the two namespaces. The
+   period budget table shows the `SpendBudget` of `team-a`.
 4. Select "Forget the token". Then give the token `example-team-a`. The page shows only the runs and the
    spend of `team-a`.
 

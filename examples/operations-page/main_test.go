@@ -151,6 +151,18 @@ func TestExample(t *testing.T) {
 	if !maps.Equal(limited, map[string]float64{namespaceA: 1.75}) {
 		t.Fatalf("the team-a viewer sees the spend %v", limited)
 	}
+	var budgets struct {
+		Items []struct {
+			Namespace string  `json:"namespace"`
+			Remaining float64 `json:"remaining"`
+		} `json:"items"`
+	}
+	for _, token := range []string{adminToken, teamAToken} {
+		if err := json.Unmarshal(c.get("/v1/budgets", token, http.StatusOK), &budgets); err != nil ||
+			len(budgets.Items) != 1 || budgets.Items[0].Namespace != namespaceA || budgets.Items[0].Remaining != 6.75 {
+			t.Fatalf("the budgets are %+v (%v)", budgets.Items, err)
+		}
+	}
 	c.get("/v1/openapi.json", adminToken, http.StatusOK)
 
 	secrets := append(slices.Clone(ex.keys), adminToken, teamAToken, masterKey)
