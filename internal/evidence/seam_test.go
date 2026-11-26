@@ -76,6 +76,11 @@ func TestSeam(t *testing.T) {
 		{name: "a pass", folder: passCase, reason: corev1alpha1.EvidencePassed},
 		{name: "a fail", folder: "fail", reason: corev1alpha1.EvidenceFailed},
 		{name: "a missing test", folder: "missing_test", reason: corev1alpha1.EvidenceFailed},
+		// Nookku 0.6.0 adds the cases of a persona set and of a second message. The result of a persona
+		// set has the key persona in each test, and the verify program does not read the tests.
+		{name: "a persona set with one persona that fails", folder: "persona_set", reason: corev1alpha1.EvidenceFailed},
+		{name: "a second message that passes", folder: "second_message_pass", reason: corev1alpha1.EvidencePassed},
+		{name: "a second message that is late", folder: "second_message_late", reason: corev1alpha1.EvidenceFailed},
 		{name: "a result.json that changed after the seal", folder: passCase, tamper: true,
 			reason: corev1alpha1.EvidenceNotVerified},
 		{name: "a subject that does not match", folder: passCase, want: other,

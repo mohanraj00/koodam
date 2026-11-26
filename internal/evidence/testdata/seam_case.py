@@ -29,15 +29,27 @@ def records(folder: Path, messages: list, oks: list, tap: list | None) -> None:
 
 
 def sealed_test(folder: Path, given: dict) -> bytes:
-    """A sealed test folder with the records of a case. It gives back the bytes of the script."""
+    """A sealed test folder with the records of a case. It gives back the bytes of the script.
+
+    A script message can have the key during, and findings.json can have second_messages
+    (Nookku 0.6.0).
+    """
     folder.mkdir(parents=True)
-    body = "".join(json.dumps({"said": m}) + "\n" for m in given["messages"]).encode()
+    during = given.get("during") or [None] * len(given["messages"])
+    rows = [
+        {"said": m} if after is None else {"said": m, "during": after}
+        for m, after in zip(given["messages"], during, strict=True)
+    ]
+    body = "".join(json.dumps(r) + "\n" for r in rows).encode()
     manifest = {"test": folder.name, "entry": given["entry"], "entry_name": given["entry_name"]}
     manifest.update(policy={}, config_sha256={}, spec=[])
     manifest["script"] = {"source": None, "file": "script.jsonl", "sha256": script.sha256(body)}
     manifest["verdict"] = {"limits": given["limits"], "unread": []}
     (folder / "manifest.json").write_text(json.dumps(manifest))
-    (folder / "findings.json").write_text(json.dumps({"counts": given["counts"]}))
+    findings = {"counts": given["counts"]}
+    if "second_messages" in given:
+        findings["second_messages"] = given["second_messages"]
+    (folder / "findings.json").write_text(json.dumps(findings))
     verdict.build(folder)
     (folder / "audit.json").write_text(json.dumps(given["audit"]))
     records(folder, given["messages"], given["replies"], given.get("tap"))
@@ -67,6 +79,9 @@ def main(case: Path, root: Path, gate_id: str, tamper: bool) -> int:
             continue
         inputs[name] = {"script.jsonl": sealed_test(tests_dir / f"t-{name}", given["tests"][name])}
         (folder / "inputs" / name / "script.jsonl").write_bytes(inputs[name]["script.jsonl"])
+        if "persona" in given["tests"][name]:
+            inputs[name]["persona"] = given["tests"][name]["persona"].encode("utf-8")
+            (folder / "inputs" / name / "persona").write_bytes(inputs[name]["persona"])
         pinned = {"entry": given["tests"][name]["entry"], "policy": {}, "spec": [], "config_sha256": {}}
         rows.append(gate.ledger_row(name, tests_dir / f"t-{name}", None, pinned, pin))
     ledger = {"v": 1, "gate": gate_id, "subject": given["subject"], "tests_dir": str(tests_dir), "tests": rows}

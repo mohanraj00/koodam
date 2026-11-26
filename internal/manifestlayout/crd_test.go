@@ -115,7 +115,7 @@ func TestRouteMixedInput(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	basePlurals := []string{"agents", "profiles", "testkeys", "workspaces"}
+	basePlurals := []string{"agents", "profiles", "spendbudgets", "testkeys", "workspaces"}
 	want := make([]string, 0, 2+len(basePlurals))
 	want = append(want, appDir+appsFile, appDir+versionsFile)
 	for _, plural := range basePlurals {

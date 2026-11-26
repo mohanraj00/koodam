@@ -1,0 +1,11 @@
+# Only a cluster admin writes a SpendBudget. The name must be default.
+apiVersion: core.koodam.dev/v1alpha1
+kind: SpendBudget
+metadata:
+  labels:
+    app.kubernetes.io/name: koodam
+    app.kubernetes.io/managed-by: kustomize
+  name: default
+spec:
+  period: Day
+  spend: "25"

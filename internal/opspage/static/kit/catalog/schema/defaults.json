@@ -1,0 +1,15 @@
+{
+  "format": 3,
+  "contract": {
+    "version": "0.1.0",
+    "kind": "component",
+    "ai_content": true,
+    "slots": {"authorship": {"required": true}},
+    "states": ["default"],
+    "tokens": ["color.text", "color.border", "type.body"],
+    "accessibility": {"role": "none", "keyboard": [], "forced_colors": true, "reduced_motion": true}
+  },
+  "field": {"required": false},
+  "item": {"required": true},
+  "sizes": {"short": 40, "line": 80, "title": 120, "summary": 200, "long": 2000}
+}

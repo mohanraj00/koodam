@@ -1,0 +1,34 @@
+{
+  "name": "table",
+  "description": "Text columns and rows with optional status text. Columns must not be empty. Each row has one cell per column. Each status is in status_values. The sort key is a zero-based column index. Sort direction needs a sort key. Equal cells keep their input order. A new fill resets the sort.",
+  "data": {
+    "label": {"type": "text", "label": "Table name", "required": true, "min_length": 1, "size": "title"},
+    "columns": {
+      "type": "list",
+      "label": "Column headers",
+      "required": true,
+      "max_items": 12,
+      "items": {"type": "text", "label": "Header", "min_length": 1, "size": "line"}
+    },
+    "rows": {
+      "type": "list",
+      "required": true,
+      "max_items": 500,
+      "items": {"type": "component", "label": "Row", "name": "table-row"}
+    },
+    "sort_key": {"type": "integer", "label": "Column index to sort", "minimum": 0, "maximum": 11},
+    "sort_direction": {"type": "enum", "values": ["ascending", "descending"]},
+    "status_values": {
+      "type": "list",
+      "label": "Allowed row status values",
+      "max_items": 20,
+      "items": {"type": "text", "label": "Status", "min_length": 1, "size": "line"}
+    }
+  },
+  "states": ["+empty", "+refused"],
+  "tokens": [
+    "color.text", "color.text-muted", "color.border", "color.surface", "space.2", "space.3", "type.body",
+    "type.caption", "type.weight-strong"
+  ],
+  "accessibility": {"role": "group", "name": {"field": "label"}, "keyboard": ["Tab", "Shift+Tab", "Enter", "Space"]}
+}

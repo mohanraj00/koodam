@@ -28,6 +28,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	corev1alpha1 "github.com/mohanraj00/koodam/api/v1alpha1"
+	"github.com/mohanraj00/koodam/internal/tenanttoken"
 )
 
 // The CRD validation of the TenantQuota. These tests do not run a controller. They only send
@@ -75,6 +76,10 @@ var _ = Describe("TenantQuota CRD", func() {
 		Expect(create(q)).To(Succeed())
 	})
 
+	It("accepts a tenant label of 253 bytes", func() {
+		Expect(create(newQuota(func(s *corev1alpha1.TenantQuotaSpec) { s.Tenant = strings.Repeat("é", 126) + "a" }))).To(Succeed())
+	})
+
 	DescribeTable("refuses a spec that is not valid", func(change func(*corev1alpha1.TenantQuotaSpec), message string) {
 		err := create(newQuota(change))
 		Expect(apierrors.IsInvalid(err)).To(BeTrue(), "the error is not Invalid: %v", err)
@@ -82,6 +87,11 @@ var _ = Describe("TenantQuota CRD", func() {
 	},
 		Entry("an empty tenant label", func(s *corev1alpha1.TenantQuotaSpec) { s.Tenant = "" }, "spec.tenant"),
 		Entry("a long tenant label", func(s *corev1alpha1.TenantQuotaSpec) { s.Tenant = strings.Repeat("a", 254) }, "spec.tenant"),
+		Entry("the reserved tenant label", func(s *corev1alpha1.TenantQuotaSpec) { s.Tenant = tenanttoken.NoTenant },
+			"spec.tenant must not be the reserved label"),
+		// The claim check counts the bytes of a label, so 127 characters of 2 bytes are too long.
+		Entry("a tenant label of 254 bytes", func(s *corev1alpha1.TenantQuotaSpec) { s.Tenant = strings.Repeat("é", 127) },
+			"253 bytes or less"),
 		Entry("an empty App name", func(s *corev1alpha1.TenantQuotaSpec) { s.AppRef = &corev1alpha1.AppReference{} },
 			"spec.appRef.name"),
 		Entry("a period that is not Hour or Day", func(s *corev1alpha1.TenantQuotaSpec) { s.Period = "Year" }, "spec.period"),
