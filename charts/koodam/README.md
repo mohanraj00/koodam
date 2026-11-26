@@ -195,6 +195,10 @@ The reference must end with `@sha256:` and 64 lower-case hex characters. If not,
 | `gateway.bundled.litellm.extraEnvFromSecrets` | `[]` | The env variables for the upstream keys. Each item has `name`, `secretName` and `secretKey`. |
 | `gateway.bundled.litellm.batchWriteSeconds` | `1` | The LiteLLM `proxy_batch_write_at`. |
 | `gateway.bundled.mock.enabled` | `false` | Add the mock model `mock-1`. |
+| `gateway.bundled.guard.enabled` | `false` | Add the guard hook for instructions in untrusted content. See [Gateway guard](../../docs/gateway-guard.md). |
+| `gateway.bundled.guard.action` | `record` | `record`, `mark` or `block`. |
+| `gateway.bundled.guard.sources` | `[toolResult, document]` | The sources that the guard examines. |
+| `gateway.bundled.guard.maxBytes` | `65536` | The guard examines at most this count of bytes of each block. |
 | `gateway.bundled.postgres.image` | `docker.io/library/postgres:16-alpine@sha256:721873c34ceb9f8d8fc265984940dc982404c105f19ad51be9fdc5970a6080ea` | The PostgreSQL image. |
 | `gateway.bundled.postgres.passwordSecret.name`, `.key` | empty, `password` | The Secret with the database password. If empty, the chart makes it. |
 | `gateway.bundled.postgres.persistence.enabled` | `false` | Use a PVC, not an `emptyDir`. |

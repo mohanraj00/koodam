@@ -211,6 +211,7 @@ helm-sync: manifests ## Copy the CRD and the RBAC rules from config/ into the He
 	cp config/apps/crd/bases/core.koodam.dev_appversions.yaml $(CHART)/files/app-crd-appversions.yaml
 	cp config/apps/crd/bases/core.koodam.dev_tenantquotas.yaml $(CHART)/files/app-crd-tenantquotas.yaml
 	cp config/gateway/koodam_zone.py $(CHART)/files/litellm-zone-hook.py
+	cp config/gateway/koodam_guard.py $(CHART)/files/litellm-guard-hook.py
 
 # LITELLM_COMMIT pins the LiteLLM price file for koodam usage. Change it, then run make prices.
 LITELLM_COMMIT ?= 191967c20781877d606885f03f50721ab825ba0a
