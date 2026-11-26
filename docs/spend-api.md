@@ -74,7 +74,7 @@ subjects:
     namespace: koodam-system
 ```
 
-The server also needs `list` on `agents.core.koodam.dev` in each namespace of `-namespace`.
+The server also needs `list` on `agents.core.koodam.dev` and `get` on `spendbudgets.core.koodam.dev` in each namespace of `-namespace`.
 
 ## Local tokens and limits
 
