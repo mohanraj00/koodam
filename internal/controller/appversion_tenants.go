@@ -77,6 +77,23 @@ func podLimit(rate float64, burst, replicas int32) appclaim.TenantLimit {
 	return appclaim.TenantLimit{Rate: rate / n, Burst: int(math.Max(1, math.Ceil(float64(burst)/n)))}
 }
 
+// tenantOwners gives back the owner of each tenant label in a list of TenantQuotas. It reads the
+// list one time, so the limits file of an App with many tenants uses little time. It must agree
+// with tenantOwner.
+func tenantOwners(all []corev1alpha1.TenantQuota) map[string]*corev1alpha1.TenantQuota {
+	owners := make(map[string]*corev1alpha1.TenantQuota, len(all))
+	for i := range all {
+		q := &all[i]
+		if !q.DeletionTimestamp.IsZero() {
+			continue
+		}
+		if owner := owners[q.Spec.Tenant]; owner == nil || tenantQuotaOrder(q, owner) < 0 {
+			owners[q.Spec.Tenant] = q
+		}
+	}
+	return owners
+}
+
 // limits gives back the limits file of a version. It has each TenantQuota of the namespace that
 // has its tenant label in the install and that applies to the App of the version.
 func (c AppClaimCheck) limits(av *corev1alpha1.AppVersion, quotas []corev1alpha1.TenantQuota) appclaim.TenantLimits {
@@ -88,12 +105,13 @@ func (c AppClaimCheck) limits(av *corev1alpha1.AppVersion, quotas []corev1alpha1
 	if c.Tenants.DefaultRate > 0 {
 		out.Default = new(podLimit(c.Tenants.DefaultRate, c.Tenants.DefaultBurst, replicas))
 	}
+	owners := tenantOwners(quotas)
 	for i := range quotas {
 		q := &quotas[i]
 		if q.Namespace != av.Namespace || (q.Spec.AppRef != nil && q.Spec.AppRef.Name != av.Spec.AppRef.Name) {
 			continue
 		}
-		if owner := tenantOwner(quotas, q.Spec.Tenant); owner == nil || owner.UID != q.UID {
+		if owners[q.Spec.Tenant] != q {
 			continue
 		}
 		var limit appclaim.TenantLimit

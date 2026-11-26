@@ -107,6 +107,7 @@ func TestTenantLimitsOfVersion(t *testing.T) {
 			q.CreationTimestamp = metav1.Now()
 		}),
 		limitsQuota("g", "tenants-z", "taken", func(q *corev1alpha1.TenantQuota) { q.CreationTimestamp = older }),
+		limitsQuota("h", limitsNS, "taken", func(q *corev1alpha1.TenantQuota) { q.CreationTimestamp = metav1.Now() }),
 	}
 	claim := AppClaimCheck{Issuer: limitsIssuer, TenantClaim: limitsClaimKey,
 		Tenants: AppTenantLimits{DefaultRate: 1, RefuseUnknown: true}}
@@ -120,6 +121,16 @@ func TestTenantLimitsOfVersion(t *testing.T) {
 	b, _ := json.Marshal(want)
 	if string(a) != string(b) {
 		t.Errorf("limits %s, want %s", a, b)
+	}
+	// The owner of each tenant label is the same when the list is read one time.
+	owners := tenantOwners(quotas)
+	for i := range quotas {
+		if label := quotas[i].Spec.Tenant; owners[label] != tenantOwner(quotas, label) {
+			t.Errorf("tenantOwners gives a different owner for the tenant label %q.", label)
+		}
+	}
+	if owners["taken"] == nil || owners["taken"].Name != "g" || owners["in-delete"] != nil {
+		t.Errorf("The owner of a label is not correct: %v, %v.", owners["taken"], owners["in-delete"])
 	}
 	// The check container accepts the file.
 	if _, err := appclaim.ParseTenantLimits(a); err != nil {
