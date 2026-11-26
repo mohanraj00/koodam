@@ -23,12 +23,15 @@ import (
 	"slices"
 	"sync"
 	"testing"
+	"time"
 
 	authenticationv1 "k8s.io/api/authentication/v1"
 	authorizationv1 "k8s.io/api/authorization/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/kubernetes/fake"
 	k8stesting "k8s.io/client-go/testing"
+
+	corev1alpha1 "github.com/mohanraj00/koodam/api/v1alpha1"
 )
 
 const (
@@ -120,6 +123,24 @@ func TestViewerSeesOnlyPermittedNamespaces(t *testing.T) {
 	}
 	f.call(t, http.MethodGet, specPath, f.reader, http.StatusOK)
 	f.call(t, http.MethodHead, runsPath, f.reader, http.StatusOK)
+
+	// Each namespace has a budget. The reader gets only the budget of its namespace.
+	f.now = func() time.Time { return budgetNow }
+	sample, other := testBudget(budgetNow.Truncate(24*time.Hour)), testBudget(budgetNow.Truncate(24*time.Hour))
+	other.Namespace = otherNamespace
+	reader := f.kube.(agentReader)
+	reader.budgets = []corev1alpha1.SpendBudget{sample, other}
+	f.kube = reader
+	for token, want := range map[string][]string{f.reader: {testNamespace}, f.admin: {testNamespace, otherNamespace}} {
+		b := decode[page[budget]](t, f.call(t, http.MethodGet, budgetsPath, token, http.StatusOK))
+		seen := make([]string, 0, len(b.Items))
+		for _, item := range b.Items {
+			seen = append(seen, item.Namespace)
+		}
+		if !slices.Equal(seen, want) {
+			t.Fatalf("a viewer sees the budgets of %v, want %v", seen, want)
+		}
+	}
 }
 
 func TestViewerPagesAcrossNamespaces(t *testing.T) {
