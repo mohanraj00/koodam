@@ -31,7 +31,7 @@ spec:
 
 | Field | Rule |
 |---|---|
-| `tenant` | Necessary. The tenant label of the signed claim, with 1 to 253 characters. You cannot change it after create. |
+| `tenant` | Necessary. The tenant label of the signed claim, with 1 to 253 characters. You cannot change it after create. The API refuses the reserved label `koodam-no-tenant`. |
 | `appRef.name` | Optional. The App that the rate limit and the claim check refusals apply to. With no value, they apply to each App of the namespace. |
 | `period` | `Hour` or `Day`. The default is `Day`. The gateway sets the start of each period. |
 | `requests` | Optional. The maximum count of model calls of the tenant in one period. The minimum is 1. |
@@ -104,6 +104,7 @@ The TenantQuota controller runs with `apps.enabled`. For each `TenantQuota` it d
 - Each change of `QuotaExceeded` goes to the log of the manager, with the typed reason, the tenant label, the requests and the spend.
 - The condition `Ready` is `False` with the reason `GatewayError` while a gateway call fails. The message is fixed text. `QuotaExceeded` then keeps its last value.
 - If 2 or more `TenantQuota` objects of the install name one tenant label, only the oldest one has an effect. Each other one has `Ready=False` with the reason `DuplicateTenant`, and no use in its status. When the oldest one goes, the next one gets the label, and the customer keeps its spend.
+- A `TenantQuota` with the reserved label `koodam-no-tenant` has no effect. The API refuses a new one. For an object that is older than this rule, the controller sets `Ready=False` with the reason `ReservedTenant`. It makes no gateway call for the object, and a delete of the object does not delete the gateway customer. See "The tenant token".
 - A delete of the last `TenantQuota` of a tenant label deletes the gateway customer and its budget first, and then removes the finalizer. While the gateway does not answer, the `TenantQuota` stays.
 
 ## The tenant token
@@ -131,7 +132,7 @@ If the token is not valid, the app gets the status `403` from the proxy. The hea
 - An app can make a model call only for a request with a tenant label. A model call with no request of a tenant gets the refusal `TenantTokenMissing`.
 - A tenant label must have only visible ASCII characters, with no space at its start or end.
 - Each model call of an Agent pod or a Workspace pod gets the reserved customer `koodam-no-tenant`. Thus the code in these pods cannot make the gateway count a call for a tenant.
-- No tenant can have the label `koodam-no-tenant`. The claim check refuses a claim with this label (`ReservedTenant`), the egress proxy refuses a token with it, and the gateway client makes no customer limits for it. Limits on this customer would stop the model calls of each Agent and each Workspace.
+- No tenant can have the label `koodam-no-tenant`. The claim check refuses a claim with this label (`ReservedTenant`), the egress proxy refuses a token with it, the API refuses a `TenantQuota` with it, and the gateway client makes no customer limits for it. Limits on this customer would stop the model calls of each Agent and each Workspace.
 - The proxy refuses the gateway key of an AppVersion in a model call of a different pod (`AppKeyOutOfPod`). An App pod can send its key to an Agent pod or a Workspace pod. Without this check, that pod can make a model call with the key of the App and with no tenant.
   - The proxy reads the hash of the key from the status of the AppVersion, and it makes the hash of each key text in the call.
   - It examines each header value, each query value and the path of the call. These include `Authorization`, `x-litellm-api-key`, `API-Key`, `x-api-key`, `x-goog-api-key`, `Ocp-Apim-Subscription-Key`, `litellm_user_api_key`, `Sec-WebSocket-Protocol` and the query value `key`.
