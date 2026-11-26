@@ -28,6 +28,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	corev1alpha1 "github.com/mohanraj00/koodam/api/v1alpha1"
+	"github.com/mohanraj00/koodam/internal/tenanttoken"
 )
 
 // The CRD validation of the TenantQuota. These tests do not run a controller. They only send
@@ -82,6 +83,8 @@ var _ = Describe("TenantQuota CRD", func() {
 	},
 		Entry("an empty tenant label", func(s *corev1alpha1.TenantQuotaSpec) { s.Tenant = "" }, "spec.tenant"),
 		Entry("a long tenant label", func(s *corev1alpha1.TenantQuotaSpec) { s.Tenant = strings.Repeat("a", 254) }, "spec.tenant"),
+		Entry("the reserved tenant label", func(s *corev1alpha1.TenantQuotaSpec) { s.Tenant = tenanttoken.NoTenant },
+			"spec.tenant must not be the reserved label"),
 		Entry("an empty App name", func(s *corev1alpha1.TenantQuotaSpec) { s.AppRef = &corev1alpha1.AppReference{} },
 			"spec.appRef.name"),
 		Entry("a period that is not Hour or Day", func(s *corev1alpha1.TenantQuotaSpec) { s.Period = "Year" }, "spec.period"),

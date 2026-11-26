@@ -6,9 +6,9 @@ A tenant is a client group of an App. The tenant label comes from the signed cla
 
 - The `TenantQuota` API is in `main`. The chart installs its CRD with `apps.enabled=true`.
 - The claim check container can refuse a tenant from a limits file. See "The refusals of the claim check".
-- The gateway client can make the customer of a tenant label, read its use and delete it. See "The gateway customer".
+- With `apps.enabled`, the TenantQuota controller makes the gateway customer of each tenant label and writes the use to the status. See "The gateway customer" and "The controller".
 - With a tenant claim, the tenant token binds each model call of an App pod to the tenant of a request. See "The tenant token".
-- No controller reads a `TenantQuota` at this time, so no pod gets a limits file and the gateway gets no customer. The controller, the status and the default for an unknown tenant come in later changes of [#193](https://github.com/mohanraj00/koodam/issues/193).
+- No pod gets a limits file at this time. Thus the claim check refuses no tenant: the rate limit, the refusal of a tenant at its quota and the default for an unknown tenant come in a later change of [#193](https://github.com/mohanraj00/koodam/issues/193). The gateway already refuses a model call of a tenant at its spend limit.
 
 ## The TenantQuota spec
 
@@ -31,7 +31,7 @@ spec:
 
 | Field | Rule |
 |---|---|
-| `tenant` | Necessary. The tenant label of the signed claim, with 1 to 253 characters. You cannot change it after create. |
+| `tenant` | Necessary. The tenant label of the signed claim, with 1 to 253 characters. You cannot change it after create. The API refuses the reserved label `koodam-no-tenant`. |
 | `appRef.name` | Optional. The App that the rate limit and the claim check refusals apply to. With no value, they apply to each App of the namespace. |
 | `period` | `Hour` or `Day`. The default is `Day`. The gateway sets the start of each period. |
 | `requests` | Optional. The maximum count of model calls of the tenant in one period. The minimum is 1. |
@@ -53,7 +53,7 @@ The gateway has one customer for each tenant label of the install. Thus use one 
 | `periodEnd` | The time when the gateway starts the next period of the tenant. |
 | `requests` | The count of model calls of the tenant in the current period. |
 | `spend` | The spend of the tenant in the current period. |
-| `observedTime` | The time of the last read of the use from the gateway. |
+| `observedTime` | The time when the controller last wrote a change of the status. |
 
 ## The refusals of the claim check
 
@@ -91,6 +91,22 @@ The quota for each period is in the gateway. The gateway has one customer for ea
 - Koodam owns one LiteLLM budget for each tenant label, with the ID `kd-tenant-` and a hash of the label. It changes no other budget. A customer that the gateway already has keeps its spend when it gets this budget.
 - The tenant label is in the URL of 2 read calls to the gateway, so it can be in the access log of the gateway. The label is not a credential.
 
+## The controller
+
+The TenantQuota controller runs with `apps.enabled`. For each `TenantQuota` it does these steps:
+
+1. It adds the finalizer `core.koodam.dev/tenantquota-customer`.
+2. It makes the gateway customer of the tenant label with the limits of the spec. After a change of the spec, it sets the limits again.
+3. Each 30 seconds, it reads the spend and the requests of the current period from the gateway and writes them to the status. The manager flag `--tenant-usage-interval` changes this time. The controller writes the status only if a value changed.
+4. It sets the condition `QuotaExceeded`. The status is `True` with the reason `TenantQuotaExceeded` when the requests or the spend are at the limit of the spec or above it. A new period of the gateway sets it back to `False` with the reason `WithinQuota`.
+5. If the gateway stopped the count of the requests at its maximum, and this count is below `spec.requests`, the status is `Unknown` with the reason `RequestCountCapped`. The `requests` of the status are then a minimum. A spend at its limit still gives `True`.
+
+- Each change of `QuotaExceeded` goes to the log of the manager, with the typed reason, the tenant label, the requests and the spend.
+- The condition `Ready` is `False` with the reason `GatewayError` while a gateway call fails. The message is fixed text. `QuotaExceeded` then keeps its last value.
+- If 2 or more `TenantQuota` objects of the install name one tenant label, only the oldest one has an effect. Each other one has `Ready=False` with the reason `DuplicateTenant`, and no use in its status. When the oldest one goes, the next one gets the label, and the customer keeps its spend.
+- A `TenantQuota` with the reserved label `koodam-no-tenant` has no effect. The API refuses a new one. For an object that is older than this rule, the controller sets `Ready=False` with the reason `ReservedTenant`. It makes no gateway call for the object, and a delete of the object does not delete the gateway customer. See "The tenant token".
+- A delete of the last `TenantQuota` of a tenant label deletes the gateway customer and its budget first, and then removes the finalizer. While the gateway does not answer, the `TenantQuota` stays.
+
 ## The tenant token
 
 The code in an App pod is not trusted. Thus the gateway must not count a model call for a tenant label that this code selects. With a tenant claim (`apps.claimCheck.tenantClaim`), the tenant token binds each model call of an App pod to the tenant of a request. The chart value `apps.claimCheck.tenantToken` sets it, and the default is `true`.
@@ -116,7 +132,7 @@ If the token is not valid, the app gets the status `403` from the proxy. The hea
 - An app can make a model call only for a request with a tenant label. A model call with no request of a tenant gets the refusal `TenantTokenMissing`.
 - A tenant label must have only visible ASCII characters, with no space at its start or end.
 - Each model call of an Agent pod or a Workspace pod gets the reserved customer `koodam-no-tenant`. Thus the code in these pods cannot make the gateway count a call for a tenant.
-- No tenant can have the label `koodam-no-tenant`. The claim check refuses a claim with this label (`ReservedTenant`), the egress proxy refuses a token with it, and the gateway client makes no customer limits for it. Limits on this customer would stop the model calls of each Agent and each Workspace.
+- No tenant can have the label `koodam-no-tenant`. The claim check refuses a claim with this label (`ReservedTenant`), the egress proxy refuses a token with it, the API refuses a `TenantQuota` with it, and the gateway client makes no customer limits for it. Limits on this customer would stop the model calls of each Agent and each Workspace.
 - The proxy refuses the gateway key of an AppVersion in a model call of a different pod (`AppKeyOutOfPod`). An App pod can send its key to an Agent pod or a Workspace pod. Without this check, that pod can make a model call with the key of the App and with no tenant.
   - The proxy reads the hash of the key from the status of the AppVersion, and it makes the hash of each key text in the call.
   - It examines each header value, each query value and the path of the call. These include `Authorization`, `x-litellm-api-key`, `API-Key`, `x-api-key`, `x-goog-api-key`, `Ocp-Apim-Subscription-Key`, `litellm_user_api_key`, `Sec-WebSocket-Protocol` and the query value `key`.

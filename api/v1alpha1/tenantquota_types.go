@@ -61,11 +61,13 @@ const (
 type TenantQuotaSpec struct {
 	// Tenant is the tenant label of the signed claim. You cannot change it after create. The
 	// gateway has one customer for each tenant label of the install, so use one TenantQuota for
-	// each tenant label.
+	// each tenant label. The label koodam-no-tenant is reserved for the model calls with no
+	// tenant, and a tenant cannot have it.
 	// +required
 	// +kubebuilder:validation:MinLength=1
 	// +kubebuilder:validation:MaxLength=253
 	// +kubebuilder:validation:XValidation:rule="self == oldSelf",message="spec.tenant is immutable."
+	// +kubebuilder:validation:XValidation:rule="self != 'koodam-no-tenant'",message="spec.tenant must not be the reserved label koodam-no-tenant."
 	Tenant string `json:"tenant"`
 
 	// AppRef is the App that the rate limit and the claim check refusals apply to. With no
@@ -135,7 +137,7 @@ type TenantQuotaStatus struct {
 	// +optional
 	Spend string `json:"spend,omitempty"`
 
-	// ObservedTime is the time of the last read of the use from the gateway.
+	// ObservedTime is the time when the controller last wrote a change of the status.
 	// +optional
 	ObservedTime *metav1.Time `json:"observedTime,omitempty"`
 }
