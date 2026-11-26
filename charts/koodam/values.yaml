@@ -291,6 +291,14 @@ zone:
   # claim check accepts such a request. It needs apps.claimCheck.issuer and
   # apps.claimCheck.zoneClaim.
   requireClaim: false
+  # The declared zone of egress hosts, as a map from a host to a zone. The egress proxy refuses a
+  # call to a host with a zone that is not zone.name (EgressOutOfZone). A host is a DNS name, or
+  # "*." and a DNS name for each name below it. A host with no entry follows the usual egress
+  # rules. It needs zone.name and egressProxy.enabled. For example:
+  #   egressHosts:
+  #     models.zone-b.example.com: zone-b
+  #     "*.zone-b.example.net": zone-b
+  egressHosts: {}
 
 # The tenants of the Apps. A TenantQuota gives one tenant label its quota and its rate limit.
 # The controller reads the use of each tenant from the gateway. defaultQuota and refuseUnknown

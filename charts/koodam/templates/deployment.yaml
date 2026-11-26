@@ -64,6 +64,9 @@ spec:
         - --agent-gateway-url={{ . }}
         {{- end }}
         - --key-grace={{ .Values.keyGrace }}
+        {{- if and .Values.zone.egressHosts (not (and .Values.zone.name (dig "enabled" false (.Values.egressProxy | default dict)))) }}
+        {{- fail "zone.egressHosts needs zone.name and egressProxy.enabled, because the egress proxy compares each host zone with the zone of the install." }}
+        {{- end }}
         {{- if and .Values.zone.requireClaim (not (and $claim .Values.apps.claimCheck.zoneClaim)) }}
         {{- fail "zone.requireClaim needs apps.enabled, apps.claimCheck.issuer and apps.claimCheck.zoneClaim, because the claim check reads no zone without them." }}
         {{- end }}

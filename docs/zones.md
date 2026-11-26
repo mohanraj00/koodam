@@ -26,7 +26,7 @@ A tenant of #193 has no zone of its own. A tenant label is known only in the ins
 | Install | `zone.name`, `zone.namespaces`, `apps.sharedResources` | none | yes |
 | Ingress of an App | The claim check compares the zone claim of the caller with the zone of the install | `ZoneMismatch` | yes |
 | Model route | The route list of the gateway has only the routes of the zone | `RouteOutOfZone` | yes |
-| Egress | The egress proxy refuses a host with a different declared zone | `EgressOutOfZone` | no |
+| Egress | The egress proxy refuses a host with a different declared zone | `EgressOutOfZone` | yes |
 | Placement | An admission policy examines the node placement and the storage class of an AppVersion | `ZonePlacement` | no |
 
 Each refusal has one typed reason. The reason is in the response and in the span or the log of the component that refuses.
@@ -86,7 +86,26 @@ With your own gateway (`gateway.mode: existing`), Koodam does not control the ro
 
 ### Egress
 
-`zone.egressHosts` gives a zone to an egress host. The egress proxy refuses a connection to a host with a zone that is not the zone of the install. The egress span has the outcome `EgressOutOfZone`. A host with no declared zone follows the usual egress rules.
+`zone.egressHosts` gives a zone to an egress host. It needs `zone.name` and `egressProxy.enabled`.
+
+```yaml
+zone:
+  name: zone-a
+  egressHosts:
+    models.zone-b.example.com: zone-b
+    "*.zone-b.example.net": zone-b
+```
+
+- The egress proxy refuses a call to a host with a declared zone that is not the zone of the install. The rule applies to each path of the proxy: CONNECT, plain HTTP and the transparent listeners.
+- The pod gets the status 403 with the text `egress denied: EgressOutOfZone`, or the proxy closes the TLS connection. The egress span has the result `denied` and the reason `EgressOutOfZone`. [egress-spans.md](egress-spans.md) has the contract.
+- The proxy refuses the host before the name lookup. Thus it sends no DNS query and no byte to a host of a different zone.
+- A host is a DNS name, or `*.` and a DNS name. The pattern `*.zone-b.example.net` is for each name below `zone-b.example.net`, not for `zone-b.example.net`. An exact name wins against a pattern, and the longest pattern wins against a shorter pattern.
+- A host with no entry follows the usual egress rules. The list is not a list of permitted hosts.
+- An IP address has no declared zone, and the proxy cannot find the host of an address. If the list has a host of a zone that is not the zone of the install, the proxy refuses each call to an IP address with the reason `EgressOutOfZone`. A host name with a number as its last label is also an address. If the list has no such host, a call to an IP address follows the usual egress rules.
+- The check uses the name of the call. A name with no entry passes the check, also if it has the same address as a host of a different zone. Put each name of an endpoint of a different zone in the list.
+- With `zone.name`, each egress span has the field `zone`: the zone of the install.
+
+The Agent ingress span of [ingress-spans.md](ingress-spans.md) has no zone field, because no proxy writes this span.
 
 ### Placement
 

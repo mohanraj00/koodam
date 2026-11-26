@@ -169,6 +169,34 @@ func TestZoneRoutes(t *testing.T) {
 	}
 }
 
+// The egress proxy gets the zone of the install and the declared zone of the egress hosts.
+func TestZoneEgressHosts(t *testing.T) {
+	const zoneFlag, hostFlag = `"--zone=zone-a"`, "--host-zones="
+	const proxy = "egressProxy: {enabled: true, clusterIP: 10.96.0.50, networkPolicy: {enabled: false}}\n"
+	const hosts = "egressHosts: {models.zone-b.example.com: zone-b, \"*.zone-b.example.net\": zone-b, " +
+		"here.example.com: zone-a}"
+	plain, err := helmTemplate(t, proxy)
+	if err != nil || strings.Contains(plain, "--zone=") || strings.Contains(plain, hostFlag) {
+		t.Fatalf("the egress proxy of an install with no zone has a zone flag: %v", err)
+	}
+	on, err := helmTemplate(t, proxy+"zone: {name: zone-a, "+hosts+"}\n")
+	if err != nil {
+		t.Fatalf("helm template failed: %v\n%s", err, on)
+	}
+	want := `"` + hostFlag + `*.zone-b.example.net=zone-b,here.example.com=zone-a,models.zone-b.example.com=zone-b"`
+	if strings.Count(on, zoneFlag) != 2 || !strings.Contains(on, want) {
+		t.Errorf("the manager and the egress proxy do not have the zone flags")
+	}
+	for name, values := range map[string]string{
+		"no zone":         proxy + "zone: {" + hosts + "}\n",
+		"no egress proxy": "zone: {name: zone-a, " + hosts + "}\n",
+	} {
+		if out, err := helmTemplate(t, values); err == nil || !strings.Contains(out, "zone.egressHosts needs") {
+			t.Errorf("%s: the host zones are accepted: %v", name, err)
+		}
+	}
+}
+
 // The App CRDs and the admission policy of the AppVersion are for the full cluster. The second
 // install of a cluster does not render them, and it has no other object for the full cluster
 // with a name that the first install has.
