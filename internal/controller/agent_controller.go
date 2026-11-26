@@ -451,6 +451,7 @@ func (r *AgentReconciler) provision(ctx context.Context, a *corev1alpha1.Agent) 
 		a.Status.RunID = string(a.UID)
 		a.Status.KeyAlias = alias
 		a.Status.KeyHash = gateway.HashKey(key)
+		a.Status.Budget = decimal(a.Spec.Budget)
 		a.Status.CostGroup = costGroup
 		if err := r.Status().Update(ctx, a); err != nil {
 			return err

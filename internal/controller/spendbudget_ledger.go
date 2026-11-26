@@ -174,12 +174,13 @@ func (r *AgentReconciler) roll(ctx context.Context, b *corev1alpha1.SpendBudget,
 		if o.Status.KeyHash == "" {
 			continue
 		}
+		admitted := admittedBudget(&o)
 		// An ended run keeps its reservation until the revoke blocked its key and read its usage.
 		if !agentEnded(&o) || o.Status.RevokedAt == nil {
 			if len(s.Reservations) < maxReservations {
 				s.Reservations = append(s.Reservations, corev1alpha1.SpendReservation{
-					RunID: string(o.UID), Agent: o.Name, Budget: decimal(o.Spec.Budget)})
-				reserved.Add(o.Spec.Budget)
+					RunID: string(o.UID), Agent: o.Name, Budget: decimal(admitted)})
+				reserved.Add(admitted)
 			}
 			continue
 		}
@@ -187,7 +188,11 @@ func (r *AgentReconciler) roll(ctx context.Context, b *corev1alpha1.SpendBudget,
 		if o.Status.StartedAt != nil {
 			began = o.Status.StartedAt.Time
 		}
-		if o.Status.Usage != nil && !began.Before(start) && began.Before(end) {
+		switch {
+		case o.Status.Usage == nil || began.Before(start) || !began.Before(end):
+		case spendNotSettled(&o):
+			spend.Add(admitted)
+		default:
 			spend.Add(quantity(o.Status.Usage.Spend))
 		}
 	}
@@ -345,6 +350,16 @@ func (r *AgentReconciler) settle(ctx context.Context, a *corev1alpha1.Agent) err
 	b.Status.Spend, b.Status.Reserved = decimal(spend), decimal(reserved)
 	b.Status.Reservations = slices.Delete(b.Status.Reservations, i, i+1)
 	return r.writeLedger(ctx, b, before, r.now())
+}
+
+// admittedBudget is the run budget that the key got. An Agent from a version before status.budget
+// has only spec.budget.
+func admittedBudget(a *corev1alpha1.Agent) resource.Quantity {
+	q, err := resource.ParseQuantity(a.Status.Budget)
+	if err != nil {
+		return a.Spec.Budget
+	}
+	return q
 }
 
 // spendNotSettled is true if the revoke found that the spend of the run did not settle.

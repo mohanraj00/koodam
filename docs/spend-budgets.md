@@ -50,7 +50,7 @@ The controller counts only the Agent runs. Workspace, AppVersion and TestKey key
 The rules of the period:
 
 - The spend of a run counts in the period where it started. At the end of a period, the controller drops the reservations of that period. A run of the old period keeps its own budget at the gateway, and its spend does not go into the new period.
-- If the status has no period (a new SpendBudget, or a lost status after a restore), or if `spec.period` changes, the controller rebuilds the ledger from the Agents. It finds a change of `spec.period` also after the old period ended. Each active run with a key gets a reservation. An ended run keeps its reservation until the revoke blocked its key and recorded its usage. Each ended run that started in the period adds its settled spend.
+- If the status has no period (a new SpendBudget, or a lost status after a restore), or if `spec.period` changes, the controller rebuilds the ledger from the Agents. It finds a change of `spec.period` also after the old period ended. Each active run with a key gets a reservation of `status.budget`, the run budget that its key got. A later change of `spec.budget` does not change the key, so the rebuild does not use it. An ended run keeps its reservation until the revoke blocked its key and recorded its usage. Each ended run that started in the period adds its settled spend, or its full `status.budget` if the spend did not settle.
 - The ledger has a maximum of 500 active runs. More runs wait.
 
 ## Who can write it

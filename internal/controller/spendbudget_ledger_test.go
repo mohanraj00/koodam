@@ -294,6 +294,38 @@ var _ = Describe("SpendBudget ledger", func() {
 		Expect(b.Status.Reservations).To(HaveLen(1))
 	})
 
+	It("rebuilds a reservation with the budget that the key got", func() {
+		newRun(ledgerActive, "8")
+		reconcileRun(ledgerActive)
+		a := run(ledgerActive)
+		Expect(a.Status.Budget).To(Equal("8"))
+		a.Spec.Budget = resource.MustParse("1")
+		Expect(k8sClient.Update(ctx, a)).To(Succeed())
+		b := budget()
+		b.Status = corev1alpha1.SpendBudgetStatus{}
+		Expect(k8sClient.Status().Update(ctx, b)).To(Succeed())
+		newRun(ledgerLater, "7")
+		expectWaits(ledgerLater, reconcileRun(ledgerLater))
+		Expect(budget().Status.Reserved).To(Equal("8"))
+	})
+
+	It("rebuilds the full run budget of a run whose spend did not settle", func() {
+		newRun(ledgerRun1, "6")
+		reconcileRun(ledgerRun1)
+		gw.usageErr = gateway.ErrSpendNotSettled
+		endRunJob(ctx, types.NamespacedName{Namespace: ns, Name: ledgerJob1}, batchv1.JobComplete)
+		reconcileRun(ledgerRun1)
+		a := run(ledgerRun1)
+		a.Status.StartedAt = &metav1.Time{Time: day1}
+		Expect(k8sClient.Status().Update(ctx, a)).To(Succeed())
+		b := budget()
+		b.Status = corev1alpha1.SpendBudgetStatus{}
+		Expect(k8sClient.Status().Update(ctx, b)).To(Succeed())
+		newRun(ledgerRun2, "6")
+		expectWaits(ledgerRun2, reconcileRun(ledgerRun2))
+		Expect(budget().Status.Spend).To(Equal("6"))
+	})
+
 	It("does not hold the other runs behind a run with a budget above the limit", func() {
 		newRun(ledgerHuge, "11")
 		newRun(ledgerNext, "2")
