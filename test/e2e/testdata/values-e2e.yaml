@@ -4,6 +4,9 @@
 # number format.
 gateway:
   bundled:
+    # The guard hook (#248) records the instructions in the tool replies. See egress_test.go.
+    guard:
+      enabled: true
     litellm:
       modelList:
       - model_name: fake-responses

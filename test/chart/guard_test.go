@@ -46,7 +46,7 @@ func TestGuardValues(t *testing.T) {
 	if err != nil {
 		t.Fatalf("helm template failed: %v\n%s", err, off)
 	}
-	for _, s := range []string{guardKey, guardSetting, guardEnv, "litellm_settings:"} {
+	for _, s := range []string{guardKey, guardSetting, guardEnv, "litellm_settings:", "allow_dynamic_callback_disabling"} {
 		if strings.Contains(off, s) {
 			t.Errorf("the install with no guard has %q", s)
 		}
@@ -56,7 +56,7 @@ func TestGuardValues(t *testing.T) {
 		t.Fatalf("helm template failed: %v\n%s", err, on)
 	}
 	for _, s := range []string{guardKey, "litellm_settings:\n      callbacks:\n", "      " + guardSetting + "\n",
-		"async def async_pre_call_hook", guardEnv + "\n          value: " +
+		"async def async_pre_call_hook", "      allow_dynamic_callback_disabling: false\n", guardEnv + "\n          value: " +
 			`"{\"action\":\"record\",\"maxBytes\":65536,\"sources\":[\"toolResult\",\"document\"]}"`} {
 		if !strings.Contains(on, s) {
 			t.Errorf("the install with the guard does not have %q", s)
