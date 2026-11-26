@@ -41,6 +41,7 @@ import (
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
+	"sigs.k8s.io/controller-runtime/pkg/handler"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
 
 	corev1alpha1 "github.com/mohanraj00/koodam/api/v1alpha1"
@@ -117,11 +118,18 @@ type AgentReconciler struct {
 	// false, such an Agent with no key hash in its status waits. An Agent with a stored key hash can
 	// recover with each value, and the revoke at the run end or at the delete does not use this field.
 	IngressEnabled bool
+	// Now gives the time for the period of a SpendBudget. If it is nil, the controller uses time.Now.
+	Now func() time.Time
+	// BudgetRetry is the most time that a run waits for a SpendBudget before a new check. If it is 0
+	// or less, the controller uses DefaultBudgetRetry.
+	BudgetRetry time.Duration
 }
 
 // +kubebuilder:rbac:groups=core.koodam.dev,resources=agents,verbs=get;list;watch;update
 // +kubebuilder:rbac:groups=core.koodam.dev,resources=agents/status,verbs=update
 // +kubebuilder:rbac:groups=core.koodam.dev,resources=agents/finalizers,verbs=update
+// +kubebuilder:rbac:groups=core.koodam.dev,resources=spendbudgets,verbs=get;list;watch
+// +kubebuilder:rbac:groups=core.koodam.dev,resources=spendbudgets/status,verbs=update
 // +kubebuilder:rbac:groups=batch,resources=jobs,verbs=get;list;watch;create;delete
 // +kubebuilder:rbac:groups="",resources=secrets,verbs=get;create;delete
 // +kubebuilder:rbac:groups="",resources=pods,verbs=list
@@ -186,7 +194,11 @@ func (r *AgentReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl
 		}
 		return ctrl.Result{}, nil
 	default:
-		return ctrl.Result{}, r.provision(ctx, a)
+		err := r.provision(ctx, a)
+		if wait, ok := errors.AsType[budgetWait](err); ok {
+			return ctrl.Result{RequeueAfter: wait.after}, nil
+		}
+		return ctrl.Result{}, err
 	}
 }
 
@@ -257,6 +269,10 @@ func invalid(a *corev1alpha1.Agent) string {
 	}
 	if !inCeiling(a.Spec.Rules) {
 		return "A rule is not in the agent-ceiling ClusterRole."
+	}
+	// A budget of zero or less would give a reservation that adds room to the period budget.
+	if a.Spec.Budget.Sign() <= 0 {
+		return "spec.budget must be more than zero."
 	}
 	// The CRD has this rule. The controller reads the first model, so it does the check again.
 	if (a.Spec.Model == "") == (len(a.Spec.Models) == 0) || slices.Contains(a.Spec.Models, "") {
@@ -351,6 +367,28 @@ func (r *AgentReconciler) costGroupCheck(ctx context.Context, a *corev1alpha1.Ag
 	return msg, reasonCostGroupNotAllowed, nil
 }
 
+// admit adds the finalizer and then reserves the run budget in the period budget of the namespace.
+// The reservation comes after the finalizer, so that a delete releases it, and before the key. If
+// the run must wait, admit gives a budgetWait error. It is true if it ended the run.
+func (r *AgentReconciler) admit(ctx context.Context, a *corev1alpha1.Agent) (bool, error) {
+	if controllerutil.AddFinalizer(a, finalizer) {
+		if err := r.Update(ctx, a); err != nil {
+			return false, err
+		}
+	}
+	if admitted(a) {
+		return false, nil
+	}
+	if a.Status.KeyHash != "" {
+		return r.admitKeyBeforeLedger(ctx, a)
+	}
+	after, msg, err := r.reserve(ctx, a)
+	if err != nil || after == 0 {
+		return false, err
+	}
+	return false, r.waitForBudget(ctx, a, after, msg)
+}
+
 func (r *AgentReconciler) provision(ctx context.Context, a *corev1alpha1.Agent) error {
 	log := logf.FromContext(ctx)
 	msg, reason := invalid(a), reasonInvalid
@@ -388,10 +426,8 @@ func (r *AgentReconciler) provision(ctx context.Context, a *corev1alpha1.Agent) 
 		})
 		return r.fail(ctx, a, corev1alpha1.AgentFailed, reason)
 	}
-	if controllerutil.AddFinalizer(a, finalizer) {
-		if err := r.Update(ctx, a); err != nil {
-			return err
-		}
+	if done, err := r.admit(ctx, a); err != nil || done {
+		return err
 	}
 	// The Secret comes first. A retry after a crash finds the key value in it.
 	key, err := r.runKey(ctx, a)
@@ -418,14 +454,17 @@ func (r *AgentReconciler) provision(ctx context.Context, a *corev1alpha1.Agent) 
 		a.Status.RunID = string(a.UID)
 		a.Status.KeyAlias = alias
 		a.Status.KeyHash = gateway.HashKey(key)
+		a.Status.Budget = decimal(a.Spec.Budget)
 		a.Status.CostGroup = costGroup
 		if err := r.Status().Update(ctx, a); err != nil {
 			return err
 		}
 	}
 	models := a.Spec.ModelList()
+	// A retry after a failed create uses the budget that the ledger reserved, not a changed spec.budget.
+	budget := admittedBudget(a)
 	err = r.Gateway.CreateKey(ctx, gateway.KeySpec{
-		Value: key, Alias: alias, Model: models[0], Models: models[1:], Budget: a.Spec.Budget.AsApproximateFloat64(),
+		Value: key, Alias: alias, Model: models[0], Models: models[1:], Budget: budget.AsApproximateFloat64(),
 		TTL: time.Duration(a.Spec.DeadlineSeconds)*time.Second + r.Grace, Metadata: keyMetadata(a),
 	})
 	if err != nil {
@@ -844,6 +883,9 @@ func (r *AgentReconciler) revoke(ctx context.Context, a *corev1alpha1.Agent) err
 			return err
 		}
 	}
+	if err := r.settle(ctx, a); err != nil {
+		return err
+	}
 	if err := r.deleteOwned(ctx, a, &corev1.Secret{}); err != nil {
 		return err
 	}
@@ -936,6 +978,7 @@ func (r *AgentReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&corev1alpha1.Agent{}).
 		Owns(&batchv1.Job{}).
+		Watches(&corev1alpha1.SpendBudget{}, handler.EnqueueRequestsFromMapFunc(r.waitingFor)).
 		Named("agent").
 		Complete(r)
 }

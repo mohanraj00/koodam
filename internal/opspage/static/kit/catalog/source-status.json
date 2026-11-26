@@ -1,0 +1,17 @@
+{
+  "name": "source-status",
+  "description": "The state of an offline data source of the application as text: ready, stale, empty or error.",
+  "ai_content": false,
+  "data": {
+    "label": {"type": "text", "required": true, "min_length": 1, "size": "line"},
+    "state": {"type": "enum", "required": true, "values": ["ready", "stale", "empty", "error"]},
+    "checked": {"type": "text", "min_length": 1, "size": "short"},
+    "reason": {"type": "text", "min_length": 1, "size": "summary"}
+  },
+  "states": ["+empty", "+error", "+refused"],
+  "tokens": [
+    "color.text", "color.text-muted", "color.border", "color.danger", "space.1", "space.2", "radius.2", "type.body",
+    "type.caption", "type.weight-strong"
+  ],
+  "accessibility": {"role": "status", "name": {"field": "label"}}
+}

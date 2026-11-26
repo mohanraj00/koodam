@@ -1,0 +1,22 @@
+# This rule gives full access to the SpendBudget objects. Bind it only to the cluster admins who
+# set the period budgets, never to the users of a namespace.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  labels:
+    app.kubernetes.io/name: koodam
+    app.kubernetes.io/managed-by: kustomize
+  name: spendbudget-admin-role
+rules:
+- apiGroups:
+  - core.koodam.dev
+  resources:
+  - spendbudgets
+  verbs:
+  - '*'
+- apiGroups:
+  - core.koodam.dev
+  resources:
+  - spendbudgets/status
+  verbs:
+  - get

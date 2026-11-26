@@ -274,6 +274,12 @@ type AgentStatus struct {
 	// +optional
 	KeyHash string `json:"keyHash,omitempty"`
 
+	// Budget is the run budget that the key got, as a decimal number. The controller writes it with
+	// keyHash. A later change of spec.budget does not change the key, so the period budget ledger
+	// uses this value.
+	// +optional
+	Budget string `json:"budget,omitempty"`
+
 	// StartedAt is the start time of the run Job. The controller sets it one time only.
 	// +optional
 	StartedAt *metav1.Time `json:"startedAt,omitempty"`

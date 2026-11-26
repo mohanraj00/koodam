@@ -19,6 +19,7 @@ package egress
 import (
 	"errors"
 	"fmt"
+	"net/netip"
 	"strings"
 
 	"k8s.io/apimachinery/pkg/util/validation"
@@ -39,12 +40,14 @@ type HostZones struct {
 	exact map[string]string
 	// below has the zone of each name below the key. The key has no "*." at its start.
 	below map[string]string
+	// zones has each zone of the list.
+	zones map[string]bool
 }
 
 // ParseHostZones reads host=zone pairs with a comma between them. It ignores an empty item. It
 // refuses a host or a zone that is not valid, and a host that is in the list 2 times.
 func ParseHostZones(list string) (*HostZones, error) {
-	z := &HostZones{exact: map[string]string{}, below: map[string]string{}}
+	z := &HostZones{exact: map[string]string{}, below: map[string]string{}, zones: map[string]bool{}}
 	for item := range strings.SplitSeq(list, ",") {
 		if item = strings.TrimSpace(item); item == "" {
 			continue
@@ -68,6 +71,7 @@ func ParseHostZones(list string) (*HostZones, error) {
 			return nil, fmt.Errorf("the host of the item %q is in the list 2 times", item)
 		}
 		into[name] = zone
+		z.zones[zone] = true
 	}
 	return z, nil
 }
@@ -103,6 +107,33 @@ func (z *HostZones) Zone(host string) (string, bool) {
 	}
 }
 
+// hasOther is true if the list has a host of a zone that is not zone.
+func (z *HostZones) hasOther(zone string) bool {
+	if z == nil {
+		return false
+	}
+	return len(z.zones) > 1 || len(z.zones) == 1 && !z.zones[zone]
+}
+
+// isAddress is true if host is an IP address and not a DNS name. A name with a last label that
+// is a number is also an address, because a resolver can read such a name as an IPv4 address.
+func isAddress(host string) bool {
+	name := normalHost(host)
+	if _, err := netip.ParseAddr(strings.Trim(name, "[]")); err == nil {
+		return true
+	}
+	last := name[strings.LastIndex(name, ".")+1:]
+	if strings.HasPrefix(last, "0x") {
+		return true
+	}
+	for _, c := range last {
+		if c < '0' || c > '9' {
+			return false
+		}
+	}
+	return last != ""
+}
+
 func normalHost(host string) string {
 	return strings.ToLower(strings.TrimSuffix(strings.TrimSpace(host), "."))
 }
@@ -112,6 +143,11 @@ func normalHost(host string) string {
 func (p *Proxy) outOfZone(host string) bool {
 	if p.Zone == "" {
 		return false
+	}
+	// The proxy cannot find the zone of an IP address. If the list has a host of a different
+	// zone, the address can be the address of that host. Thus the proxy refuses the address.
+	if isAddress(host) {
+		return p.HostZones.hasOther(p.Zone)
 	}
 	zone, ok := p.HostZones.Zone(host)
 	return ok && zone != p.Zone

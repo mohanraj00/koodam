@@ -194,6 +194,23 @@ var _ = Describe("TenantQuota Controller", func() {
 		Entry("above the 2 limits", gateway.CustomerUsage{Requests: 11, Spend: 1.5}, true, "requests, spend"),
 	)
 
+	It("gives no mark for a capped count below the request limit", func() {
+		const tenant = "tq-capped"
+		q := newQuota("capped", tenant, func(s *corev1alpha1.TenantQuotaSpec) { s.Requests = new(int64(10)) })
+		gw.usage[tenant] = gateway.CustomerUsage{Requests: 9, RequestsCapped: true, PeriodEnd: periodEnd}
+		got, _, err := run(q)
+		Expect(err).NotTo(HaveOccurred())
+		c := cond(got, corev1alpha1.TenantQuotaExceeded)
+		Expect(c.Status).To(Equal(metav1.ConditionUnknown))
+		Expect(c.Reason).To(Equal("RequestCountCapped"))
+		Expect(got.Status.Requests).To(Equal(int64(9)))
+		// A capped count at the limit is sufficient for the mark.
+		gw.usage[tenant] = gateway.CustomerUsage{Requests: 10, RequestsCapped: true, PeriodEnd: periodEnd}
+		got, _, err = run(got)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(cond(got, corev1alpha1.TenantQuotaExceeded).Status).To(Equal(metav1.ConditionTrue))
+	})
+
 	It("gives a tenant with no limit a customer with a day period and no mark", func() {
 		const tenant = "tq-open"
 		got, _, err := run(newQuota("open", tenant, nil))
@@ -226,9 +243,11 @@ var _ = Describe("TenantQuota Controller", func() {
 		gw.usage[tenant] = gateway.CustomerUsage{Requests: 1, PeriodEnd: periodEnd}
 		got, _, err := run(q)
 		Expect(err).NotTo(HaveOccurred())
-		gw.err = errors.New("the gateway answer has sk-secret-data")
+		gw.err = &gateway.HTTPError{Path: "/customer/info", Status: 500, Body: "the gateway answer has sk-secret-data"}
 		got, _, err = run(got)
-		Expect(err).To(MatchError(gw.err))
+		// controller-runtime writes the returned error to the log, so it has no text of the gateway.
+		Expect(err).To(MatchError(errTenantGateway))
+		Expect(err.Error()).To(Equal("a call to the gateway failed: HTTP 500"))
 		ready := cond(got, corev1alpha1.TenantQuotaReady)
 		Expect(ready.Status).To(Equal(metav1.ConditionFalse))
 		Expect(ready.Reason).To(Equal(reasonTenantGateway))
@@ -272,9 +291,10 @@ var _ = Describe("TenantQuota Controller", func() {
 		Expect(err).NotTo(HaveOccurred())
 		Expect(k8sClient.Delete(ctx, got)).To(Succeed())
 		// A gateway error keeps the TenantQuota.
-		gw.err = errors.New("the gateway is down")
+		gw.err = errors.New("the gateway is down with sk-secret-data")
 		_, err = r.Reconcile(ctx, reconcile.Request{NamespacedName: client.ObjectKeyFromObject(q)})
-		Expect(err).To(MatchError(gw.err))
+		Expect(err).To(MatchError(errTenantGateway))
+		Expect(err.Error()).To(Equal("a call to the gateway failed"))
 		Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(q), got)).To(Succeed())
 		gw.err = nil
 		_, err = r.Reconcile(ctx, reconcile.Request{NamespacedName: client.ObjectKeyFromObject(q)})

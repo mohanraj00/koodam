@@ -88,6 +88,11 @@ spec:
         - --job-ttl-seconds={{ int64 .Values.jobTTLSeconds }}
         - "--installer-image={{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
         - "--workspace-image={{ include "koodam.workspaceImage" . }}"
+        {{- with .Values.zone.storageClasses }}
+        # The home claim of a new Workspace gets a storage class of the zone. With no storage class,
+        # the storage policy of the zone refuses the claim.
+        - {{ printf "--workspace-storage-class=%s" (first .) | quote }}
+        {{- end }}
         {{- with (.Values.nookku | default dict).image }}
         {{- if not (regexMatch "^[^@\\s]+@sha256:[0-9a-f]{64}$" .) }}
         {{- fail "nookku.image must end with a digest @sha256:<64 hex characters>." }}
@@ -137,6 +142,7 @@ spec:
         - {{ printf "--app-claim-audience=%s" (required "apps.claimCheck.audience is necessary with an issuer." .audience) | quote }}
         - {{ printf "--app-claim-caller-claim=%s" .callerClaim | quote }}
         - {{ printf "--app-claim-tenant-claim=%s" .tenantClaim | quote }}
+        - "--app-claim-tenant-token={{ if and .tenantClaim .tenantToken }}true{{ else }}false{{ end }}"
         {{- with .zoneClaim }}
         {{- if not $.Values.zone.name }}
         {{- fail "apps.claimCheck.zoneClaim needs zone.name, because the claim check compares the claim with the zone of the install." }}

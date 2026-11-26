@@ -202,6 +202,25 @@ var _ = Describe("Zone placement admission policy", Ordered, func() {
 		}
 	})
 
+	It("refuses a pod template that selects a node by its name", func() {
+		const hostKey = "kubernetes.io/hostname"
+		field := corev1.NodeSelectorTerm{MatchFields: []corev1.NodeSelectorRequirement{
+			{Key: "metadata.name", Operator: corev1.NodeSelectorOpIn, Values: []string{"node-far"}}}}
+		for name, change := range map[string]func(*corev1.PodSpec){
+			"a node name":               func(p *corev1.PodSpec) { p.NodeName = "node-far" },
+			"a host name selector":      selector(hostKey, "node-far"),
+			"a field term":              required(field),
+			"a field term after a zone": required(term(zoneKey, corev1.NodeSelectorOpIn, here), field),
+			"a preferred field term":    preferred(field),
+			"a host name term":          required(term(hostKey, corev1.NodeSelectorOpIn, "node-far")),
+			"a host name not in":        required(term(hostKey, corev1.NodeSelectorOpNotIn, "node-near")),
+			"a preferred host name":     preferred(term(hostKey, corev1.NodeSelectorOpIn, "node-far")),
+		} {
+			By(name)
+			refused(create(newVersion(inNS, "pinned-far", change)))
+		}
+	})
+
 	It("refuses a volume claim with a storage class that is not of the zone", func() {
 		Expect(create(newVersion(inNS, "claim-near", scratch(new(nearClass))))).To(Succeed())
 		refused(create(newVersion(inNS, "claim-far", scratch(new(farClass)))))
@@ -214,6 +233,16 @@ var _ = Describe("Zone placement admission policy", Ordered, func() {
 		refused(create(claim("data-far", new(farClass))))
 		refused(create(claim("data-none", nil)))
 		refused(create(claim("data-empty", new(""))))
+		// The home claim of a Workspace has the storage class that the controller gets from the chart.
+		home := func(name, class string) *corev1.PersistentVolumeClaim {
+			r := &WorkspaceReconciler{Image: testWorkspaceImage, StorageClass: class}
+			ws := &corev1alpha1.Workspace{ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: inNS}}
+			c := r.statefulSet(ws, testProfile).Spec.VolumeClaimTemplates[0]
+			c.Name, c.Namespace = name, inNS
+			return &c
+		}
+		Expect(create(home("home-near", nearClass))).To(Succeed())
+		refused(create(home("home-none", "")))
 	})
 
 	It("does not apply to a namespace of a different install", func() {

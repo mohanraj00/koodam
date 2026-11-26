@@ -133,6 +133,24 @@ func TestZoneRoutes(t *testing.T) {
 		!strings.Contains(own, "openai/route-a") {
 		t.Errorf("the install with only its own routes: %v", err)
 	}
+	// The mock route is a route of the install. Its model name is not in the refusal list, also
+	// if only a route of a different zone has the same name.
+	mock, err := helmTemplate(t, routes+"zone: {name: zone-a}\n",
+		"gateway.bundled.mock.enabled=true", "gateway.bundled.mock.modelName=model-b")
+	if err != nil {
+		t.Fatalf("helm template failed: %v\n%s", err, mock)
+	}
+	for _, s := range []string{`model: "openai/model-b"`, `value: "[\"odd,name\"]"`} {
+		if !strings.Contains(mock, s) {
+			t.Errorf("the install with the mock route does not have %q", s)
+		}
+	}
+	// With the mock name as the only name of a different zone, the gateway has no hook.
+	only, err := helmTemplate(t, "zone: {name: zone-a}\ngateway: {bundled: {mock: {enabled: true, modelName: model-b}, "+
+		"litellm: {modelList: [{model_name: model-b, zone: zone-b, litellm_params: {model: openai/route-other}}]}}}\n")
+	if err != nil || strings.Contains(only, hookKey) || strings.Contains(only, listEnv) {
+		t.Errorf("the install with only the mock name out of the zone has the hook: %v", err)
+	}
 	for name, tc := range map[string][2]string{
 		"zone not a string": {"[{model_name: model-a, zone: 7}]", "modelList[0].zone must be a string"},
 		"no model name":     {"[{zone: zone-b}]", "modelList[0].model_name is necessary"},
@@ -196,7 +214,7 @@ func TestZonePlacementPolicy(t *testing.T) {
 		t.Fatalf("helm template failed: %v\n%s", err, all)
 	}
 	if strings.Count(all, placement) != 2 || strings.Contains(all, storage) || strings.Contains(all, selector) ||
-		!strings.Contains(all, `expression: "[\"zone-a\"]"`) {
+		strings.Contains(all, "--workspace-storage-class") || !strings.Contains(all, `expression: "[\"zone-a\"]"`) {
 		t.Error("the install with a zone and no namespaces does not have only the placement policy for the zone name")
 	}
 	scoped, err := helmTemplate(t, apps+"zone: {name: zone-a, namespaces: [team-1], storageClasses: [near-disk], "+
@@ -205,7 +223,8 @@ func TestZonePlacementPolicy(t *testing.T) {
 		t.Fatalf("helm template failed: %v\n%s", err, scoped)
 	}
 	for _, s := range []string{`expression: "[\"eu-west-1\",\"eu-west-1a\"]"`, `expression: "[\"near-disk\"]"`,
-		`values: ["koodam-system","team-1"]`,
+		`values: ["koodam-system","team-1"]`, `- "--workspace-storage-class=near-disk"`,
+		"ZonePlacement: the pod template selects a node by its name",
 		"ZonePlacement: the storage class of the volume claim is not in the zone zone-a."} {
 		if !strings.Contains(scoped, s) {
 			t.Errorf("the install with the zone values does not have %q", s)

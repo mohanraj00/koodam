@@ -260,6 +260,13 @@ apps:
     # The claim with the tenant label. The app container gets it in the header Koodam-Tenant. If
     # it is empty, the check reads no tenant label.
     tenantClaim: ""
+    # With a tenant claim, bind each model call of an App pod to the tenant of a request. The
+    # check container gives the app a signed token in the header Koodam-Tenant-Token, with a life
+    # of 10 minutes. The app must send this header with each model call, or the egress proxy
+    # refuses the call. The proxy also gives each model call of an Agent pod and a Workspace pod
+    # the reserved customer koodam-no-tenant. If false, the gateway counts a model call for the
+    # tenant label that the code in the pod sends, and that code is not trusted.
+    tenantToken: true
     # The claim with the zone of the caller. With it, a request with a zone claim that is not
     # zone.name gets the status 403 and the reason ZoneMismatch. It needs zone.name. If it is
     # empty, the check reads no zone. docs/zones.md has the rules.
@@ -299,8 +306,9 @@ zone:
   topologyValues: []
   # The storage classes of the zone. With items, an admission policy refuses a new
   # PersistentVolumeClaim of the install namespaces, and a volume claim of an AppVersion pod
-  # template, with a different storage class (ZonePlacement). Empty: no storage check. It needs
-  # zone.name, zone.namespaces and apps.enabled.
+  # template, with a different storage class (ZonePlacement). The home claim of a new Workspace
+  # gets the first class of the list. Empty: no storage check. It needs zone.name,
+  # zone.namespaces and apps.enabled.
   storageClasses: []
 
 # The tenants of the Apps. A TenantQuota gives one tenant label its quota and its rate limit.

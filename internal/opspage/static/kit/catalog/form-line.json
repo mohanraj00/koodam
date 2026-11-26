@@ -1,0 +1,14 @@
+{
+  "name": "form-line",
+  "description": "One line of a form card: an optional line number, a field and a read-only flag.",
+  "data": {
+    "line": {"type": "text", "label": "Line number", "min_length": 1, "max_length": 12},
+    "read_only": {"type": "boolean", "label": "Read-only"},
+    "field": {
+      "type": "component",
+      "required": true,
+      "names": ["field", "long-text-field", "number-field", "date-field", "choice-field"]
+    }
+  },
+  "tokens": ["color.text", "color.text-muted", "space.1", "space.2", "type.body", "type.caption"]
+}

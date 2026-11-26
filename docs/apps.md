@@ -186,6 +186,7 @@ Then each AppVersion pod gets the container `koodam-claim` in front of the `app`
 - The check accepts the algorithms RS256 and ES256 only. It verifies the signature with the keys of `jwks`, and it checks `iss`, `aud`, `exp` and `nbf`.
 - A request with no valid claim gets the status 401. It does not get to the `app` container.
 - The `app` container does not get the token. It gets the caller label in the header `Koodam-Caller`, and the tenant label in `Koodam-Tenant` if `tenantClaim` is set. A caller cannot set these headers.
+- With a tenant claim, the `app` container also gets a tenant token in the header `Koodam-Tenant-Token`. The app must send this header with each model call. See [tenants.md](tenants.md#the-tenant-token).
 - The check container writes one JSON line for each request to its log: the time, the App, the version, the method, the status, the outcome and the 2 labels. The line has no token, no path and no header.
 
 `jwks` has the public keys of the issuer. A change of `jwks` starts the manager again, and then each AppVersion gets new pods. A JWKS URL is not in this step.

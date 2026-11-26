@@ -76,6 +76,7 @@ gateway:
 - An item with no zone is a route that the operator permits in each zone.
 - A call for a model name that only items of a different zone have gets the status 403. The message starts with `RouteOutOfZone`. Here, `model-b` gets this refusal in the install of `zone-a`.
 - If a model name has an item of the install zone and an item of a different zone, the gateway uses only the item of the install zone.
+- The mock route of `gateway.bundled.mock` is a route of the install. A call for its model name gets no `RouteOutOfZone`, also if an item of a different zone has the same name.
 - The gateway writes one JSON line to its log for each refusal: `{"kind": "gateway-zone", "outcome": "RouteOutOfZone", "zone": "zone-a", "model": "model-b"}`. The line has no key and no request data.
 - The gateway examines the key before the zone. Thus a key that does not permit the model name gets the usual key refusal of the gateway, not `RouteOutOfZone`.
 
@@ -100,7 +101,8 @@ zone:
 - The proxy refuses the host before the name lookup. Thus it sends no DNS query and no byte to a host of a different zone.
 - A host is a DNS name, or `*.` and a DNS name. The pattern `*.zone-b.example.net` is for each name below `zone-b.example.net`, not for `zone-b.example.net`. An exact name wins against a pattern, and the longest pattern wins against a shorter pattern.
 - A host with no entry follows the usual egress rules. The list is not a list of permitted hosts.
-- An IP address has no declared zone. The transparent TLS listener refuses a connection with no server name, but a CONNECT to an IP address passes the zone check.
+- An IP address has no declared zone, and the proxy cannot find the host of an address. If the list has a host of a zone that is not the zone of the install, the proxy refuses each call to an IP address with the reason `EgressOutOfZone`. A host name with a number as its last label is also an address. If the list has no such host, a call to an IP address follows the usual egress rules.
+- The check uses the name of the call. A name with no entry passes the check, also if it has the same address as a host of a different zone. Put each name of an endpoint of a different zone in the list.
 - With `zone.name`, each egress span has the field `zone`: the zone of the install.
 
 The Agent ingress span of [ingress-spans.md](ingress-spans.md) has no zone field, because no proxy writes this span. #390 adds the field.
@@ -123,12 +125,14 @@ The node placement:
 - `zone.topologyValues` has the values of these labels on the nodes of the zone. With an empty list, the only permitted value is the zone name.
 - A node selector for one of these labels must have a permitted value.
 - A node affinity term for one of these labels must have the operator `In` and only permitted values. The policy refuses each other operator, for example `NotIn`, because such a term does not show that the node is in the zone. This rule applies to the necessary terms and to the preferred terms.
+- The policy refuses a pod template that selects a node by its name, because a node name does not show that the node is in the zone. This rule applies to `nodeName`, to a `matchFields` term of the node affinity, and to the node label `kubernetes.io/hostname` in the node selector or the node affinity.
 - A pod template with no term for these labels is accepted. The policy does not put the pod on a node of the zone.
 
 The storage, only with items in `zone.storageClasses`:
 
 - The policy refuses a pod template with an ephemeral volume claim that has no storage class or a storage class that is not in the list.
 - A second policy, `<release>-koodam-zone-storage`, refuses a new PersistentVolumeClaim with no storage class or a storage class that is not in the list. It also applies to the volume claims of a Workspace. It does not change a claim that exists.
+- The home claim of a new Workspace gets the first storage class of the list. Thus the policy accepts the claim, also if the default storage class of the cluster is not in the list. A Workspace from before this value keeps its claim and its claim template.
 - `zone.storageClasses` needs `zone.namespaces`, because the storage policy must not refuse the volume claims of other software in the cluster.
 - With the bundled gateway and `gateway.bundled.postgres.persistence.enabled`, the chart refuses a storage class of the database that is not in the list.
 
@@ -195,5 +199,12 @@ The install of the test suite has no `zone.namespaces`, so it reads each namespa
 - The zone is a declared name. Koodam does not prove where a node, a disk, a model provider or an egress host is.
 - The cluster role of each manager is for the full cluster. `zone.namespaces` limits what the manager reads. It is not an RBAC limit.
 - A pod template with no node selector for a zone can run on each node of the cluster. In a cluster with nodes of 2 zones, also use a control of the cluster, for example a node selector for each namespace.
-- The placement policy does not examine `spec.nodeName` and the node of a volume that exists.
+- The placement policy is a list of refused placements. It examines the zone labels, the region labels and the node name only. It is not a full control of the node of a pod ([#433](https://github.com/mohanraj00/koodam/issues/433)). The owner of an App can direct a pod to a node of a different zone with a field that the policy does not examine:
+  - a different node label, if it is only on the nodes of a different zone;
+  - a pod affinity or a pod anti-affinity with a `topologyKey`, if a pod with the selected labels is on a node of a different zone;
+  - a toleration for a taint of the nodes of a different zone;
+  - a `schedulerName` of a scheduler that does not apply the node selector.
+
+  The control of the cluster is also necessary for these cases.
+- The placement policy does not examine the node of a volume that exists.
 - An install does not move a workload or its data to a different zone.

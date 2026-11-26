@@ -1,0 +1,14 @@
+{
+  "name": "rich-list",
+  "description": "A list node of rich text, with bullets or with numbers. Each item is a paragraph node.",
+  "data": {
+    "ordered": {"type": "boolean", "label": "Numbered list"},
+    "items": {
+      "type": "list",
+      "required": true,
+      "max_items": 50,
+      "items": {"type": "component", "label": "Item", "name": "rich-paragraph"}
+    }
+  },
+  "tokens": ["color.text", "color.text-muted", "color.border", "space.1", "space.2", "type.body", "space.4"]
+}
