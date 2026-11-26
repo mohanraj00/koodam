@@ -88,3 +88,23 @@ func TestBudgetOfAnOldPeriod(t *testing.T) {
 		t.Fatalf("got %+v", got)
 	}
 }
+
+// After a change of spec.period, a status period that overlaps the current period keeps its spend,
+// as the controller does. The item must not show the full limit as remaining.
+func TestBudgetAfterAPeriodChange(t *testing.T) {
+	b := testBudget(time.Date(2026, 11, 25, 0, 0, 0, 0, time.UTC))
+	b.Spec.Period = corev1alpha1.SpendPeriodMonth
+	got := budgetItem(&b, budgetNow)
+	if !got.PeriodStart.Equal(time.Date(2026, 11, 1, 0, 0, 0, 0, time.UTC)) || got.Spend != 4 ||
+		got.Reserved != 2.5 || got.Remaining != 3.5 || !got.Exceeded || got.WaitingRuns != 1 {
+		t.Fatalf("a day ledger in the current month must keep its spend, got %+v", got)
+	}
+
+	b.Spec.Period = corev1alpha1.SpendPeriodDay
+	b.Status.PeriodStart = &metav1.Time{Time: time.Date(2026, 11, 1, 0, 0, 0, 0, time.UTC)}
+	b.Status.PeriodEnd = &metav1.Time{Time: time.Date(2026, 12, 1, 0, 0, 0, 0, time.UTC)}
+	got = budgetItem(&b, budgetNow)
+	if !got.PeriodStart.Equal(time.Date(2026, 11, 25, 0, 0, 0, 0, time.UTC)) || got.Spend != 4 || got.Remaining != 3.5 {
+		t.Fatalf("a month ledger that has today must keep its spend, got %+v", got)
+	}
+}
