@@ -369,30 +369,24 @@ func (r *AgentReconciler) costGroupCheck(ctx context.Context, a *corev1alpha1.Ag
 
 // admit adds the finalizer and then reserves the run budget in the period budget of the namespace.
 // The reservation comes after the finalizer, so that a delete releases it, and before the key. If
-// the run must wait, admit gives a budgetWait error.
-func (r *AgentReconciler) admit(ctx context.Context, a *corev1alpha1.Agent) error {
+// the run must wait, admit gives a budgetWait error. It is true if it ended the run.
+func (r *AgentReconciler) admit(ctx context.Context, a *corev1alpha1.Agent) (bool, error) {
 	if controllerutil.AddFinalizer(a, finalizer) {
 		if err := r.Update(ctx, a); err != nil {
-			return err
+			return false, err
 		}
 	}
 	if admitted(a) {
-		return nil
-	}
-	after, msg, err := r.reserve(ctx, a)
-	if err != nil {
-		return err
-	}
-	if after > 0 {
-		return r.waitForBudget(ctx, a, after, msg)
+		return false, nil
 	}
 	if a.Status.KeyHash != "" {
-		// A version before the ledger wrote the key hash, and the key was not made. The ledger
-		// reserved spec.budget now, so the key gets that budget.
-		a.Status.Budget = decimal(a.Spec.Budget)
-		return r.Status().Update(ctx, a)
+		return r.admitKeyBeforeLedger(ctx, a)
 	}
-	return nil
+	after, msg, err := r.reserve(ctx, a)
+	if err != nil || after == 0 {
+		return false, err
+	}
+	return false, r.waitForBudget(ctx, a, after, msg)
 }
 
 func (r *AgentReconciler) provision(ctx context.Context, a *corev1alpha1.Agent) error {
@@ -432,7 +426,7 @@ func (r *AgentReconciler) provision(ctx context.Context, a *corev1alpha1.Agent) 
 		})
 		return r.fail(ctx, a, corev1alpha1.AgentFailed, reason)
 	}
-	if err := r.admit(ctx, a); err != nil {
+	if done, err := r.admit(ctx, a); err != nil || done {
 		return err
 	}
 	// The Secret comes first. A retry after a crash finds the key value in it.

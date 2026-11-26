@@ -41,7 +41,7 @@ The Agent controller writes the status. It has these fields:
 The controller counts only the Agent runs. Workspace, AppVersion and TestKey keys keep their own daily budgets.
 
 1. Before the controller makes the key of a run, it reads the SpendBudget of the namespace. With no SpendBudget, the run starts.
-2. A run starts only if `spend + reserved + its budget` is not more than `spec.spend`. A run with a budget of zero or less fails with the reason `Invalid`, because a negative reservation would add room to the limit. The controller writes the reservation to the status before it makes the key. If the run budget changes before the key exists, the controller checks the new budget again. The status update with the `resourceVersion` is the lock. A Pending run with a key hash and no `status.budget` is from a version before the ledger. It goes through the ledger again before the controller makes its key.
+2. A run starts only if `spend + reserved + its budget` is not more than `spec.spend`. A run with a budget of zero or less fails with the reason `Invalid`, because a negative reservation would add room to the limit. The controller writes the reservation to the status before it makes the key. If the run budget changes before the key exists, the controller checks the new budget again. The status update with the `resourceVersion` is the lock. A Pending run with a key hash and no `status.budget` is from a version before the ledger. Its key can exist at the gateway with a budget that the ledger does not know. Thus the run fails with the reason `KeyBeforeLedger`, and the revoke blocks the key. Create the Agent again. With no SpendBudget, the key gets `spec.budget`.
 3. A run that cannot start stays `Pending`. Its condition `Provisioned` is `False` with the reason `PeriodBudgetExceeded`, and the message gives the cause and the end of the period. The run does not fail, and the controller makes no key.
 4. The controller checks a waiting run again when the SpendBudget changes, at the end of the period, and at the latest after one minute.
 5. Waiting runs start in the order of their creation time. A run with a budget that is more than the limit never starts, but it does not stop the runs after it. Delete it, or raise the limit.
@@ -61,6 +61,8 @@ A rebuild of the ledger counts only the Agents that exist. Thus in these cases, 
 - A restore gives the SpendBudget no status, or a status of an earlier time. The rebuild cannot see the spend of the runs that a user deleted in the period.
 
 In these cases, the spend of the period can go above the limit by the spend of the deleted runs. Do not delete the ended Agents of a period before a change of `spec.period` or a restore. [#430](https://github.com/mohanraj00/koodam/issues/430) tracks a ledger that does not depend on the Agents.
+
+After an upgrade from a version before the ledger, a Pending run that already has a key hash and no `status.budget` fails with the reason `KeyBeforeLedger`. Its key can exist at the gateway with a budget that the ledger does not know, so the controller blocks the key. Create the Agent again.
 
 ## Who can write it
 

@@ -377,8 +377,33 @@ func (r *AgentReconciler) settle(ctx context.Context, a *corev1alpha1.Agent) err
 	return r.writeLedger(ctx, b, before, r.now())
 }
 
+// reasonKeyBeforeLedger is the reason for a run that got its key hash from a version before the
+// ledger, in a namespace with a SpendBudget.
+const reasonKeyBeforeLedger = "KeyBeforeLedger"
+
+// admitKeyBeforeLedger handles a Pending run with a key hash from a version before the ledger. Its
+// key can exist at the gateway with a budget that the ledger does not know, and a new CreateKey does
+// not change the budget of a key that exists. Thus in a namespace with a SpendBudget, the run fails
+// and the revoke blocks the key. With no SpendBudget, the key gets spec.budget, as before.
+func (r *AgentReconciler) admitKeyBeforeLedger(ctx context.Context, a *corev1alpha1.Agent) (bool, error) {
+	b, err := r.spendBudget(ctx, a.Namespace)
+	if err != nil {
+		return false, err
+	}
+	if b == nil {
+		a.Status.Budget = decimal(a.Spec.Budget)
+		return false, r.Status().Update(ctx, a)
+	}
+	meta.SetStatusCondition(&a.Status.Conditions, metav1.Condition{
+		Type: condProvisioned, Status: metav1.ConditionFalse, Reason: reasonKeyBeforeLedger,
+		Message:            "The key of the run is from a version before the period budget ledger. Create the Agent again.",
+		ObservedGeneration: a.Generation,
+	})
+	return true, r.fail(ctx, a, corev1alpha1.AgentFailed, reasonKeyBeforeLedger)
+}
+
 // admitted is true if the ledger admitted the run. A key hash with no status.budget is from a version
-// before the ledger, and that run goes through the ledger again before its key exists.
+// before the ledger.
 func admitted(a *corev1alpha1.Agent) bool {
 	return a.Status.KeyHash != "" && a.Status.Budget != ""
 }
