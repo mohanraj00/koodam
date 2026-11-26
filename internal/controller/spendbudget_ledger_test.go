@@ -27,6 +27,7 @@ import (
 	. "github.com/onsi/gomega"
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -277,6 +278,27 @@ var _ = Describe("SpendBudget ledger", func() {
 		b = budget()
 		Expect(b.Status.PeriodStart.Time).To(BeTemporally("==", time.Date(2026, 11, 1, 0, 0, 0, 0, time.UTC)))
 		Expect(b.Status.Spend).To(Equal("6"))
+	})
+
+	It("keeps the spend of a deleted run when the period changes", func() {
+		newRun(ledgerRun1, "6")
+		reconcileRun(ledgerRun1)
+		gw.spend = 6
+		endRunJob(ctx, types.NamespacedName{Namespace: ns, Name: ledgerJob1}, batchv1.JobComplete)
+		reconcileRun(ledgerRun1)
+		Expect(budget().Status.Spend).To(Equal("6"))
+		Expect(k8sClient.Delete(ctx, run(ledgerRun1))).To(Succeed())
+		reconcileRun(ledgerRun1)
+		Expect(apierrors.IsNotFound(k8sClient.Get(ctx, types.NamespacedName{Namespace: ns, Name: ledgerRun1},
+			&corev1alpha1.Agent{}))).To(BeTrue())
+
+		By("the same day, the budget changes from Day to Month")
+		b := budget()
+		b.Spec.Period = corev1alpha1.SpendPeriodMonth
+		Expect(k8sClient.Update(ctx, b)).To(Succeed())
+		newRun(ledgerRun2, "6")
+		expectWaits(ledgerRun2, reconcileRun(ledgerRun2))
+		Expect(budget().Status.Spend).To(Equal("6"))
 	})
 
 	It("fails a run with a budget of zero or less, and reserves nothing", func() {

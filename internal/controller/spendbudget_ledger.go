@@ -143,7 +143,8 @@ func (r *AgentReconciler) waitingRuns(ctx context.Context, ns string, b *corev1a
 // reservations of that period: the spend of a run counts only in the period where it started. It
 // rebuilds the ledger from the Agents if the status has no period (a new budget or a lost status),
 // or if spec.period changed. A change of spec.period gives a status period that is not a period of
-// the new type, also after the old period ended.
+// the new type, also after the old period ended. A rebuild cannot see the spend of a deleted run,
+// so if the old period overlaps the new period, the rebuild keeps the old spend when it is more.
 func (r *AgentReconciler) roll(ctx context.Context, b *corev1alpha1.SpendBudget, now time.Time) error {
 	start, end := budgetPeriod(b.Spec.Period, now)
 	s := &b.Status
@@ -155,6 +156,11 @@ func (r *AgentReconciler) roll(ctx context.Context, b *corev1alpha1.SpendBudget,
 	if !rebuild {
 		oldStart, oldEnd := budgetPeriod(b.Spec.Period, s.PeriodStart.Time)
 		rebuild = !oldStart.Equal(s.PeriodStart.Time) || !oldEnd.Equal(s.PeriodEnd.Time)
+	}
+	var kept resource.Quantity
+	if s.PeriodStart != nil && s.PeriodEnd != nil && s.PeriodStart.Before(&metav1.Time{Time: end}) &&
+		start.Before(s.PeriodEnd.Time) {
+		kept = quantity(s.Spend)
 	}
 	s.PeriodStart, s.PeriodEnd = &metav1.Time{Time: start}, &metav1.Time{Time: end}
 	s.Spend, s.Reserved, s.Reservations = "0", "0", nil
@@ -171,6 +177,9 @@ func (r *AgentReconciler) roll(ctx context.Context, b *corev1alpha1.SpendBudget,
 		return err
 	}
 	rebuildLedger(s, list.Items, start, end, b.Spec.Spend, maxReservations)
+	if kept.Cmp(quantity(s.Spend)) > 0 {
+		s.Spend = decimal(kept)
+	}
 	return nil
 }
 
