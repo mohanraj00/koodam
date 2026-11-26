@@ -62,6 +62,36 @@ func TestSplitNamespaces(t *testing.T) {
 	}
 }
 
+func TestInstallScope(t *testing.T) {
+	got, err := installScope("zone-a", "team-1,team-2")
+	if err != nil || !slices.Equal(got, []string{"team-1", "team-2"}) {
+		t.Errorf("got %q and %v, want [team-1 team-2]", got, err)
+	}
+	if got, err := installScope("", ""); err != nil || got != nil {
+		t.Errorf("an install with no zone: got %q and %v", got, err)
+	}
+	for _, zone := range []string{"Zone_A", "zone a", "-zone", strings.Repeat("z", 64)} {
+		if _, err := installScope(zone, ""); err == nil {
+			t.Errorf("the zone %q is accepted", zone)
+		}
+	}
+	if _, err := installScope("zone-a", "Team_1"); err == nil {
+		t.Error("a namespace that is not valid is accepted")
+	}
+}
+
+// With no namespaces, the cache has each namespace. With namespaces, it has only them.
+func TestWorkspaceCacheNamespaces(t *testing.T) {
+	if all := workspaceCache(nil); all.DefaultNamespaces != nil || len(all.ByObject) != 2 {
+		t.Errorf("the cache of a full cluster: %v", all.DefaultNamespaces)
+	}
+	scoped := workspaceCache([]string{"team-1", "team-2"})
+	_, ok := scoped.DefaultNamespaces["team-2"]
+	if !ok || len(scoped.DefaultNamespaces) != 2 || len(scoped.ByObject) != 2 {
+		t.Errorf("the cache of 2 namespaces: %v", scoped.DefaultNamespaces)
+	}
+}
+
 func TestWorkspaceImageFor(t *testing.T) {
 	const repo, latest = "ghcr.io/mohanraj00/koodam-workspace:", "latest"
 	for v, tag := range map[string]string{
@@ -132,10 +162,18 @@ func TestLoadClaim(t *testing.T) {
 	if c, err := loadClaim(full, good); err != nil || c.JWKS != jwks {
 		t.Errorf("valid configuration: %v", err)
 	}
-	noAudience, noImage := full, full
+	noAudience, noImage, noZone, noZoneClaim := full, full, full, full
 	noAudience.Audience, noImage.Image = "", ""
+	noZone.ZoneClaim, noZoneClaim.Zone, noZoneClaim.RequireZoneClaim = "zone", "zone-a", true
+	withZone := noZoneClaim
+	withZone.ZoneClaim = noZone.ZoneClaim
+	if c, err := loadClaim(withZone, good); err != nil || c.Zone != withZone.Zone || !c.RequireZoneClaim {
+		t.Errorf("valid configuration with a zone: %v", err)
+	}
 	for name, err := range map[string]error{
-		"no audience": second(loadClaim(noAudience, good)), "no image": second(loadClaim(noImage, good)),
+		"zone claim and no zone": second(loadClaim(noZone, good)),
+		"necessary and no claim": second(loadClaim(noZoneClaim, good)),
+		"no audience":            second(loadClaim(noAudience, good)), "no image": second(loadClaim(noImage, good)),
 		"no file": second(loadClaim(full, "")), "no key": second(loadClaim(full, bad)),
 		"private key": second(loadClaim(full, private)),
 	} {
@@ -174,5 +212,41 @@ func TestSetupAppsInterval(t *testing.T) {
 	err := setupApps(nil, &controller.AppVersionReconciler{}, quotas)
 	if err == nil || !strings.Contains(err.Error(), "--tenant-usage-interval") {
 		t.Errorf("got %v", err)
+	}
+}
+
+// The flags for a tenant label with no TenantQuota need a tenant claim, and the manager refuses
+// a rate or a burst out of range.
+func TestLoadTenantDefaults(t *testing.T) {
+	claim := controller.AppClaimCheck{Issuer: "https://tenants.example.com", TenantClaim: "tenant"}
+	got, err := loadTenantDefaults(claim, "500m", 3, true)
+	want := controller.AppTenantLimits{DefaultRate: 0.5, DefaultBurst: 3, RefuseUnknown: true}
+	if err != nil || got.Tenants != want {
+		t.Errorf("got %+v, %v", got.Tenants, err)
+	}
+	// With no tenant flag, a claim check with no tenant claim is valid.
+	if got, err := loadTenantDefaults(controller.AppClaimCheck{}, "", 0, false); err != nil ||
+		got.Tenants != (controller.AppTenantLimits{}) {
+		t.Errorf("no flag: %+v, %v", got.Tenants, err)
+	}
+	for name, tc := range map[string]struct {
+		claim  controller.AppClaimCheck
+		rate   string
+		burst  int
+		refuse bool
+	}{
+		"no issuer":          {claim: controller.AppClaimCheck{TenantClaim: "tenant"}, refuse: true},
+		"no tenant claim":    {claim: controller.AppClaimCheck{Issuer: claim.Issuer}, rate: "1"},
+		"rate of 0":          {claim: claim, rate: "0"},
+		"rate below 0":       {claim: claim, rate: "-1"},
+		"rate not a number":  {claim: claim, rate: "fast"},
+		"rate too large":     {claim: claim, rate: "1000001"},
+		"burst below 0":      {claim: claim, rate: "1", burst: -1},
+		"burst too large":    {claim: claim, rate: "1", burst: 1000001},
+		"burst with no rate": {claim: claim, burst: 2},
+	} {
+		if _, err := loadTenantDefaults(tc.claim, tc.rate, tc.burst, tc.refuse); err == nil {
+			t.Errorf("%s is accepted", name)
+		}
 	}
 }

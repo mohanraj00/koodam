@@ -59,7 +59,7 @@ For an existing gateway, do not use `values-bundled.yaml`. Use `--set gateway.ur
 
 The `model` of an Agent is a model name in the LiteLLM config. The key permits only this model. To permit more than one model, use `models` and not `model`. `models` is a list of model names. The key permits each model of the list, and the gateway refuses a call to a different model. The first model of the list is the model of the harness. The list keeps its order: an apply replaces the full list. A model name can be in the list only one time.
 
-- With the bundled gateway, add your models to `gateway.bundled.litellm.modelList`. This value is the LiteLLM `model_list`.
+- With the bundled gateway, add your models to `gateway.bundled.litellm.modelList`. This value is the LiteLLM `model_list`. An item can also have a `zone`: [zones.md](zones.md) tells how an install refuses a route of a different zone (`RouteOutOfZone`).
 - With an existing gateway, add the model to the LiteLLM config of that gateway.
 
 If the model name is not in the LiteLLM config, the gateway refuses the calls.
@@ -147,4 +147,6 @@ koodam usage --by cost-group -n dev-sample
 
 The command lists Agents with your kubeconfig. With no `-n`, it uses the namespace of the current context. It takes no WORKSPACE argument and uses no SSH. The group is `status.costGroup`, saved when the controller made the key from the label `koodam.dev/cost-group`. A later label change does not change the group. [profiles.md](profiles.md) has the permitted cost groups of a Profile.
 
-Each group shows the runs, calls, failed calls, input tokens, output tokens and spend, with `source: gateway`. The spend is the sum of the key spend in `status.usage.spend`, not the sum of the model entries. Groups are in name order, with `(none)` for an empty group last, then a total line. Agents with no usage or with a spend that is not a number are not in the table. Notes on stderr give these counts. The table has no AppVersion, TestKey or Workspace spend. An AppVersion has no usage status.
+For the tenants of the Apps, `koodam usage --by tenant -n NAMESPACE` shows the requests and the spend of each tenant in the current period. [tenants.md](tenants.md) has the rules.
+
+Each cost group shows the runs, calls, failed calls, input tokens, output tokens and spend, with `source: gateway`. The spend is the sum of the key spend in `status.usage.spend`, not the sum of the model entries. Groups are in name order, with `(none)` for an empty group last, then a total line. Agents with no usage or with a spend that is not a number are not in the table. Notes on stderr give these counts. The table has no AppVersion, TestKey or Workspace spend. An AppVersion has no usage status.

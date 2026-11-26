@@ -74,7 +74,7 @@ subjects:
     namespace: koodam-system
 ```
 
-The server also needs `list` on `agents.core.koodam.dev` in each namespace of `-namespace`.
+The server also needs `list` on `agents.core.koodam.dev` and `get` on `spendbudgets.core.koodam.dev` in each namespace of `-namespace`.
 
 ## Local tokens and limits
 
@@ -152,7 +152,9 @@ SpendBudget has no item. Each item has these fields:
 
 If the controller did not move the ledger to the current period yet, the item shows the current period
 with no spend and no reservation. The controller drops the reservations of the old period at the next
-check.
+check. After a change of `spec.period`, the old period of the status can overlap the current period.
+The controller then keeps the old spend and rebuilds the reservations. Thus the item shows the values of
+the status, not zero.
 
 ## Read more pages
 

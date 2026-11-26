@@ -195,8 +195,7 @@ func (r *AgentReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl
 		return ctrl.Result{}, nil
 	default:
 		err := r.provision(ctx, a)
-		var wait budgetWait
-		if errors.As(err, &wait) {
+		if wait, ok := errors.AsType[budgetWait](err); ok {
 			return ctrl.Result{RequeueAfter: wait.after}, nil
 		}
 		return ctrl.Result{}, err
@@ -270,6 +269,10 @@ func invalid(a *corev1alpha1.Agent) string {
 	}
 	if !inCeiling(a.Spec.Rules) {
 		return "A rule is not in the agent-ceiling ClusterRole."
+	}
+	// A budget of zero or less would give a reservation that adds room to the period budget.
+	if a.Spec.Budget.Sign() <= 0 {
+		return "spec.budget must be more than zero."
 	}
 	// The CRD has this rule. The controller reads the first model, so it does the check again.
 	if (a.Spec.Model == "") == (len(a.Spec.Models) == 0) || slices.Contains(a.Spec.Models, "") {
@@ -364,6 +367,28 @@ func (r *AgentReconciler) costGroupCheck(ctx context.Context, a *corev1alpha1.Ag
 	return msg, reasonCostGroupNotAllowed, nil
 }
 
+// admit adds the finalizer and then reserves the run budget in the period budget of the namespace.
+// The reservation comes after the finalizer, so that a delete releases it, and before the key. If
+// the run must wait, admit gives a budgetWait error. It is true if it ended the run.
+func (r *AgentReconciler) admit(ctx context.Context, a *corev1alpha1.Agent) (bool, error) {
+	if controllerutil.AddFinalizer(a, finalizer) {
+		if err := r.Update(ctx, a); err != nil {
+			return false, err
+		}
+	}
+	if admitted(a) {
+		return false, nil
+	}
+	if a.Status.KeyHash != "" {
+		return r.admitKeyBeforeLedger(ctx, a)
+	}
+	after, msg, err := r.reserve(ctx, a)
+	if err != nil || after == 0 {
+		return false, err
+	}
+	return false, r.waitForBudget(ctx, a, after, msg)
+}
+
 func (r *AgentReconciler) provision(ctx context.Context, a *corev1alpha1.Agent) error {
 	log := logf.FromContext(ctx)
 	msg, reason := invalid(a), reasonInvalid
@@ -401,20 +426,8 @@ func (r *AgentReconciler) provision(ctx context.Context, a *corev1alpha1.Agent) 
 		})
 		return r.fail(ctx, a, corev1alpha1.AgentFailed, reason)
 	}
-	if controllerutil.AddFinalizer(a, finalizer) {
-		if err := r.Update(ctx, a); err != nil {
-			return err
-		}
-	}
-	if a.Status.KeyHash == "" {
-		// The reservation comes after the finalizer, so that a delete releases it, and before the key.
-		after, msg, err := r.reserve(ctx, a)
-		if err != nil {
-			return err
-		}
-		if after > 0 {
-			return r.waitForBudget(ctx, a, after, msg)
-		}
+	if done, err := r.admit(ctx, a); err != nil || done {
+		return err
 	}
 	// The Secret comes first. A retry after a crash finds the key value in it.
 	key, err := r.runKey(ctx, a)
@@ -441,14 +454,17 @@ func (r *AgentReconciler) provision(ctx context.Context, a *corev1alpha1.Agent) 
 		a.Status.RunID = string(a.UID)
 		a.Status.KeyAlias = alias
 		a.Status.KeyHash = gateway.HashKey(key)
+		a.Status.Budget = decimal(a.Spec.Budget)
 		a.Status.CostGroup = costGroup
 		if err := r.Status().Update(ctx, a); err != nil {
 			return err
 		}
 	}
 	models := a.Spec.ModelList()
+	// A retry after a failed create uses the budget that the ledger reserved, not a changed spec.budget.
+	budget := admittedBudget(a)
 	err = r.Gateway.CreateKey(ctx, gateway.KeySpec{
-		Value: key, Alias: alias, Model: models[0], Models: models[1:], Budget: a.Spec.Budget.AsApproximateFloat64(),
+		Value: key, Alias: alias, Model: models[0], Models: models[1:], Budget: budget.AsApproximateFloat64(),
 		TTL: time.Duration(a.Spec.DeadlineSeconds)*time.Second + r.Grace, Metadata: keyMetadata(a),
 	})
 	if err != nil {

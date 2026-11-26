@@ -142,6 +142,8 @@ type Span struct {
 	AppVersion string `json:"appVersion,omitempty"`
 	// Claimed is true if the pod sent a claim header. The span does not hold the value.
 	Claimed bool `json:"claimed,omitempty"`
+	// Zone is the zone of the install. It is not the zone of the host.
+	Zone string `json:"zone,omitempty"`
 }
 
 // Sink receives each span. Write must be safe for concurrent use.
@@ -198,6 +200,10 @@ type Proxy struct {
 	// nil, the proxy refuses a model call with the key of an AppVersion from a pod that is not a
 	// pod of that AppVersion. The hash must come from the same source as the key of TenantKey.
 	AppKeyOwner func(keyHash string) (namespace, appVersion string, ok bool)
+	// Zone is the zone of the install. HostZones has the declared zone of egress hosts. The
+	// proxy refuses a host with a declared zone that is not Zone. With no Zone, there is no check.
+	Zone      string
+	HostZones *HostZones
 
 	once      sync.Once
 	direct    http.RoundTripper
@@ -513,6 +519,10 @@ func (p *Proxy) dialFailed(w http.ResponseWriter, sp *Span, err error) {
 		p.deny(w, sp, reasonAddress)
 		return
 	}
+	if errors.Is(err, errOutOfZone) {
+		p.deny(w, sp, ReasonOutOfZone)
+		return
+	}
 	// The reason is fixed text. The error text can hold a URL.
 	sp.Result, sp.Reason, sp.Status = ResultError, reasonUpstream, http.StatusBadGateway
 	http.Error(w, "egress error", http.StatusBadGateway)
@@ -521,6 +531,11 @@ func (p *Proxy) dialFailed(w http.ResponseWriter, sp *Span, err error) {
 // dial resolves host and dials the first address. It refuses the call if one address is not
 // permitted. It dials the checked address, thus a second name lookup cannot change it.
 func (p *Proxy) dial(ctx context.Context, host, port string) (net.Conn, error) {
+	// The zone check is before the name lookup. Thus the proxy sends no DNS query for a host of
+	// a different zone.
+	if p.outOfZone(host) {
+		return nil, errOutOfZone
+	}
 	var addrs []netip.Addr
 	if a, err := netip.ParseAddr(host); err == nil {
 		addrs = []netip.Addr{a}

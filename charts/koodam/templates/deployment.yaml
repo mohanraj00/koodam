@@ -64,6 +64,22 @@ spec:
         - --agent-gateway-url={{ . }}
         {{- end }}
         - --key-grace={{ .Values.keyGrace }}
+        {{- if and .Values.zone.egressHosts (not (and .Values.zone.name (dig "enabled" false (.Values.egressProxy | default dict)))) }}
+        {{- fail "zone.egressHosts needs zone.name and egressProxy.enabled, because the egress proxy compares each host zone with the zone of the install." }}
+        {{- end }}
+        {{- if and .Values.zone.requireClaim (not (and $claim .Values.apps.claimCheck.zoneClaim)) }}
+        {{- fail "zone.requireClaim needs apps.enabled, apps.claimCheck.issuer and apps.claimCheck.zoneClaim, because the claim check reads no zone without them." }}
+        {{- end }}
+        {{- with .Values.zone.name }}
+        {{- if not (regexMatch "^[a-z0-9]([-a-z0-9]{0,61}[a-z0-9])?$" .) }}
+        {{- fail "zone.name must be a DNS label: lower case letters, digits and \"-\", with 63 characters at most." }}
+        {{- end }}
+        - {{ printf "--zone=%s" . | quote }}
+        {{- end }}
+        {{- with .Values.zone.namespaces }}
+        # The manager reads only the namespaces of this install, and its own namespace.
+        - {{ printf "--watch-namespaces=%s" (join "," (prepend . $.Release.Namespace | uniq)) | quote }}
+        {{- end }}
         {{- if eq .Values.gateway.mode "bundled" }}
         # The bundled gateway has 1 replica and 1 worker. Only then is a block a fence, so
         # only then does the controller issue TestKeys (#192).
@@ -72,6 +88,11 @@ spec:
         - --job-ttl-seconds={{ int64 .Values.jobTTLSeconds }}
         - "--installer-image={{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
         - "--workspace-image={{ include "koodam.workspaceImage" . }}"
+        {{- with .Values.zone.storageClasses }}
+        # The home claim of a new Workspace gets a storage class of the zone. With no storage class,
+        # the storage policy of the zone refuses the claim.
+        - {{ printf "--workspace-storage-class=%s" (first .) | quote }}
+        {{- end }}
         {{- with (.Values.nookku | default dict).image }}
         {{- if not (regexMatch "^[^@\\s]+@sha256:[0-9a-f]{64}$" .) }}
         {{- fail "nookku.image must end with a digest @sha256:<64 hex characters>." }}
@@ -86,6 +107,22 @@ spec:
         {{- end }}
         {{- if .Values.apps.enabled }}
         - --apps-enabled
+        - {{ printf "--tenant-usage-interval=%s" .Values.tenants.usageInterval | quote }}
+        {{- $rate := .Values.tenants.defaultQuota.rateLimit }}
+        {{- if or .Values.tenants.refuseUnknown $rate.requestsPerSecond $rate.burst }}
+        {{- if not (and $claim .Values.apps.claimCheck.tenantClaim) }}
+        {{- fail "tenants.defaultQuota and tenants.refuseUnknown need apps.claimCheck.issuer and apps.claimCheck.tenantClaim, because the claim check has no tenant label without them." }}
+        {{- end }}
+        {{- with $rate.requestsPerSecond }}
+        - {{ printf "--tenant-default-rate=%v" . | quote }}
+        {{- end }}
+        {{- with $rate.burst }}
+        - {{ printf "--tenant-default-burst=%d" (int64 .) | quote }}
+        {{- end }}
+        {{- if .Values.tenants.refuseUnknown }}
+        - --tenant-refuse-unknown
+        {{- end }}
+        {{- end }}
         {{- if .Values.egressProxy.enabled }}
         # Each AppVersion gets a NetworkPolicy with egress to these pods only.
         - --egress-proxy-namespace={{ .Release.Namespace }}
@@ -106,6 +143,15 @@ spec:
         - {{ printf "--app-claim-caller-claim=%s" .callerClaim | quote }}
         - {{ printf "--app-claim-tenant-claim=%s" .tenantClaim | quote }}
         - "--app-claim-tenant-token={{ if and .tenantClaim .tenantToken }}true{{ else }}false{{ end }}"
+        {{- with .zoneClaim }}
+        {{- if not $.Values.zone.name }}
+        {{- fail "apps.claimCheck.zoneClaim needs zone.name, because the claim check compares the claim with the zone of the install." }}
+        {{- end }}
+        - {{ printf "--app-claim-zone-claim=%s" . | quote }}
+        {{- end }}
+        {{- if $.Values.zone.requireClaim }}
+        - --app-claim-require-zone
+        {{- end }}
         - --app-claim-jwks-file=/etc/koodam/app-claim/jwks.json
         {{- end }}
         {{- end }}

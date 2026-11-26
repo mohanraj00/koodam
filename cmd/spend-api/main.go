@@ -163,10 +163,7 @@ func setupKube(c *spendapi.Config, rules *clientcmd.ClientConfigLoadingRules) er
 	if err := corev1alpha1.AddToScheme(scheme); err != nil {
 		return errors.New("the Agent scheme could not be registered")
 	}
-	gv := corev1alpha1.GroupVersion
-	mapper := meta.NewDefaultRESTMapper([]schema.GroupVersion{gv})
-	mapper.AddSpecific(gv.WithKind("Agent"), gv.WithResource("agents"), gv.WithResource("agent"), meta.RESTScopeNamespace)
-	c.Kube, err = client.New(cfg, client.Options{Scheme: scheme, Mapper: mapper})
+	c.Kube, err = client.New(cfg, client.Options{Scheme: scheme, Mapper: kubeMapper()})
 	if err != nil {
 		return errors.New("the Kubernetes client could not start")
 	}
@@ -198,4 +195,16 @@ func serve(address string, timeout time.Duration, handler http.Handler) error {
 		}
 		return nil
 	}
+}
+
+// kubeMapper maps the kinds that the server reads. It is static, so the server needs no discovery
+// access. Each kind that the server reads must be here, or the read fails before it goes to the API
+// server.
+func kubeMapper() meta.RESTMapper {
+	gv := corev1alpha1.GroupVersion
+	mapper := meta.NewDefaultRESTMapper([]schema.GroupVersion{gv})
+	mapper.AddSpecific(gv.WithKind("Agent"), gv.WithResource("agents"), gv.WithResource("agent"), meta.RESTScopeNamespace)
+	mapper.AddSpecific(gv.WithKind("SpendBudget"), gv.WithResource("spendbudgets"), gv.WithResource("spendbudget"),
+		meta.RESTScopeNamespace)
+	return mapper
 }

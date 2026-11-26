@@ -187,6 +187,17 @@ spec:
         {{- if $tenantTokens }}
         - --tenant-tokens
         {{- end }}
+        {{- with .Values.zone.name }}
+        - {{ printf "--zone=%s" . | quote }}
+        {{- end }}
+        {{- with .Values.zone.egressHosts }}
+        {{- $pairs := list }}
+        {{- range $host, $zone := . }}
+        {{- $pairs = append $pairs (printf "%s=%s" $host $zone) }}
+        {{- end }}
+        # The proxy refuses a host with a declared zone that is not the zone of the install.
+        - {{ printf "--host-zones=%s" (join "," $pairs) | quote }}
+        {{- end }}
         ports:
         - containerPort: {{ $ep.port }}
           name: proxy

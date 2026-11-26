@@ -130,7 +130,7 @@ func (r *AgentReconciler) waitingRuns(ctx context.Context, ns string, b *corev1a
 	for _, o := range list.Items {
 		c := meta.FindStatusCondition(o.Status.Conditions, condProvisioned)
 		if c == nil || c.Reason != corev1alpha1.ReasonPeriodBudgetExceeded || agentEnded(&o) ||
-			o.Status.KeyHash != "" || !o.DeletionTimestamp.IsZero() || reservation(b, o.UID) >= 0 {
+			admitted(&o) || !o.DeletionTimestamp.IsZero() || reservation(b, o.UID) >= 0 {
 			continue
 		}
 		out = append(out, o)
@@ -140,9 +140,11 @@ func (r *AgentReconciler) waitingRuns(ctx context.Context, ns string, b *corev1a
 }
 
 // roll moves the ledger to the period that has now. When a period ends, the ledger drops the
-// reservations of that period: the spend of a run counts only in the period where it started. With
-// no period in the status (a new budget, a lost status or a changed period), it rebuilds the ledger
-// from the Agents.
+// reservations of that period: the spend of a run counts only in the period where it started. It
+// rebuilds the ledger from the Agents if the status has no period (a new budget or a lost status),
+// or if spec.period changed. A change of spec.period gives a status period that is not a period of
+// the new type, also after the old period ended. A rebuild cannot see the spend of a deleted run,
+// so if the old period overlaps the new period, the rebuild keeps the old spend when it is more.
 func (r *AgentReconciler) roll(ctx context.Context, b *corev1alpha1.SpendBudget, now time.Time) error {
 	start, end := budgetPeriod(b.Spec.Period, now)
 	s := &b.Status
@@ -151,6 +153,15 @@ func (r *AgentReconciler) roll(ctx context.Context, b *corev1alpha1.SpendBudget,
 		return nil
 	}
 	rebuild := s.PeriodStart == nil || s.PeriodEnd == nil || now.Before(s.PeriodEnd.Time)
+	if !rebuild {
+		oldStart, oldEnd := budgetPeriod(b.Spec.Period, s.PeriodStart.Time)
+		rebuild = !oldStart.Equal(s.PeriodStart.Time) || !oldEnd.Equal(s.PeriodEnd.Time)
+	}
+	var kept resource.Quantity
+	if s.PeriodStart != nil && s.PeriodEnd != nil && s.PeriodStart.Before(&metav1.Time{Time: end}) &&
+		start.Before(s.PeriodEnd.Time) {
+		kept = quantity(s.Spend)
+	}
 	s.PeriodStart, s.PeriodEnd = &metav1.Time{Time: start}, &metav1.Time{Time: end}
 	s.Spend, s.Reserved, s.Reservations = "0", "0", nil
 	meta.SetStatusCondition(&s.Conditions, metav1.Condition{Type: corev1alpha1.SpendBudgetReady,
@@ -159,34 +170,59 @@ func (r *AgentReconciler) roll(ctx context.Context, b *corev1alpha1.SpendBudget,
 	if !rebuild {
 		return nil
 	}
+	// The rebuild reads the Agents from the API server. The cache can miss the keyHash of a run that
+	// the controller admitted a moment ago, and the rebuild would then not reserve its budget.
 	list := &corev1alpha1.AgentList{}
-	if err := r.List(ctx, list, client.InNamespace(b.Namespace)); err != nil {
+	if err := r.APIReader.List(ctx, list, client.InNamespace(b.Namespace)); err != nil {
 		return err
 	}
-	slices.SortFunc(list.Items, olderFirst)
+	rebuildLedger(s, list.Items, start, end, b.Spec.Spend, maxReservations)
+	if kept.Cmp(quantity(s.Spend)) > 0 {
+		s.Spend = decimal(kept)
+	}
+	return nil
+}
+
+// rebuildLedger counts the runs that have a key in the ledger of the period from start to end. The
+// ledger has a reservation for at most maxRuns active runs. The budget of each other active run is
+// in reserved too, with no reservation, so the limit check counts it until the period ends. A run
+// with a key and no valid status.budget got its key before the ledger existed. Its spec.budget can have
+// changed after the key, so the rebuild counts the limit for that run: no other run starts until
+// it ends.
+func rebuildLedger(s *corev1alpha1.SpendBudgetStatus, runs []corev1alpha1.Agent, start, end time.Time,
+	limit resource.Quantity, maxRuns int) {
+	slices.SortFunc(runs, olderFirst)
 	var spend, reserved resource.Quantity
-	for _, o := range list.Items {
+	for _, o := range runs {
 		if o.Status.KeyHash == "" {
 			continue
 		}
-		if !agentEnded(&o) {
-			if len(s.Reservations) < maxReservations {
+		admitted, err := resource.ParseQuantity(o.Status.Budget)
+		if err != nil {
+			admitted = limit.DeepCopy()
+		}
+		// An ended run keeps its reservation until the revoke blocked its key and read its usage.
+		if !agentEnded(&o) || o.Status.RevokedAt == nil {
+			if len(s.Reservations) < maxRuns {
 				s.Reservations = append(s.Reservations, corev1alpha1.SpendReservation{
-					RunID: string(o.UID), Agent: o.Name, Budget: decimal(o.Spec.Budget)})
-				reserved.Add(o.Spec.Budget)
+					RunID: string(o.UID), Agent: o.Name, Budget: decimal(admitted)})
 			}
+			reserved.Add(admitted)
 			continue
 		}
 		began := o.CreationTimestamp.Time
 		if o.Status.StartedAt != nil {
 			began = o.Status.StartedAt.Time
 		}
-		if o.Status.Usage != nil && !began.Before(start) && began.Before(end) {
+		switch {
+		case o.Status.Usage == nil || began.Before(start) || !began.Before(end):
+		case spendNotSettled(&o):
+			spend.Add(admitted)
+		default:
 			spend.Add(quantity(o.Status.Usage.Spend))
 		}
 	}
 	s.Spend, s.Reserved = decimal(spend), decimal(reserved)
-	return nil
 }
 
 // writeLedger writes the status if it changed. A write that does not change the ledger would start
@@ -213,8 +249,19 @@ func (r *AgentReconciler) reserve(ctx context.Context, a *corev1alpha1.Agent) (t
 	if err := r.roll(ctx, b, now); err != nil {
 		return 0, "", err
 	}
-	if reservation(b, a.UID) >= 0 {
-		return 0, "", r.writeLedger(ctx, b, before, now)
+	if i := reservation(b, a.UID); i >= 0 {
+		if b.Status.Reservations[i].Budget == decimal(a.Spec.Budget) {
+			return 0, "", r.writeLedger(ctx, b, before, now)
+		}
+		// The run budget changed before the key exists. Drop the old reservation and check the new
+		// budget, because the key gets the new budget.
+		held, reserved := quantity(b.Status.Reservations[i].Budget), quantity(b.Status.Reserved)
+		reserved.Sub(held)
+		if reserved.Sign() < 0 {
+			reserved = resource.Quantity{}
+		}
+		b.Status.Reserved = decimal(reserved)
+		b.Status.Reservations = slices.Delete(b.Status.Reservations, i, i+1)
 	}
 	waiting, err := r.waitingRuns(ctx, a.Namespace, b)
 	if err != nil {
@@ -245,11 +292,15 @@ func (r *AgentReconciler) reserve(ctx context.Context, a *corev1alpha1.Agent) (t
 		msg = fmt.Sprintf("The SpendBudget %s has the maximum of %d active runs.", b.Name, maxReservations)
 	}
 	count := len(slices.DeleteFunc(waiting, func(o corev1alpha1.Agent) bool { return o.UID == a.UID }))
+	// The condition message is the same for each waiting run. A message for each run would change
+	// the status at each check, and each change starts a new check of all the waiting runs. The Agent
+	// condition has the message for the run.
 	cond := metav1.Condition{Type: corev1alpha1.SpendBudgetExceeded, Status: metav1.ConditionFalse,
 		Reason: "WithinLimit", Message: "The last run started in the limit.", ObservedGeneration: b.Generation}
 	if msg != "" {
 		count++
-		cond.Status, cond.Reason, cond.Message = metav1.ConditionTrue, corev1alpha1.ReasonPeriodBudgetExceeded, msg
+		cond.Status, cond.Reason = metav1.ConditionTrue, corev1alpha1.ReasonPeriodBudgetExceeded
+		cond.Message = fmt.Sprintf("At least one run waits for the budget. The period ends at %s.", end)
 	} else {
 		b.Status.Reservations = append(b.Status.Reservations, corev1alpha1.SpendReservation{
 			RunID: string(a.UID), Agent: a.Name, Budget: decimal(budget)})
@@ -292,8 +343,10 @@ func (r *AgentReconciler) waitForBudget(ctx context.Context, a *corev1alpha1.Age
 	return budgetWait{after: after}
 }
 
-// settle moves a run from reserved to spend, with the settled spend of the run. It does nothing if
-// the ledger has no reservation for the run, for example after the end of the period.
+// settle moves a run from reserved to spend, with the settled spend of the run. If the spend did not
+// settle, the usage can be low, so settle counts the full run budget: the gateway stops the run at
+// that budget. It does nothing if the ledger has no reservation for the run, for example after the
+// end of the period.
 func (r *AgentReconciler) settle(ctx context.Context, a *corev1alpha1.Agent) error {
 	b, err := r.spendBudget(ctx, a.Namespace)
 	if b == nil || err != nil {
@@ -313,7 +366,7 @@ func (r *AgentReconciler) settle(ctx context.Context, a *corev1alpha1.Agent) err
 	// With no usage, the run had no key at the gateway, so it has no spend.
 	var used resource.Quantity
 	if a.Status.Usage != nil {
-		if used, err = resource.ParseQuantity(a.Status.Usage.Spend); err != nil {
+		if used, err = resource.ParseQuantity(a.Status.Usage.Spend); err != nil || spendNotSettled(a) {
 			used = held
 		}
 	}
@@ -322,6 +375,53 @@ func (r *AgentReconciler) settle(ctx context.Context, a *corev1alpha1.Agent) err
 	b.Status.Spend, b.Status.Reserved = decimal(spend), decimal(reserved)
 	b.Status.Reservations = slices.Delete(b.Status.Reservations, i, i+1)
 	return r.writeLedger(ctx, b, before, r.now())
+}
+
+// reasonKeyBeforeLedger is the reason for a run that got its key hash from a version before the
+// ledger, in a namespace with a SpendBudget.
+const reasonKeyBeforeLedger = "KeyBeforeLedger"
+
+// admitKeyBeforeLedger handles a Pending run with a key hash from a version before the ledger. Its
+// key can exist at the gateway with a budget that the ledger does not know, and a new CreateKey does
+// not change the budget of a key that exists. Thus in a namespace with a SpendBudget, the run fails
+// and the revoke blocks the key. With no SpendBudget, the key gets spec.budget, as before.
+func (r *AgentReconciler) admitKeyBeforeLedger(ctx context.Context, a *corev1alpha1.Agent) (bool, error) {
+	b, err := r.spendBudget(ctx, a.Namespace)
+	if err != nil {
+		return false, err
+	}
+	if b == nil {
+		a.Status.Budget = decimal(a.Spec.Budget)
+		return false, r.Status().Update(ctx, a)
+	}
+	meta.SetStatusCondition(&a.Status.Conditions, metav1.Condition{
+		Type: condProvisioned, Status: metav1.ConditionFalse, Reason: reasonKeyBeforeLedger,
+		Message:            "The key of the run is from a version before the period budget ledger. Create the Agent again.",
+		ObservedGeneration: a.Generation,
+	})
+	return true, r.fail(ctx, a, corev1alpha1.AgentFailed, reasonKeyBeforeLedger)
+}
+
+// admitted is true if the ledger admitted the run. A key hash with no status.budget is from a version
+// before the ledger.
+func admitted(a *corev1alpha1.Agent) bool {
+	return a.Status.KeyHash != "" && a.Status.Budget != ""
+}
+
+// admittedBudget is the run budget that the key got. An Agent from a version before status.budget
+// has only spec.budget.
+func admittedBudget(a *corev1alpha1.Agent) resource.Quantity {
+	q, err := resource.ParseQuantity(a.Status.Budget)
+	if err != nil {
+		return a.Spec.Budget
+	}
+	return q
+}
+
+// spendNotSettled is true if the revoke found that the spend of the run did not settle.
+func spendNotSettled(a *corev1alpha1.Agent) bool {
+	c := meta.FindStatusCondition(a.Status.Conditions, condRevoked)
+	return c != nil && strings.HasSuffix(c.Message, spendNotSettledNote)
 }
 
 // waitingFor maps a change of a SpendBudget to the runs that wait for it.

@@ -98,6 +98,9 @@ gateway:
       # Helm writes small floats as "1e-06". Do not set a cost per token here.
       # To use an upstream key, write "api_key: os.environ/<NAME>" in a model.
       # Do not put a key value here. Helm writes modelList into a ConfigMap and the release values.
+      # An item can have the key "zone". With zone.name, the route list has only the items with
+      # no zone or with the zone of the install, and a call for a model name of a different zone
+      # gets the status 403 (RouteOutOfZone). docs/zones.md has the rules.
       modelList: []
       # The env variables for the upstream provider keys. Each variable comes from a Secret
       # that you make. The chart does not make or read these Secrets. For example:
@@ -235,6 +238,9 @@ egressProxy:
 # the proxy gives an App pod an identity only in a named namespace.
 apps:
   enabled: false
+  # The App CRDs and the admission policy of the AppVersion are for the full cluster. Each
+  # cluster has them one time. Set false in the second install of a cluster.
+  sharedResources: true
   # The namespaces whose pods can send traffic to the App pods, for example the namespace of the
   # Gateway data plane. It has an effect only with egressProxy.enabled: then each AppVersion has
   # a NetworkPolicy, and that policy permits no ingress if this list is empty.
@@ -261,10 +267,67 @@ apps:
     # the reserved customer koodam-no-tenant. If false, the gateway counts a model call for the
     # tenant label that the code in the pod sends, and that code is not trusted.
     tenantToken: true
+    # The claim with the zone of the caller. With it, a request with a zone claim that is not
+    # zone.name gets the status 403 and the reason ZoneMismatch. It needs zone.name. If it is
+    # empty, the check reads no zone. docs/zones.md has the rules.
+    zoneClaim: ""
     # The JWKS document of the issuer, as text. It has public keys only: the manager refuses a
     # document with private or symmetric key material. A change of this value starts the manager
     # again, and then each AppVersion gets new pods.
     jwks: ""
+
+# The zone of this install. One install is one zone: a workload, its model routes and its egress
+# stay in the zone of the install. docs/zones.md has the design, and the steps for 2 installs in
+# one cluster.
+zone:
+  # The name of the zone, as a DNS label, for example "zone-a". Empty: the install has no zone.
+  name: ""
+  # The namespaces of this install. With items, the manager reads the namespaced objects of
+  # these namespaces and of the release namespace only. Empty: each namespace of the cluster.
+  # It is necessary if the cluster has 2 installs, and 2 installs must not have the same
+  # namespace.
+  namespaces: []
+  # Refuse a request to an App with no zone claim in its token (ZoneMismatch). By default, the
+  # claim check accepts such a request. It needs apps.claimCheck.issuer and
+  # apps.claimCheck.zoneClaim.
+  requireClaim: false
+  # The declared zone of egress hosts, as a map from a host to a zone. The egress proxy refuses a
+  # call to a host with a zone that is not zone.name (EgressOutOfZone). A host is a DNS name, or
+  # "*." and a DNS name for each name below it. A host with no entry follows the usual egress
+  # rules. It needs zone.name and egressProxy.enabled. For example:
+  #   egressHosts:
+  #     models.zone-b.example.com: zone-b
+  #     "*.zone-b.example.net": zone-b
+  egressHosts: {}
+  # The values of the node labels topology.kubernetes.io/zone and topology.kubernetes.io/region
+  # on the nodes of the zone. An admission policy refuses an AppVersion with a node selector or
+  # a node affinity for a different value (ZonePlacement). Empty: only the value of zone.name is
+  # permitted. It needs zone.name and apps.enabled.
+  topologyValues: []
+  # The storage classes of the zone. With items, an admission policy refuses a new
+  # PersistentVolumeClaim of the install namespaces, and a volume claim of an AppVersion pod
+  # template, with a different storage class (ZonePlacement). The home claim of a new Workspace
+  # gets the first class of the list. Empty: no storage check. It needs zone.name,
+  # zone.namespaces and apps.enabled.
+  storageClasses: []
+
+# The tenants of the Apps. A TenantQuota gives one tenant label its quota and its rate limit.
+# The controller reads the use of each tenant from the gateway. defaultQuota and refuseUnknown
+# are for a tenant label with no TenantQuota, and they need apps.claimCheck.tenantClaim.
+tenants:
+  # The quota of a tenant label with no TenantQuota. With no rate, such a tenant has no limit.
+  defaultQuota:
+    rateLimit:
+      # The requests for each second, as a quantity, for example "5" or "500m". Empty: no limit.
+      requestsPerSecond: ""
+      # The count of requests that such a tenant can send at one time. 0: the rate, with a
+      # minimum of 1.
+      burst: 0
+  # If true, the claim check refuses a tenant label with no TenantQuota, with the status 403 and
+  # the reason UnknownTenant. Then defaultQuota has no effect.
+  refuseUnknown: false
+  # The time between 2 reads of the use of a tenant from the gateway. It is 1s or more.
+  usageInterval: 30s
 
 # The metrics endpoint (HTTPS). If true, the chart adds the metrics Service and the
 # metrics-auth ClusterRole (tokenreviews and subjectaccessreviews, verb create).

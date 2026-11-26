@@ -65,7 +65,9 @@ func amount(s string) float64 {
 }
 
 // budgetItem shows the ledger for the period that has now. If the controller did not move the
-// ledger to this period yet, the period has no spend and no reservation.
+// ledger to this period yet, the period has no spend and no reservation. The one exception is a
+// status period that overlaps the current period, after a change of spec.period. The controller
+// then keeps the old spend and rebuilds the reservations, so the item shows the status values.
 func budgetItem(b *corev1alpha1.SpendBudget, now time.Time) budget {
 	period := b.Spec.Period
 	if period == "" {
@@ -75,7 +77,10 @@ func budgetItem(b *corev1alpha1.SpendBudget, now time.Time) budget {
 	item := budget{Namespace: b.Namespace, Period: string(period), PeriodStart: start, PeriodEnd: end,
 		Limit: b.Spec.Spend.AsApproximateFloat64()}
 	s := b.Status
-	if s.PeriodStart != nil && s.PeriodStart.Time.Equal(start) {
+	current := s.PeriodStart != nil && s.PeriodStart.Time.Equal(start)
+	overlaps := s.PeriodStart != nil && s.PeriodEnd != nil && s.PeriodStart.Time.Before(end) &&
+		start.Before(s.PeriodEnd.Time)
+	if current || overlaps {
 		item.Spend, item.Reserved, item.WaitingRuns = amount(s.Spend), amount(s.Reserved), s.WaitingRuns
 		item.Exceeded = meta.IsStatusConditionTrue(s.Conditions, corev1alpha1.SpendBudgetExceeded)
 	}

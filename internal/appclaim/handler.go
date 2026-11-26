@@ -42,8 +42,10 @@ const (
 	CallerHeader = "Koodam-Caller"
 	// TenantHeader gives the tenant label of the claim to the app container.
 	TenantHeader = "Koodam-Tenant"
-	// ReasonHeader gives the typed reason of a tenant refusal to the caller.
+	// ReasonHeader gives the typed reason of a zone refusal or a tenant refusal to the caller.
 	ReasonHeader = "Koodam-Reason"
+	// ReasonZoneMismatch tells that the zone of the claim is not the zone of the install.
+	ReasonZoneMismatch = "ZoneMismatch"
 	// outcomeOK is the outcome of a request with a valid claim.
 	outcomeOK = "ok"
 	// KindIngress is the kind of each span of the check.
@@ -67,6 +69,7 @@ type Span struct {
 	Outcome    string    `json:"outcome"`
 	Caller     string    `json:"caller,omitempty"`
 	Tenant     string    `json:"tenant,omitempty"`
+	Zone       string    `json:"zone,omitempty"`
 	DurationMs float64   `json:"durationMs"`
 }
 
@@ -141,7 +144,8 @@ func (c *Check) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		now = c.Now
 	}
 	start := now()
-	span := Span{V: SpanVersion, Time: start.UTC(), Kind: KindIngress, App: c.App, Version: c.Version, Method: "OTHER"}
+	span := Span{V: SpanVersion, Time: start.UTC(), Kind: KindIngress, App: c.App, Version: c.Version, Method: "OTHER",
+		Zone: c.Config.Zone}
 	if methods[r.Method] {
 		span.Method = r.Method
 	}
@@ -173,13 +177,11 @@ func (c *Check) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "A valid signed claim is necessary.", http.StatusUnauthorized)
 		return
 	}
-	// The claim is valid, so a tenant refusal has the labels of the claim in its span.
+	// The claim is valid, so a zone refusal or a tenant refusal has the labels of the claim in
+	// its span.
 	span.Caller, span.Tenant = id.Caller, id.Tenant
-	if reason, wait := c.tenantRefusal(id.Tenant, start); reason != "" {
-		span.Outcome, span.Status = reason, http.StatusTooManyRequests
-		if reason == ReasonUnknownTenant || reason == ReasonReservedTenant {
-			span.Status = http.StatusForbidden
-		}
+	if reason, status, wait := c.refusal(id, start); reason != "" {
+		span.Outcome, span.Status = reason, status
 		if wait > 0 {
 			w.Header().Set("Retry-After", strconv.Itoa(int(math.Ceil(wait.Seconds()))))
 		}
@@ -199,6 +201,23 @@ func (c *Check) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		rec = &statusWriter{ResponseWriter: w, status: http.StatusOK}
 		c.Next.ServeHTTP(rec, r)
 	}
+}
+
+// refusal gives back the typed reason and the status of the refusal of a valid claim. An empty
+// reason is no refusal. The zone check is first. Thus a request of a different zone uses no
+// token of the tenant.
+func (c *Check) refusal(id Identity, now time.Time) (reason string, status int, wait time.Duration) {
+	if id.ZoneMismatch {
+		return ReasonZoneMismatch, http.StatusForbidden, 0
+	}
+	reason, wait = c.tenantRefusal(id.Tenant, now)
+	switch reason {
+	case "":
+		return "", 0, 0
+	case ReasonUnknownTenant, ReasonReservedTenant:
+		return reason, http.StatusForbidden, wait
+	}
+	return reason, http.StatusTooManyRequests, wait
 }
 
 // tenantRefusal gives back the typed reason if the limits refuse the request of the tenant. A

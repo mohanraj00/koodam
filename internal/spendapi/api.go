@@ -45,6 +45,8 @@ const (
 	runsPath      = "/v1/runs"
 	spendPath     = "/v1/spend"
 	specPath      = "/v1/openapi.json"
+	// msgTimeLimit is the problem detail when the request time limit expires.
+	msgTimeLimit = "The request time limit expired."
 )
 
 var errCursor = errors.New("the page cursor is not valid")
@@ -158,7 +160,7 @@ func (a *api) scope(ctx context.Context, r *http.Request) ([]string, int, proble
 	}
 	switch {
 	case ctx.Err() != nil:
-		return nil, http.StatusGatewayTimeout, problem{"The request time limit expired."}
+		return nil, http.StatusGatewayTimeout, problem{msgTimeLimit}
 	case err != nil:
 		return nil, http.StatusBadGateway, problem{"The Kubernetes access review is not available."}
 	case len(namespaces) == 0:
@@ -245,7 +247,7 @@ func (a *api) list(ctx context.Context, w http.ResponseWriter, r *http.Request, 
 	}
 	switch {
 	case ctx.Err() != nil:
-		reply(w, r, http.StatusGatewayTimeout, problem{"The request time limit expired."})
+		reply(w, r, http.StatusGatewayTimeout, problem{msgTimeLimit})
 	case err == nil:
 		reply(w, r, http.StatusOK, result)
 	case errors.Is(err, errCursor) || apierrors.IsBadRequest(err):
@@ -266,7 +268,7 @@ func (a *api) listBudgets(ctx context.Context, w http.ResponseWriter, r *http.Re
 	result, err := a.budgets(ctx, namespaces)
 	switch {
 	case ctx.Err() != nil:
-		reply(w, r, http.StatusGatewayTimeout, problem{"The request time limit expired."})
+		reply(w, r, http.StatusGatewayTimeout, problem{msgTimeLimit})
 	case err != nil:
 		reply(w, r, http.StatusBadGateway, problem{"The budget data is not available."})
 	default:

@@ -52,6 +52,11 @@ const (
 // operator configures it. If Issuer is empty, the pods have no check container.
 type AppClaimCheck struct {
 	Issuer, Audience, CallerClaim, TenantClaim string
+	// Zone is the zone of the install. ZoneClaim is the claim with the zone of the caller. With
+	// a zone claim, the check refuses a caller of a different zone.
+	Zone, ZoneClaim string
+	// RequireZoneClaim refuses a token with no zone claim.
+	RequireZoneClaim bool
 	// JWKS is the JWKS document of the issuer.
 	JWKS string
 	// Image is the image with /app-claim-check.
@@ -59,6 +64,8 @@ type AppClaimCheck struct {
 	// TenantToken makes the check container sign a tenant token for the tenant of each request.
 	// It has an effect only with a tenant claim.
 	TenantToken bool
+	// Tenants is the configuration for a tenant label with no TenantQuota.
+	Tenants AppTenantLimits
 }
 
 func (c AppClaimCheck) enabled() bool { return c.Issuer != "" }
@@ -94,6 +101,22 @@ func (c AppClaimCheck) listenPorts(app []corev1.ContainerPort, pod *corev1.PodSp
 	return out
 }
 
+// zoneArgs gives back the zone flags of the check container. An install with no zone has none,
+// so its pod template does not change.
+func (c AppClaimCheck) zoneArgs() []string {
+	if c.Zone == "" {
+		return nil
+	}
+	args := []string{"--zone", c.Zone}
+	if c.ZoneClaim != "" {
+		args = append(args, "--zone-claim", c.ZoneClaim)
+	}
+	if c.RequireZoneClaim {
+		args = append(args, "--zone-require-claim")
+	}
+	return args
+}
+
 // claimPorts gives back the ports of the check container of the pod. If the check is off or the
 // pod has no check container, it gives back the ports of the app container. With the check
 // off, a container of the user can have the name of the check container, and its ports must
@@ -126,7 +149,7 @@ func (c AppClaimCheck) add(tmpl *corev1.PodTemplateSpec, av *corev1alpha1.AppVer
 		}
 	}
 	for _, v := range tmpl.Spec.Volumes {
-		if v.Name == claimContainer {
+		if v.Name == claimContainer || (c.tenantsEnabled() && v.Name == tenantsVolume) {
 			errs = append(errs, field.Invalid(path.Child("volumes"), v.Name, msgClaimName))
 		}
 	}
@@ -137,6 +160,7 @@ func (c AppClaimCheck) add(tmpl *corev1.PodTemplateSpec, av *corev1alpha1.AppVer
 	args := []string{"--issuer", c.Issuer, "--audience", c.Audience, "--caller-claim", c.CallerClaim,
 		"--tenant-claim", c.TenantClaim, "--jwks-file", claimDir + "/jwks.json",
 		"--app", av.Spec.AppRef.Name, "--version", av.Name}
+	args = append(args, c.zoneArgs()...)
 	for i, p := range app {
 		args = append(args, "--route", fmt.Sprintf("%d=%d", listen[i].ContainerPort, p.ContainerPort))
 	}
@@ -144,10 +168,18 @@ func (c AppClaimCheck) add(tmpl *corev1.PodTemplateSpec, av *corev1alpha1.AppVer
 	tmpl.Spec.Volumes = append(tmpl.Spec.Volumes, corev1.Volume{Name: claimContainer, VolumeSource: corev1.VolumeSource{
 		DownwardAPI: &corev1.DownwardAPIVolumeSource{Items: []corev1.DownwardAPIVolumeFile{{Path: "jwks.json",
 			FieldRef: &corev1.ObjectFieldSelector{FieldPath: "metadata.annotations['" + claimJWKSAnnotation + "']"}}}}}})
+	mounts := []corev1.VolumeMount{{Name: claimContainer, MountPath: claimDir, ReadOnly: true}}
+	if c.tenantsEnabled() {
+		// The volume is the full ConfigMap with no subPath, so the kubelet updates the file.
+		args = append(args, "--tenants-file", tenantsDir+"/"+tenantsFile)
+		tmpl.Spec.Volumes = append(tmpl.Spec.Volumes, corev1.Volume{Name: tenantsVolume, VolumeSource: corev1.VolumeSource{
+			ConfigMap: &corev1.ConfigMapVolumeSource{LocalObjectReference: corev1.LocalObjectReference{Name: tenantLimitsName(av)}}}})
+		mounts = append(mounts, corev1.VolumeMount{Name: tenantsVolume, MountPath: tenantsDir, ReadOnly: true})
+	}
 	check := corev1.Container{
 		Name: claimContainer, Image: c.Image, Command: []string{"/app-claim-check"}, Args: args, Ports: listen,
 		RestartPolicy:   new(corev1.ContainerRestartPolicyAlways),
-		VolumeMounts:    []corev1.VolumeMount{{Name: claimContainer, MountPath: claimDir, ReadOnly: true}},
+		VolumeMounts:    mounts,
 		SecurityContext: helperSecurityContext(),
 		Resources: corev1.ResourceRequirements{Requests: corev1.ResourceList{
 			corev1.ResourceCPU: resource.MustParse("10m"), corev1.ResourceMemory: resource.MustParse("16Mi")}},

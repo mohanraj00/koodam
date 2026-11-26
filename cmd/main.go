@@ -35,6 +35,7 @@ import (
 
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/api/resource"
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/selection"
@@ -102,14 +103,36 @@ func workspaceImageFor(v string) string {
 // cache. Thus the controller does not keep all these objects of the cluster in memory. This limit
 // applies to all the controllers of the manager. A controller that reads other ConfigMaps or
 // StatefulSets (for example koodam-globals) must use the API reader or change this cache.
-func workspaceCache() cache.Options {
+//
+// With namespaces, the cache has the namespaced objects of these namespaces only. Then the
+// controllers of this manager do not see an object of a different install of the cluster. A
+// cluster-scoped object, for example a Profile, is in the cache of each install.
+func workspaceCache(namespaces []string) cache.Options {
 	req, err := labels.NewRequirement(controller.WorkspaceLabel, selection.Exists, nil)
 	utilruntime.Must(err)
 	sel := labels.NewSelector().Add(*req)
-	return cache.Options{ByObject: map[client.Object]cache.ByObject{
+	opts := cache.Options{ByObject: map[client.Object]cache.ByObject{
 		&corev1.ConfigMap{}:   {Label: sel},
 		&appsv1.StatefulSet{}: {Label: sel},
 	}}
+	if len(namespaces) > 0 {
+		opts.DefaultNamespaces = map[string]cache.Config{}
+		for _, ns := range namespaces {
+			opts.DefaultNamespaces[ns] = cache.Config{}
+		}
+	}
+	return opts
+}
+
+// installScope examines the zone of the install and gives back the namespaces that the manager
+// reads. A zone is a DNS label. An empty list is each namespace of the cluster.
+func installScope(zone, namespaces string) ([]string, error) {
+	if zone != "" {
+		if errs := validation.IsDNS1123Label(zone); len(errs) > 0 {
+			return nil, fmt.Errorf("the zone %q is not valid: %s", zone, strings.Join(errs, "; "))
+		}
+	}
+	return splitNamespaces(namespaces)
 }
 
 // nolint:gocyclo
@@ -119,7 +142,8 @@ func loadClaim(c controller.AppClaimCheck, jwksFile string) (controller.AppClaim
 	if c.Issuer == "" {
 		return controller.AppClaimCheck{}, nil
 	}
-	cfg := appclaim.Config{Issuer: c.Issuer, Audience: c.Audience, CallerClaim: c.CallerClaim, TenantClaim: c.TenantClaim}
+	cfg := appclaim.Config{Issuer: c.Issuer, Audience: c.Audience, CallerClaim: c.CallerClaim, TenantClaim: c.TenantClaim,
+		Zone: c.Zone, ZoneClaim: c.ZoneClaim, RequireZoneClaim: c.RequireZoneClaim}
 	if err := cfg.Valid(); err != nil {
 		return c, err
 	}
@@ -137,6 +161,34 @@ func loadClaim(c controller.AppClaimCheck, jwksFile string) (controller.AppClaim
 	return c, nil
 }
 
+// loadTenantDefaults examines the flags for a tenant label with no TenantQuota. rate is a
+// quantity of requests for each second, or empty. The flags need a tenant claim, because the
+// claim check has no tenant label without it.
+func loadTenantDefaults(c controller.AppClaimCheck, rate string, burst int, refuse bool) (
+	controller.AppClaimCheck, error) {
+	if rate == "" && burst == 0 && !refuse {
+		return c, nil
+	}
+	if c.Issuer == "" || c.TenantClaim == "" {
+		return c, errors.New("the tenant flags need --app-claim-issuer and --app-claim-tenant-claim")
+	}
+	if burst < 0 || burst > maxTenantRate || (burst > 0 && rate == "") {
+		return c, errors.New("--tenant-default-burst must be from 0 to 1000000, and it needs --tenant-default-rate")
+	}
+	c.Tenants = controller.AppTenantLimits{DefaultBurst: int32(burst), RefuseUnknown: refuse}
+	if rate != "" {
+		q, err := resource.ParseQuantity(rate)
+		if err != nil || q.Sign() <= 0 || q.AsApproximateFloat64() > maxTenantRate {
+			return c, errors.New("--tenant-default-rate must be a quantity more than 0, and 1000000 or less")
+		}
+		c.Tenants.DefaultRate = q.AsApproximateFloat64()
+	}
+	return c, nil
+}
+
+// maxTenantRate is the largest default rate and the largest default burst of a tenant.
+const maxTenantRate = 1_000_000
+
 // setupApps adds the App controllers to the manager. It refuses a read interval of the tenant
 // use below 1 second.
 func setupApps(mgr ctrl.Manager, versions *controller.AppVersionReconciler,
@@ -149,6 +201,11 @@ func setupApps(mgr ctrl.Manager, versions *controller.AppVersionReconciler,
 	}
 	if err := quotas.SetupWithManager(mgr); err != nil {
 		return fmt.Errorf("tenantquota: %w", err)
+	}
+	limits := &controller.TenantLimitsReconciler{Client: mgr.GetClient(), APIReader: mgr.GetAPIReader(),
+		Claim: versions.Claim}
+	if err := limits.SetupWithManager(mgr); err != nil {
+		return fmt.Errorf("tenantlimits: %w", err)
 	}
 	apps := &controller.AppReconciler{Client: mgr.GetClient(), APIReader: mgr.GetAPIReader()}
 	if err := apps.SetupWithManager(mgr); err != nil {
@@ -217,13 +274,16 @@ func main() {
 	var secureMetrics bool
 	var enableHTTP2 bool
 	var gatewayURL, gatewayKeyFile, agentGatewayURL, installerImage, nookkuImage, workspaceImage string
+	var workspaceStorageClass string
 	var testKeySingleGateway bool
 	var testKeyRevokeWait time.Duration
 	var keyGrace, tenantUsageInterval time.Duration
 	var egress controller.EgressProxy
 	var egressPodLabels, appIngressNamespaces, claimJWKSFile string
 	var claim controller.AppClaimCheck
-	var jobTTLSeconds int
+	var jobTTLSeconds, tenantDefaultBurst int
+	var tenantDefaultRate, zone, watchNamespaces string
+	var tenantRefuseUnknown bool
 	var agentIngressEnabled, appsEnabled bool
 	var tlsOpts []func(*tls.Config)
 	flag.StringVar(&metricsAddr, "metrics-bind-address", "0", "The address the metrics endpoint binds to. "+
@@ -274,9 +334,17 @@ func main() {
 	flag.BoolVar(&claim.TenantToken, "app-claim-tenant-token", true,
 		"With a tenant claim, the check container signs a tenant token for the tenant of each request. "+
 			"The egress proxy then needs --tenant-tokens.")
+	flag.StringVar(&claim.ZoneClaim, "app-claim-zone-claim", "",
+		"The claim with the zone of the caller. With it, the check refuses a caller of a zone that is not --zone.")
+	flag.BoolVar(&claim.RequireZoneClaim, "app-claim-require-zone", false,
+		"Refuse a token with no zone claim. It needs --app-claim-zone-claim.")
 	flag.StringVar(&claimJWKSFile, "app-claim-jwks-file", "",
 		"The file with the JWKS of the issuer. The manager reads it at its start.")
 	flag.StringVar(&egress.ClusterDomain, "cluster-domain", "cluster.local", "The DNS domain of the cluster.")
+	flag.StringVar(&zone, "zone", "", "The zone of this install, as a DNS label. Empty: the install has no zone.")
+	flag.StringVar(&watchNamespaces, "watch-namespaces", "",
+		"The namespaces of this install, separated by commas. The manager reads the namespaced objects of these "+
+			"namespaces only. Empty: each namespace. It is necessary if the cluster has 2 installs.")
 	flag.DurationVar(&keyGrace, "key-grace", time.Minute, "The time that is added to deadlineSeconds for the key TTL.")
 	flag.IntVar(&jobTTLSeconds, "job-ttl-seconds", controller.DefaultJobTTLSeconds,
 		"The time in seconds that the controller keeps a run Job and its pods after the Job ends. "+
@@ -288,6 +356,8 @@ func main() {
 			"The reference must have a digest (@sha256:).")
 	flag.StringVar(&workspaceImage, "workspace-image", defaultWorkspaceImage(),
 		"The workspace image for a Workspace with no spec.image.")
+	flag.StringVar(&workspaceStorageClass, "workspace-storage-class", "",
+		"The storage class of the home claim of a new Workspace. Empty: the default of the cluster.")
 	flag.BoolVar(&testKeySingleGateway, "test-key-single-instance-gateway", false,
 		"Issue TestKeys. Set it only if the gateway has one replica and one worker (#192).")
 	flag.DurationVar(&testKeyRevokeWait, "test-key-revoke-wait", controller.DefaultTestKeyRevokeWait,
@@ -295,6 +365,12 @@ func main() {
 	flag.BoolVar(&appsEnabled, "apps-enabled", false,
 		"If set, the manager runs the App and AppVersion controllers. The App CRDs and the App role in config/apps "+
 			"must be installed first.")
+	flag.StringVar(&tenantDefaultRate, "tenant-default-rate", "",
+		"The rate limit of a tenant label with no TenantQuota, in requests for each second. Empty: no limit.")
+	flag.IntVar(&tenantDefaultBurst, "tenant-default-burst", 0,
+		"The burst of a tenant label with no TenantQuota. 0: the rate, with a minimum of 1.")
+	flag.BoolVar(&tenantRefuseUnknown, "tenant-refuse-unknown", false,
+		"If set, the claim check refuses a tenant label with no TenantQuota.")
 	flag.DurationVar(&tenantUsageInterval, "tenant-usage-interval", controller.DefaultTenantUsageInterval,
 		"The time between 2 reads of the use of a tenant from the gateway. It is 1s or more.")
 	flag.BoolVar(&agentIngressEnabled, "agent-ingress-enabled", false,
@@ -374,9 +450,15 @@ func main() {
 		metricsServerOptions.KeyName = metricsCertKey
 	}
 
+	watched, err := installScope(zone, watchNamespaces)
+	if err != nil {
+		setupLog.Error(err, "The flag --zone or --watch-namespaces is not valid")
+		os.Exit(1)
+	}
+	setupLog.Info("The scope of this install", "zone", zone, "namespaces", watched)
 	mgr, err := ctrl.NewManager(ctrl.GetConfigOrDie(), ctrl.Options{
 		Scheme:                 scheme,
-		Cache:                  workspaceCache(),
+		Cache:                  workspaceCache(watched),
 		Metrics:                metricsServerOptions,
 		WebhookServer:          webhookServer,
 		HealthProbeBindAddress: probeAddr,
@@ -434,12 +516,12 @@ func main() {
 		os.Exit(1)
 	}
 	claim.Image = installerImage
-	if claim, err = loadClaim(claim, claimJWKSFile); err != nil {
-		setupLog.Error(err, "The App claim check flags are not valid")
-		os.Exit(1)
+	claim.Zone = zone
+	if claim, err = loadClaim(claim, claimJWKSFile); err == nil {
+		claim, err = loadTenantDefaults(claim, tenantDefaultRate, tenantDefaultBurst, tenantRefuseUnknown)
 	}
-	if err := checkClaimPolicy(claim, egress); err != nil {
-		setupLog.Error(err, "The App claim check flags are not valid")
+	if err = errors.Join(err, checkClaimPolicy(claim, egress)); err != nil {
+		setupLog.Error(err, "The App claim check flags or the tenant flags are not valid")
 		os.Exit(1)
 	}
 	if err := checkEgress(egress); err != nil {
@@ -476,6 +558,7 @@ func main() {
 		Scheme:         mgr.GetScheme(),
 		APIReader:      mgr.GetAPIReader(),
 		Image:          workspaceImage,
+		StorageClass:   workspaceStorageClass,
 		InstallerImage: installerImage,
 		NookkuImage:    nookkuImage,
 		Gateway:        gw,

@@ -20,10 +20,11 @@ The claim check container `koodam-claim` of an App pod writes 1 JSON line to its
 | `app` | string | no | The name of the App. |
 | `version` | string | no | The name of the AppVersion of the pod. This is not the contract version. |
 | `method` | string | yes | The HTTP method: `GET`, `HEAD`, `POST`, `PUT`, `PATCH`, `DELETE` or `OPTIONS`. Each other method is `OTHER`. |
-| `status` | number | yes | The HTTP status that the caller got. `401` for a refused claim. `429` or `403` for a refused tenant. `502` if the app container did not answer. |
+| `status` | number | yes | The HTTP status that the caller got. `401` for a refused claim. `403` for a refused zone. `429` or `403` for a refused tenant. `502` if the app container did not answer. |
 | `outcome` | string | yes | `ok`, or the reason of the refusal. See "Outcomes". |
-| `caller` | string | no | The caller label of the claim. Only for the outcome `ok` and for a refused tenant. |
-| `tenant` | string | no | The tenant label of the claim. Only for the outcome `ok` and for a refused tenant, and only if the claim check has a tenant claim. |
+| `caller` | string | no | The caller label of the claim. Only for the outcome `ok`, for a refused zone and for a refused tenant. |
+| `tenant` | string | no | The tenant label of the claim. Only for the outcome `ok`, for a refused zone and for a refused tenant, and only if the claim check has a tenant claim. |
+| `zone` | string | no | The zone of the install (`zone.name`). It is not the zone of the caller. An install with no zone has no such field. |
 | `durationMs` | number | yes | The time of the request in milliseconds, with microsecond steps. |
 
 "Always" means that the field is in each span. A field that is not always there is not in the line when it is empty.
@@ -42,6 +43,7 @@ The claim check container `koodam-claim` of an App pod writes 1 JSON line to its
 | `time` | `401` | The token has no `exp`, it expired, or its `nbf` is in the future. The check permits 30 seconds of clock difference. |
 | `caller` | `401` | The caller claim is missing, empty, not printable or longer than 253 characters. |
 | `tenant` | `401` | The tenant claim is not valid by the same rule. |
+| `ZoneMismatch` | `403` | The claim is valid, and its zone claim is not the zone of the install. With `zone.requireClaim`, a claim with no zone claim gets this outcome too. |
 | `TenantRateLimited` | `429` | The claim is valid, and the tenant sent more requests than its rate limit. |
 | `TenantQuotaExceeded` | `429` | The claim is valid, and the tenant is at its quota of the current period. |
 | `UnknownTenant` | `403` | The claim is valid, no `TenantQuota` names the tenant label, and the install refuses such a tenant. |
@@ -51,7 +53,7 @@ A reader must accept other outcome words. New outcomes can come in the same vers
 
 ## What a span does not hold
 
-A span has no token, no path, no query string, no header and no body. Thus the `Authorization` header, the signed claim and the request data are never in a span. A request with a refused claim has no `caller` and no `tenant`, because the check does not trust a claim that it refused. A refused tenant has a valid claim, so its span has the 2 labels. [tenants.md](tenants.md) has the tenant refusals.
+A span has no token, no path, no query string, no header and no body. Thus the `Authorization` header, the signed claim and the request data are never in a span. A request with a refused claim has no `caller` and no `tenant`, because the check does not trust a claim that it refused. A refused zone and a refused tenant have a valid claim, so their spans have the 2 labels. The zone of a refused caller is not in the span. [zones.md](zones.md) has the zone refusal, and [tenants.md](tenants.md) has the tenant refusals.
 
 `caller` and `tenant` are the labels of a valid claim, not the claim. The issuer chooses them, so they can identify a person. Give the spans the same protection as the logs of the App pods: only the people who can read the logs of the namespace can read its spans.
 
