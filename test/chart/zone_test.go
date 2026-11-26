@@ -214,7 +214,7 @@ func TestZonePlacementPolicy(t *testing.T) {
 		t.Fatalf("helm template failed: %v\n%s", err, all)
 	}
 	if strings.Count(all, placement) != 2 || strings.Contains(all, storage) || strings.Contains(all, selector) ||
-		!strings.Contains(all, `expression: "[\"zone-a\"]"`) {
+		strings.Contains(all, "--workspace-storage-class") || !strings.Contains(all, `expression: "[\"zone-a\"]"`) {
 		t.Error("the install with a zone and no namespaces does not have only the placement policy for the zone name")
 	}
 	scoped, err := helmTemplate(t, apps+"zone: {name: zone-a, namespaces: [team-1], storageClasses: [near-disk], "+
@@ -223,7 +223,7 @@ func TestZonePlacementPolicy(t *testing.T) {
 		t.Fatalf("helm template failed: %v\n%s", err, scoped)
 	}
 	for _, s := range []string{`expression: "[\"eu-west-1\",\"eu-west-1a\"]"`, `expression: "[\"near-disk\"]"`,
-		`values: ["koodam-system","team-1"]`,
+		`values: ["koodam-system","team-1"]`, `- "--workspace-storage-class=near-disk"`,
 		"ZonePlacement: the storage class of the volume claim is not in the zone zone-a."} {
 		if !strings.Contains(scoped, s) {
 			t.Errorf("the install with the zone values does not have %q", s)

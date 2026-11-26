@@ -214,6 +214,16 @@ var _ = Describe("Zone placement admission policy", Ordered, func() {
 		refused(create(claim("data-far", new(farClass))))
 		refused(create(claim("data-none", nil)))
 		refused(create(claim("data-empty", new(""))))
+		// The home claim of a Workspace has the storage class that the controller gets from the chart.
+		home := func(name, class string) *corev1.PersistentVolumeClaim {
+			r := &WorkspaceReconciler{Image: testWorkspaceImage, StorageClass: class}
+			ws := &corev1alpha1.Workspace{ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: inNS}}
+			c := r.statefulSet(ws, testProfile).Spec.VolumeClaimTemplates[0]
+			c.Name, c.Namespace = name, inNS
+			return &c
+		}
+		Expect(create(home("home-near", nearClass))).To(Succeed())
+		refused(create(home("home-none", "")))
 	})
 
 	It("does not apply to a namespace of a different install", func() {

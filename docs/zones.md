@@ -131,6 +131,7 @@ The storage, only with items in `zone.storageClasses`:
 
 - The policy refuses a pod template with an ephemeral volume claim that has no storage class or a storage class that is not in the list.
 - A second policy, `<release>-koodam-zone-storage`, refuses a new PersistentVolumeClaim with no storage class or a storage class that is not in the list. It also applies to the volume claims of a Workspace. It does not change a claim that exists.
+- The home claim of a new Workspace gets the first storage class of the list. Thus the policy accepts the claim, also if the default storage class of the cluster is not in the list. A Workspace from before this value keeps its claim and its claim template.
 - `zone.storageClasses` needs `zone.namespaces`, because the storage policy must not refuse the volume claims of other software in the cluster.
 - With the bundled gateway and `gateway.bundled.postgres.persistence.enabled`, the chart refuses a storage class of the database that is not in the list.
 

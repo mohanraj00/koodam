@@ -113,6 +113,9 @@ type WorkspaceReconciler struct {
 	APIReader client.Reader
 	// Image is the workspace image if spec.image is empty.
 	Image string
+	// StorageClass is the storage class of the home claim of a new Workspace. If it is empty, the
+	// claim has no storage class, and the cluster gives its default.
+	StorageClass string
 	// InstallerImage has /harness-install. The pod uses it as an init container for each
 	// harness of spec.harnesses.
 	InstallerImage string
@@ -507,6 +510,10 @@ func (r *WorkspaceReconciler) statefulSet(ws *corev1alpha1.Workspace, user strin
 		storage = resource.MustParse("20Gi")
 	}
 	labels := map[string]string{WorkspaceLabel: ws.Name}
+	var storageClass *string
+	if r.StorageClass != "" {
+		storageClass = &r.StorageClass
+	}
 	volumes := []corev1.Volume{
 		// One projected volume gives the 2 files of the contract. The kubelet updates the files.
 		// The secret files are owner root, group fsGroup 1000, mode 0440. Thus sshd (uid 1000)
@@ -589,7 +596,8 @@ func (r *WorkspaceReconciler) statefulSet(ws *corev1alpha1.Workspace, user strin
 		VolumeClaimTemplates: []corev1.PersistentVolumeClaim{{
 			ObjectMeta: metav1.ObjectMeta{Name: home, Labels: labels},
 			Spec: corev1.PersistentVolumeClaimSpec{
-				AccessModes: []corev1.PersistentVolumeAccessMode{corev1.ReadWriteOnce},
+				AccessModes:      []corev1.PersistentVolumeAccessMode{corev1.ReadWriteOnce},
+				StorageClassName: storageClass,
 				Resources: corev1.VolumeResourceRequirements{
 					Requests: corev1.ResourceList{corev1.ResourceStorage: storage}},
 			},

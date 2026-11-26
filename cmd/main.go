@@ -274,6 +274,7 @@ func main() {
 	var secureMetrics bool
 	var enableHTTP2 bool
 	var gatewayURL, gatewayKeyFile, agentGatewayURL, installerImage, nookkuImage, workspaceImage string
+	var workspaceStorageClass string
 	var testKeySingleGateway bool
 	var testKeyRevokeWait time.Duration
 	var keyGrace, tenantUsageInterval time.Duration
@@ -355,6 +356,8 @@ func main() {
 			"The reference must have a digest (@sha256:).")
 	flag.StringVar(&workspaceImage, "workspace-image", defaultWorkspaceImage(),
 		"The workspace image for a Workspace with no spec.image.")
+	flag.StringVar(&workspaceStorageClass, "workspace-storage-class", "",
+		"The storage class of the home claim of a new Workspace. Empty: the default of the cluster.")
 	flag.BoolVar(&testKeySingleGateway, "test-key-single-instance-gateway", false,
 		"Issue TestKeys. Set it only if the gateway has one replica and one worker (#192).")
 	flag.DurationVar(&testKeyRevokeWait, "test-key-revoke-wait", controller.DefaultTestKeyRevokeWait,
@@ -555,6 +558,7 @@ func main() {
 		Scheme:         mgr.GetScheme(),
 		APIReader:      mgr.GetAPIReader(),
 		Image:          workspaceImage,
+		StorageClass:   workspaceStorageClass,
 		InstallerImage: installerImage,
 		NookkuImage:    nookkuImage,
 		Gateway:        gw,

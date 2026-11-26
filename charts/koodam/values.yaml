@@ -306,8 +306,9 @@ zone:
   topologyValues: []
   # The storage classes of the zone. With items, an admission policy refuses a new
   # PersistentVolumeClaim of the install namespaces, and a volume claim of an AppVersion pod
-  # template, with a different storage class (ZonePlacement). Empty: no storage check. It needs
-  # zone.name, zone.namespaces and apps.enabled.
+  # template, with a different storage class (ZonePlacement). The home claim of a new Workspace
+  # gets the first class of the list. Empty: no storage check. It needs zone.name,
+  # zone.namespaces and apps.enabled.
   storageClasses: []
 
 # The tenants of the Apps. A TenantQuota gives one tenant label its quota and its rate limit.
