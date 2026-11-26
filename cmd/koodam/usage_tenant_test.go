@@ -57,13 +57,19 @@ func TestUsageByTenant(t *testing.T) {
 	other.Namespace = otherName
 	noEnd := tenantQuota("no-end", "delta", "", "0", 0, true, false)
 	noEnd.Status.PeriodEnd = nil
+	// The gateway stopped the count of the requests below the limit, so the quota state is not known.
+	capped := tenantQuota("capped", "epsilon", "", "0.0100", 3, true, false)
+	capped.Status.Conditions[1].Status = metav1.ConditionUnknown
+	capped.Status.Conditions[1].Reason = "RequestCountCapped"
+	noMark := tenantQuota("no-mark", "eta", "", "0", 0, true, false)
+	noMark.Status.Conditions = noMark.Status.Conditions[:1]
 	kube := newKube(t, nil,
 		tenantQuota("b", "beta", "storefront", "0.0300", 12, true, true),
 		tenantQuota("a", "alpha", "", "0.0150", 5, true, false),
 		// A tenant label with a line break and an escape sequence goes into quotes.
 		tenantQuota("c", "evil\n\x1b[2Jtotal", "", "0.0050", 1, true, false),
 		tenantQuota("duplicate", "alpha", "", "5", 500, false, false),
-		tenantQuota("bad-spend", "gamma", "", "invalid", 7, true, false), noEnd, other)
+		tenantQuota("bad-spend", "gamma", "", "invalid", 7, true, false), noEnd, capped, noMark, other)
 	old := outputProgram
 	t.Cleanup(func() { outputProgram = old })
 	outputProgram = func(*cobra.Command, string, string, ...string) ([]byte, error) {
@@ -82,7 +88,9 @@ func TestUsageByTenant(t *testing.T) {
 		"alpha (all) 5 0.0150 USD no 2026-11-26T00:00:00Z source: gateway",
 		"beta storefront 12 0.0300 USD yes 2026-11-26T00:00:00Z source: gateway",
 		"delta (all) 0 0.0000 USD no - source: gateway",
-		"total 18 0.0500 USD source: gateway",
+		"epsilon (all) 3 0.0100 USD unknown 2026-11-26T00:00:00Z source: gateway",
+		"eta (all) 0 0.0000 USD unknown 2026-11-26T00:00:00Z source: gateway",
+		"total 21 0.0600 USD source: gateway",
 	}
 	lines := strings.Split(strings.TrimSpace(out), "\n")
 	for i := range lines {
@@ -96,7 +104,9 @@ func TestUsageByTenant(t *testing.T) {
 	}
 	if wantNote := "note: TenantQuotas that are not Ready: 1. The cause is a gateway error, or an older " +
 		"TenantQuota with the same tenant label. They are not in the table.\n" +
-		"note: TenantQuotas with a spend that is not a number: 1. They are not in the table.\n"; errOut != wantNote {
+		"note: TenantQuotas with a spend that is not a number: 1. They are not in the table.\n" +
+		"note: TenantQuotas with an unknown quota state: 2. If the reason is RequestCountCapped, " +
+		"the gateway stopped the request count, and REQUESTS is a minimum.\n"; errOut != wantNote {
 		t.Errorf("stderr: got %q, want %q", errOut, wantNote)
 	}
 }

@@ -28,6 +28,7 @@ import (
 	"unicode"
 
 	"k8s.io/apimachinery/pkg/api/meta"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	corev1alpha1 "github.com/mohanraj00/koodam/api/v1alpha1"
 )
@@ -42,18 +43,34 @@ func tenantText(s string) string {
 	return s
 }
 
+// exceededUnknown is the text of the column EXCEEDED for a TenantQuota with no known quota state.
+const exceededUnknown = "unknown"
+
+// exceededText gives back the state of the condition QuotaExceeded for the table. The condition
+// has 3 states. It is Unknown when the gateway stopped the count of the requests below the limit
+// of the spec. A condition that is not there is also not known.
+func exceededText(conditions []metav1.Condition) string {
+	c := meta.FindStatusCondition(conditions, corev1alpha1.TenantQuotaExceeded)
+	switch {
+	case c != nil && c.Status == metav1.ConditionTrue:
+		return "yes"
+	case c != nil && c.Status == metav1.ConditionFalse:
+		return "no"
+	}
+	return exceededUnknown
+}
+
 // printTenantUsage writes 1 line for each TenantQuota that has the use of its tenant, and 1 total
 // line. The use is the status of the TenantQuota: the count of the gateway for the current period.
 func printTenantUsage(out, errOut io.Writer, quotas []corev1alpha1.TenantQuota, namespace string) error {
 	type row struct {
-		tenant, app, end string
-		requests         int64
-		spend            float64
-		exceeded         bool
+		tenant, app, end, exceeded string
+		requests                   int64
+		spend                      float64
 	}
 	var rows []row
 	var total row
-	var notReady, invalid int
+	var notReady, invalid, unknown int
 	for i := range quotas {
 		q := &quotas[i]
 		if !meta.IsStatusConditionTrue(q.Status.Conditions, corev1alpha1.TenantQuotaReady) {
@@ -66,7 +83,10 @@ func printTenantUsage(out, errOut io.Writer, quotas []corev1alpha1.TenantQuota, 
 			continue
 		}
 		r := row{tenant: tenantText(q.Spec.Tenant), app: "(all)", end: "-", requests: q.Status.Requests, spend: spend,
-			exceeded: meta.IsStatusConditionTrue(q.Status.Conditions, corev1alpha1.TenantQuotaExceeded)}
+			exceeded: exceededText(q.Status.Conditions)}
+		if r.exceeded == exceededUnknown {
+			unknown++
+		}
 		if q.Spec.AppRef != nil {
 			r.app = tenantText(q.Spec.AppRef.Name)
 		}
@@ -85,6 +105,10 @@ func printTenantUsage(out, errOut io.Writer, quotas []corev1alpha1.TenantQuota, 
 		_, _ = fmt.Fprintf(errOut, "note: TenantQuotas with a spend that is not a number: %d. "+
 			"They are not in the table.\n", invalid)
 	}
+	if unknown > 0 {
+		_, _ = fmt.Fprintf(errOut, "note: TenantQuotas with an unknown quota state: %d. If the reason is "+
+			"RequestCountCapped, the gateway stopped the request count, and REQUESTS is a minimum.\n", unknown)
+	}
 	if len(rows) == 0 {
 		_, err := fmt.Fprintf(out, "No tenant usage in the TenantQuotas of namespace %s.\n", namespace)
 		return err
@@ -93,12 +117,8 @@ func printTenantUsage(out, errOut io.Writer, quotas []corev1alpha1.TenantQuota, 
 	w := tabwriter.NewWriter(out, 0, 4, 2, ' ', 0)
 	_, _ = fmt.Fprintln(w, "TENANT\tAPP\tREQUESTS\tSPEND\tEXCEEDED\tPERIOD-END\tSOURCE")
 	for _, r := range rows {
-		exceeded := "no"
-		if r.exceeded {
-			exceeded = "yes"
-		}
 		_, _ = fmt.Fprintf(w, "%s\t%s\t%d\t%.4f USD\t%s\t%s\tsource: gateway\n",
-			r.tenant, r.app, r.requests, r.spend, exceeded, r.end)
+			r.tenant, r.app, r.requests, r.spend, r.exceeded, r.end)
 	}
 	_, _ = fmt.Fprintf(w, "total\t\t%d\t%.4f USD\t\t\tsource: gateway\n", total.requests, total.spend)
 	return w.Flush()
