@@ -29,6 +29,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	. "github.com/onsi/ginkgo/v2"
@@ -53,7 +54,14 @@ import (
 // otherTenant is the label of a tenant that sends no request to the app.
 const otherTenant = "other-tenant"
 
-// appServer is the app of the test. It answers each GET with the name of its AppVersion. For the
+// condGatewayKeyReady is the condition of an AppVersion with an active gateway key.
+const condGatewayKeyReady = "GatewayKey"
+
+// resultsEnv names a folder. If it is set, the key rotation spec writes its result there.
+const resultsEnv = "KOODAM_E2E_RESULTS"
+
+// appServer is the app of the test. It answers each GET with the name of its AppVersion, also in the
+// header Koodam-Test-Version. For the
 // path /model, it makes a model call and answers with the status of that call. The body and a
 // header of the model call have the label of a different tenant, in each field from which the
 // gateway can read a customer. With the query "token", the call has the tenant token of the
@@ -67,6 +75,7 @@ class H(http.server.BaseHTTPRequestHandler):
         if self.path.startswith("/model"):
             body = self.model().encode()
         self.send_response(200)
+        self.send_header("Koodam-Test-Version", os.environ["KOODAM_APP_VERSION"])
         self.send_header("Content-Length", str(len(body)))
         self.end_headers()
         self.wfile.write(body)
@@ -512,5 +521,172 @@ var _ = Describe("Thin App", Ordered, Label("app"), func() {
 		}, time.Minute, time.Second).Should(BeTrue())
 		// The other versions serve all the traffic.
 		Expect(rest()).To(Equal(20))
+	})
+	// A key rotation is a new version with the same template. The weight moves to the new version,
+	// and the old version retires: it drains with its key, and then the controller blocks the key
+	// (#184). Each model call of a client must work in the rotation.
+	It("rotates the gateway key of a 2-replica version with no failed call", func() {
+		const v3, replicas = "shop-v3", int32(2)
+		getVersion := func(name string) *corev1alpha1.AppVersion {
+			av := &corev1alpha1.AppVersion{}
+			Expect(k8s.Get(ctx, client.ObjectKey{Namespace: appNS, Name: name}, av)).To(Succeed())
+			return av
+		}
+		ready := func(name string) int32 {
+			d := &appsv1.Deployment{}
+			if k8s.Get(ctx, client.ObjectKey{Namespace: appNS, Name: "kd-" + name}, d) != nil {
+				return -1
+			}
+			return d.Status.ReadyReplicas
+		}
+		setWeights := func(w ...corev1alpha1.AppEndpointVersion) {
+			Eventually(func() error {
+				app := &corev1alpha1.App{}
+				if err := k8s.Get(ctx, client.ObjectKey{Namespace: appNS, Name: appName}, app); err != nil {
+					return err
+				}
+				app.Spec.Endpoints[0].Versions = w
+				return k8s.Update(ctx, app)
+			}, time.Minute, time.Second).Should(Succeed())
+		}
+		// model sends one request through the Gateway to the path that makes a model call with the
+		// tenant token. It gives back the version that answered and the answer.
+		model := func() (string, string) {
+			req, err := http.NewRequest(http.MethodGet, localURL+"model?token", nil)
+			if err != nil {
+				return "", err.Error()
+			}
+			req.Header.Set("Authorization", "Bearer "+token)
+			resp, err := httpClient.Do(req)
+			if err != nil {
+				return "", "error " + err.Error()
+			}
+			defer func() { _ = resp.Body.Close() }()
+			body, _ := io.ReadAll(resp.Body)
+			return resp.Header.Get("Koodam-Test-Version"), fmt.Sprintf("%d %s", resp.StatusCode, body)
+		}
+
+		By("giving the version with the key 2 replicas and all the traffic")
+		Eventually(func() error {
+			av := getVersion(v2)
+			av.Spec.Replicas = new(replicas)
+			return k8s.Update(ctx, av)
+		}, time.Minute, time.Second).Should(Succeed())
+		setWeights(weight(v2, 1), weight(static, 0))
+		Eventually(func() int32 { return ready(v2) }, 3*time.Minute, time.Second).Should(Equal(replicas))
+		Eventually(func() []corev1alpha1.AppEndpointVersion { return endpoint().Weights }, time.Minute, time.Second).
+			Should(Equal([]corev1alpha1.AppEndpointVersion{weight(v2, 1), weight(static, 0)}))
+		Eventually(func() string { _, out := model(); return out }, 2*time.Minute, time.Second).Should(Equal("200 200"))
+		// Envoy can send a request to the version of the old route for a short time.
+		Eventually(func() string { got, _ := model(); return got }, time.Minute, time.Second).Should(Equal(v2))
+
+		By("sending model calls without a stop in the rotation")
+		var (
+			mu       sync.Mutex
+			answers  = map[string]int{}
+			failures []string
+			// afterRevoke counts the answers of the old version after its key is blocked.
+			afterRevoke, total int
+			revoked            bool
+		)
+		stop, done := make(chan struct{}), make(chan struct{})
+		start := time.Now()
+		go func() {
+			defer GinkgoRecover()
+			defer close(done)
+			for {
+				select {
+				case <-stop:
+					return
+				default:
+				}
+				got, out := model()
+				mu.Lock()
+				total++
+				if out == "200 200" && (got == v2 || got == v3) {
+					answers[got]++
+					if revoked && got == v2 {
+						afterRevoke++
+					}
+				} else {
+					failures = append(failures, got+": "+out)
+				}
+				mu.Unlock()
+				time.Sleep(100 * time.Millisecond)
+			}
+		}()
+		stopCalls := func() {
+			select {
+			case <-stop:
+			default:
+				close(stop)
+			}
+			<-done
+		}
+		DeferCleanup(stopCalls)
+		count := func(name string) int {
+			mu.Lock()
+			defer mu.Unlock()
+			return answers[name]
+		}
+		Eventually(func() int { return count(v2) }, time.Minute, time.Second).Should(BeNumerically(">=", 20))
+
+		By("making the new version with the same template and a new key")
+		next := version(v3)
+		next.Spec.Template = getVersion(v2).Spec.Template
+		next.Spec.Replicas = new(replicas)
+		Expect(k8s.Create(ctx, next)).To(Succeed())
+		Eventually(func() int32 { return ready(v3) }, 3*time.Minute, time.Second).Should(Equal(replicas))
+		Eventually(func() bool {
+			return meta.IsStatusConditionTrue(getVersion(v3).Status.Conditions, condGatewayKeyReady)
+		}, 2*time.Minute, time.Second).Should(BeTrue())
+		oldAlias, newAlias := getVersion(v2).Status.KeyAlias, getVersion(v3).Status.KeyAlias
+		Expect(newAlias).NotTo(BeEmpty())
+		Expect(newAlias).NotTo(Equal(oldAlias), "The new version has the key of the old version.")
+
+		By("moving the traffic to the new version")
+		setWeights(weight(v2, 1), weight(v3, 1), weight(static, 0))
+		Eventually(func() int { return count(v3) }, 2*time.Minute, time.Second).Should(BeNumerically(">=", 20))
+
+		By("retiring the old version")
+		Eventually(func() error {
+			av := getVersion(v2)
+			av.Spec.Lifecycle = corev1alpha1.AppVersionRetiring
+			return k8s.Update(ctx, av)
+		}, time.Minute, time.Second).Should(Succeed())
+		Eventually(func() []corev1alpha1.AppEndpointVersion { return endpoint().Weights }, time.Minute, time.Second).
+			Should(Equal([]corev1alpha1.AppEndpointVersion{weight(v2, 0), weight(v3, 1), weight(static, 0)}))
+
+		By("blocking the old key after the drain time")
+		Eventually(func() bool {
+			return meta.IsStatusConditionTrue(getVersion(v2).Status.Conditions, corev1alpha1.AppVersionRevoked)
+		}, drainSeconds*time.Second+3*time.Minute, 2*time.Second).Should(BeTrue())
+		mu.Lock()
+		revoked = true
+		mu.Unlock()
+		Eventually(func() int32 { return ready(v2) }, time.Minute, time.Second).Should(Equal(int32(-1)))
+		before := count(v3)
+		Eventually(func() int { return count(v3) - before }, time.Minute, time.Second).Should(BeNumerically(">=", 20))
+		stopCalls()
+		elapsed := time.Since(start)
+
+		mu.Lock()
+		defer mu.Unlock()
+		_, _ = fmt.Fprintf(GinkgoWriter, "rotation: %d calls, %d failures, answers %v, %s\n",
+			total, len(failures), answers, elapsed.Round(time.Second))
+		Expect(failures).To(BeEmpty(), "A model call failed in the rotation.")
+		Expect(afterRevoke).To(BeZero(), "The old version answered after its key was blocked.")
+
+		if dir := os.Getenv(resultsEnv); dir != "" {
+			By("writing the result of the rotation")
+			out, err := json.MarshalIndent(map[string]any{
+				"date_utc": time.Now().UTC().Format(time.RFC3339), "test": CurrentSpecReport().FullText(),
+				"replicas": replicas, "drain_seconds": drainSeconds, "seconds": int(elapsed.Seconds()),
+				"calls": total, "failures": len(failures), "answers": answers,
+				"old_key_alias": oldAlias, "new_key_alias": newAlias, "old_key_revoked": true,
+			}, "", "  ")
+			Expect(err).NotTo(HaveOccurred())
+			Expect(os.WriteFile(filepath.Join(dir, "app-key-rotation.json"), append(out, '\n'), 0o644)).To(Succeed())
+		}
 	})
 })

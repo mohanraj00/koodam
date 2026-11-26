@@ -1,0 +1,20 @@
+{
+  "answers": {
+    "shop-v2": 79,
+    "shop-v3": 407
+  },
+  "calls": 486,
+  "command": "make test-e2e E2E_ARGS=-ginkgo.label-filter=app KOODAM_E2E_RESULTS=<folder>",
+  "date_utc": "2026-11-26T22:59:36Z",
+  "drain_seconds": 45,
+  "envoy_gateway": "1.10.0",
+  "failures": 0,
+  "kind": "kind v0.33.0 go1.27.2 darwin/arm64",
+  "new_key_alias": "kdapp-8aef524f-25cd-4250-a16c-dcf728288ee3",
+  "old_key_alias": "kdapp-2ef1f55f-0e2f-44ab-b2f1-a8a41db7c7bf",
+  "old_key_revoked": true,
+  "replicas": 2,
+  "seconds": 60,
+  "source_commit": "f6f7ac2f66868d95f91b306b1f5200b61795064d",
+  "test": "Thin App rotates the gateway key of a 2-replica version with no failed call"
+}
