@@ -128,8 +128,8 @@ A tenant of an App can use more than its quota. A call or a pod can go out of it
 A user of a namespace can try to change the `SpendBudget` of the namespace, so that more runs start in the period.
 
 - **Control.** The chart gives no write role for `spendbudgets`, except the role of the manager. The viewer role has only `get`, `list` and `watch`, and no role of the chart has an aggregate label, so the Kubernetes roles `edit` and `admin` get no rule. The API accepts only the name `default`, so a user cannot add a second budget for the namespace.
-- **Test.** `test/chart/spendbudget_test.go`, `TestSpendBudgetRolesOnlyRead`. `internal/controller/spendbudget_crd_test.go`: "refuses an object that is not valid".
-- **Residual risk.** A cluster admin can bind a write role to a namespace user. A role with a wildcard resource, outside the chart, also gives write access. No controller applies the budget in this change ([#128](https://github.com/mohanraj00/koodam/issues/128)).
+- **Test.** `test/chart/spendbudget_test.go`, `TestSpendBudgetRolesOnlyRead`. `internal/controller/spendbudget_crd_test.go`: "refuses an object that is not valid". `internal/controller/spendbudget_ledger_test.go`: "holds a run until the next period when the period limit has no room" and "releases the reservation of a deleted run".
+- **Residual risk.** A cluster admin can bind a write role to a namespace user. A role with a wildcard resource, outside the chart, also gives write access. A user who can delete Agents can delete a waiting run, but not the reservation of an active run: the finalizer moves the reservation to the spend. The ledger counts only Agent runs.
 
 ## Out of scope
 
