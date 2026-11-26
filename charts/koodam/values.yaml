@@ -98,6 +98,9 @@ gateway:
       # Helm writes small floats as "1e-06". Do not set a cost per token here.
       # To use an upstream key, write "api_key: os.environ/<NAME>" in a model.
       # Do not put a key value here. Helm writes modelList into a ConfigMap and the release values.
+      # An item can have the key "zone". With zone.name, the route list has only the items with
+      # no zone or with the zone of the install, and a call for a model name of a different zone
+      # gets the status 403 (RouteOutOfZone). docs/zones.md has the rules.
       modelList: []
       # The env variables for the upstream provider keys. Each variable comes from a Secret
       # that you make. The chart does not make or read these Secrets. For example:

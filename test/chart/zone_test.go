@@ -83,6 +83,92 @@ func TestZoneClaimValues(t *testing.T) {
 	}
 }
 
+// The route list of the gateway has only the model routes of the zone of the install. The zone
+// hook gets the model names that only routes of a different zone have.
+func TestZoneRoutes(t *testing.T) {
+	const hookKey, hookSetting = "koodam_zone.py: |", "callbacks: koodam_zone.handler"
+	const listEnv = "KOODAM_OUT_OF_ZONE_MODELS"
+	const routes = "gateway:\n  bundled:\n    litellm:\n      modelList:\n" +
+		"      - {model_name: model-a, zone: zone-a, litellm_params: {model: openai/route-a}}\n" +
+		"      - {model_name: model-b, zone: zone-b, litellm_params: {model: openai/route-other}}\n" +
+		"      - {model_name: shared, litellm_params: {model: openai/route-shared}}\n" +
+		"      - {model_name: both, zone: zone-a, litellm_params: {model: openai/route-both-a}}\n" +
+		"      - {model_name: both, zone: zone-b, litellm_params: {model: openai/route-both-b}}\n" +
+		"      - {model_name: \"odd,name\", zone: zone-c, litellm_params: {model: openai/route-c}}\n"
+	// An install with no zone makes no zone check: each route is in the list, with no zone key.
+	all, err := helmTemplate(t, routes)
+	if err != nil {
+		t.Fatalf("helm template failed: %v\n%s", err, all)
+	}
+	for _, s := range []string{"route-a", "route-other", "route-shared", "route-both-a", "route-both-b", "route-c"} {
+		if !strings.Contains(all, "openai/"+s) {
+			t.Errorf("the install with no zone does not have %s", s)
+		}
+	}
+	for _, s := range []string{hookKey, hookSetting, listEnv, "zone: zone-"} {
+		if strings.Contains(all, s) {
+			t.Errorf("the install with no zone has %q", s)
+		}
+	}
+	in, err := helmTemplate(t, routes+"zone: {name: zone-a}\n")
+	if err != nil {
+		t.Fatalf("helm template failed: %v\n%s", err, in)
+	}
+	for _, s := range []string{"openai/route-a", "openai/route-shared", "openai/route-both-a", hookKey, hookSetting,
+		`value: "[\"model-b\",\"odd,name\"]"`, "name: KOODAM_ZONE\n          value: \"zone-a\"",
+		"async def async_pre_call_hook"} {
+		if !strings.Contains(in, s) {
+			t.Errorf("the install of zone-a does not have %q", s)
+		}
+	}
+	for _, s := range []string{"route-other", "route-both-b", "route-c", "zone: zone-"} {
+		if strings.Contains(in, s) {
+			t.Errorf("the install of zone-a has %q", s)
+		}
+	}
+	// With only routes of the zone, the gateway has no hook.
+	own, err := helmTemplate(t, "zone: {name: zone-a}\ngateway: {bundled: {litellm: {modelList: "+
+		"[{model_name: model-a, zone: zone-a, litellm_params: {model: openai/route-a}}]}}}\n")
+	if err != nil || strings.Contains(own, hookKey) || strings.Contains(own, listEnv) ||
+		!strings.Contains(own, "openai/route-a") {
+		t.Errorf("the install with only its own routes: %v", err)
+	}
+	// The mock route is a route of the install. Its model name is not in the refusal list, also
+	// if only a route of a different zone has the same name.
+	mock, err := helmTemplate(t, routes+"zone: {name: zone-a}\n",
+		"gateway.bundled.mock.enabled=true", "gateway.bundled.mock.modelName=model-b")
+	if err != nil {
+		t.Fatalf("helm template failed: %v\n%s", err, mock)
+	}
+	for _, s := range []string{`model: "openai/model-b"`, `value: "[\"odd,name\"]"`} {
+		if !strings.Contains(mock, s) {
+			t.Errorf("the install with the mock route does not have %q", s)
+		}
+	}
+	// With the mock name as the only name of a different zone, the gateway has no hook.
+	only, err := helmTemplate(t, "zone: {name: zone-a}\ngateway: {bundled: {mock: {enabled: true, modelName: model-b}, "+
+		"litellm: {modelList: [{model_name: model-b, zone: zone-b, litellm_params: {model: openai/route-other}}]}}}\n")
+	if err != nil || strings.Contains(only, hookKey) || strings.Contains(only, listEnv) {
+		t.Errorf("the install with only the mock name out of the zone has the hook: %v", err)
+	}
+	for name, tc := range map[string][2]string{
+		"zone not a string": {"[{model_name: model-a, zone: 7}]", "modelList[0].zone must be a string"},
+		"no model name":     {"[{zone: zone-b}]", "modelList[0].model_name is necessary"},
+	} {
+		out, err := helmTemplate(t, "zone: {name: zone-a}\ngateway: {bundled: {litellm: {modelList: "+tc[0]+"}}}\n")
+		if err == nil || !strings.Contains(out, tc[1]) {
+			t.Errorf("%s is accepted: %v", name, err)
+		}
+	}
+	for _, env := range []string{"KOODAM_ZONE", listEnv} {
+		out, err := helmTemplate(t, "gateway: {bundled: {litellm: {extraEnvFromSecrets: "+
+			"[{name: "+env+", secretName: s, secretKey: k}]}}}\n")
+		if err == nil || !strings.Contains(out, "must not be "+env) {
+			t.Errorf("a Secret can set %s: %v", env, err)
+		}
+	}
+}
+
 // The App CRDs and the admission policy of the AppVersion are for the full cluster. The second
 // install of a cluster does not render them, and it has no other object for the full cluster
 // with a name that the first install has.
