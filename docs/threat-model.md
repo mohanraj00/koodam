@@ -132,6 +132,14 @@ A user of a namespace can try to change the `SpendBudget` of the namespace, so t
 - **Test.** `test/chart/spendbudget_test.go`, `TestSpendBudgetRolesOnlyRead`. `internal/controller/spendbudget_crd_test.go`: "refuses an object that is not valid". `internal/controller/spendbudget_ledger_test.go`: "holds a run until the next period when the period limit has no room" and "releases the reservation of a deleted run".
 - **Residual risk.** A cluster admin can bind a write role to a namespace user. A role with a wildcard resource, outside the chart, also gives write access. A user who can delete Agents can delete a waiting run, but not the reservation of an active run: the finalizer moves the reservation to the spend. The ledger counts only Agent runs.
 
+## T12. Untrusted content gives instructions to the model
+
+A document, a web page or a tool reply that an agent reads can hold instructions for the model. A harness that follows them can try to send data out or to change the work of the run.
+
+- **Control.** The egress policy is the boundary (T7): a pod that follows an instruction still cannot call a host that its policy refuses, and each call that goes out has a span. The optional [gateway guard](gateway-guard.md) is one more layer. It examines the tool replies and the documents in each model request with fixed rules, and it records, marks or blocks a match. Each decision gives a gateway log line with the policy version and a digest of the content, and no content.
+- **Test.** No test on `main` yet. [#248](https://github.com/mohanraj00/koodam/issues/248) adds the unit test with a planted injection and a clean reply, the chart test, and the kind test where the egress proxy refuses the host of a planted instruction.
+- **Residual risk.** The guard is a tripwire for known forms, not a defense. [gateway-guard.md](gateway-guard.md) lists what it cannot detect, for example a paraphrase, encoded text or an instruction across blocks. The guard is off by default. It covers only the bundled gateway and the model calls with a gateway key. A model call with a subscription login goes in a TLS tunnel that no part of Koodam can read. With the action `block`, a hostile page or a false match stops the run, because the history sends the block again. An instruction can still misuse the hosts that the egress policy permits, the tools of the harness and the files of the pod.
+
 ## Out of scope
 
 - The security of LiteLLM, PostgreSQL, Kubernetes and the model providers.
