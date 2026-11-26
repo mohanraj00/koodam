@@ -170,22 +170,28 @@ func (r *AgentReconciler) roll(ctx context.Context, b *corev1alpha1.SpendBudget,
 	if err := r.APIReader.List(ctx, list, client.InNamespace(b.Namespace)); err != nil {
 		return err
 	}
-	rebuildLedger(s, list.Items, start, end, maxReservations)
+	rebuildLedger(s, list.Items, start, end, b.Spec.Spend, maxReservations)
 	return nil
 }
 
 // rebuildLedger counts the runs that have a key in the ledger of the period from start to end. The
 // ledger has a reservation for at most maxRuns active runs. The budget of each other active run is
-// in reserved too, with no reservation, so the limit check counts it until the period ends.
+// in reserved too, with no reservation, so the limit check counts it until the period ends. A run
+// with a key and no valid status.budget got its key before the ledger existed. Its spec.budget can have
+// changed after the key, so the rebuild counts the limit for that run: no other run starts until
+// it ends.
 func rebuildLedger(s *corev1alpha1.SpendBudgetStatus, runs []corev1alpha1.Agent, start, end time.Time,
-	maxRuns int) {
+	limit resource.Quantity, maxRuns int) {
 	slices.SortFunc(runs, olderFirst)
 	var spend, reserved resource.Quantity
 	for _, o := range runs {
 		if o.Status.KeyHash == "" {
 			continue
 		}
-		admitted := admittedBudget(&o)
+		admitted, err := resource.ParseQuantity(o.Status.Budget)
+		if err != nil {
+			admitted = limit.DeepCopy()
+		}
 		// An ended run keeps its reservation until the revoke blocked its key and read its usage.
 		if !agentEnded(&o) || o.Status.RevokedAt == nil {
 			if len(s.Reservations) < maxRuns {

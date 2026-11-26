@@ -87,7 +87,7 @@ func TestRebuildLedgerCap(t *testing.T) {
 		runs = append(runs, a)
 	}
 	s := &corev1alpha1.SpendBudgetStatus{}
-	rebuildLedger(s, runs, start, end, 2)
+	rebuildLedger(s, runs, start, end, resource.MustParse("10"), 2)
 	if len(s.Reservations) != 2 || s.Reserved != "6" {
 		t.Errorf("reservations %d, reserved %s; want 2 and 6", len(s.Reservations), s.Reserved)
 	}
@@ -397,6 +397,23 @@ var _ = Describe("SpendBudget ledger", func() {
 		b := budget()
 		Expect(b.Status.Reserved).To(Equal("0"))
 		Expect(b.Status.Spend).To(Equal("0.25"))
+	})
+
+	It("rebuilds a run with a key and no status.budget with the limit", func() {
+		newRun(ledgerActive, "6")
+		reconcileRun(ledgerActive)
+		a := run(ledgerActive)
+		a.Status.Budget = ""
+		Expect(k8sClient.Status().Update(ctx, a)).To(Succeed())
+		a = run(ledgerActive)
+		a.Spec.Budget = resource.MustParse("1")
+		Expect(k8sClient.Update(ctx, a)).To(Succeed())
+		b := budget()
+		b.Status = corev1alpha1.SpendBudgetStatus{}
+		Expect(k8sClient.Status().Update(ctx, b)).To(Succeed())
+		newRun(ledgerLater, "1")
+		expectWaits(ledgerLater, reconcileRun(ledgerLater))
+		Expect(budget().Status.Reserved).To(Equal("10"))
 	})
 
 	It("rebuilds a lost ledger from the API server, not from the cache", func() {
