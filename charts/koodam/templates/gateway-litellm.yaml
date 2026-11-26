@@ -102,7 +102,8 @@ general_settings:
 {{- fail "gateway.bundled.guard.sources must be a list of toolResult and document." }}
 {{- end }}
 {{- end }}
-{{- if or (not (kindIs "float64" $g.maxBytes)) (lt (float64 $g.maxBytes) 1.0) (ne (float64 (int64 $g.maxBytes)) (float64 $g.maxBytes)) }}
+{{- /* A values file gives a float64, and --set gives an int64. */}}
+{{- if or (not (or (kindIs "float64" $g.maxBytes) (kindIs "int64" $g.maxBytes) (kindIs "int" $g.maxBytes))) (lt (float64 $g.maxBytes) 1.0) (ne (float64 (int64 $g.maxBytes)) (float64 $g.maxBytes)) }}
 {{- fail "gateway.bundled.guard.maxBytes must be a positive integer." }}
 {{- end }}
 {{- $guardHook = .Files.Get "files/litellm-guard-hook.py" }}

@@ -76,6 +76,17 @@ func TestGuardValues(t *testing.T) {
 	if annotation(t, on) == annotation(t, block) {
 		t.Error("a change of the guard policy does not start the gateway again")
 	}
+	// The --set flag gives an int64, not a float64.
+	set, err := helmTemplate(t, "", "gateway.bundled.guard.enabled=true", "gateway.bundled.guard.maxBytes=1024")
+	if err != nil || !strings.Contains(set, `\"maxBytes\":1024,`) {
+		t.Errorf("a maxBytes value from --set is not in the gateway: %v\n%s", err, set)
+	}
+	for _, bad := range []string{"0", "-1", "1.5", "text"} {
+		out, err := helmTemplate(t, "", "gateway.bundled.guard.enabled=true", "gateway.bundled.guard.maxBytes="+bad)
+		if err == nil || !strings.Contains(out, "gateway.bundled.guard.maxBytes must be a positive integer.") {
+			t.Errorf("the maxBytes value %s from --set is accepted: %v", bad, err)
+		}
+	}
 }
 
 // annotation gives the config checksum of the gateway pod.
