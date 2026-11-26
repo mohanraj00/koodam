@@ -27,7 +27,7 @@ import (
 
 // readVerbs are the only verbs that a role of the chart, other than the manager role, can give
 // on a SpendBudget.
-var readVerbs = []string{"get", "list", "watch"}
+var readVerbs = strings.Fields("get list watch")
 
 // TestSpendBudgetRolesOnlyRead proves that only the controller can change a SpendBudget. The
 // users of a namespace get the viewer role, which can only read. No role of the chart has an
