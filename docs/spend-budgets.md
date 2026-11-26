@@ -6,7 +6,7 @@ A `SpendBudget` gives one namespace a spend limit for each period. It is for the
 
 - The `SpendBudget` API is in `main`, and the chart installs its CRD.
 - The Agent controller keeps the ledger in the status, and a run waits when the period has no room. See "The ledger".
-- The spend API does not show the budget yet. That comes in a later change of [#128](https://github.com/mohanraj00/koodam/issues/128).
+- `GET /v1/budgets` of the [spend API](spend-api.md#list-budgets) shows the ledger of each namespace.
 
 ## The spec
 

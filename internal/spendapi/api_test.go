@@ -116,7 +116,7 @@ func TestMethodsAndQueries(t *testing.T) {
 		t.Fatal("want the published OpenAPI 3 document")
 	}
 	f.call(t, http.MethodHead, specPath, f.token, http.StatusOK)
-	for _, path := range []string{runsPath, spendPath, specPath, "/v2/runs"} {
+	for _, path := range []string{runsPath, spendPath, budgetsPath, specPath, "/v2/runs"} {
 		for _, method := range []string{http.MethodPost, http.MethodPut, http.MethodDelete, http.MethodOptions} {
 			w := f.call(t, method, path, "", http.StatusMethodNotAllowed)
 			if w.Header().Get("Allow") != "GET, HEAD" {
@@ -133,7 +133,7 @@ func TestMethodsAndQueries(t *testing.T) {
 	for _, path := range []string{
 		runsPath + "?limit=0", runsPath + "?limit=101", runsPath + "?limit=1&limit=2",
 		runsPath + "?cursor=bad!", spendPath, testPeriod + "a/b/c",
-		spendPath + "?from=2026-02-01&to=2026-01-01&groupBy=label:team",
+		spendPath + "?from=2026-02-01&to=2026-01-01&groupBy=label:team", budgetsPath + "?limit=1",
 	} {
 		f.call(t, http.MethodGet, path, f.token, http.StatusBadRequest)
 	}

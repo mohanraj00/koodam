@@ -29,8 +29,10 @@ import (
 	"testing"
 	"time"
 
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
@@ -49,7 +51,27 @@ const (
 
 type agentReader struct {
 	client.Reader
-	items []corev1alpha1.Agent
+	items   []corev1alpha1.Agent
+	budgets []corev1alpha1.SpendBudget
+	// getErr is the error of each Get.
+	getErr error
+}
+
+func (l agentReader) Get(_ context.Context, key client.ObjectKey, target client.Object, _ ...client.GetOption) error {
+	b, ok := target.(*corev1alpha1.SpendBudget)
+	if !ok {
+		return fmt.Errorf("the spend API reads only SpendBudgets by name")
+	}
+	if l.getErr != nil {
+		return l.getErr
+	}
+	for _, item := range l.budgets {
+		if item.Namespace == key.Namespace && item.Name == key.Name {
+			item.DeepCopyInto(b)
+			return nil
+		}
+	}
+	return apierrors.NewNotFound(schema.GroupResource{Group: "core.koodam.dev", Resource: "spendbudgets"}, key.Name)
 }
 
 func (l agentReader) List(_ context.Context, target client.ObjectList, options ...client.ListOption) error {

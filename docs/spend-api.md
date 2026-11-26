@@ -7,7 +7,7 @@ Send an `Authorization: Bearer` header on each GET or HEAD, including the OpenAP
 ## Start the server
 
 Build with `go build ./cmd/spend-api`. Run the binary with an identity that has `list` on
-`agents.core.koodam.dev` in each namespace. The server uses the current kubeconfig or the pod's service
+`agents.core.koodam.dev` and `get` on `spendbudgets.core.koodam.dev` in each namespace. The server uses the current kubeconfig or the pod's service
 account. Set `-namespace` to select the namespaces, separated by commas, for example `team-a,team-b`.
 The server refuses a list that is longer than the `maxNamespaces` constant in
 `internal/spendapi/api.go`. The default is the namespace of the Kubernetes client. Each caller with a
@@ -74,7 +74,7 @@ subjects:
     namespace: koodam-system
 ```
 
-The server also needs `list` on `agents.core.koodam.dev` in each namespace of `-namespace`.
+The server also needs `list` on `agents.core.koodam.dev` and `get` on `spendbudgets.core.koodam.dev` in each namespace of `-namespace`.
 
 ## Local tokens and limits
 
@@ -134,8 +134,27 @@ For `koodam.dev/cost-group`, the API uses the group that the controller saved wh
 For other label names, such as `team`, it uses the current Agent label. An Agent with no group
 has an empty `labelValue`. Groups are in label value order.
 
-Koodam has no declared period budgets. The period items omit `budget` and `remainingBudget`.
-The run budgets apply to individual runs.
+The period items omit `budget` and `remainingBudget`, because a range of dates is not always a budget
+period. Use `GET /v1/budgets` for the period budgets. The run budgets apply to individual runs.
+
+## List budgets
+
+`GET /v1/budgets` gives the [SpendBudget](spend-budgets.md) ledger of each namespace of the caller that
+has one, in the order of `-namespace`. The path has no query and no pages. A namespace with no
+SpendBudget has no item. Each item has these fields:
+
+- `namespace`, `period` (`Day` or `Month`), `periodStart` and `periodEnd`: the current UTC period.
+- `limit`, `spend`, `reserved` and `remaining`, in USD. `spend` is the settled spend of the Agent runs
+  that started in the period and ended. `reserved` is the sum of the budgets of the active runs.
+  `remaining` is the limit minus the spend and the reserved budgets, with a minimum of zero.
+- `exceeded`: true if the last run that the controller checked had to wait.
+- `waitingRuns`: the count of the runs that waited at the last check.
+
+If the controller did not move the ledger to the current period yet, the item shows the current period
+with no spend and no reservation. The controller drops the reservations of the old period at the next
+check. After a change of `spec.period`, the old period of the status can overlap the current period.
+The controller then keeps the old spend and rebuilds the reservations. Thus the item shows the values of
+the status, not zero.
 
 ## Read more pages
 

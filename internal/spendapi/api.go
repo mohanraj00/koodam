@@ -45,6 +45,8 @@ const (
 	runsPath      = "/v1/runs"
 	spendPath     = "/v1/spend"
 	specPath      = "/v1/openapi.json"
+	// msgTimeLimit is the problem detail when the request time limit expires.
+	msgTimeLimit = "The request time limit expired."
 )
 
 var errCursor = errors.New("the page cursor is not valid")
@@ -73,6 +75,8 @@ type api struct {
 	claims     appclaim.Config
 	keys       *appclaim.KeySet
 	tokens     [][sha256.Size]byte
+	// now gives the time for the period of a budget. If it is nil, the API uses time.Now.
+	now func() time.Time
 }
 
 // New makes a read-only handler. One instance serves a fixed list of namespaces.
@@ -156,7 +160,7 @@ func (a *api) scope(ctx context.Context, r *http.Request) ([]string, int, proble
 	}
 	switch {
 	case ctx.Err() != nil:
-		return nil, http.StatusGatewayTimeout, problem{"The request time limit expired."}
+		return nil, http.StatusGatewayTimeout, problem{msgTimeLimit}
 	case err != nil:
 		return nil, http.StatusBadGateway, problem{"The Kubernetes access review is not available."}
 	case len(namespaces) == 0:
@@ -205,6 +209,8 @@ func (a *api) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 	case runsPath, spendPath:
 		a.list(ctx, w, r, namespaces)
+	case budgetsPath:
+		a.listBudgets(ctx, w, r, namespaces)
 	default:
 		reply(w, r, http.StatusNotFound, problem{"This path does not exist."})
 	}
@@ -241,7 +247,7 @@ func (a *api) list(ctx context.Context, w http.ResponseWriter, r *http.Request, 
 	}
 	switch {
 	case ctx.Err() != nil:
-		reply(w, r, http.StatusGatewayTimeout, problem{"The request time limit expired."})
+		reply(w, r, http.StatusGatewayTimeout, problem{msgTimeLimit})
 	case err == nil:
 		reply(w, r, http.StatusOK, result)
 	case errors.Is(err, errCursor) || apierrors.IsBadRequest(err):
@@ -250,6 +256,23 @@ func (a *api) list(ctx context.Context, w http.ResponseWriter, r *http.Request, 
 		reply(w, r, http.StatusGone, problem{"The page cursor expired. Start again with no cursor."})
 	default:
 		reply(w, r, http.StatusBadGateway, problem{"The spend data is not available."})
+	}
+}
+
+// listBudgets has no query and no pages, because it has one item for each namespace at most.
+func (a *api) listBudgets(ctx context.Context, w http.ResponseWriter, r *http.Request, namespaces []string) {
+	if r.URL.RawQuery != "" {
+		reply(w, r, http.StatusBadRequest, problem{"This path has no query."})
+		return
+	}
+	result, err := a.budgets(ctx, namespaces)
+	switch {
+	case ctx.Err() != nil:
+		reply(w, r, http.StatusGatewayTimeout, problem{msgTimeLimit})
+	case err != nil:
+		reply(w, r, http.StatusBadGateway, problem{"The budget data is not available."})
+	default:
+		reply(w, r, http.StatusOK, result)
 	}
 }
 

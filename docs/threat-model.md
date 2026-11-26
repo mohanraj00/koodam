@@ -105,6 +105,7 @@ The spend API and the operations page show the runs and the spend.
   - [#401](https://github.com/mohanraj00/koodam/pull/401): `internal/spendapi/viewer_test.go`, `TestViewerSeesOnlyPermittedNamespaces` and `TestViewerRefusals`.
   - [#404](https://github.com/mohanraj00/koodam/pull/404): `internal/opspage/page_test.go`, `TestPolicyAndPageHaveNoInlineCode` and `TestPageKeepsTheTokenInMemory`.
   - [#405](https://github.com/mohanraj00/koodam/pull/405): `examples/operations-page/main_test.go`, `TestExample`.
+  - [#422](https://github.com/mohanraj00/koodam/issues/422): `internal/spendapi/budgets_test.go`, `TestServeBudgets`. `/v1/budgets` uses the same namespace scope as the other paths.
 - **Residual risk.** The static token mode and the claim mode show each configured namespace to each valid caller. Use the viewer mode for people. In the viewer mode, the server needs `create` on `tokenreviews` and `subjectaccessreviews`. Give this access to the ServiceAccount of the spend API only.
 
 ## T10. A tenant or a zone goes past its limit
