@@ -195,8 +195,7 @@ func (r *AgentReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl
 		return ctrl.Result{}, nil
 	default:
 		err := r.provision(ctx, a)
-		var wait budgetWait
-		if errors.As(err, &wait) {
+		if wait, ok := errors.AsType[budgetWait](err); ok {
 			return ctrl.Result{RequeueAfter: wait.after}, nil
 		}
 		return ctrl.Result{}, err
@@ -364,6 +363,25 @@ func (r *AgentReconciler) costGroupCheck(ctx context.Context, a *corev1alpha1.Ag
 	return msg, reasonCostGroupNotAllowed, nil
 }
 
+// admit adds the finalizer and then reserves the run budget in the period budget of the namespace.
+// The reservation comes after the finalizer, so that a delete releases it, and before the key. If
+// the run must wait, admit gives a budgetWait error.
+func (r *AgentReconciler) admit(ctx context.Context, a *corev1alpha1.Agent) error {
+	if controllerutil.AddFinalizer(a, finalizer) {
+		if err := r.Update(ctx, a); err != nil {
+			return err
+		}
+	}
+	if a.Status.KeyHash != "" {
+		return nil
+	}
+	after, msg, err := r.reserve(ctx, a)
+	if err != nil || after == 0 {
+		return err
+	}
+	return r.waitForBudget(ctx, a, after, msg)
+}
+
 func (r *AgentReconciler) provision(ctx context.Context, a *corev1alpha1.Agent) error {
 	log := logf.FromContext(ctx)
 	msg, reason := invalid(a), reasonInvalid
@@ -401,20 +419,8 @@ func (r *AgentReconciler) provision(ctx context.Context, a *corev1alpha1.Agent) 
 		})
 		return r.fail(ctx, a, corev1alpha1.AgentFailed, reason)
 	}
-	if controllerutil.AddFinalizer(a, finalizer) {
-		if err := r.Update(ctx, a); err != nil {
-			return err
-		}
-	}
-	if a.Status.KeyHash == "" {
-		// The reservation comes after the finalizer, so that a delete releases it, and before the key.
-		after, msg, err := r.reserve(ctx, a)
-		if err != nil {
-			return err
-		}
-		if after > 0 {
-			return r.waitForBudget(ctx, a, after, msg)
-		}
+	if err := r.admit(ctx, a); err != nil {
+		return err
 	}
 	// The Secret comes first. A retry after a crash finds the key value in it.
 	key, err := r.runKey(ctx, a)

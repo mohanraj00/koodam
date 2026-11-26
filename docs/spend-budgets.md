@@ -45,12 +45,12 @@ The controller counts only the Agent runs. Workspace, AppVersion and TestKey key
 3. A run that cannot start stays `Pending`. Its condition `Provisioned` is `False` with the reason `PeriodBudgetExceeded`, and the message gives the cause and the end of the period. The run does not fail, and the controller makes no key.
 4. The controller checks a waiting run again when the SpendBudget changes, at the end of the period, and at the latest after one minute.
 5. Waiting runs start in the order of their creation time. A run with a budget that is more than the limit never starts, but it does not stop the runs after it. Delete it, or raise the limit.
-6. When a run ends or is deleted, the controller moves its reservation to `spend`, with the settled spend from the gateway. A change of the status starts the check of the waiting runs.
+6. When a run ends or is deleted, the controller moves its reservation to `spend`, with the settled spend from the gateway. If the spend did not settle in the wait time, the controller counts the full run budget, because the gateway stops the run at that budget. A change of the status starts the check of the waiting runs. The condition `BudgetExceeded` of the SpendBudget has one message for all the waiting runs, so a new check of a run does not change the status.
 
 The rules of the period:
 
 - The spend of a run counts in the period where it started. At the end of a period, the controller drops the reservations of that period. A run of the old period keeps its own budget at the gateway, and its spend does not go into the new period.
-- If the status has no period (a new SpendBudget, or a lost status after a restore), or if `spec.period` changes, the controller rebuilds the ledger from the Agents. Each active run with a key gets a reservation. Each ended run that started in the period adds its settled spend.
+- If the status has no period (a new SpendBudget, or a lost status after a restore), or if `spec.period` changes, the controller rebuilds the ledger from the Agents. It finds a change of `spec.period` also after the old period ended. Each active run with a key gets a reservation. Each ended run that started in the period adds its settled spend.
 - The ledger has a maximum of 500 active runs. More runs wait.
 
 ## Who can write it

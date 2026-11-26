@@ -140,9 +140,10 @@ func (r *AgentReconciler) waitingRuns(ctx context.Context, ns string, b *corev1a
 }
 
 // roll moves the ledger to the period that has now. When a period ends, the ledger drops the
-// reservations of that period: the spend of a run counts only in the period where it started. With
-// no period in the status (a new budget, a lost status or a changed period), it rebuilds the ledger
-// from the Agents.
+// reservations of that period: the spend of a run counts only in the period where it started. It
+// rebuilds the ledger from the Agents if the status has no period (a new budget or a lost status),
+// or if spec.period changed. A change of spec.period gives a status period that is not a period of
+// the new type, also after the old period ended.
 func (r *AgentReconciler) roll(ctx context.Context, b *corev1alpha1.SpendBudget, now time.Time) error {
 	start, end := budgetPeriod(b.Spec.Period, now)
 	s := &b.Status
@@ -151,6 +152,10 @@ func (r *AgentReconciler) roll(ctx context.Context, b *corev1alpha1.SpendBudget,
 		return nil
 	}
 	rebuild := s.PeriodStart == nil || s.PeriodEnd == nil || now.Before(s.PeriodEnd.Time)
+	if !rebuild {
+		oldStart, oldEnd := budgetPeriod(b.Spec.Period, s.PeriodStart.Time)
+		rebuild = !oldStart.Equal(s.PeriodStart.Time) || !oldEnd.Equal(s.PeriodEnd.Time)
+	}
 	s.PeriodStart, s.PeriodEnd = &metav1.Time{Time: start}, &metav1.Time{Time: end}
 	s.Spend, s.Reserved, s.Reservations = "0", "0", nil
 	meta.SetStatusCondition(&s.Conditions, metav1.Condition{Type: corev1alpha1.SpendBudgetReady,
@@ -245,11 +250,15 @@ func (r *AgentReconciler) reserve(ctx context.Context, a *corev1alpha1.Agent) (t
 		msg = fmt.Sprintf("The SpendBudget %s has the maximum of %d active runs.", b.Name, maxReservations)
 	}
 	count := len(slices.DeleteFunc(waiting, func(o corev1alpha1.Agent) bool { return o.UID == a.UID }))
+	// The condition message is the same for each waiting run. A message for each run would change
+	// the status at each check, and each change starts a new check of all the waiting runs. The Agent
+	// condition has the message for the run.
 	cond := metav1.Condition{Type: corev1alpha1.SpendBudgetExceeded, Status: metav1.ConditionFalse,
 		Reason: "WithinLimit", Message: "The last run started in the limit.", ObservedGeneration: b.Generation}
 	if msg != "" {
 		count++
-		cond.Status, cond.Reason, cond.Message = metav1.ConditionTrue, corev1alpha1.ReasonPeriodBudgetExceeded, msg
+		cond.Status, cond.Reason = metav1.ConditionTrue, corev1alpha1.ReasonPeriodBudgetExceeded
+		cond.Message = fmt.Sprintf("At least one run waits for the budget. The period ends at %s.", end)
 	} else {
 		b.Status.Reservations = append(b.Status.Reservations, corev1alpha1.SpendReservation{
 			RunID: string(a.UID), Agent: a.Name, Budget: decimal(budget)})
@@ -292,8 +301,10 @@ func (r *AgentReconciler) waitForBudget(ctx context.Context, a *corev1alpha1.Age
 	return budgetWait{after: after}
 }
 
-// settle moves a run from reserved to spend, with the settled spend of the run. It does nothing if
-// the ledger has no reservation for the run, for example after the end of the period.
+// settle moves a run from reserved to spend, with the settled spend of the run. If the spend did not
+// settle, the usage can be low, so settle counts the full run budget: the gateway stops the run at
+// that budget. It does nothing if the ledger has no reservation for the run, for example after the
+// end of the period.
 func (r *AgentReconciler) settle(ctx context.Context, a *corev1alpha1.Agent) error {
 	b, err := r.spendBudget(ctx, a.Namespace)
 	if b == nil || err != nil {
@@ -313,7 +324,7 @@ func (r *AgentReconciler) settle(ctx context.Context, a *corev1alpha1.Agent) err
 	// With no usage, the run had no key at the gateway, so it has no spend.
 	var used resource.Quantity
 	if a.Status.Usage != nil {
-		if used, err = resource.ParseQuantity(a.Status.Usage.Spend); err != nil {
+		if used, err = resource.ParseQuantity(a.Status.Usage.Spend); err != nil || spendNotSettled(a) {
 			used = held
 		}
 	}
@@ -322,6 +333,12 @@ func (r *AgentReconciler) settle(ctx context.Context, a *corev1alpha1.Agent) err
 	b.Status.Spend, b.Status.Reserved = decimal(spend), decimal(reserved)
 	b.Status.Reservations = slices.Delete(b.Status.Reservations, i, i+1)
 	return r.writeLedger(ctx, b, before, r.now())
+}
+
+// spendNotSettled is true if the revoke found that the spend of the run did not settle.
+func spendNotSettled(a *corev1alpha1.Agent) bool {
+	c := meta.FindStatusCondition(a.Status.Conditions, condRevoked)
+	return c != nil && strings.HasSuffix(c.Message, spendNotSettledNote)
 }
 
 // waitingFor maps a change of a SpendBudget to the runs that wait for it.

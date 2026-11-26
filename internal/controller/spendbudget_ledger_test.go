@@ -33,6 +33,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	corev1alpha1 "github.com/mohanraj00/koodam/api/v1alpha1"
+	"github.com/mohanraj00/koodam/internal/gateway"
 )
 
 // The run names of the ledger tests.
@@ -102,7 +103,7 @@ var _ = Describe("SpendBudget ledger", func() {
 	newRun := func(name, budget string) {
 		Expect(k8sClient.Create(ctx, &corev1alpha1.Agent{
 			ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: ns},
-			Spec: corev1alpha1.AgentSpec{Image: "registry.k8s.io/pause:3.10", Command: []string{"/ledger"},
+			Spec: corev1alpha1.AgentSpec{Image: "registry.k8s.io/pause:3.9", Command: []string{"/ledger"},
 				Model: "ledger-model", Budget: resource.MustParse(budget), DeadlineSeconds: 600},
 		})).To(Succeed())
 	}
@@ -186,6 +187,59 @@ var _ = Describe("SpendBudget ledger", func() {
 		expectWaits(ledgerSmall, reconcileRun(ledgerSmall))
 		Expect(budget().Status.WaitingRuns).To(Equal(int32(2)))
 		Expect(r.waitingFor(ctx, budget())).To(HaveLen(2))
+	})
+
+	It("writes no SpendBudget status when two waiting runs check the budget again", func() {
+		newRun(ledgerBig, "8")
+		newRun(ledgerOlder, "6")
+		newRun(ledgerSmall, "1")
+		reconcileRun(ledgerBig)
+		expectWaits(ledgerOlder, reconcileRun(ledgerOlder))
+		expectWaits(ledgerSmall, reconcileRun(ledgerSmall))
+		expectWaits(ledgerOlder, reconcileRun(ledgerOlder))
+		version := budget().ResourceVersion
+		expectWaits(ledgerSmall, reconcileRun(ledgerSmall))
+		expectWaits(ledgerOlder, reconcileRun(ledgerOlder))
+		Expect(budget().ResourceVersion).To(Equal(version))
+		Expect(meta.FindStatusCondition(budget().Status.Conditions, corev1alpha1.SpendBudgetExceeded).Message).
+			To(Equal("At least one run waits for the budget. The period ends at 2026-11-26T00:00:00Z."))
+	})
+
+	It("counts the full run budget when the spend did not settle", func() {
+		newRun(ledgerRun1, "6")
+		reconcileRun(ledgerRun1)
+		gw.usageErr = gateway.ErrSpendNotSettled
+		endRunJob(ctx, types.NamespacedName{Namespace: ns, Name: "kd-run-1"}, batchv1.JobComplete)
+		reconcileRun(ledgerRun1)
+		Expect(meta.FindStatusCondition(run(ledgerRun1).Status.Conditions, condRevoked).Message).
+			To(HaveSuffix(spendNotSettledNote))
+		b := budget()
+		Expect(b.Status.Spend).To(Equal("6"))
+		Expect(b.Status.Reserved).To(Equal("0"))
+	})
+
+	It("rebuilds the ledger when the period changes after the old period ended", func() {
+		newRun(ledgerRun1, "6")
+		reconcileRun(ledgerRun1)
+		gw.spend = 6
+		endRunJob(ctx, types.NamespacedName{Namespace: ns, Name: "kd-run-1"}, batchv1.JobComplete)
+		reconcileRun(ledgerRun1)
+		Expect(budget().Status.Spend).To(Equal("6"))
+		// The run Job starts at the wall clock time. The rebuild counts the run on the fake day.
+		a := run(ledgerRun1)
+		a.Status.StartedAt = &metav1.Time{Time: day1}
+		Expect(k8sClient.Status().Update(ctx, a)).To(Succeed())
+
+		By("the next day, the budget changes from Day to Month")
+		clock = day1.Add(24 * time.Hour)
+		b := budget()
+		b.Spec.Period = corev1alpha1.SpendPeriodMonth
+		Expect(k8sClient.Update(ctx, b)).To(Succeed())
+		newRun(ledgerRun2, "6")
+		expectWaits(ledgerRun2, reconcileRun(ledgerRun2))
+		b = budget()
+		Expect(b.Status.PeriodStart.Time).To(BeTemporally("==", time.Date(2026, 11, 1, 0, 0, 0, 0, time.UTC)))
+		Expect(b.Status.Spend).To(Equal("6"))
 	})
 
 	It("does not hold the other runs behind a run with a budget above the limit", func() {
