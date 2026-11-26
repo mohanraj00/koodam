@@ -41,6 +41,7 @@ import (
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
+	"sigs.k8s.io/controller-runtime/pkg/handler"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
 
 	corev1alpha1 "github.com/mohanraj00/koodam/api/v1alpha1"
@@ -117,11 +118,18 @@ type AgentReconciler struct {
 	// false, such an Agent with no key hash in its status waits. An Agent with a stored key hash can
 	// recover with each value, and the revoke at the run end or at the delete does not use this field.
 	IngressEnabled bool
+	// Now gives the time for the period of a SpendBudget. If it is nil, the controller uses time.Now.
+	Now func() time.Time
+	// BudgetRetry is the most time that a run waits for a SpendBudget before a new check. If it is 0
+	// or less, the controller uses DefaultBudgetRetry.
+	BudgetRetry time.Duration
 }
 
 // +kubebuilder:rbac:groups=core.koodam.dev,resources=agents,verbs=get;list;watch;update
 // +kubebuilder:rbac:groups=core.koodam.dev,resources=agents/status,verbs=update
 // +kubebuilder:rbac:groups=core.koodam.dev,resources=agents/finalizers,verbs=update
+// +kubebuilder:rbac:groups=core.koodam.dev,resources=spendbudgets,verbs=get;list;watch
+// +kubebuilder:rbac:groups=core.koodam.dev,resources=spendbudgets/status,verbs=update
 // +kubebuilder:rbac:groups=batch,resources=jobs,verbs=get;list;watch;create;delete
 // +kubebuilder:rbac:groups="",resources=secrets,verbs=get;create;delete
 // +kubebuilder:rbac:groups="",resources=pods,verbs=list
@@ -186,7 +194,12 @@ func (r *AgentReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl
 		}
 		return ctrl.Result{}, nil
 	default:
-		return ctrl.Result{}, r.provision(ctx, a)
+		err := r.provision(ctx, a)
+		var wait budgetWait
+		if errors.As(err, &wait) {
+			return ctrl.Result{RequeueAfter: wait.after}, nil
+		}
+		return ctrl.Result{}, err
 	}
 }
 
@@ -391,6 +404,16 @@ func (r *AgentReconciler) provision(ctx context.Context, a *corev1alpha1.Agent) 
 	if controllerutil.AddFinalizer(a, finalizer) {
 		if err := r.Update(ctx, a); err != nil {
 			return err
+		}
+	}
+	if a.Status.KeyHash == "" {
+		// The reservation comes after the finalizer, so that a delete releases it, and before the key.
+		after, msg, err := r.reserve(ctx, a)
+		if err != nil {
+			return err
+		}
+		if after > 0 {
+			return r.waitForBudget(ctx, a, after, msg)
 		}
 	}
 	// The Secret comes first. A retry after a crash finds the key value in it.
@@ -844,6 +867,9 @@ func (r *AgentReconciler) revoke(ctx context.Context, a *corev1alpha1.Agent) err
 			return err
 		}
 	}
+	if err := r.settle(ctx, a); err != nil {
+		return err
+	}
 	if err := r.deleteOwned(ctx, a, &corev1.Secret{}); err != nil {
 		return err
 	}
@@ -936,6 +962,7 @@ func (r *AgentReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&corev1alpha1.Agent{}).
 		Owns(&batchv1.Job{}).
+		Watches(&corev1alpha1.SpendBudget{}, handler.EnqueueRequestsFromMapFunc(r.waitingFor)).
 		Named("agent").
 		Complete(r)
 }

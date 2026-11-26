@@ -56,6 +56,8 @@ type fakeGateway struct {
 	runBinding    types.NamespacedName
 	// usageErr is the Usage error.
 	usageErr error
+	// spend is the spend that Usage gives. If it is 0, Usage gives 0.25.
+	spend float64
 }
 
 func (g *fakeGateway) CreateKey(_ context.Context, s gateway.KeySpec) error {
@@ -87,7 +89,11 @@ func (g *fakeGateway) Usage(context.Context, string) (gateway.Usage, error) {
 	if g.usageErr != nil {
 		return gateway.Usage{}, g.usageErr
 	}
-	return gateway.Usage{Spend: 0.25, Calls: 3, FailedCalls: 1, InputTokens: 100, OutputTokens: 20}, nil
+	spend := 0.25
+	if g.spend != 0 {
+		spend = g.spend
+	}
+	return gateway.Usage{Spend: spend, Calls: 3, FailedCalls: 1, InputTokens: 100, OutputTokens: 20}, nil
 }
 
 // endRunJob writes an end status to the run Job, as the Job controller does. envtest has no Job controller.

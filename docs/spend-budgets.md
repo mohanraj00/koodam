@@ -5,7 +5,8 @@ A `SpendBudget` gives one namespace a spend limit for each period. It is for the
 ## What is active
 
 - The `SpendBudget` API is in `main`, and the chart installs its CRD.
-- No controller reads the type in this change. Thus no run waits for a budget yet. The ledger and the wait come in a later change of [#128](https://github.com/mohanraj00/koodam/issues/128).
+- The Agent controller keeps the ledger in the status, and a run waits when the period has no room. See "The ledger".
+- The spend API does not show the budget yet. That comes in a later change of [#128](https://github.com/mohanraj00/koodam/issues/128).
 
 ## The spec
 
@@ -26,16 +27,31 @@ spec:
 
 ## The status
 
-The controller of a later change writes the status. It has these fields:
+The Agent controller writes the status. It has these fields:
 
 - `periodStart` and `periodEnd`: the current period.
 - `spend`: the settled spend of the runs that started in the period and ended.
 - `reserved`: the sum of the budgets of the active runs of the period.
 - `reservations`: one item for each active run, with its UID, its name and its budget. The list has a maximum of 500 items.
-- `waitingRuns`: the count of the runs that wait for the budget.
-- The conditions `Ready` and `BudgetExceeded`.
+- `waitingRuns`: the count of the runs that waited for the budget at the last check.
+- The conditions `Ready` and `BudgetExceeded`. `BudgetExceeded` is `True` with the reason `PeriodBudgetExceeded` when the last run that the controller checked had to wait.
 
-The design rule is: a run starts only if `spend + reserved + its budget` is not more than `spec.spend`. A run that cannot start stays `Pending`, with the reason `PeriodBudgetExceeded`. It does not fail.
+## The ledger
+
+The controller counts only the Agent runs. Workspace, AppVersion and TestKey keys keep their own daily budgets.
+
+1. Before the controller makes the key of a run, it reads the SpendBudget of the namespace. With no SpendBudget, the run starts.
+2. A run starts only if `spend + reserved + its budget` is not more than `spec.spend`. The controller writes the reservation to the status before it makes the key. The status update with the `resourceVersion` is the lock.
+3. A run that cannot start stays `Pending`. Its condition `Provisioned` is `False` with the reason `PeriodBudgetExceeded`, and the message gives the cause and the end of the period. The run does not fail, and the controller makes no key.
+4. The controller checks a waiting run again when the SpendBudget changes, at the end of the period, and at the latest after one minute.
+5. Waiting runs start in the order of their creation time. A run with a budget that is more than the limit never starts, but it does not stop the runs after it. Delete it, or raise the limit.
+6. When a run ends or is deleted, the controller moves its reservation to `spend`, with the settled spend from the gateway. A change of the status starts the check of the waiting runs.
+
+The rules of the period:
+
+- The spend of a run counts in the period where it started. At the end of a period, the controller drops the reservations of that period. A run of the old period keeps its own budget at the gateway, and its spend does not go into the new period.
+- If the status has no period (a new SpendBudget, or a lost status after a restore), or if `spec.period` changes, the controller rebuilds the ledger from the Agents. Each active run with a key gets a reservation. Each ended run that started in the period adds its settled spend.
+- The ledger has a maximum of 500 active runs. More runs wait.
 
 ## Who can write it
 
