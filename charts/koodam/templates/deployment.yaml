@@ -64,6 +64,16 @@ spec:
         - --agent-gateway-url={{ . }}
         {{- end }}
         - --key-grace={{ .Values.keyGrace }}
+        {{- with .Values.zone.name }}
+        {{- if not (regexMatch "^[a-z0-9]([-a-z0-9]{0,61}[a-z0-9])?$" .) }}
+        {{- fail "zone.name must be a DNS label: lower case letters, digits and \"-\", with 63 characters at most." }}
+        {{- end }}
+        - {{ printf "--zone=%s" . | quote }}
+        {{- end }}
+        {{- with .Values.zone.namespaces }}
+        # The manager reads only the namespaces of this install, and its own namespace.
+        - {{ printf "--watch-namespaces=%s" (join "," (prepend . $.Release.Namespace | uniq)) | quote }}
+        {{- end }}
         {{- if eq .Values.gateway.mode "bundled" }}
         # The bundled gateway has 1 replica and 1 worker. Only then is a block a fence, so
         # only then does the controller issue TestKeys (#192).

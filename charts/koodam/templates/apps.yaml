@@ -1,5 +1,6 @@
 {{- if .Values.apps.enabled }}
 {{- $fullname := include "koodam.fullname" . -}}
+{{- if .Values.apps.sharedResources }}
 {{- /* The App CRDs come from config/apps/crd/bases (controller-gen). Helm keeps them on an uninstall. */ -}}
 {{- range $file := list "files/app-crd-apps.yaml" "files/app-crd-appversions.yaml" "files/app-crd-tenantquotas.yaml" }}
 {{- $crd := $.Files.Get $file | fromYaml }}
@@ -12,6 +13,7 @@
 # config/apps/admission/policy.yaml.
 {{ .Files.Get "files/app-admission-policy.yaml" }}
 ---
+{{- end }}
 # The rules of the App controllers. They come from config/apps/rbac/role.yaml (controller-gen).
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole

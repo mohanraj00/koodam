@@ -103,14 +103,36 @@ func workspaceImageFor(v string) string {
 // cache. Thus the controller does not keep all these objects of the cluster in memory. This limit
 // applies to all the controllers of the manager. A controller that reads other ConfigMaps or
 // StatefulSets (for example koodam-globals) must use the API reader or change this cache.
-func workspaceCache() cache.Options {
+//
+// With namespaces, the cache has the namespaced objects of these namespaces only. Then the
+// controllers of this manager do not see an object of a different install of the cluster. A
+// cluster-scoped object, for example a Profile, is in the cache of each install.
+func workspaceCache(namespaces []string) cache.Options {
 	req, err := labels.NewRequirement(controller.WorkspaceLabel, selection.Exists, nil)
 	utilruntime.Must(err)
 	sel := labels.NewSelector().Add(*req)
-	return cache.Options{ByObject: map[client.Object]cache.ByObject{
+	opts := cache.Options{ByObject: map[client.Object]cache.ByObject{
 		&corev1.ConfigMap{}:   {Label: sel},
 		&appsv1.StatefulSet{}: {Label: sel},
 	}}
+	if len(namespaces) > 0 {
+		opts.DefaultNamespaces = map[string]cache.Config{}
+		for _, ns := range namespaces {
+			opts.DefaultNamespaces[ns] = cache.Config{}
+		}
+	}
+	return opts
+}
+
+// installScope examines the zone of the install and gives back the namespaces that the manager
+// reads. A zone is a DNS label. An empty list is each namespace of the cluster.
+func installScope(zone, namespaces string) ([]string, error) {
+	if zone != "" {
+		if errs := validation.IsDNS1123Label(zone); len(errs) > 0 {
+			return nil, fmt.Errorf("the zone %q is not valid: %s", zone, strings.Join(errs, "; "))
+		}
+	}
+	return splitNamespaces(namespaces)
 }
 
 // nolint:gocyclo
@@ -258,7 +280,7 @@ func main() {
 	var egressPodLabels, appIngressNamespaces, claimJWKSFile string
 	var claim controller.AppClaimCheck
 	var jobTTLSeconds, tenantDefaultBurst int
-	var tenantDefaultRate string
+	var tenantDefaultRate, zone, watchNamespaces string
 	var tenantRefuseUnknown bool
 	var agentIngressEnabled, appsEnabled bool
 	var tlsOpts []func(*tls.Config)
@@ -313,6 +335,10 @@ func main() {
 	flag.StringVar(&claimJWKSFile, "app-claim-jwks-file", "",
 		"The file with the JWKS of the issuer. The manager reads it at its start.")
 	flag.StringVar(&egress.ClusterDomain, "cluster-domain", "cluster.local", "The DNS domain of the cluster.")
+	flag.StringVar(&zone, "zone", "", "The zone of this install, as a DNS label. Empty: the install has no zone.")
+	flag.StringVar(&watchNamespaces, "watch-namespaces", "",
+		"The namespaces of this install, separated by commas. The manager reads the namespaced objects of these "+
+			"namespaces only. Empty: each namespace. It is necessary if the cluster has 2 installs.")
 	flag.DurationVar(&keyGrace, "key-grace", time.Minute, "The time that is added to deadlineSeconds for the key TTL.")
 	flag.IntVar(&jobTTLSeconds, "job-ttl-seconds", controller.DefaultJobTTLSeconds,
 		"The time in seconds that the controller keeps a run Job and its pods after the Job ends. "+
@@ -416,9 +442,15 @@ func main() {
 		metricsServerOptions.KeyName = metricsCertKey
 	}
 
+	watched, err := installScope(zone, watchNamespaces)
+	if err != nil {
+		setupLog.Error(err, "The flag --zone or --watch-namespaces is not valid")
+		os.Exit(1)
+	}
+	setupLog.Info("The scope of this install", "zone", zone, "namespaces", watched)
 	mgr, err := ctrl.NewManager(ctrl.GetConfigOrDie(), ctrl.Options{
 		Scheme:                 scheme,
-		Cache:                  workspaceCache(),
+		Cache:                  workspaceCache(watched),
 		Metrics:                metricsServerOptions,
 		WebhookServer:          webhookServer,
 		HealthProbeBindAddress: probeAddr,
@@ -479,12 +511,8 @@ func main() {
 	if claim, err = loadClaim(claim, claimJWKSFile); err == nil {
 		claim, err = loadTenantDefaults(claim, tenantDefaultRate, tenantDefaultBurst, tenantRefuseUnknown)
 	}
-	if err != nil {
+	if err = errors.Join(err, checkClaimPolicy(claim, egress)); err != nil {
 		setupLog.Error(err, "The App claim check flags or the tenant flags are not valid")
-		os.Exit(1)
-	}
-	if err := checkClaimPolicy(claim, egress); err != nil {
-		setupLog.Error(err, "The App claim check flags are not valid")
 		os.Exit(1)
 	}
 	if err := checkEgress(egress); err != nil {
