@@ -58,11 +58,16 @@ type fakeGateway struct {
 	usageErr error
 	// spend is the spend that Usage gives. If it is 0, Usage gives 0.25.
 	spend float64
+	// createErr is the CreateKey error.
+	createErr error
 }
 
 func (g *fakeGateway) CreateKey(_ context.Context, s gateway.KeySpec) error {
 	g.mu.Lock()
 	defer g.mu.Unlock()
+	if g.createErr != nil {
+		return g.createErr
+	}
 	g.created = append(g.created, s)
 	g.order = append(g.order, "create")
 	return nil

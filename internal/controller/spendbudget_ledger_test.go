@@ -18,6 +18,7 @@ package controller
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 
@@ -292,6 +293,23 @@ var _ = Describe("SpendBudget ledger", func() {
 		b = budget()
 		Expect(b.Status.Reserved).To(Equal("4"))
 		Expect(b.Status.Reservations).To(HaveLen(1))
+	})
+
+	It("gives a retried key the reserved budget after spec.budget changed", func() {
+		newRun(ledgerRun1, "1")
+		gw.createErr = errors.New("the gateway is not available")
+		_, err := r.Reconcile(ctx, reconcile.Request{NamespacedName: types.NamespacedName{Namespace: ns, Name: ledgerRun1}})
+		Expect(err).To(HaveOccurred())
+		a := run(ledgerRun1)
+		Expect(a.Status.KeyHash).NotTo(BeEmpty())
+		Expect(a.Status.Budget).To(Equal("1"))
+		a.Spec.Budget = resource.MustParse("10")
+		Expect(k8sClient.Update(ctx, a)).To(Succeed())
+		gw.createErr = nil
+		reconcileRun(ledgerRun1)
+		Expect(gw.created).To(HaveLen(1))
+		Expect(gw.created[0].Budget).To(Equal(1.0))
+		Expect(budget().Status.Reserved).To(Equal("1"))
 	})
 
 	It("rebuilds a reservation with the budget that the key got", func() {

@@ -458,8 +458,10 @@ func (r *AgentReconciler) provision(ctx context.Context, a *corev1alpha1.Agent) 
 		}
 	}
 	models := a.Spec.ModelList()
+	// A retry after a failed create uses the budget that the ledger reserved, not a changed spec.budget.
+	budget := admittedBudget(a)
 	err = r.Gateway.CreateKey(ctx, gateway.KeySpec{
-		Value: key, Alias: alias, Model: models[0], Models: models[1:], Budget: a.Spec.Budget.AsApproximateFloat64(),
+		Value: key, Alias: alias, Model: models[0], Models: models[1:], Budget: budget.AsApproximateFloat64(),
 		TTL: time.Duration(a.Spec.DeadlineSeconds)*time.Second + r.Grace, Metadata: keyMetadata(a),
 	})
 	if err != nil {
