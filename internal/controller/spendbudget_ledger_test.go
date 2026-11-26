@@ -35,6 +35,20 @@ import (
 	corev1alpha1 "github.com/mohanraj00/koodam/api/v1alpha1"
 )
 
+// The run names of the ledger tests.
+const (
+	ledgerRun1   = "run-1"
+	ledgerRun2   = "run-2"
+	ledgerHuge   = "huge"
+	ledgerGone   = "gone"
+	ledgerSmall  = "small"
+	ledgerOlder  = "older"
+	ledgerNext   = "next"
+	ledgerLater  = "later"
+	ledgerActive = "active"
+	ledgerBig    = "big"
+)
+
 func TestBudgetPeriod(t *testing.T) {
 	at := time.Date(2026, time.December, 31, 23, 59, 0, 0, time.FixedZone("x", 2*3600))
 	for _, c := range []struct {
@@ -120,19 +134,19 @@ var _ = Describe("SpendBudget ledger", func() {
 	}
 
 	It("holds a run until the next period when the period limit has no room", func() {
-		newRun("run-1", "6")
-		newRun("run-2", "6")
+		newRun(ledgerRun1, "6")
+		newRun(ledgerRun2, "6")
 
 		By("run 1 starts and reserves its budget")
-		reconcileRun("run-1")
-		Expect(run("run-1").Status.Phase).To(Equal(corev1alpha1.AgentRunning))
+		reconcileRun(ledgerRun1)
+		Expect(run(ledgerRun1).Status.Phase).To(Equal(corev1alpha1.AgentRunning))
 		b := budget()
 		Expect(b.Status.Reserved).To(Equal("6"))
 		Expect(b.Status.Reservations).To(HaveLen(1))
 		Expect(b.Status.PeriodStart.Time).To(BeTemporally("==", time.Date(2026, 11, 25, 0, 0, 0, 0, time.UTC)))
 
 		By("run 2 waits, because 6 + 6 is more than 10")
-		expectWaits("run-2", reconcileRun("run-2"))
+		expectWaits(ledgerRun2, reconcileRun(ledgerRun2))
 		b = budget()
 		Expect(b.Status.WaitingRuns).To(Equal(int32(1)))
 		Expect(meta.IsStatusConditionTrue(b.Status.Conditions, corev1alpha1.SpendBudgetExceeded)).To(BeTrue())
@@ -141,20 +155,20 @@ var _ = Describe("SpendBudget ledger", func() {
 		By("run 1 ends with a spend of 6, and run 2 still waits")
 		gw.spend = 6
 		endRunJob(ctx, types.NamespacedName{Namespace: ns, Name: "kd-run-1"}, batchv1.JobComplete)
-		reconcileRun("run-1")
-		Expect(run("run-1").Status.Phase).To(Equal(corev1alpha1.AgentSucceeded))
+		reconcileRun(ledgerRun1)
+		Expect(run(ledgerRun1).Status.Phase).To(Equal(corev1alpha1.AgentSucceeded))
 		b = budget()
 		Expect(b.Status.Spend).To(Equal("6"))
 		Expect(b.Status.Reserved).To(Equal("0"))
 		Expect(b.Status.Reservations).To(BeEmpty())
 		Expect(r.waitingFor(ctx, b)).To(ConsistOf(reconcile.Request{
-			NamespacedName: types.NamespacedName{Namespace: ns, Name: "run-2"}}))
-		expectWaits("run-2", reconcileRun("run-2"))
+			NamespacedName: types.NamespacedName{Namespace: ns, Name: ledgerRun2}}))
+		expectWaits(ledgerRun2, reconcileRun(ledgerRun2))
 
 		By("the clock goes to the next day, and run 2 starts")
 		clock = day1.Add(24 * time.Hour)
-		reconcileRun("run-2")
-		Expect(run("run-2").Status.Phase).To(Equal(corev1alpha1.AgentRunning))
+		reconcileRun(ledgerRun2)
+		Expect(run(ledgerRun2).Status.Phase).To(Equal(corev1alpha1.AgentRunning))
 		b = budget()
 		Expect(b.Status.PeriodStart.Time).To(BeTemporally("==", time.Date(2026, 11, 26, 0, 0, 0, 0, time.UTC)))
 		Expect(b.Status.Spend).To(Equal("0"))
@@ -163,49 +177,49 @@ var _ = Describe("SpendBudget ledger", func() {
 	})
 
 	It("starts the waiting runs in the order of their creation time", func() {
-		newRun("big", "8")
-		newRun("older", "6")
-		newRun("small", "1")
-		reconcileRun("big")
-		expectWaits("older", reconcileRun("older"))
+		newRun(ledgerBig, "8")
+		newRun(ledgerOlder, "6")
+		newRun(ledgerSmall, "1")
+		reconcileRun(ledgerBig)
+		expectWaits(ledgerOlder, reconcileRun(ledgerOlder))
 		// The small run fits (8 + 1), but an older run waits.
-		expectWaits("small", reconcileRun("small"))
+		expectWaits(ledgerSmall, reconcileRun(ledgerSmall))
 		Expect(budget().Status.WaitingRuns).To(Equal(int32(2)))
 		Expect(r.waitingFor(ctx, budget())).To(HaveLen(2))
 	})
 
 	It("does not hold the other runs behind a run with a budget above the limit", func() {
-		newRun("huge", "11")
-		newRun("next", "2")
-		expectWaits("huge", reconcileRun("huge"))
-		Expect(meta.FindStatusCondition(run("huge").Status.Conditions, condProvisioned).Message).
+		newRun(ledgerHuge, "11")
+		newRun(ledgerNext, "2")
+		expectWaits(ledgerHuge, reconcileRun(ledgerHuge))
+		Expect(meta.FindStatusCondition(run(ledgerHuge).Status.Conditions, condProvisioned).Message).
 			To(ContainSubstring("more than the limit"))
-		reconcileRun("next")
-		Expect(run("next").Status.Phase).To(Equal(corev1alpha1.AgentRunning))
+		reconcileRun(ledgerNext)
+		Expect(run(ledgerNext).Status.Phase).To(Equal(corev1alpha1.AgentRunning))
 	})
 
 	It("releases the reservation of a deleted run", func() {
-		newRun("gone", "6")
-		reconcileRun("gone")
+		newRun(ledgerGone, "6")
+		reconcileRun(ledgerGone)
 		Expect(budget().Status.Reserved).To(Equal("6"))
-		Expect(k8sClient.Delete(ctx, run("gone"))).To(Succeed())
-		reconcileRun("gone")
+		Expect(k8sClient.Delete(ctx, run(ledgerGone))).To(Succeed())
+		reconcileRun(ledgerGone)
 		b := budget()
 		Expect(b.Status.Reserved).To(Equal("0"))
 		Expect(b.Status.Spend).To(Equal("0.25"))
 	})
 
 	It("rebuilds a lost ledger from the active runs", func() {
-		newRun("active", "4")
-		reconcileRun("active")
+		newRun(ledgerActive, "4")
+		reconcileRun(ledgerActive)
 		b := budget()
 		b.Status = corev1alpha1.SpendBudgetStatus{}
 		Expect(k8sClient.Status().Update(ctx, b)).To(Succeed())
-		newRun("later", "7")
-		expectWaits("later", reconcileRun("later"))
+		newRun(ledgerLater, "7")
+		expectWaits(ledgerLater, reconcileRun(ledgerLater))
 		b = budget()
 		Expect(b.Status.Reserved).To(Equal("4"))
 		Expect(b.Status.Reservations).To(HaveLen(1))
-		Expect(b.Status.Reservations[0].Agent).To(Equal("active"))
+		Expect(b.Status.Reservations[0].Agent).To(Equal(ledgerActive))
 	})
 })
