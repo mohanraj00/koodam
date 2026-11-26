@@ -1,0 +1,21 @@
+{
+  "name": "excerpt",
+  "description": "A passage of a source document as text, with a marked span, the source name and the locator of the passage.",
+  "slots": {"citation": {"required": true}},
+  "data": {
+    "passage": {"type": "text", "required": true, "min_length": 1, "size": "long"},
+    "span_start": {"type": "integer", "required": true, "minimum": 0, "maximum": 1999},
+    "span_end": {"type": "integer", "required": true, "minimum": 1, "maximum": 2000},
+    "clamp": {"type": "integer", "label": "Initial lines", "minimum": 1, "maximum": 20}
+  },
+  "states": ["+refused"],
+  "tokens": [
+    "color.text", "color.text-muted", "color.border", "color.accent", "space.1", "space.2", "space.3", "radius.2",
+    "type.body", "type.caption", "type.weight-strong", "color.focus"
+  ],
+  "accessibility": {
+    "role": "group",
+    "name": {"text": "Source excerpt"},
+    "keyboard": ["Tab", "Shift+Tab", "Enter", "Space"]
+  }
+}

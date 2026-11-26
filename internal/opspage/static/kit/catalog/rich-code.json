@@ -1,0 +1,8 @@
+{
+  "name": "rich-code",
+  "description": "A code block node of rich text. The kit shows the text as text in a fixed-width font and runs nothing.",
+  "data": {
+    "text": {"type": "text", "label": "Code", "required": true, "min_length": 1, "max_length": 10000}
+  },
+  "tokens": ["color.text", "color.text-muted", "color.border", "space.1", "space.2", "type.body", "radius.1"]
+}

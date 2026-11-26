@@ -18,6 +18,7 @@ package appclaim
 
 import (
 	"bytes"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -26,6 +27,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/mohanraj00/koodam/internal/tenanttoken"
 )
 
 const (
@@ -339,5 +342,35 @@ func TestCheckTenantRefusals(t *testing.T) {
 	calls = 0
 	if w := call(); w.Code != http.StatusOK || calls != 1 {
 		t.Errorf("no tenant claim: status %d, %d requests to the app", w.Code, calls)
+	}
+}
+
+// The reserved label is the customer of the model calls with no tenant. A claim with this label
+// is refused, with limits and with no limits.
+func TestCheckRefusesTheReservedTenant(t *testing.T) {
+	f := newFixture(t)
+	path := filepath.Join(t.TempDir(), "jwks.json")
+	keys := &Keys{}
+	if err := errors.Join(os.WriteFile(path, f.jwks, 0o600), keys.Load(path)); err != nil {
+		t.Fatal(err)
+	}
+	calls := 0
+	spans := &bytes.Buffer{}
+	check := &Check{Config: testCfg, Keys: keys, Spans: NewSpanWriter(spans), Now: func() time.Time { return now },
+		Next: http.HandlerFunc(func(http.ResponseWriter, *http.Request) { calls++ })}
+	token := f.sign(t, header(algES256, "e1"), claims(func(c map[string]any) { c["tenant"] = tenanttoken.NoTenant }))
+	for name, limits := range map[string]*Tenants{"no limits": nil,
+		"limits that name the label": mustLimits(t, `{"tenants":{"`+tenanttoken.NoTenant+`":{}}}`)} {
+		check.Tenants = limits
+		r := httptest.NewRequest(http.MethodGet, "/", nil)
+		r.Header.Set("Authorization", "Bearer "+token)
+		w := httptest.NewRecorder()
+		check.ServeHTTP(w, r)
+		if w.Code != http.StatusForbidden || w.Header().Get(ReasonHeader) != ReasonReservedTenant || calls != 0 {
+			t.Errorf("%s: status %d, reason %q, %d requests to the app", name, w.Code, w.Header().Get(ReasonHeader), calls)
+		}
+	}
+	if !strings.Contains(spans.String(), `"outcome":"`+ReasonReservedTenant+`"`) {
+		t.Errorf("The span must have the reason: %s", spans.String())
 	}
 }

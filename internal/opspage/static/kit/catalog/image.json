@@ -1,0 +1,22 @@
+{
+  "name": "image",
+  "description": "An image in a fixed box with an optional caption. Page code permits origins. Only http and https URLs can load. A text alternative is required unless decorative is true. Loading and error keep the box. Error shows the alternative. A native dialog gives the full-size view and returns focus on close.",
+  "data": {
+    "url": {"type": "text", "label": "Image URL", "required": true, "min_length": 1, "max_length": 2048},
+    "alt": {"type": "text", "label": "Text alternative", "required": true, "min_length": 0, "max_length": 500},
+    "decorative": {"type": "boolean", "label": "Decorative image"},
+    "caption": {"type": "text", "min_length": 1, "max_length": 500},
+    "width": {"type": "integer", "required": true, "minimum": 1, "maximum": 4096},
+    "height": {"type": "integer", "required": true, "minimum": 1, "maximum": 4096}
+  },
+  "states": ["+loading", "+error", "+refused"],
+  "tokens": [
+    "color.text", "color.text-muted", "color.surface", "color.border", "space.1", "space.2", "radius.2", "type.body",
+    "type.caption"
+  ],
+  "accessibility": {
+    "role": "group",
+    "name": {"text": "Image"},
+    "keyboard": ["Tab", "Shift+Tab", "Enter", "Space", "Escape"]
+  }
+}

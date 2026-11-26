@@ -1,0 +1,13 @@
+{
+  "name": "table-row",
+  "description": "A row in a table. Cells follow the column order. The optional status is text from the application or the service. The table checks the cell count and the allowed status values.",
+  "data": {
+    "cells": {
+      "type": "list",
+      "required": true,
+      "max_items": 12,
+      "items": {"type": "text", "label": "Cell", "max_length": 500}
+    },
+    "status": {"type": "text", "label": "Row status", "min_length": 1, "size": "line"}
+  }
+}

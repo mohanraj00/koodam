@@ -1,0 +1,16 @@
+{
+  "name": "data-grid-column",
+  "description": "One column of a data grid: a key, a header label, the type of its cells and an optional read-only flag. A choice column gives its choices.",
+  "data": {
+    "key": {"type": "text", "required": true, "min_length": 1, "size": "short"},
+    "label": {"type": "text", "required": true, "min_length": 1, "size": "line"},
+    "type": {"type": "enum", "label": "Cell type", "required": true, "values": ["text", "number", "date", "choice"]},
+    "read_only": {"type": "boolean", "label": "Read-only"},
+    "choices": {
+      "type": "list",
+      "max_items": 20,
+      "items": {"type": "text", "label": "Choice", "min_length": 1, "size": "line"}
+    }
+  },
+  "tokens": ["color.text", "color.border", "color.surface", "type.body", "type.weight-strong"]
+}

@@ -27,6 +27,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/mohanraj00/koodam/internal/tenanttoken"
 )
 
 const (
@@ -346,5 +348,16 @@ func TestBudgetDuration(t *testing.T) {
 		if _, ok := parseBudgetDuration(bad); ok {
 			t.Errorf("%q is accepted", bad)
 		}
+	}
+}
+
+// Limits on the reserved label would stop each model call with no tenant. The client refuses the
+// label before a call to the gateway.
+func TestSetCustomerRefusesTheReservedLabel(t *testing.T) {
+	f := newCustomerFake()
+	err := customerClient(t, f).SetCustomer(context.Background(),
+		CustomerSpec{ID: tenanttoken.NoTenant, Budget: 1, Period: time.Hour})
+	if !errors.Is(err, ErrReservedCustomer) || len(f.calls) != 0 {
+		t.Fatalf("error %v, %d gateway calls", err, len(f.calls))
 	}
 }

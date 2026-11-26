@@ -1,0 +1,20 @@
+{
+  "name": "diff-part",
+  "description": "One part of a diff: a title and its changes. A person can open and close the part.",
+  "ai_content": false,
+  "data": {
+    "title": {"type": "text", "required": true, "min_length": 1, "size": "line"},
+    "changes": {
+      "type": "list",
+      "required": true,
+      "max_items": 200,
+      "items": {"type": "component", "label": "Change", "name": "diff-change"}
+    }
+  },
+  "states": ["+empty"],
+  "tokens": [
+    "color.text", "color.text-muted", "color.border", "space.1", "space.2", "type.body", "type.caption",
+    "type.weight-strong"
+  ],
+  "accessibility": {"role": "group", "name": {"field": "title"}, "keyboard": ["Enter", "Space"]}
+}
