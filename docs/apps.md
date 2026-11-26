@@ -213,6 +213,52 @@ Set `spec.lifecycle: Retiring` on the AppVersion. This change is terminal.
 
 Koodam cannot see a session, so the end of the drain time is the end of the sessions. A delete of the AppVersion does not wait for the drain time.
 
+## Rotate the gateway key
+
+A version keeps one gateway key for its life. To rotate the key, make a new version with the same template, move the weight to it, and retire the old version. The drain time of the App is the overlap: the old key stays valid for `spec.drainSeconds`, and then the controller blocks it.
+
+1. Make the new version with the spec of the old version and a new name. For example, with `jq`:
+
+   ```sh
+   kubectl get appversion shop-v2 -o json \
+     | jq '{apiVersion, kind, metadata: {name: "shop-v3"}, spec: (.spec | del(.lifecycle))}' \
+     | kubectl create -f -
+   ```
+
+2. Wait for the key and the pods of the new version:
+
+   ```sh
+   kubectl wait appversion/shop-v3 --for=condition=GatewayKey --timeout=5m
+   kubectl rollout status deployment/kd-shop-v3
+   ```
+
+3. Add `shop-v3` with a weight to each endpoint of the App, in `spec.endpoints[].versions`. A version gets its weight only after it has its key, so a request never goes to a version with no key. `status.endpoints` of the App shows the weights in effect.
+4. Retire the old version:
+
+   ```sh
+   kubectl patch appversion shop-v2 --type=merge -p '{"spec":{"lifecycle":"Retiring"}}'
+   ```
+
+5. At the end of the drain time, the old version has `Revoked=True`, and its key is blocked:
+
+   ```sh
+   kubectl wait appversion/shop-v2 --for=condition=Revoked --timeout=1h
+   ```
+
+The status shows the alias of each key, never the value: `kubectl get appversion shop-v2 shop-v3 -o custom-columns=NAME:.metadata.name,KEY:.status.keyAlias`.
+
+Rules:
+
+- The retiring version keeps its key in the drain time, so it counts for `spec.maxLiveVersions`. The App needs 2 or more, which is the default.
+- In the drain time, the 2 versions each have a `budgetPerDay`. Thus the spend of that day can be the sum of the 2 budgets.
+- A client that sends the version header of the old version stays on it until the end of the drain time. After the block, its model calls fail. Set `spec.drainSeconds` to the longest session.
+- A version with an evidence gate gets traffic only after its gate run passes, and the old version keeps the traffic until then.
+- The new version gets new pods. An app that reads the key file one time at its start is correct, because a key never changes in a pod.
+
+A rotation in one version, with no new pods, is tracked in [#441](https://github.com/mohanraj00/koodam/issues/441).
+
+The kind test `rotates the gateway key of a 2-replica version with no failed call` in `test/e2e/app_test.go` sends model calls through the route of the Gateway without a stop, while it adds the new version, moves the weight, retires the old version and blocks its key. It expects no failed call ([results](results/app-key-rotation.json)).
+
 ## Egress
 
 With the egress proxy of the chart, name each namespace of the Apps in `workspace.networkPolicy.namespaces`. The proxy gives an App pod an identity only in a named namespace, and it refuses each call of a pod with no identity. The chart refuses `apps.enabled` with `egressProxy.enabled` and an empty list.
