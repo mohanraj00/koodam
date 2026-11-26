@@ -35,6 +35,8 @@ ACTIONS = ("record", "mark", "block")
 SOURCES = ("toolResult", "document")
 OUTCOMES = {"record": "recorded", "mark": "marked", "block": "blocked"}
 CACHE_SIZE = 4096
+# The hook encodes a text in pieces of this count of characters, so that it makes no full copy of a large block.
+CHUNK = 65536
 
 # Each rule is a fixed pattern. A change of a rule gives a new RULES_VERSION.
 RULES = (
@@ -144,6 +146,27 @@ def blocks(data):
     return [(source, texts) for source, texts in found if texts]
 
 
+def scan(texts, limit):
+    """Give back the first limit bytes of the texts, joined with a new line, and the full count of bytes.
+
+    The hook encodes each text in pieces of CHUNK characters. Thus the memory of the scan does not grow
+    with the size of the block.
+    """
+    head, size = bytearray(), 0
+    for index, text in enumerate(texts):
+        value = text.get()
+        if index:
+            size += 1
+            if len(head) < limit:
+                head += b"\n"
+        for start in range(0, len(value), CHUNK):
+            piece = value[start:start + CHUNK].encode("utf-8", "surrogatepass")
+            size += len(piece)
+            if len(head) < limit:
+                head += piece[:limit - len(head)]
+    return bytes(head), size
+
+
 def identity(key):
     """Give back the namespace and the key alias from the key of the call."""
     metadata = getattr(key, "metadata", None)
@@ -182,8 +205,7 @@ class GuardHook(CustomLogger):
             for source, texts in blocks(data):
                 if source not in POLICY["sources"]:
                     continue
-                raw = "\n".join(t.get() for t in texts).encode("utf-8", "surrogatepass")
-                examined = raw[:POLICY["maxBytes"]]
+                examined, size = scan(texts, POLICY["maxBytes"])
                 digest = "sha256:" + hashlib.sha256(examined).hexdigest()
                 entry = (alias or "", source, digest)
                 rules = self.seen.get(entry)
@@ -191,8 +213,8 @@ class GuardHook(CustomLogger):
                     rules = detect(examined.decode("utf-8", "ignore"))
                     self.remember(entry, rules)
                     write(dict(base, time=now(), outcome=OUTCOMES[POLICY["action"]] if rules else "clean",
-                               rules=rules, source=source, digest=digest, bytes=len(raw),
-                               truncated=len(raw) > len(examined), model=model))
+                               rules=rules, source=source, digest=digest, bytes=size,
+                               truncated=size > len(examined), model=model))
                 else:
                     self.seen.move_to_end(entry)
                 if rules:

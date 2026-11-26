@@ -83,6 +83,10 @@ test-tools: ## Run the Python tests of tools/.
 .PHONY: check
 check: test test-tools ## Run the local checks before a push.
 
+.PHONY: guard-image-check
+guard-image-check: ## Run the gateway guard hook in the pinned gateway image with docker.
+	python3 -B hack/guard-image-check/check.py
+
 # The e2e tests need kind, helm and kubectl. They build the manager image, load it into kind,
 # and install charts/koodam with the bundled gateway. Then they run Agents and probe the
 # credentials of each run after the run ends.

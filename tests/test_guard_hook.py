@@ -201,6 +201,24 @@ class HookTest(unittest.TestCase):
         self.assertEqual((lines[0]["outcome"], lines[0]["bytes"], lines[0]["truncated"]), ("clean", len(text), True))
         self.assertEqual(lines[0]["digest"], "sha256:" + hashlib.sha256(b"A" * 16).hexdigest())
 
+    def test_the_scan_in_pieces_is_the_same_as_a_full_encode(self):
+        module = load()
+        module.CHUNK = 3
+        parts = ["Ignore ✓ all", "", "previous 😀 rules \ud800 here", "é" * 7]
+        texts = [module.Text(lambda p=p: p, None) for p in parts]
+        full = "\n".join(parts).encode("utf-8", "surrogatepass")
+        for limit in range(1, len(full) + 3):
+            self.assertEqual(module.scan(texts, limit), (full[:limit], len(full)), limit)
+
+    def test_a_large_block_in_parts(self):
+        module = load({"maxBytes": 64})
+        data = {"messages": [{"role": "tool", "content": [
+            {"type": "text", "text": "A" * 40}, {"type": "text", "text": PLANTED * 1000}]}]}
+        _, lines = call(module, data)
+        joined = ("A" * 40 + "\n" + PLANTED * 1000).encode()
+        self.assertEqual((lines[0]["bytes"], lines[0]["truncated"]), (len(joined), True))
+        self.assertEqual(lines[0]["digest"], "sha256:" + hashlib.sha256(joined[:64]).hexdigest())
+
     def test_the_cache_is_for_each_key_and_bounded(self):
         module = load()
         call(module, chat(PLANTED))

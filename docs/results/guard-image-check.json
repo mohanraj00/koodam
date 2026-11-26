@@ -1,0 +1,499 @@
+{
+  "date_utc": "2026-11-26T21:59:54.063795+00:00",
+  "command": [
+    "python3",
+    "-B",
+    "hack/guard-image-check/check.py",
+    "--results",
+    "docs/results/guard-image-check.json"
+  ],
+  "image": "ghcr.io/berriai/litellm-database:v1.104.2@sha256:5a9ff0fd7177372f2ccd8949cb121f67e281f4d13d026af51f9c096c0626f50a",
+  "image_id": "sha256:5a9ff0fd7177372f2ccd8949cb121f67e281f4d13d026af51f9c096c0626f50a",
+  "source_commit": "4458d40c6db7f9cdbeae731d952e526f735ec335",
+  "source_changed": false,
+  "hook_sha256": "e68e9842f03546eaefce75ec486b5950314a857af961bfa46f1c138722f44fad",
+  "cases": 60,
+  "failures": 0,
+  "results": [
+    {
+      "action": "record",
+      "case": "chat plain planted",
+      "ok": true,
+      "status": 200,
+      "upstreamBodies": 1,
+      "outcome": "recorded"
+    },
+    {
+      "action": "record",
+      "case": "chat plain clean",
+      "ok": true,
+      "status": 200,
+      "upstreamBodies": 1,
+      "outcome": "clean"
+    },
+    {
+      "action": "record",
+      "case": "chat stream planted",
+      "ok": true,
+      "status": 200,
+      "upstreamBodies": 1,
+      "outcome": "recorded"
+    },
+    {
+      "action": "record",
+      "case": "chat stream clean",
+      "ok": true,
+      "status": 200,
+      "upstreamBodies": 1,
+      "outcome": "clean"
+    },
+    {
+      "action": "record",
+      "case": "messages plain planted",
+      "ok": true,
+      "status": 200,
+      "upstreamBodies": 1,
+      "outcome": "recorded"
+    },
+    {
+      "action": "record",
+      "case": "messages plain clean",
+      "ok": true,
+      "status": 200,
+      "upstreamBodies": 1,
+      "outcome": "clean"
+    },
+    {
+      "action": "record",
+      "case": "messages stream planted",
+      "ok": true,
+      "status": 200,
+      "upstreamBodies": 1,
+      "outcome": "recorded"
+    },
+    {
+      "action": "record",
+      "case": "messages stream clean",
+      "ok": true,
+      "status": 200,
+      "upstreamBodies": 1,
+      "outcome": "clean"
+    },
+    {
+      "action": "record",
+      "case": "document plain planted",
+      "ok": true,
+      "status": 200,
+      "upstreamBodies": 1,
+      "outcome": "recorded"
+    },
+    {
+      "action": "record",
+      "case": "document plain clean",
+      "ok": true,
+      "status": 200,
+      "upstreamBodies": 1,
+      "outcome": "clean"
+    },
+    {
+      "action": "record",
+      "case": "document stream planted",
+      "ok": true,
+      "status": 200,
+      "upstreamBodies": 1,
+      "outcome": "recorded"
+    },
+    {
+      "action": "record",
+      "case": "document stream clean",
+      "ok": true,
+      "status": 200,
+      "upstreamBodies": 1,
+      "outcome": "clean"
+    },
+    {
+      "action": "record",
+      "case": "responses plain planted",
+      "ok": true,
+      "status": 200,
+      "upstreamBodies": 1,
+      "outcome": "recorded"
+    },
+    {
+      "action": "record",
+      "case": "responses plain clean",
+      "ok": true,
+      "status": 200,
+      "upstreamBodies": 1,
+      "outcome": "clean"
+    },
+    {
+      "action": "record",
+      "case": "responses stream planted",
+      "ok": true,
+      "status": 200,
+      "upstreamBodies": 1,
+      "outcome": "recorded"
+    },
+    {
+      "action": "record",
+      "case": "responses stream clean",
+      "ok": true,
+      "status": 200,
+      "upstreamBodies": 1,
+      "outcome": "clean"
+    },
+    {
+      "action": "record",
+      "case": "turn off with header",
+      "ok": true,
+      "status": 200,
+      "upstreamBodies": 1,
+      "outcome": "recorded"
+    },
+    {
+      "action": "record",
+      "case": "turn off with metadata",
+      "ok": true,
+      "status": 200,
+      "upstreamBodies": 1,
+      "outcome": "recorded"
+    },
+    {
+      "action": "record",
+      "case": "turn off with field",
+      "ok": true,
+      "status": 200,
+      "upstreamBodies": 1,
+      "outcome": "recorded"
+    },
+    {
+      "action": "record",
+      "case": "turn off with guardrails",
+      "ok": true,
+      "status": 200,
+      "upstreamBodies": 1,
+      "outcome": "recorded"
+    },
+    {
+      "action": "mark",
+      "case": "chat plain planted",
+      "ok": true,
+      "status": 200,
+      "upstreamBodies": 1,
+      "outcome": "marked"
+    },
+    {
+      "action": "mark",
+      "case": "chat plain clean",
+      "ok": true,
+      "status": 200,
+      "upstreamBodies": 1,
+      "outcome": "clean"
+    },
+    {
+      "action": "mark",
+      "case": "chat stream planted",
+      "ok": true,
+      "status": 200,
+      "upstreamBodies": 1,
+      "outcome": "marked"
+    },
+    {
+      "action": "mark",
+      "case": "chat stream clean",
+      "ok": true,
+      "status": 200,
+      "upstreamBodies": 1,
+      "outcome": "clean"
+    },
+    {
+      "action": "mark",
+      "case": "messages plain planted",
+      "ok": true,
+      "status": 200,
+      "upstreamBodies": 1,
+      "outcome": "marked"
+    },
+    {
+      "action": "mark",
+      "case": "messages plain clean",
+      "ok": true,
+      "status": 200,
+      "upstreamBodies": 1,
+      "outcome": "clean"
+    },
+    {
+      "action": "mark",
+      "case": "messages stream planted",
+      "ok": true,
+      "status": 200,
+      "upstreamBodies": 1,
+      "outcome": "marked"
+    },
+    {
+      "action": "mark",
+      "case": "messages stream clean",
+      "ok": true,
+      "status": 200,
+      "upstreamBodies": 1,
+      "outcome": "clean"
+    },
+    {
+      "action": "mark",
+      "case": "document plain planted",
+      "ok": true,
+      "status": 200,
+      "upstreamBodies": 1,
+      "outcome": "marked"
+    },
+    {
+      "action": "mark",
+      "case": "document plain clean",
+      "ok": true,
+      "status": 200,
+      "upstreamBodies": 1,
+      "outcome": "clean"
+    },
+    {
+      "action": "mark",
+      "case": "document stream planted",
+      "ok": true,
+      "status": 200,
+      "upstreamBodies": 1,
+      "outcome": "marked"
+    },
+    {
+      "action": "mark",
+      "case": "document stream clean",
+      "ok": true,
+      "status": 200,
+      "upstreamBodies": 1,
+      "outcome": "clean"
+    },
+    {
+      "action": "mark",
+      "case": "responses plain planted",
+      "ok": true,
+      "status": 200,
+      "upstreamBodies": 1,
+      "outcome": "marked"
+    },
+    {
+      "action": "mark",
+      "case": "responses plain clean",
+      "ok": true,
+      "status": 200,
+      "upstreamBodies": 1,
+      "outcome": "clean"
+    },
+    {
+      "action": "mark",
+      "case": "responses stream planted",
+      "ok": true,
+      "status": 200,
+      "upstreamBodies": 1,
+      "outcome": "marked"
+    },
+    {
+      "action": "mark",
+      "case": "responses stream clean",
+      "ok": true,
+      "status": 200,
+      "upstreamBodies": 1,
+      "outcome": "clean"
+    },
+    {
+      "action": "mark",
+      "case": "turn off with header",
+      "ok": true,
+      "status": 200,
+      "upstreamBodies": 1,
+      "outcome": "marked"
+    },
+    {
+      "action": "mark",
+      "case": "turn off with metadata",
+      "ok": true,
+      "status": 200,
+      "upstreamBodies": 1,
+      "outcome": "marked"
+    },
+    {
+      "action": "mark",
+      "case": "turn off with field",
+      "ok": true,
+      "status": 200,
+      "upstreamBodies": 1,
+      "outcome": "marked"
+    },
+    {
+      "action": "mark",
+      "case": "turn off with guardrails",
+      "ok": true,
+      "status": 200,
+      "upstreamBodies": 1,
+      "outcome": "marked"
+    },
+    {
+      "action": "block",
+      "case": "chat plain planted",
+      "ok": true,
+      "status": 403,
+      "upstreamBodies": 0,
+      "outcome": "blocked"
+    },
+    {
+      "action": "block",
+      "case": "chat plain clean",
+      "ok": true,
+      "status": 200,
+      "upstreamBodies": 1,
+      "outcome": "clean"
+    },
+    {
+      "action": "block",
+      "case": "chat stream planted",
+      "ok": true,
+      "status": 403,
+      "upstreamBodies": 0,
+      "outcome": "blocked"
+    },
+    {
+      "action": "block",
+      "case": "chat stream clean",
+      "ok": true,
+      "status": 200,
+      "upstreamBodies": 1,
+      "outcome": "clean"
+    },
+    {
+      "action": "block",
+      "case": "messages plain planted",
+      "ok": true,
+      "status": 403,
+      "upstreamBodies": 0,
+      "outcome": "blocked"
+    },
+    {
+      "action": "block",
+      "case": "messages plain clean",
+      "ok": true,
+      "status": 200,
+      "upstreamBodies": 1,
+      "outcome": "clean"
+    },
+    {
+      "action": "block",
+      "case": "messages stream planted",
+      "ok": true,
+      "status": 403,
+      "upstreamBodies": 0,
+      "outcome": "blocked"
+    },
+    {
+      "action": "block",
+      "case": "messages stream clean",
+      "ok": true,
+      "status": 200,
+      "upstreamBodies": 1,
+      "outcome": "clean"
+    },
+    {
+      "action": "block",
+      "case": "document plain planted",
+      "ok": true,
+      "status": 403,
+      "upstreamBodies": 0,
+      "outcome": "blocked"
+    },
+    {
+      "action": "block",
+      "case": "document plain clean",
+      "ok": true,
+      "status": 200,
+      "upstreamBodies": 1,
+      "outcome": "clean"
+    },
+    {
+      "action": "block",
+      "case": "document stream planted",
+      "ok": true,
+      "status": 403,
+      "upstreamBodies": 0,
+      "outcome": "blocked"
+    },
+    {
+      "action": "block",
+      "case": "document stream clean",
+      "ok": true,
+      "status": 200,
+      "upstreamBodies": 1,
+      "outcome": "clean"
+    },
+    {
+      "action": "block",
+      "case": "responses plain planted",
+      "ok": true,
+      "status": 403,
+      "upstreamBodies": 0,
+      "outcome": "blocked"
+    },
+    {
+      "action": "block",
+      "case": "responses plain clean",
+      "ok": true,
+      "status": 200,
+      "upstreamBodies": 1,
+      "outcome": "clean"
+    },
+    {
+      "action": "block",
+      "case": "responses stream planted",
+      "ok": true,
+      "status": 403,
+      "upstreamBodies": 0,
+      "outcome": "blocked"
+    },
+    {
+      "action": "block",
+      "case": "responses stream clean",
+      "ok": true,
+      "status": 200,
+      "upstreamBodies": 1,
+      "outcome": "clean"
+    },
+    {
+      "action": "block",
+      "case": "turn off with header",
+      "ok": true,
+      "status": 403,
+      "upstreamBodies": 0,
+      "outcome": "blocked"
+    },
+    {
+      "action": "block",
+      "case": "turn off with metadata",
+      "ok": true,
+      "status": 403,
+      "upstreamBodies": 0,
+      "outcome": "blocked"
+    },
+    {
+      "action": "block",
+      "case": "turn off with field",
+      "ok": true,
+      "status": 403,
+      "upstreamBodies": 0,
+      "outcome": "blocked"
+    },
+    {
+      "action": "block",
+      "case": "turn off with guardrails",
+      "ok": true,
+      "status": 403,
+      "upstreamBodies": 0,
+      "outcome": "blocked"
+    }
+  ]
+}

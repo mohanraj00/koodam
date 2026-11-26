@@ -73,6 +73,10 @@ litellm_settings:
   # koodam_guard.py examines the tool replies and the documents (docs/gateway-guard.md).
   - koodam_guard.handler
   {{- end }}
+  {{- if $b.guard.enabled }}
+  # A request or a key must not turn off a hook of the operator.
+  allow_dynamic_callback_disabling: false
+  {{- end }}
 {{- end }}
 general_settings:
   master_key: os.environ/LITELLM_MASTER_KEY

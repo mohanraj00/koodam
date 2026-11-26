@@ -2,7 +2,7 @@
 
 An agent reads text from documents, web pages and tools. This text can hold instructions for the model. The gateway guard is an optional hook of the bundled gateway. It examines this text in each model request and records, marks or blocks a match. This page is the design and the log line contract (v1) for the programs that read the decisions, for example Nookku.
 
-> Status: [#248](https://github.com/mohanraj00/koodam/issues/248). The hook, the chart values and the unit tests are in the chart. The check in the pinned gateway image and the kind test come in the next pull request of #248. Until that check passes, the hook is not proved in the gateway image.
+> Status: [#248](https://github.com/mohanraj00/koodam/issues/248). The hook and the chart values are in the chart. The [image check](#check-the-pinned-gateway-image) and the kind test prove the hook in the pinned gateway image. The guard is off by default.
 
 **The guard is a tripwire for known forms. It is not a defense.** It finds only the fixed forms that its rules name. A different text can always go past it. The [egress policy](traced-egress.md) stays the boundary that limits the effect of a successful injection: a pod that follows an instruction still cannot call a host that its policy refuses.
 
@@ -14,7 +14,11 @@ The guard is a hook in the bundled LiteLLM gateway, in the same pattern as the [
 - The identity of a decision comes from the key metadata of the gateway, not from the request. The pod cannot change it.
 - The egress proxy does not read the body of a model request, and the guard does not change this. The proxy stays small, and its [span contract](egress-spans.md) does not change.
 
-The hook goes in the `litellm_settings.callbacks` list, after the zone hook. Its source is `config/gateway/koodam_guard.py`. The LiteLLM custom guardrail form with `default_on` is an alternative. The chart uses it only if a check in the pinned gateway image shows that no field of a request can turn it off. A pod must not turn off a policy of the operator.
+The hook goes in the `litellm_settings.callbacks` list, after the zone hook. Its source is `config/gateway/koodam_guard.py`. A pod must not turn off a policy of the operator:
+
+- The chart sets `litellm_settings.allow_dynamic_callback_disabling: false` when the guard is on. Thus the `x-litellm-disable-callbacks` header and the `litellm_disabled_callbacks` field of a key or a request do not turn off the hook.
+- The pinned image also honours these fields only with an enterprise licence. The image check sends them and a `guardrails` field, and the hook still runs.
+- The chart does not use the LiteLLM custom guardrail form. The `callbacks` form gives the same result, and the image check proves it.
 
 ## What the guard examines
 
@@ -123,7 +127,7 @@ The hook keeps a bounded cache of the digests that it examined for each key. A b
 
 ### Read the lines
 
-The lines are in the log of the gateway pod, in the namespace of the install. The operator reads them, for example with `kubectl logs` of the gateway Deployment. A reader matches a line to a test by `keyAlias` and `time`. A reader for Nookku is tracked in a Nookku issue that #248 files.
+The lines are in the log of the gateway pod, in the namespace of the install. The operator reads them, for example with `kubectl logs` of the gateway Deployment. A reader matches a line to a test by `keyAlias` and `time`. A reader for Nookku is tracked in [mohanraj00/nookku#700](https://github.com/mohanraj00/nookku/issues/700).
 
 **Protect the lines in the same way as the pod logs.** The line has no content, but a reader can compare the digest of a short text with the digest of a guess, and so confirm the guess.
 
@@ -146,13 +150,37 @@ A coding agent reads many texts that are full of instructions. Thus a wide rule 
 Other limits:
 
 - The guard adds time to each model call. The bundled gateway has 1 replica and 1 worker, so a slow hook delays each model call of the install.
-- The policy is one policy for the install. A stricter action for each namespace is a possible follow-up.
-- A detector with a classifier model is a possible follow-up. It starts with a spike that measures its speed, its matches and the licence of its weights.
+- The policy is one policy for the install. A stricter action for each namespace is a possible follow-up ([#439](https://github.com/mohanraj00/koodam/issues/439)).
+- A detector with a classifier model is a possible follow-up. It starts with a spike that measures its speed, its matches and the licence of its weights ([#438](https://github.com/mohanraj00/koodam/issues/438)).
+
+## Turn on the guard
+
+1. Install or upgrade the chart with `--set gateway.bundled.guard.enabled=true`. The default action is `record`, so the gateway does not change a request.
+2. Read the lines of the gateway:
+
+   ```sh
+   kubectl -n koodam-system logs deployment/koodam-litellm | grep '"kind":"gateway-guard"'
+   ```
+
+3. Examine the `recorded` lines for false matches with your agents. Then set `gateway.bundled.guard.action` to `mark` or `block` if you want.
+
+A change of a guard value starts the gateway pod again. [The chart README](../charts/koodam/README.md) has each value.
 
 ## Tests
 
-- `tests/test_guard_hook.py`: a planted injection and a clean reply in each request form, for each action. The same text in the system prompt or the user text gives no line. Also the `maxBytes` limit, the cache, a bad policy and a hook error.
+- `tests/test_guard_hook.py`: a planted injection and a clean reply in each request form, for each action. The same text in the system prompt or the user text gives no line. Also the `maxBytes` limit, the scan of a large block in pieces, the cache, a bad policy and a hook error.
 - `tests/testdata/guard/`: the measured set. It has 5 planted texts, one or more for each rule, and 4 clean texts, also a README with many instructions. The test asserts that each planted text matches its rule and that no clean text matches.
-- `test/chart/guard_test.go`: with the guard off, the gateway configuration does not change. With the guard on, the gateway has the hook, the registration and the policy. With the zone hook, the zone hook is first.
+- `test/chart/guard_test.go`: with the guard off, the gateway configuration does not change. With the guard on, the gateway has the hook, the registration, the policy and `allow_dynamic_callback_disabling: false`. With the zone hook, the zone hook is first.
+- `test/e2e/egress_test.go` (kind, action `record`): an Agent pod sends a planted and a clean tool reply. The gateway sends both calls and writes a `recorded` and a `clean` line with the key alias and the namespace of the Agent. The planted reply names a host on port 8443, and the egress proxy refuses the call to it.
 
-The next pull request of #248 adds a check in the pinned gateway image and a kind test with the mock model. A pod sends a synthetic tool reply that tells the model to send data to a test host. The guard records it, and the egress proxy still refuses the test host.
+### Check the pinned gateway image
+
+`make guard-image-check` runs the hook in the gateway image of the chart, in docker, with a fake upstream model in the same container. It uses no model and no network access. For each action, it sends a planted and a clean text in the 4 request forms (chat completions, Anthropic Messages with a tool reply, Anthropic Messages with a text document, and Responses), with and without a stream. It also sends 4 requests that try to turn off the hook. It checks the status, the body that the upstream gets and the line of each request. The output has the names of the cases, not the texts.
+
+Run the check again before a change of the pinned image. To save the result, add `--results docs/results/guard-image-check.json` to the command of the target. The result for `litellm-database:v1.104.2` on 2026-11-26: 60 cases, no failures ([results file](results/guard-image-check.json), with the image digest and the source commit).
+
+- `block`: each planted request gets 403, and the upstream gets no request. Each clean request gets 200.
+- `mark`: the upstream gets each planted block with 1 notice line.
+- `record`: the upstream gets each request with no change.
+
+The image sends `/v1/messages` to an Anthropic model as it is. For an OpenAI model, the pinned image removes a text document block before it sends the request. The guard examines the block before this change, so its line does not depend on the model.

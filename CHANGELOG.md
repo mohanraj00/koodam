@@ -45,6 +45,7 @@ This file records the changes for each Koodam version. The newest version is fir
 ### Gateway
 
 - Add an optional guard hook to the bundled gateway for instructions in untrusted content (`gateway.bundled.guard`, off by default). It examines the tool replies and the documents of each model request with fixed rules, and it records, marks or blocks a match. It writes one log line with the policy version and a digest for each new block, and no content. It is a tripwire for known forms, not a defense. The [gateway guard](docs/gateway-guard.md) page lists what it cannot detect. The gateway `callbacks` setting is now a list ([#248](https://github.com/mohanraj00/koodam/issues/248)).
+- With the guard on, the chart sets `allow_dynamic_callback_disabling: false`, so a request or a key cannot turn off a gateway hook. The hook examines a large block in pieces, so its memory does not grow with the block. `make guard-image-check` runs the hook in the pinned gateway image with docker ([#248](https://github.com/mohanraj00/koodam/issues/248)).
 
 ## v0.4.0 (2026-11-20)
 
