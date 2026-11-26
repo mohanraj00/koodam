@@ -130,7 +130,8 @@ func (z *zoneInstall) chat(model, tenant string) (int, string) {
 		req.Header.Set("Content-Type", "application/json")
 		return req
 	})
-	Expect(body).NotTo(ContainSubstring(z.key), "The answer of the gateway has the master key.")
+	// The assertion is on a boolean. Thus a failure message does not have the body or the key.
+	Expect(strings.Contains(body, z.key)).To(BeFalse(), "The answer of the gateway has the master key.")
 	return status, body
 }
 
@@ -501,9 +502,10 @@ gateway:
 			out, err := exec.Command("kubectl", "-n", z.systemNS, "logs", "deployment/"+z.fullname()+"-litellm",
 				"--tail=-1").Output()
 			Expect(err).NotTo(HaveOccurred())
+			// The key check is first and on a boolean. Thus no failure message has a log with the key.
+			Expect(strings.Contains(string(out), z.key)).To(BeFalse(), "The log of the gateway has the master key.")
 			Expect(string(out)).To(ContainSubstring(fmt.Sprintf(
 				`{"kind": "gateway-zone", "outcome": %q, "zone": %q, "model": %q}`, outOfZone, z.zone, other(z).model())))
-			Expect(string(out)).NotTo(ContainSubstring(z.key), "The log of the gateway has the master key.")
 		}
 	})
 
