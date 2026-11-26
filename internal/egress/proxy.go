@@ -84,7 +84,8 @@ const (
 	ReasonTenantLabelNotASCII = "TenantLabelNotASCII"
 )
 
-// ReasonHeader gives the typed reason of a tenant token refusal to the app.
+// ReasonHeader gives the typed reason of a tenant token refusal, or of an App key refusal, to
+// the caller.
 const ReasonHeader = "Koodam-Reason"
 
 // NoTenantCustomer is the customer of a model call of a pod that is not an App pod, when the
@@ -193,6 +194,10 @@ type Proxy struct {
 	// the pod and the users of its namespace cannot write. If it is nil, the proxy examines no
 	// tenant token.
 	TenantKey func(namespace, appVersion string) (ed25519.PublicKey, bool)
+	// AppKeyOwner gives the AppVersion that has the gateway key with this hash. If it is not
+	// nil, the proxy refuses a model call with the key of an AppVersion from a pod that is not a
+	// pod of that AppVersion. The hash must come from the same source as the key of TenantKey.
+	AppKeyOwner func(keyHash string) (namespace, appVersion string, ok bool)
 
 	once      sync.Once
 	direct    http.RoundTripper
@@ -347,6 +352,11 @@ func (p *Proxy) llm(w http.ResponseWriter, r *http.Request, sp *Span) {
 	sp.Port = p.Gateway.Port()
 	if sp.Port == "" {
 		sp.Port = map[string]string{schemeHTTP: "80", "https": "443"}[p.Gateway.Scheme]
+	}
+	if reason := p.appKeyReason(r, sp); reason != "" {
+		w.Header().Set(ReasonHeader, reason)
+		p.deny(w, sp, reason)
+		return
 	}
 	tenant, ok := p.tenantOf(w, r, sp)
 	if !ok {

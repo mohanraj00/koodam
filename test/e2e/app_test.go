@@ -465,6 +465,21 @@ var _ = Describe("Thin App", Ordered, Label("app"), func() {
 		Eventually(func() int { return count(egress.NoTenantCustomer) }, 3*time.Minute, 2*time.Second).
 			Should(BeNumerically(">=", 1), "The gateway did not count the Agent call on the reserved customer.")
 		Expect(count(tenant)).To(Equal(calls), "The gateway counted the Agent call on the tenant.")
+
+		By("refusing the gateway key of the App in a model call from the Agent pod")
+		appKey := &corev1.Secret{}
+		Expect(k8s.Get(ctx, client.ObjectKey{Namespace: appNS, Name: "kd-" + v1}, appKey)).To(Succeed())
+		// The key goes to the pod on the standard input. Thus no command line and no log has it.
+		relay := `read -r key; curl -sS -o /dev/null -D - --max-time 30 -H "Authorization: Bearer $key" ` +
+			`-H 'Content-Type: application/json' ` +
+			`-d '{"model":"` + mockModel + `","messages":[{"role":"user","content":"hi"}]}' ` +
+			`"$OPENAI_BASE_URL/chat/completions" | tr -d '\r' | grep -i -e '^HTTP/' -e '^koodam-reason:'`
+		cmd := exec.Command("kubectl", "exec", "-i", "-n", appNS, pod, "--", "sh", "-c", relay)
+		cmd.Stdin = strings.NewReader(string(appKey.Data["key"]) + "\n")
+		out, err := cmd.Output()
+		Expect(err).NotTo(HaveOccurred(), "The model call with the key of the App did not run.")
+		Expect(string(out)).To(And(ContainSubstring(" 403"), ContainSubstring(egress.ReasonAppKeyOutOfPod)),
+			"The proxy did not refuse the key of the App from the Agent pod.")
 	})
 
 	It("drains a retiring version and then revokes its key", func() {

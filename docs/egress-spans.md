@@ -80,6 +80,8 @@ The proxy does not decrypt TLS. For `connect` and `tls`, the span has the host a
 | `TenantTokenInvalid` | `denied` | The tenant token is not a token of the AppVersion of the pod: it has a false signature, or it is not a token. |
 | `TenantTokenExpired` | `denied` | The tenant token is at its end time or after it. |
 | `TenantLabelNotASCII` | `denied` | The tenant label of the token cannot be the value of a header. |
+| `AppKeyOutOfPod` | `denied` | An `llm` call has the gateway key of an AppVersion, and the pod is not a pod of that AppVersion. |
+| `KeyScanLimit` | `denied` | An `llm` call has more key texts than the proxy examines, or its headers, its query and its path are together too long, or a query value has an escape that is not valid. |
 
 A reader must accept other reason text. The reason is for people, and new reasons can come in the same version.
 
@@ -93,6 +95,7 @@ The proxy can bind each `llm` call of an App pod to a tenant. Then it accepts su
 - The gateway does not get the token, and no span has the token or the tenant label.
 - A tenant label in the header must have only visible ASCII characters, with no space at its start or end.
 - A pod that is not an App pod has no tenant. With `--tenant-tokens`, the proxy sets the customer header of its `llm` calls to the reserved customer `koodam-no-tenant`.
+- With `--tenant-tokens`, the proxy also reads the hash of the gateway key from the status of each AppVersion. It refuses an `llm` call with the key of an AppVersion from a pod that is not a pod of that AppVersion, with the reason `AppKeyOutOfPod`. This check is defense in depth. [tenants.md](tenants.md#the-tenant-token) gives the key locations and the limits.
 
 ## What a span holds from the pod
 

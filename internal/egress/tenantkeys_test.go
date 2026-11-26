@@ -92,3 +92,49 @@ func TestTenantKeysWatch(t *testing.T) {
 	}
 	eventually(t, "no key after the delete", func() bool { _, ok := keys.Key(ns, "shop-v3"); return !ok })
 }
+
+// The hash of the gateway key of an AppVersion comes from its status, in the watched namespaces
+// only. A new hash replaces the hash, and a delete removes it.
+func TestTenantKeysWatchTheKeyHash(t *testing.T) {
+	const hash1, hash2, hash3 = "hash-1", "hash-2", "hash-3"
+	withHash := func(namespace, name, hash string) *unstructured.Unstructured {
+		u := appVersion(namespace, name, "")
+		_ = unstructured.SetNestedField(u.Object, hash, "status", "keyHash")
+		return u
+	}
+	client := dynamicfake.NewSimpleDynamicClientWithCustomListKinds(runtime.NewScheme(),
+		map[schema.GroupVersionResource]string{AppVersions: "AppVersionList"},
+		withHash(ns, appV1, hash1), appVersion(ns, appV2, ""), withHash("other", appV1, hash3))
+	keys := NewTenantKeys()
+	ctx := t.Context()
+	if err := keys.Watch(ctx, client, 0, ns); err != nil {
+		t.Fatal(err)
+	}
+	owner := func(hash string) string {
+		namespace, version, ok := keys.KeyOwner(hash)
+		if !ok {
+			return ""
+		}
+		return namespace + "/" + version
+	}
+	if owner(hash1) != ns+"/"+appV1 || owner(hash3) != "" || owner("") != "" {
+		t.Fatalf("The owners are %q, %q and %q.", owner(hash1), owner(hash3), owner(""))
+	}
+	versions := client.Resource(AppVersions).Namespace(ns)
+	if _, err := versions.Update(ctx, withHash(ns, appV1, hash2), metav1.UpdateOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	eventually(t, "the new hash", func() bool { return owner(hash2) == ns+"/"+appV1 && owner(hash1) == "" })
+	if _, err := versions.Update(ctx, withHash(ns, appV2, hash1), metav1.UpdateOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	eventually(t, "the hash of the second version", func() bool { return owner(hash1) == ns+"/"+appV2 })
+	if err := versions.Delete(ctx, appV1, metav1.DeleteOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	eventually(t, "no owner after the delete", func() bool { return owner(hash2) == "" && owner(hash1) == ns+"/"+appV2 })
+	if _, err := versions.Update(ctx, appVersion(ns, appV2, ""), metav1.UpdateOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	eventually(t, "no owner after the status has no hash", func() bool { return owner(hash1) == "" })
+}
