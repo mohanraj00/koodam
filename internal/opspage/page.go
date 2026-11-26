@@ -38,6 +38,14 @@ var contentTypes = map[string]string{
 	"":      "text/plain; charset=utf-8",
 }
 
+// Routes sends /v1/ to the spend API and each other path to the operations page.
+func Routes(api http.Handler) http.Handler {
+	mux := http.NewServeMux()
+	mux.Handle("/v1/", api)
+	mux.Handle("/", Handler())
+	return mux
+}
+
 // Handler serves the page at / and its files. It serves only the embedded files, with no
 // directory list. The page reads the spend API of the same origin with the token of the viewer.
 func Handler() http.Handler {

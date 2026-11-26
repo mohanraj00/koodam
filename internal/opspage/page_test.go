@@ -99,3 +99,18 @@ func TestPageKeepsTheTokenInMemory(t *testing.T) {
 		}
 	}
 }
+
+func TestRoutes(t *testing.T) {
+	api := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusTeapot) })
+	h := Routes(api)
+	for path, want := range map[string]int{
+		"/v1/runs": http.StatusTeapot, "/v1/unknown": http.StatusTeapot, "/": http.StatusOK,
+		"/page.js": http.StatusOK, "/v1": http.StatusTemporaryRedirect, "/none": http.StatusNotFound,
+	} {
+		w := httptest.NewRecorder()
+		h.ServeHTTP(w, httptest.NewRequest(http.MethodGet, path, nil))
+		if w.Code != want {
+			t.Errorf("GET %s gave %d, want %d", path, w.Code, want)
+		}
+	}
+}
