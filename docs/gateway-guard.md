@@ -177,7 +177,7 @@ A change of a guard value starts the gateway pod again. [The chart README](../ch
 
 `make guard-image-check` runs the hook in the gateway image of the chart, in docker, with a fake upstream model in the same container. It uses no model and no network access. For each action, it sends a planted and a clean text in the 4 request forms (chat completions, Anthropic Messages with a tool reply, Anthropic Messages with a text document, and Responses), with and without a stream. It also sends 4 requests that try to turn off the hook. It checks the status, the body that the upstream gets and the line of each request. The output has the names of the cases, not the texts.
 
-Run the check again before a change of the pinned image. The result for `litellm-database:v1.104.2` on 2026-11-26: 60 cases, no failures.
+Run the check again before a change of the pinned image. To save the result, add `--results docs/results/guard-image-check.json` to the command of the target. The result for `litellm-database:v1.104.2` on 2026-11-26: 60 cases, no failures ([results file](results/guard-image-check.json), with the image digest and the source commit).
 
 - `block`: each planted request gets 403, and the upstream gets no request. Each clean request gets 200.
 - `mark`: the upstream gets each planted block with 1 notice line.
