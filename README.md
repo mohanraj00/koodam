@@ -72,6 +72,7 @@ A Workspace is a pod with a home on a PVC. I connect to it over SSH and run the 
 - [Spend budgets](docs/spend-budgets.md): the `SpendBudget` resource, with a spend limit for each period for the Agent runs of a namespace.
 - [Tenants](docs/tenants.md): the `TenantQuota` resource, with a quota and a rate limit for each tenant of an App.
 - [Zones](docs/zones.md): one install for each zone, and 2 installs in one cluster.
+- [Gateway guard](docs/gateway-guard.md): the design of an optional guard for instructions in untrusted content, its log line and what it cannot detect.
 - [App ingress spans](docs/app-ingress-spans.md): the contract of the spans at the App ingress.
 - [Release checklist](docs/release-checklist.md): the steps before a tag.
 - [Security](SECURITY.md): how to report a security problem, the supported versions and the response goal.
