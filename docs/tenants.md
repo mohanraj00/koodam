@@ -8,7 +8,8 @@ A tenant is a client group of an App. The tenant label comes from the signed cla
 - The claim check container can refuse a tenant from a limits file. See "The refusals of the claim check".
 - With `apps.enabled`, the TenantQuota controller makes the gateway customer of each tenant label and writes the use to the status. See "The gateway customer" and "The controller".
 - With a tenant claim, the tenant token binds each model call of an App pod to the tenant of a request. See "The tenant token".
-- No pod gets a limits file at this time. Thus the claim check refuses no tenant: the rate limit, the refusal of a tenant at its quota and the default for an unknown tenant come in a later change of [#193](https://github.com/mohanraj00/koodam/issues/193). The gateway already refuses a model call of a tenant at its spend limit.
+- With a tenant claim (`apps.claimCheck.tenantClaim`), each AppVersion pod gets the limits file of its tenants. Then the claim check refuses a tenant above its rate, a tenant at its quota and, if the chart says so, an unknown tenant. See "The limits file" and "A tenant with no TenantQuota".
+- The spend group `tenant` of the spend report comes in a later change of [#193](https://github.com/mohanraj00/koodam/issues/193).
 
 ## The TenantQuota spec
 
@@ -31,7 +32,7 @@ spec:
 
 | Field | Rule |
 |---|---|
-| `tenant` | Necessary. The tenant label of the signed claim, with 1 to 253 characters. You cannot change it after create. The API refuses the reserved label `koodam-no-tenant`. |
+| `tenant` | Necessary. The tenant label of the signed claim, with 1 to 253 characters and a maximum of 253 bytes in UTF-8. You cannot change it after create. The API refuses the reserved label `koodam-no-tenant`. |
 | `appRef.name` | Optional. The App that the rate limit and the claim check refusals apply to. With no value, they apply to each App of the namespace. |
 | `period` | `Hour` or `Day`. The default is `Day`. The gateway sets the start of each period. |
 | `requests` | Optional. The maximum count of model calls of the tenant in one period. The minimum is 1. |
@@ -73,6 +74,46 @@ The check examines a request after it verified the signed claim:
 - Each pod has its own token bucket for each tenant. A refused request uses no token, and the limit of one tenant has no effect on a different tenant.
 - A request with no tenant label has no tenant limit. This occurs only if the claim check has no tenant claim.
 
+## The limits file
+
+With `apps.claimCheck.tenantClaim`, the controller writes one ConfigMap for each AppVersion, with the name `kd-<version>-tenants`. The check container of each pod of the version mounts it as its limits file.
+
+- The file has each `TenantQuota` of the namespace of the version that applies to its App: a `TenantQuota` with no `appRef`, or with the `appRef` of the App. A tenant label of a different App or a different namespace is an unknown tenant for the version.
+- Each pod gets the rate divided by the number of pods that share it. The burst of a pod is the burst divided by this number, to the next full number, with a minimum of 1. Thus the sum of the bursts can be more than the burst of the tenant.
+  - The number is the sum of `spec.replicas` of the version and of each other version of the App with a weight above 0 in the spec of an endpoint. A caller can select each such version with the header `Koodam-App-Version`. Thus the rate is for the App, and a tenant does not get it one time for each version.
+  - A version with a complete revoke has no pods, so it is not in the sum.
+  - If the replicas of the versions are not in proportion to their weights, a tenant gets less than its rate.
+  - Each pod has its own token bucket, so a tenant can get one request from each pod at one time. This can be more than the burst of the `TenantQuota`. The rate over time stays correct. [#428](https://github.com/mohanraj00/koodam/issues/428) has the work for a burst that the pods share.
+  - A `TenantQuota` with no `appRef` applies to each App of the namespace, and each App gives the tenant the full rate. For a rate of one App, set the `appRef`.
+- The file has the mark of the condition `QuotaExceeded`. While the mark is set, the claim check refuses each request of the tenant with `TenantQuotaExceeded`. Only the status `True` sets the mark. The status `Unknown` (the reason `RequestCountCapped`) sets no mark.
+- A change of a `TenantQuota`, of its mark, of the weights of the App or of `spec.replicas` of a version of the App changes the ConfigMap. The kubelet then updates the file in the pods, and the check container reads it again. This can take more than 1 minute. The pods do not start again.
+  - The pods do not read a new file at the same time. A new pod starts with the new, smaller rate. A pod that runs keeps its old rate until it reads the new file. Thus, after a new version gets a weight or a version gets more replicas, a tenant can get more than its rate for this time. Only a change of the App or of a version starts this time, and a tenant cannot make such a change. [#428](https://github.com/mohanraj00/koodam/issues/428) has the work for a limit that the pods share. See "How exact the limits are".
+- A ConfigMap has a maximum of 1 MiB. This is space for some thousand tenants of one App.
+- The mark comes from the gateway count of the tenant, so the mark is only as correct as that count:
+  - With the tenant token, the gateway counts a model call of an App pod only for the tenant of a token. An app can use the token of a tenant for a model call of a different request until the token ends. Thus an app can add to the count of a tenant that sent a request in that time, and to no other count.
+  - With `apps.claimCheck.tenantToken=false`, the code in the pod selects the tenant label of each model call. An app can then fill the quota of a tenant with the calls of a different tenant, and the claim check refuses the requests of the first tenant.
+  - The rate limit of the claim check does not use the gateway count. See "The tenant token" for the other limits.
+- Without a tenant claim, the claim check has no tenant label, and a pod gets no limits file.
+
+## A tenant with no TenantQuota
+
+By default, the claim check accepts a tenant label with no `TenantQuota`, with no limit. The chart can change this:
+
+```yaml
+tenants:
+  defaultQuota:
+    rateLimit:
+      requestsPerSecond: "5"
+      burst: 10
+  refuseUnknown: false
+  usageInterval: 30s
+```
+
+- `tenants.defaultQuota.rateLimit` gives such a tenant a rate limit. Each tenant label has its own token bucket. The gateway has no customer for such a tenant, so it has no quota for each period.
+- `tenants.refuseUnknown: true` refuses such a tenant with the status 403 and the reason `UnknownTenant`. Then `defaultQuota` has no effect.
+- `tenants.usageInterval` is the time between 2 reads of the use from the gateway.
+- `defaultQuota` and `refuseUnknown` need `apps.claimCheck.issuer` and `apps.claimCheck.tenantClaim`. The chart refuses them without these values.
+
 ## The gateway customer
 
 The quota for each period is in the gateway. The gateway has one customer for each tenant label, with these values from the `TenantQuota`:
@@ -106,6 +147,20 @@ The TenantQuota controller runs with `apps.enabled`. For each `TenantQuota` it d
 - If 2 or more `TenantQuota` objects of the install name one tenant label, only the oldest one has an effect. Each other one has `Ready=False` with the reason `DuplicateTenant`, and no use in its status. When the oldest one goes, the next one gets the label, and the customer keeps its spend.
 - A `TenantQuota` with the reserved label `koodam-no-tenant` has no effect. The API refuses a new one. For an object that is older than this rule, the controller sets `Ready=False` with the reason `ReservedTenant`. It makes no gateway call for the object, and a delete of the object does not delete the gateway customer. See "The tenant token".
 - A delete of the last `TenantQuota` of a tenant label deletes the gateway customer and its budget first, and then removes the finalizer. While the gateway does not answer, the `TenantQuota` stays.
+
+## How exact the limits are
+
+Koodam has no count that all the pods share before each request. A limit that comes from the state of one pod, or from a read at an interval, is thus not exact. A tenant can get more than a limit in these cases:
+
+| Limit | Cause | Effect |
+|---|---|---|
+| `requests` | Koodam sends no limit of the request count to the gateway. The controller reads the count from the gateway at each `tenants.usageInterval`. Then the mark of the condition `QuotaExceeded` goes to the pods in the limits file. | The claim check accepts the requests of the tenant until each pod has the mark. With no `rateLimit` and no `spend`, nothing limits the count of these requests. |
+| `rateLimit.requestsPerSecond` | The pods do not read a new limits file at the same time. | After a new version gets a weight or a version gets more replicas, a tenant can get more than its rate until each pod reads the new file. |
+| `rateLimit.burst` | Each pod has its own token bucket. | A tenant can get one request from each pod at one time. |
+
+- Set a `rateLimit` or a `spend` limit together with `requests`. The rate then limits the requests in the time before the mark. The `spend` limit does not use the mark: the gateway refuses a model call of a customer at its budget.
+- The rate and the burst of `tenants.defaultQuota` have the same 2 causes as the rate and the burst of a `TenantQuota`.
+- [#429](https://github.com/mohanraj00/koodam/issues/429) has the work for a request limit at one shared point. [#428](https://github.com/mohanraj00/koodam/issues/428) has the work for a rate and a burst that the pods share.
 
 ## The tenant token
 

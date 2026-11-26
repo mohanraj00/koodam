@@ -86,6 +86,22 @@ spec:
         {{- end }}
         {{- if .Values.apps.enabled }}
         - --apps-enabled
+        - {{ printf "--tenant-usage-interval=%s" .Values.tenants.usageInterval | quote }}
+        {{- $rate := .Values.tenants.defaultQuota.rateLimit }}
+        {{- if or .Values.tenants.refuseUnknown $rate.requestsPerSecond $rate.burst }}
+        {{- if not (and $claim .Values.apps.claimCheck.tenantClaim) }}
+        {{- fail "tenants.defaultQuota and tenants.refuseUnknown need apps.claimCheck.issuer and apps.claimCheck.tenantClaim, because the claim check has no tenant label without them." }}
+        {{- end }}
+        {{- with $rate.requestsPerSecond }}
+        - {{ printf "--tenant-default-rate=%v" . | quote }}
+        {{- end }}
+        {{- with $rate.burst }}
+        - {{ printf "--tenant-default-burst=%d" (int64 .) | quote }}
+        {{- end }}
+        {{- if .Values.tenants.refuseUnknown }}
+        - --tenant-refuse-unknown
+        {{- end }}
+        {{- end }}
         {{- if .Values.egressProxy.enabled }}
         # Each AppVersion gets a NetworkPolicy with egress to these pods only.
         - --egress-proxy-namespace={{ .Release.Namespace }}
