@@ -259,6 +259,41 @@ var _ = Describe("SpendBudget ledger", func() {
 		Expect(gw.created).To(BeEmpty())
 	})
 
+	It("checks the budget again if it changed after the reservation and before the key", func() {
+		newRun(ledgerActive, "4")
+		reconcileRun(ledgerActive)
+		newRun(ledgerRun1, "1")
+		// A crash after the reservation and before the key hash leaves a reservation with no key.
+		after, _, err := r.reserve(ctx, run(ledgerRun1))
+		Expect(err).NotTo(HaveOccurred())
+		Expect(after).To(BeZero())
+		Expect(budget().Status.Reserved).To(Equal("5"))
+		a := run(ledgerRun1)
+		a.Spec.Budget = resource.MustParse("8")
+		Expect(k8sClient.Update(ctx, a)).To(Succeed())
+		expectWaits(ledgerRun1, reconcileRun(ledgerRun1))
+		b := budget()
+		Expect(b.Status.Reserved).To(Equal("4"))
+		Expect(b.Status.Reservations).To(HaveLen(1))
+		Expect(gw.created).To(HaveLen(1))
+	})
+
+	It("keeps the reservation of an ended run that is not revoked when it rebuilds the ledger", func() {
+		newRun(ledgerActive, "4")
+		reconcileRun(ledgerActive)
+		a := run(ledgerActive)
+		a.Status.Phase = corev1alpha1.AgentFailed
+		Expect(k8sClient.Status().Update(ctx, a)).To(Succeed())
+		b := budget()
+		b.Status = corev1alpha1.SpendBudgetStatus{}
+		Expect(k8sClient.Status().Update(ctx, b)).To(Succeed())
+		newRun(ledgerLater, "7")
+		expectWaits(ledgerLater, reconcileRun(ledgerLater))
+		b = budget()
+		Expect(b.Status.Reserved).To(Equal("4"))
+		Expect(b.Status.Reservations).To(HaveLen(1))
+	})
+
 	It("does not hold the other runs behind a run with a budget above the limit", func() {
 		newRun(ledgerHuge, "11")
 		newRun(ledgerNext, "2")

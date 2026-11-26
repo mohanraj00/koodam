@@ -41,7 +41,7 @@ The Agent controller writes the status. It has these fields:
 The controller counts only the Agent runs. Workspace, AppVersion and TestKey keys keep their own daily budgets.
 
 1. Before the controller makes the key of a run, it reads the SpendBudget of the namespace. With no SpendBudget, the run starts.
-2. A run starts only if `spend + reserved + its budget` is not more than `spec.spend`. A run with a budget of zero or less fails with the reason `Invalid`, because a negative reservation would add room to the limit. The controller writes the reservation to the status before it makes the key. The status update with the `resourceVersion` is the lock.
+2. A run starts only if `spend + reserved + its budget` is not more than `spec.spend`. A run with a budget of zero or less fails with the reason `Invalid`, because a negative reservation would add room to the limit. The controller writes the reservation to the status before it makes the key. If the run budget changes before the key exists, the controller checks the new budget again. The status update with the `resourceVersion` is the lock.
 3. A run that cannot start stays `Pending`. Its condition `Provisioned` is `False` with the reason `PeriodBudgetExceeded`, and the message gives the cause and the end of the period. The run does not fail, and the controller makes no key.
 4. The controller checks a waiting run again when the SpendBudget changes, at the end of the period, and at the latest after one minute.
 5. Waiting runs start in the order of their creation time. A run with a budget that is more than the limit never starts, but it does not stop the runs after it. Delete it, or raise the limit.
@@ -50,7 +50,7 @@ The controller counts only the Agent runs. Workspace, AppVersion and TestKey key
 The rules of the period:
 
 - The spend of a run counts in the period where it started. At the end of a period, the controller drops the reservations of that period. A run of the old period keeps its own budget at the gateway, and its spend does not go into the new period.
-- If the status has no period (a new SpendBudget, or a lost status after a restore), or if `spec.period` changes, the controller rebuilds the ledger from the Agents. It finds a change of `spec.period` also after the old period ended. Each active run with a key gets a reservation. Each ended run that started in the period adds its settled spend.
+- If the status has no period (a new SpendBudget, or a lost status after a restore), or if `spec.period` changes, the controller rebuilds the ledger from the Agents. It finds a change of `spec.period` also after the old period ended. Each active run with a key gets a reservation. An ended run keeps its reservation until the revoke blocked its key and recorded its usage. Each ended run that started in the period adds its settled spend.
 - The ledger has a maximum of 500 active runs. More runs wait.
 
 ## Who can write it

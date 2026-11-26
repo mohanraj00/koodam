@@ -174,7 +174,8 @@ func (r *AgentReconciler) roll(ctx context.Context, b *corev1alpha1.SpendBudget,
 		if o.Status.KeyHash == "" {
 			continue
 		}
-		if !agentEnded(&o) {
+		// An ended run keeps its reservation until the revoke blocked its key and read its usage.
+		if !agentEnded(&o) || o.Status.RevokedAt == nil {
 			if len(s.Reservations) < maxReservations {
 				s.Reservations = append(s.Reservations, corev1alpha1.SpendReservation{
 					RunID: string(o.UID), Agent: o.Name, Budget: decimal(o.Spec.Budget)})
@@ -218,8 +219,19 @@ func (r *AgentReconciler) reserve(ctx context.Context, a *corev1alpha1.Agent) (t
 	if err := r.roll(ctx, b, now); err != nil {
 		return 0, "", err
 	}
-	if reservation(b, a.UID) >= 0 {
-		return 0, "", r.writeLedger(ctx, b, before, now)
+	if i := reservation(b, a.UID); i >= 0 {
+		if b.Status.Reservations[i].Budget == decimal(a.Spec.Budget) {
+			return 0, "", r.writeLedger(ctx, b, before, now)
+		}
+		// The run budget changed before the key exists. Drop the old reservation and check the new
+		// budget, because the key gets the new budget.
+		held, reserved := quantity(b.Status.Reservations[i].Budget), quantity(b.Status.Reserved)
+		reserved.Sub(held)
+		if reserved.Sign() < 0 {
+			reserved = resource.Quantity{}
+		}
+		b.Status.Reserved = decimal(reserved)
+		b.Status.Reservations = slices.Delete(b.Status.Reservations, i, i+1)
 	}
 	waiting, err := r.waitingRuns(ctx, a.Namespace, b)
 	if err != nil {
