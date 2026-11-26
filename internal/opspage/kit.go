@@ -21,11 +21,11 @@ import (
 	"embed"
 )
 
-// Kit holds the vendored mugham kit files under static/kit. mugham.pin.json gives the
-// release and the SHA-256 value of each file.
+// files holds the page and the vendored mugham kit files under static/kit. mugham.pin.json
+// gives the release and the SHA-256 value of each kit file.
 //
-//go:embed static/kit
-var Kit embed.FS
+//go:embed static
+var files embed.FS
 
 // Pin is the content of mugham.pin.json.
 //

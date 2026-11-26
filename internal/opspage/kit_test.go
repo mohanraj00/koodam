@@ -42,11 +42,11 @@ func TestKitMatchesPin(t *testing.T) {
 		t.Fatalf("the pin does not name the release asset: %+v", p)
 	}
 	got := map[string]string{}
-	err := fs.WalkDir(Kit, "static/kit", func(path string, d fs.DirEntry, err error) error {
+	err := fs.WalkDir(files, "static/kit", func(path string, d fs.DirEntry, err error) error {
 		if err != nil || d.IsDir() {
 			return err
 		}
-		data, err := Kit.ReadFile(path)
+		data, err := files.ReadFile(path)
 		sum := sha256.Sum256(data)
 		got[path[len("static/kit/"):]] = hex.EncodeToString(sum[:])
 		return err

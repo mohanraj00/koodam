@@ -86,6 +86,23 @@ Use `-request-timeout` to set the time limit for the Kubernetes and gateway read
 An expired request gets status 504. If an upstream read fails, the API gives an error with no partial
 spend data.
 
+## Operations page
+
+The server also serves a read-only operations page at `/`. Open the address of the server in a browser
+and give a bearer token. The page shows the runs, the detail of one run, and the spend in a period by a
+label and by namespace. It reads the API again at the `POLL_MS` interval in
+`internal/opspage/static/page.js`. Use the viewer review mode, so that each
+person sees only the namespaces where that person can list Agents.
+
+- The page keeps the token in memory only. A reload or a close of the page forgets it. The page does not
+  write the token to storage, to the URL or to the console.
+- The page and the mugham kit files are in the binary. The server sends a `Content-Security-Policy`
+  that permits no inline script and no other origin. `internal/opspage/README.md` tells how to update
+  the kit.
+- The page sends GET requests to `/v1/` only. It has no action that changes the cluster.
+- Each table shows the items of the first `MAX_PAGES` pages in `page.js`. If the server has more items,
+  the status tells you.
+
 ## List runs
 
 `GET /v1/runs` gives the retained Agent runs, one namespace after the other, in the order of

@@ -1,0 +1,68 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="referrer" content="no-referrer">
+  <title>Koodam operations</title>
+  <link rel="stylesheet" href="kit/src/tokens/tokens.css">
+  <link rel="stylesheet" href="kit/src/styles/page.css">
+  <link rel="stylesheet" href="page.css">
+  <script type="module" src="page.js"></script>
+</head>
+<body>
+  <header>
+    <h1>Koodam operations</h1>
+    <p>Agent runs and spend. This page only reads data.</p>
+  </header>
+  <main>
+    <section aria-labelledby="token-title">
+      <h2 id="token-title">Token</h2>
+      <form id="token-form" class="controls" autocomplete="off">
+        <div class="field">
+          <label for="token">Bearer token</label>
+          <input id="token" type="password" autocomplete="off" spellcheck="false" required>
+        </div>
+        <button type="submit">Connect</button>
+        <button type="button" id="forget">Forget the token</button>
+      </form>
+      <p class="note">The page keeps the token in memory only. A reload or a close of the page forgets it.</p>
+      <div id="state"></div>
+    </section>
+
+    <section aria-labelledby="runs-title">
+      <h2 id="runs-title">Runs</h2>
+      <div id="runs"></div>
+      <div class="controls">
+        <div class="field">
+          <label for="run">Run detail</label>
+          <select id="run"></select>
+        </div>
+      </div>
+      <div id="detail"></div>
+    </section>
+
+    <section aria-labelledby="spend-title">
+      <h2 id="spend-title">Spend in a period</h2>
+      <form id="period" class="controls">
+        <div class="field">
+          <label for="from">From (UTC)</label>
+          <input id="from" type="date" required>
+        </div>
+        <div class="field">
+          <label for="to">To (UTC)</label>
+          <input id="to" type="date" required>
+        </div>
+        <div class="field">
+          <label for="label">Label name</label>
+          <input id="label" type="text" value="koodam.dev/cost-group" spellcheck="false" required>
+        </div>
+        <button type="submit">Show</button>
+      </form>
+      <div id="by-label"></div>
+      <div id="by-namespace"></div>
+    </section>
+  </main>
+  <footer>The page reads the spend API again every 30 seconds. Amounts are in USD.</footer>
+</body>
+</html>

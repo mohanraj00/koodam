@@ -39,6 +39,7 @@ import (
 
 	corev1alpha1 "github.com/mohanraj00/koodam/api/v1alpha1"
 	"github.com/mohanraj00/koodam/internal/appclaim"
+	"github.com/mohanraj00/koodam/internal/opspage"
 	"github.com/mohanraj00/koodam/internal/spendapi"
 )
 
@@ -85,7 +86,7 @@ func main() {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(2)
 	}
-	if err := serve(*listen, c.Timeout, handler); err != nil {
+	if err := serve(*listen, c.Timeout, routes(handler)); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}
@@ -170,6 +171,14 @@ func setupKube(c *spendapi.Config, rules *clientcmd.ClientConfigLoadingRules) er
 		return errors.New("the Kubernetes client could not start")
 	}
 	return nil
+}
+
+// routes sends /v1/ to the spend API and each other path to the operations page.
+func routes(api http.Handler) http.Handler {
+	mux := http.NewServeMux()
+	mux.Handle("/v1/", api)
+	mux.Handle("/", opspage.Handler())
+	return mux
 }
 
 func serve(address string, timeout time.Duration, handler http.Handler) error {
