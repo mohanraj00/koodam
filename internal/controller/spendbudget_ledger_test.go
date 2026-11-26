@@ -48,6 +48,8 @@ const (
 	ledgerLater  = "later"
 	ledgerActive = "active"
 	ledgerBig    = "big"
+	// ledgerJob1 is the Job of the run ledgerRun1.
+	ledgerJob1 = "kd-run-1"
 )
 
 func TestBudgetPeriod(t *testing.T) {
@@ -155,7 +157,7 @@ var _ = Describe("SpendBudget ledger", func() {
 
 		By("run 1 ends with a spend of 6, and run 2 still waits")
 		gw.spend = 6
-		endRunJob(ctx, types.NamespacedName{Namespace: ns, Name: "kd-run-1"}, batchv1.JobComplete)
+		endRunJob(ctx, types.NamespacedName{Namespace: ns, Name: ledgerJob1}, batchv1.JobComplete)
 		reconcileRun(ledgerRun1)
 		Expect(run(ledgerRun1).Status.Phase).To(Equal(corev1alpha1.AgentSucceeded))
 		b = budget()
@@ -209,7 +211,7 @@ var _ = Describe("SpendBudget ledger", func() {
 		newRun(ledgerRun1, "6")
 		reconcileRun(ledgerRun1)
 		gw.usageErr = gateway.ErrSpendNotSettled
-		endRunJob(ctx, types.NamespacedName{Namespace: ns, Name: "kd-run-1"}, batchv1.JobComplete)
+		endRunJob(ctx, types.NamespacedName{Namespace: ns, Name: ledgerJob1}, batchv1.JobComplete)
 		reconcileRun(ledgerRun1)
 		Expect(meta.FindStatusCondition(run(ledgerRun1).Status.Conditions, condRevoked).Message).
 			To(HaveSuffix(spendNotSettledNote))
@@ -222,7 +224,7 @@ var _ = Describe("SpendBudget ledger", func() {
 		newRun(ledgerRun1, "6")
 		reconcileRun(ledgerRun1)
 		gw.spend = 6
-		endRunJob(ctx, types.NamespacedName{Namespace: ns, Name: "kd-run-1"}, batchv1.JobComplete)
+		endRunJob(ctx, types.NamespacedName{Namespace: ns, Name: ledgerJob1}, batchv1.JobComplete)
 		reconcileRun(ledgerRun1)
 		Expect(budget().Status.Spend).To(Equal("6"))
 		// The run Job starts at the wall clock time. The rebuild counts the run on the fake day.
