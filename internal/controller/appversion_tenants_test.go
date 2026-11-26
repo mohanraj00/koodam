@@ -30,6 +30,7 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/intstr"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	corev1alpha1 "github.com/mohanraj00/koodam/api/v1alpha1"
@@ -111,7 +112,7 @@ func TestTenantLimitsOfVersion(t *testing.T) {
 	}
 	claim := AppClaimCheck{Issuer: limitsIssuer, TenantClaim: limitsClaimKey,
 		Tenants: AppTenantLimits{DefaultRate: 1, RefuseUnknown: true}}
-	got := claim.limits(av, quotas)
+	got := claim.limits(av, 2, quotas)
 	want := appclaim.TenantLimits{RefuseUnknown: true, Default: &appclaim.TenantLimit{Rate: 0.5, Burst: 1},
 		Tenants: map[string]appclaim.TenantLimit{
 			limitsTenantA: {Rate: 2, Burst: 3, Exceeded: true},
@@ -137,13 +138,95 @@ func TestTenantLimitsOfVersion(t *testing.T) {
 		t.Errorf("the check container refuses the file: %v", err)
 	}
 	// With no default and no TenantQuota, the file has no tenant and no default.
-	empty, _ := json.Marshal(AppClaimCheck{}.limits(av, nil))
+	empty, _ := json.Marshal(AppClaimCheck{}.limits(av, 1, nil))
 	if string(empty) != `{}` {
 		t.Errorf("empty limits: %s", empty)
 	}
 }
 
 // The check container gets the limits file only with a tenant claim.
+// A caller can select each version with a weight above 0. Thus the pods of all these versions
+// share the rate of a tenant, and 2 versions do not give the tenant 2 times its rate.
+func TestTenantRateIsForAllTheVersionsOfTheApp(t *testing.T) {
+	version := func(name, app string, replicas int32) *corev1alpha1.AppVersion {
+		return &corev1alpha1.AppVersion{ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: limitsNS, UID: types.UID(name)},
+			Spec: corev1alpha1.AppVersionSpec{AppRef: corev1alpha1.AppReference{Name: app}, Replicas: &replicas}}
+	}
+	weights := func(pairs map[string]int32) []corev1alpha1.AppEndpointVersion {
+		out := make([]corev1alpha1.AppEndpointVersion, 0, len(pairs))
+		for name, w := range pairs {
+			out = append(out, corev1alpha1.AppEndpointVersion{Name: name, Weight: &w})
+		}
+		return out
+	}
+	app := &corev1alpha1.App{ObjectMeta: metav1.ObjectMeta{Name: limitsApp, Namespace: limitsNS},
+		Spec: corev1alpha1.AppSpec{Endpoints: []corev1alpha1.AppEndpoint{
+			{Name: "front", Versions: weights(map[string]int32{"v1": 90, "v2": 0, "v3": 0})},
+			// A weight in one endpoint is sufficient.
+			{Name: "back", Versions: weights(map[string]int32{"v2": 1})},
+		}}}
+	v1, v2 := version("v1", limitsApp, 2), version("v2", limitsApp, 3)
+	// These versions get no request of the App: no weight, not in the spec, and a different App.
+	v3, v4, other := version("v3", limitsApp, 5), version("v4", limitsApp, 7), version("o1", "search", 11)
+	alone := version("alone", "no-app", 4)
+	quota := limitsQuota("a", limitsNS, limitsTenantA, limitsRate("10", new(int32(20))))
+	c := fake.NewClientBuilder().WithScheme(ingWorld(t).Scheme()).
+		WithObjects(app, v1, v2, v3, v4, other, alone, &quota).Build()
+	claim := AppClaimCheck{Issuer: limitsIssuer, TenantClaim: limitsClaimKey}
+	pod := func(av *corev1alpha1.AppVersion) appclaim.TenantLimit {
+		t.Helper()
+		if err := applyTenantLimits(t.Context(), c, c, claim, av); err != nil {
+			t.Fatal(err)
+		}
+		cm := &corev1.ConfigMap{}
+		if err := c.Get(t.Context(), types.NamespacedName{Namespace: limitsNS, Name: tenantLimitsName(av)}, cm); err != nil {
+			t.Fatal(err)
+		}
+		limits, err := appclaim.ParseTenantLimits([]byte(cm.Data[tenantsFile]))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return limits.Tenants[limitsTenantA]
+	}
+	// The 2 versions with a weight have 5 pods together.
+	want := appclaim.TenantLimit{Rate: 2, Burst: 4}
+	if a, b := pod(v1), pod(v2); a != want || b != want {
+		t.Errorf("The limit of a pod is %+v for v1 and %+v for v2, want %+v.", a, b, want)
+	}
+	if sum := 2*pod(v1).Rate + 3*pod(v2).Rate; sum != 10 {
+		t.Errorf("The pods of the 2 versions permit %v requests for each second, want 10.", sum)
+	}
+	// A version with no weight has its pods and the pods of the versions with a weight in the sum.
+	if got := pod(v3); got != (appclaim.TenantLimit{Rate: 1, Burst: 2}) {
+		t.Errorf("The limit of a pod of v3 is %+v.", got)
+	}
+	// A version with no App has only its pods in the sum.
+	if n, err := appReplicas(t.Context(), c, alone); err != nil || n != 4 {
+		t.Errorf("The replicas of a version with no App are %d, %v.", n, err)
+	}
+
+	// A change of the App or of one version builds the file of each version of the App again.
+	r := &TenantLimitsReconciler{Client: c}
+	names := func(reqs []reconcile.Request) []string {
+		out := make([]string, 0, len(reqs))
+		for _, req := range reqs {
+			out = append(out, req.Name)
+		}
+		slices.Sort(out)
+		return out
+	}
+	siblings := []string{"v1", "v2", "v3", "v4"}
+	if got := names(r.appVersions(t.Context(), app)); !slices.Equal(got, siblings) {
+		t.Errorf("A change of the App gives the versions %v.", got)
+	}
+	if got := names(r.appVersions(t.Context(), v2)); !slices.Equal(got, siblings) {
+		t.Errorf("A change of a version gives the versions %v.", got)
+	}
+	if got := names(r.allVersions(t.Context(), nil)); len(got) != 6 {
+		t.Errorf("A change of a TenantQuota gives the versions %v.", got)
+	}
+}
+
 func TestClaimTenantsVolume(t *testing.T) {
 	av := &corev1alpha1.AppVersion{ObjectMeta: metav1.ObjectMeta{Name: "v1"},
 		Spec: corev1alpha1.AppVersionSpec{AppRef: corev1alpha1.AppReference{Name: limitsApp}}}

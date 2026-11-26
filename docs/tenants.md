@@ -79,9 +79,12 @@ The check examines a request after it verified the signed claim:
 With `apps.claimCheck.tenantClaim`, the controller writes one ConfigMap for each AppVersion, with the name `kd-<version>-tenants`. The check container of each pod of the version mounts it as its limits file.
 
 - The file has each `TenantQuota` of the namespace of the version that applies to its App: a `TenantQuota` with no `appRef`, or with the `appRef` of the App. A tenant label of a different App or a different namespace is an unknown tenant for the version.
-- Each pod gets the rate divided by `spec.replicas` of the version. The burst of a pod is the burst divided by the replicas, to the next full number, with a minimum of 1. Thus the sum of the bursts can be more than the burst of the tenant.
+- Each pod gets the rate divided by the number of pods that share it. The burst of a pod is the burst divided by this number, to the next full number, with a minimum of 1. Thus the sum of the bursts can be more than the burst of the tenant.
+  - The number is the sum of `spec.replicas` of the version and of each other version of the App with a weight above 0 in the spec of an endpoint. A caller can select each such version with the header `Koodam-App-Version`. Thus the rate is for the App, and a tenant does not get it one time for each version.
+  - If the replicas of the versions are not in proportion to their weights, a tenant gets less than its rate.
+  - A `TenantQuota` with no `appRef` applies to each App of the namespace, and each App gives the tenant the full rate. For a rate of one App, set the `appRef`.
 - The file has the mark of the condition `QuotaExceeded`. While the mark is set, the claim check refuses each request of the tenant with `TenantQuotaExceeded`. Only the status `True` sets the mark. The status `Unknown` (the reason `RequestCountCapped`) sets no mark.
-- A change of a `TenantQuota`, of its mark or of `spec.replicas` changes the ConfigMap. The kubelet then updates the file in the pods, and the check container reads it again. This can take more than 1 minute. The pods do not start again.
+- A change of a `TenantQuota`, of its mark, of the weights of the App or of `spec.replicas` of a version of the App changes the ConfigMap. The kubelet then updates the file in the pods, and the check container reads it again. This can take more than 1 minute. The pods do not start again.
 - A ConfigMap has a maximum of 1 MiB. This is space for some thousand tenants of one App.
 - The mark comes from the gateway count of the tenant, so the mark is only as correct as that count:
   - With the tenant token, the gateway counts a model call of an App pod only for the tenant of a token. An app can use the token of a tenant for a model call of a different request until the token ends. Thus an app can add to the count of a tenant that sent a request in that time, and to no other count.

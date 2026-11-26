@@ -101,7 +101,7 @@ type TenantQuotaSpec struct {
 }
 
 // TenantRateLimit is a token bucket. Each pod of an AppVersion has its own bucket, with the
-// rate and the burst divided by the replicas of the version.
+// rate and the burst divided by the pods of all the versions of the App that share the rate.
 type TenantRateLimit struct {
 	// RequestsPerSecond is the rate that the tenant can keep, for example "5" or "500m". It
 	// must be more than zero.
