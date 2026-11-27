@@ -60,7 +60,7 @@ The [egress proxy](traced-egress.md) watches the Holds and the Profiles. While a
 | App | The pods of each version of the App. |
 | Profile | The pods of each Agent, Workspace and AppVersion in each namespace that the Profile binds. The proxy reads the bound namespaces from `status.boundNamespaces` of the Profile. |
 
-The proxy writes a span of the kind `control` when a quarantine starts and when it ends. The field `by` has `spec.user` at the start and `spec.release.user` at the end. A Profile target writes 1 control span for each bound namespace. See [egress spans](egress-spans.md).
+The proxy writes a span of the kind `control` when a quarantine starts and when it ends. The field `by` has `spec.user` at the start and `spec.release.user` at the end. A Profile target writes 1 control span for each bound namespace. When a Profile binds a new namespace during a quarantine, the proxy writes the start span of that namespace. See [egress spans](egress-spans.md).
 
 In this version, the quarantine blocks only the egress through the proxy. The gateway key stays active, and the pods stay. The proxy sees only the calls that go through it. A call in a path with no proxy, for example to a host in `workspace.networkPolicy.extraEgress` or in a namespace that the NetworkPolicy does not cover, has no check.
 
