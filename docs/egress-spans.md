@@ -27,7 +27,7 @@ The egress proxy writes 1 JSON line to its stdout for each call from an Agent po
 | `status` | number | no | The HTTP status that the pod got. `200` for a CONNECT tunnel that opened. |
 | `bytesIn` | number | yes | The bytes from the target to the pod. |
 | `bytesOut` | number | yes | The bytes from the pod to the target. |
-| `result` | string | yes | `ok`, `denied` or `error`. See "Results". |
+| `result` | string | yes | `ok`, `denied` or `error`. A `control` span has `quarantined` or `released`. See "Results". |
 | `reason` | string | no | Why the call was denied or failed. See "Reasons". |
 | `namespace` | string | no | The namespace of the source pod. |
 | `pod` | string | no | The name of the source pod, or `unknown`. |
@@ -39,6 +39,7 @@ The egress proxy writes 1 JSON line to its stdout for each call from an Agent po
 | `appVersion` | string | no | The value of the pod label `koodam.dev/app-version`. Only for an App pod. |
 | `claimed` | boolean | no | `true` if the pod sent an `X-Koodam-Run` or `X-Koodam-User` header. The span does not hold the value. |
 | `zone` | string | no | The zone of the install (`zone.name`). It is not the zone of the host. An install with no zone has no such field. |
+| `by` | string | no | Only for `control`. The user that started or released the quarantine: `spec.user` or `spec.release.user` of the Hold. |
 
 "Always" means that the field is in each span. A field that is not always there is not in the line when it is empty.
 
@@ -50,8 +51,13 @@ The egress proxy writes 1 JSON line to its stdout for each call from an Agent po
 | `tls` | An HTTPS call that DNS steering sent to the proxy (#166). | TLS connection |
 | `http` | A plain HTTP call. | HTTP request |
 | `llm` | A model call to `<proxy>/llm/`, which the proxy sends to the gateway. | HTTP request |
+| `control` | Not a call. The start or the end of a quarantine ([holds.md](holds.md#the-quarantine)). | quarantine start, quarantine end |
 
 The proxy does not decrypt TLS. For `connect` and `tls`, the span has the host and the SNI, but no method, path or status of the requests inside the tunnel. A client can send many requests on 1 TLS connection, so 1 span can hold many requests.
+
+A control span has no `source`, `host`, `sni`, `port` or `method`, and its `durationMs` and byte counts are 0. Its `result` is `quarantined` or `released`, and its `reason` is the reason of the Hold or of the release. It has the target fields: `namespace` and one of `agent`, `workspace`, `app` and `appVersion`. A Profile target has 1 span for each bound namespace, with only `namespace`. `user` is not in a control span, and `by` is the user of the Hold. After a restart, the proxy writes the start span of each active quarantine again.
+
+A reader must accept a kind that it does not know.
 
 ## Results
 
@@ -83,6 +89,7 @@ The proxy does not decrypt TLS. For `connect` and `tls`, the span has the host a
 | `TenantTokenExpired` | `denied` | The tenant token is at its end time or after it. |
 | `TenantLabelNotASCII` | `denied` | The tenant label of the token cannot be the value of a header. |
 | `AppKeyOutOfPod` | `denied` | An `llm` call has the gateway key of an AppVersion, and the pod is not a pod of that AppVersion. |
+| `quarantined` | `denied` | A Quarantine Hold targets the pod. The proxy refused the call, or it ended an open call when the quarantine started. |
 | `KeyScanLimit` | `denied` | An `llm` call has more key texts than the proxy examines, or its headers, its query and its path are together too long, or a query value has an escape that is not valid. |
 
 A reader must accept other reason text. The reason is for people, and new reasons can come in the same version.
@@ -125,6 +132,7 @@ This is only the span part of #183. The full App wiring in production, default-d
 - A removed field, a renamed field or a new meaning of a field adds 1 to `v`.
 - A span with no `v` field is version 1. The proxy of v0.3 before #168 wrote no `v`.
 - Version 2 (#170) replaced `claimedRun` and `claimedUser` with `claimed`, and removed `path` from `http` spans.
+- The kind `control`, the results `quarantined` and `released`, and the field `by` (#185) came in version 2.
 
 ## Traffic with no span
 

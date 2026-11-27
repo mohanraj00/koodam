@@ -20,8 +20,12 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
+
+	rbacv1 "k8s.io/api/rbac/v1"
+	"sigs.k8s.io/yaml"
 
 	"github.com/mohanraj00/koodam/internal/manifestlayout"
 )
@@ -123,16 +127,81 @@ func TestRunWritesNoFileOnAnError(t *testing.T) {
 	}
 }
 
+// appReadVerbs are the only verbs that the default role can have on appversions. The Hold
+// controller reads the AppVersions of a Profile when the App controllers do not run.
+var appReadVerbs = []string{"get", "list"}
+
+// appGrants checks the default role. It permits only get and list on appversions, and it refuses
+// each other App resource. It gives a problem for each refused grant.
+func appGrants(data []byte) ([]string, error) {
+	role := rbacv1.ClusterRole{}
+	if err := yaml.UnmarshalStrict(data, &role); err != nil {
+		return nil, err
+	}
+	var problems []string
+	for _, rule := range role.Rules {
+		for _, res := range rule.Resources {
+			switch base, _, _ := strings.Cut(res, "/"); {
+			case base == "deployments" || base == "services" || base == "*":
+				problems = append(problems, "the App grant "+res)
+			case res == "appversions":
+				for _, v := range rule.Verbs {
+					if !slices.Contains(appReadVerbs, v) {
+						problems = append(problems, "the verb "+v+" on appversions")
+					}
+				}
+			case base == "appversions":
+				problems = append(problems, "the App grant "+res)
+			}
+		}
+	}
+	return problems, nil
+}
+
+func TestAppGrants(t *testing.T) {
+	const head = "apiVersion: rbac.authorization.k8s.io/v1\nkind: ClusterRole\nmetadata:\n  name: manager-role\nrules:\n"
+	rule := func(resource string, verbs ...string) string {
+		return "- apiGroups: [core.koodam.dev]\n  resources: [" + resource + "]\n  verbs: [" +
+			strings.Join(verbs, ", ") + "]\n"
+	}
+	for name, tc := range map[string]struct {
+		rules string
+		want  []string
+	}{
+		"the read verbs on appversions": {rule("appversions", "get", "list"), nil},
+		"a write verb on appversions": {rule("appversions", "get", "update"),
+			[]string{"the verb update on appversions"}},
+		"the watch verb on appversions": {rule("appversions", "watch"), []string{"the verb watch on appversions"}},
+		"the status of appversions":     {rule("appversions/status", "get"), []string{"the App grant appversions/status"}},
+		"deployments":                   {rule("deployments", "get"), []string{"the App grant deployments"}},
+		"services":                      {rule("services", "list"), []string{"the App grant services"}},
+		"a wildcard":                    {rule(`"*"`, "get"), []string{"the App grant *"}},
+		"a different resource":          {rule("holds", "get", "update"), nil},
+	} {
+		t.Run(name, func(t *testing.T) {
+			got, err := appGrants([]byte(head + tc.rules))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !slices.Equal(got, tc.want) {
+				t.Errorf("got %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
 // TestDefaultRoleHasNoAppGrant examines the generated roles of the repository.
 func TestDefaultRoleHasNoAppGrant(t *testing.T) {
 	base, err := os.ReadFile("../../config/rbac/role.yaml")
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, s := range []string{"appversions", "deployments", "services"} {
-		if strings.Contains(string(base), s) {
-			t.Errorf("config/rbac/role.yaml has the App grant %q", strings.TrimSpace(s))
-		}
+	problems, err := appGrants(base)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, p := range problems {
+		t.Errorf("config/rbac/role.yaml has %s", p)
 	}
 	app, err := os.ReadFile("../../config/apps/rbac/role.yaml")
 	if err != nil {

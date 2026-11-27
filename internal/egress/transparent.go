@@ -120,6 +120,13 @@ func (p *Proxy) transparentTLS(ctx context.Context, client net.Conn) {
 			return
 		}
 	}
+	ctx, end, ok := p.admit(ctx, &sp)
+	defer end()
+	if !ok {
+		sp.Result, sp.Reason = ResultDenied, ReasonQuarantined
+		return
+	}
+	defer context.AfterFunc(ctx, func() { _ = client.Close() })()
 	if !slices.Contains(orDefault(p.ConnectPorts, "443"), port) {
 		sp.Result, sp.Reason = ResultDenied, reasonPort
 		return
