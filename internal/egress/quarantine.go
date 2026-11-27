@@ -33,9 +33,14 @@ import (
 // Holds and Profiles are the resources that the quarantine reads. The values must agree with
 // api/v1alpha1.
 var (
-	Holds    = schema.GroupVersionResource{Group: "core.koodam.dev", Version: "v1alpha1", Resource: "holds"}
-	Profiles = schema.GroupVersionResource{Group: "core.koodam.dev", Version: "v1alpha1", Resource: "profiles"}
+	Holds    = koodamResource("holds")
+	Profiles = koodamResource("profiles")
 )
+
+// koodamResource gives the resource in the API group of Koodam.
+func koodamResource(resource string) schema.GroupVersionResource {
+	return schema.GroupVersionResource{Group: "core.koodam.dev", Version: "v1alpha1", Resource: resource}
+}
 
 const (
 	// KindControl is the kind of a span that records the start or the end of a quarantine.

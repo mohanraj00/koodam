@@ -85,7 +85,7 @@ func checkPodRules(t *testing.T, rules []rbacv1.PolicyRule) {
 	t.Helper()
 	if len(rules) != 1 || !slices.Equal(rules[0].APIGroups, []string{""}) ||
 		!slices.Equal(rules[0].Resources, []string{"pods"}) ||
-		!slices.Equal(rules[0].Verbs, []string{"get", "list", "watch"}) {
+		!slices.Equal(rules[0].Verbs, readVerbs) {
 		t.Fatalf("got the rules %+v, want get, list and watch on pods", rules)
 	}
 }
@@ -293,7 +293,7 @@ func TestEgressProxyReadsHolds(t *testing.T) {
 		out := render(t, proxyValues, set...)
 		crs := decode[rbacv1.ClusterRole](t, out, "ClusterRole", proxyName+"-holds")
 		want := []rbacv1.PolicyRule{{APIGroups: []string{"core.koodam.dev"}, Resources: []string{"holds", "profiles"},
-			Verbs: []string{"get", "list", "watch"}}}
+			Verbs: readVerbs}}
 		if len(crs) != 1 || !reflect.DeepEqual(crs[0].Rules, want) {
 			t.Fatalf("%v: got the Hold ClusterRoles %+v, want 1 with %+v", set, crs, want)
 		}

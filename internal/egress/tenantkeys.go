@@ -27,7 +27,6 @@ import (
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
-	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/dynamic/dynamicinformer"
 	"k8s.io/client-go/tools/cache"
@@ -36,7 +35,7 @@ import (
 )
 
 // AppVersions is the resource of the AppVersions. The values must agree with api/v1alpha1.
-var AppVersions = schema.GroupVersionResource{Group: "core.koodam.dev", Version: "v1alpha1", Resource: "appversions"}
+var AppVersions = koodamResource("appversions")
 
 // TenantKeys has the public key of the tenant token of each AppVersion. The keys come from the
 // status of the AppVersions, which only the controller writes. No data of a pod gives a key.

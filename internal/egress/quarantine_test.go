@@ -40,6 +40,7 @@ const (
 	qAdmin   = "admin@example.test"
 	qRelease = "admin-b@example.test"
 	qProfile = "q-profile"
+	otherNS  = "other"
 )
 
 // hold returns a Hold with the target kind, namespace and name. A release user releases it.
@@ -74,19 +75,19 @@ func profile(name string, bound ...string) *unstructured.Unstructured {
 }
 
 func TestQuarantineMatch(t *testing.T) {
-	sp := &Span{Namespace: ns, Agent: qAgent, Workspace: "ws", App: "shop", AppVersion: appV1}
-	bound := map[string][]string{qProfile: {"other", ns}, "empty": nil}
+	sp := &Span{Namespace: ns, Agent: qAgent, Workspace: "ws", App: appName, AppVersion: appV1}
+	bound := map[string][]string{qProfile: {otherNS, ns}, "empty": nil}
 	for _, c := range []struct {
 		q    quarantine
 		want bool
 	}{
 		{quarantine{kind: targetAgent, namespace: ns, name: qAgent}, true},
-		{quarantine{kind: targetAgent, namespace: "other", name: qAgent}, false},
+		{quarantine{kind: targetAgent, namespace: otherNS, name: qAgent}, false},
 		{quarantine{kind: targetAgent, namespace: ns, name: "ws"}, false},
 		{quarantine{kind: targetWS, namespace: ns, name: "ws"}, true},
-		{quarantine{kind: targetApp, namespace: ns, name: "shop"}, true},
+		{quarantine{kind: targetApp, namespace: ns, name: appName}, true},
 		{quarantine{kind: targetVersion, namespace: ns, name: appV1}, true},
-		{quarantine{kind: targetVersion, namespace: ns, name: "shop"}, false},
+		{quarantine{kind: targetVersion, namespace: ns, name: appName}, false},
 		{quarantine{kind: targetProfile, name: qProfile}, true},
 		{quarantine{kind: targetProfile, name: "empty"}, false},
 		{quarantine{kind: targetProfile, name: "unknown"}, false},
@@ -114,7 +115,7 @@ func TestQuarantinesAdmitAndCut(t *testing.T) {
 	now := time.Date(2026, 10, 6, 8, 5, 0, 0, time.UTC)
 	q.Now = func() time.Time { return now }
 	agent := &Span{Namespace: ns, Agent: qAgent}
-	otherPod := &Span{Namespace: ns, Agent: "other"}
+	otherPod := &Span{Namespace: ns, Agent: qAgent + "-b"}
 
 	var stopped, otherStopped atomic.Int32
 	done, ok := q.Admit(agent, func() { stopped.Add(1) })

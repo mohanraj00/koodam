@@ -87,13 +87,19 @@ func holdUser() string {
 	return r.Status.UserInfo.Username
 }
 
-// makeHold makes a Hold with the action Stop. The cleanup releases the Hold and then deletes it,
-// because the admission policy refuses the delete of a Hold with no release.
+// makeHold makes a Hold with the action Stop.
 func makeHold(name string, t corev1alpha1.HoldTarget) *corev1alpha1.Hold {
 	GinkgoHelper()
+	return makeHoldFor(name, corev1alpha1.HoldStop, t)
+}
+
+// makeHoldFor makes a Hold with the action. The cleanup releases the Hold and then deletes it,
+// because the admission policy refuses the delete of a Hold with no release.
+func makeHoldFor(name string, action corev1alpha1.HoldAction, t corev1alpha1.HoldTarget) *corev1alpha1.Hold {
+	GinkgoHelper()
 	h := &corev1alpha1.Hold{ObjectMeta: metav1.ObjectMeta{Name: name},
-		Spec: corev1alpha1.HoldSpec{Target: t, Action: corev1alpha1.HoldStop,
-			Reason: "The e2e test stops the workload.", User: holdUser()}}
+		Spec: corev1alpha1.HoldSpec{Target: t, Action: action,
+			Reason: "The e2e test holds the workload.", User: holdUser()}}
 	Expect(k8s.Create(ctx, h)).To(Succeed())
 	DeferCleanup(func() {
 		releaseHold(h)
@@ -121,13 +127,19 @@ func releaseHold(h *corev1alpha1.Hold) {
 // expectHeld waits until the Held condition of the Hold is true with the reason Stopped.
 func expectHeld(h *corev1alpha1.Hold) {
 	GinkgoHelper()
+	expectHeldWith(h, "Stopped")
+}
+
+// expectHeldWith waits until the Held condition of the Hold is true with the reason.
+func expectHeldWith(h *corev1alpha1.Hold, reason string) {
+	GinkgoHelper()
 	Eventually(func(g Gomega) {
 		g.Expect(k8s.Get(ctx, client.ObjectKeyFromObject(h), h)).To(Succeed())
 		c := meta.FindStatusCondition(h.Status.Conditions, corev1alpha1.HoldHeld)
 		g.Expect(c).NotTo(BeNil())
 		g.Expect(c.Status).To(Equal(metav1.ConditionTrue), c.Message)
-		g.Expect(c.Reason).To(Equal("Stopped"))
-	}, 2*time.Minute).Should(Succeed(), "The Hold does not show that the target stopped.")
+		g.Expect(c.Reason).To(Equal(reason))
+	}, 2*time.Minute).Should(Succeed(), "The Hold does not show the reason "+reason+".")
 }
 
 // expectStopEvent waits for the Warning event Stopped on the workload, with the Hold as the related

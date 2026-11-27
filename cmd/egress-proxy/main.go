@@ -40,6 +40,7 @@ import (
 	"k8s.io/apimachinery/pkg/util/validation"
 	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/kubernetes"
+	"k8s.io/client-go/rest"
 	ctrl "sigs.k8s.io/controller-runtime"
 
 	"github.com/mohanraj00/koodam/internal/egress"
@@ -59,6 +60,38 @@ func main() {
 		slog.Error("the egress proxy stopped", "error", err)
 		os.Exit(1)
 	}
+}
+
+// syncCaches fills the pod index, the quarantines and, if they are on, the tenant keys. It returns
+// when each cache is in sync. The quarantines need get, list and watch on holds and profiles.
+func syncCaches(ctx context.Context, cfg *rest.Config, cs kubernetes.Interface, p *egress.Proxy,
+	pods *egress.PodIndex, namespaces []string, tenantTokens bool) error {
+	if err := pods.Watch(ctx, cs, 0, namespaces...); err != nil {
+		return err
+	}
+	dyn, err := dynamic.NewForConfig(cfg)
+	if err != nil {
+		return err
+	}
+	// The quarantines are in sync before the first call, so that a restart does not open a
+	// quarantined pod.
+	q := egress.NewQuarantines()
+	q.Sink = p.Sink
+	if err := q.Watch(ctx, dyn, 0); err != nil {
+		return err
+	}
+	p.Quarantine = q.Admit
+	if tenantTokens {
+		// The keys are in sync before the first call. With no key, the proxy refuses a model call
+		// of an App pod.
+		keys := egress.NewTenantKeys()
+		if err := keys.Watch(ctx, dyn, 0, namespaces...); err != nil {
+			return err
+		}
+		p.TenantKey = keys.Key
+		p.AppKeyOwner = keys.KeyOwner
+	}
+	return nil
 }
 
 func run() error {
@@ -84,8 +117,6 @@ func run() error {
 			"named namespaces")
 	idle := flag.Duration("idle-timeout", egress.DefaultIdle,
 		"the time limit with no bytes on a tunnel, a request body or a response")
-	holds := flag.Bool("holds", true,
-		"watch the Quarantine Holds and the Profiles, and refuse each call of a quarantined pod. It needs get, list and watch on holds and profiles")
 	zone := flag.String("zone", "", "the zone of the install, in each span. Empty: the install has no zone")
 	hostZones := flag.String("host-zones", "",
 		"the declared zone of egress hosts, as host=zone pairs separated by commas. A host can start with *.")
@@ -140,32 +171,7 @@ func run() error {
 	}
 	pods := egress.NewPodIndex()
 	synced := make(chan error, 1)
-	go func() {
-		err := pods.Watch(ctx, cs, 0, list(*namespaces)...)
-		var dyn dynamic.Interface
-		if err == nil && (*tenantTokens || *holds) {
-			dyn, err = dynamic.NewForConfig(cfg)
-		}
-		if err == nil && *holds {
-			// The quarantines are in sync before the first call, so that a restart does not open
-			// a quarantined pod.
-			q := egress.NewQuarantines()
-			q.Sink = p.Sink
-			if err = q.Watch(ctx, dyn, 0); err == nil {
-				p.Quarantine = q.Admit
-			}
-		}
-		if err == nil && *tenantTokens {
-			// The keys are in sync before the first call. With no key, the proxy refuses a model
-			// call of an App pod.
-			keys := egress.NewTenantKeys()
-			if err = keys.Watch(ctx, dyn, 0, list(*namespaces)...); err == nil {
-				p.TenantKey = keys.Key
-				p.AppKeyOwner = keys.KeyOwner
-			}
-		}
-		synced <- err
-	}()
+	go func() { synced <- syncCaches(ctx, cfg, cs, p, pods, list(*namespaces), *tenantTokens) }()
 	select {
 	case err := <-synced:
 		if err != nil {
