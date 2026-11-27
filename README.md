@@ -79,6 +79,7 @@ A Workspace is a pod with a home on a PVC. I connect to it over SSH and run the 
 - [Security](SECURITY.md): how to report a security problem, the supported versions and the response goal.
 - [Threat model](docs/threat-model.md): the threats, the control and the test for each threat, and the risks that stay.
 - [Traced egress](docs/traced-egress.md): the egress proxy, the spans and `koodam trace`.
+- [One trace for a run](docs/tracing.md): the design of the trace IDs and the OTLP export (v0.6).
 - [Architecture](docs/architecture.md): the controller, the gateway, the Workspace pod, the PVC home and the tunnel.
 - [Bring your Claude Code to Kubernetes, not a new agent platform](https://mohanraj00.github.io/tech/introducing-koodam/): the blog post. Why I built Koodam, and a day with a Workspace.
 
