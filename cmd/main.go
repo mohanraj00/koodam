@@ -544,13 +544,15 @@ func main() {
 	}
 	agentGatewayURL = egress.GatewayURL(agentGatewayURL)
 	gw := gateway.NewLiteLLM(gatewayURL, strings.TrimSpace(string(masterKey)))
+	// Each reconciler gets the gateway with a count of its failed key blocks (#130).
+	revokeFailures := registerRevokeFailures()
 	// The events of a stop by a Hold (#185).
 	recorder := mgr.GetEventRecorder("koodam")
 	if err := (&controller.AgentReconciler{
 		Client:         mgr.GetClient(),
 		Scheme:         mgr.GetScheme(),
 		APIReader:      mgr.GetAPIReader(),
-		Gateway:        gw,
+		Gateway:        revokeFailures.Gateway(gw, "Agent"),
 		GatewayURL:     strings.TrimRight(agentGatewayURL, "/"),
 		Egress:         egress,
 		Grace:          keyGrace,
@@ -582,7 +584,7 @@ func main() {
 		StorageClass:   workspaceStorageClass,
 		InstallerImage: installerImage,
 		NookkuImage:    nookkuImage,
-		Gateway:        gw,
+		Gateway:        revokeFailures.Gateway(gw, "Workspace"),
 		GatewayURL:     strings.TrimRight(agentGatewayURL, "/"),
 		Egress:         egress,
 		Recorder:       recorder,
@@ -594,7 +596,7 @@ func main() {
 	if err := (&controller.TestKeyReconciler{
 		Client:                mgr.GetClient(),
 		APIReader:             mgr.GetAPIReader(),
-		Gateway:               gw,
+		Gateway:               revokeFailures.Gateway(gw, "TestKey"),
 		GatewayURL:            strings.TrimRight(agentGatewayURL, "/"),
 		SingleInstanceGateway: testKeySingleGateway,
 		RevokeWait:            testKeyRevokeWait,
@@ -607,7 +609,7 @@ func main() {
 			Client:            mgr.GetClient(),
 			Scheme:            mgr.GetScheme(),
 			APIReader:         mgr.GetAPIReader(),
-			Gateway:           gw,
+			Gateway:           revokeFailures.Gateway(gw, "AppVersion"),
 			GatewayURL:        strings.TrimRight(agentGatewayURL, "/"),
 			Egress:            egress,
 			IngressNamespaces: ingressNamespaces,
@@ -636,4 +638,14 @@ func main() {
 		setupLog.Error(err, "Failed to run manager")
 		os.Exit(1)
 	}
+}
+
+// registerRevokeFailures registers the count of the failed key blocks of the revoke paths.
+func registerRevokeFailures() *runmetrics.RevokeFailures {
+	r := runmetrics.NewRevokeFailures()
+	if err := metrics.Registry.Register(r); err != nil {
+		setupLog.Error(err, "Failed to register the revoke metrics")
+		os.Exit(1)
+	}
+	return r
 }

@@ -7,6 +7,8 @@ metadata:
   namespace: {{ .Release.Namespace }}
   labels:
     {{- include "koodam.labels" . | nindent 4 }}
+    # The ServiceMonitor selects this Service by this label.
+    app.kubernetes.io/component: metrics
 spec:
   ports:
   - name: https

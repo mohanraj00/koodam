@@ -1,0 +1,39 @@
+{{- if .Values.metrics.serviceMonitor.enabled }}
+{{- if not .Values.metrics.enabled }}
+{{- fail "metrics.serviceMonitor.enabled needs metrics.enabled, because the ServiceMonitor scrapes the metrics Service." }}
+{{- end }}
+# The Prometheus Operator scrapes the metrics Service with this ServiceMonitor. docs/metrics.md has the
+# ClusterRole that the Prometheus service account needs.
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: {{ include "koodam.fullname" . }}-metrics
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "koodam.labels" . | nindent 4 }}
+    {{- with .Values.metrics.serviceMonitor.labels }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+spec:
+  endpoints:
+  - path: /metrics
+    port: https
+    scheme: https
+    bearerTokenFile: /var/run/secrets/kubernetes.io/serviceaccount/token
+    {{- with .Values.metrics.serviceMonitor.interval }}
+    interval: {{ . }}
+    {{- end }}
+    {{- with .Values.metrics.serviceMonitor.tlsConfig }}
+    tlsConfig:
+      {{- toYaml . | nindent 6 }}
+    {{- end }}
+  namespaceSelector:
+    matchNames:
+    - {{ .Release.Namespace }}
+  # The labels of the metrics Service only. The other Services of the chart do not have the component label.
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: {{ .Chart.Name }}
+      app.kubernetes.io/instance: {{ .Release.Name }}
+      app.kubernetes.io/component: metrics
+{{- end }}
