@@ -25,9 +25,16 @@ rules:
 - apiGroups:
   - ""
   resources:
+  - persistentvolumeclaims
+  verbs:
+  - patch
+- apiGroups:
+  - ""
+  resources:
   - pods
   verbs:
   - list
+  - patch
 - apiGroups:
   - ""
   resources:

@@ -79,7 +79,7 @@ The policy permits only this traffic:
 
 | Direction | Permitted |
 | --- | --- |
-| Ingress | TCP 2222, the sshd port. `koodam tunnel` uses a port-forward to this port. |
+| Ingress | TCP 2222, the sshd port, only from the peers in `workspace.networkPolicy.sshFrom` (#412). The default list is empty, so no pod can connect directly. `koodam tunnel` uses a port-forward, which the policy does not stop. |
 | Egress | UDP and TCP 53 to the cluster DNS pods (`workspace.networkPolicy.dns`). This is the only DNS that the pods can use with the default ports. |
 | Egress | TCP 4000 to the bundled LiteLLM pods, only in the bundled gateway mode. |
 | Egress | Each public address on TCP 443, 80 and 22, if `publicInternet` is `true`. The harnesses use it for the vendor APIs, the harness downloads, git and the package registries. `publicInternetPorts` changes the ports. An empty list permits all ports, also public DNS. |
@@ -102,7 +102,7 @@ If `egressProxy.enabled` is `true`, the policy changes to default-deny egress (#
 
 | Direction | Permitted |
 | --- | --- |
-| Ingress | TCP 2222 to the Workspace pods. |
+| Ingress | TCP 2222 to the Workspace pods, only from the peers in `workspace.networkPolicy.sshFrom`. |
 | Egress | The proxy pods on their target ports: TCP `egressProxy.port` (the proxy and `/llm`), UDP and TCP 5353 (DNS), TCP 8443 (TLS) and TCP 8080 (HTTP). |
 | Egress | The API server, from `egressProxy.networkPolicy.apiServer`, for `kubectl` and for an Agent with `rules`. These calls have no span. |
 | Egress | The rules of `workspace.networkPolicy.extraEgress`, for example an in-cluster Service. These calls go direct and have no span. |

@@ -65,9 +65,8 @@ func TestWorkspaceNetworkPolicy(t *testing.T) {
 	if !slices.Equal(np.Spec.PolicyTypes, []networkingv1.PolicyType{"Ingress", "Egress"}) {
 		t.Errorf("the policy types are %v, want Ingress and Egress", np.Spec.PolicyTypes)
 	}
-	in := np.Spec.Ingress
-	if len(in) != 1 || len(in[0].Ports) != 1 || in[0].Ports[0].Port.IntValue() != 2222 {
-		t.Errorf("the ingress is %v, want only TCP 2222", in)
+	if len(np.Spec.Ingress) != 0 {
+		t.Errorf("the ingress is %v, want none", np.Spec.Ingress)
 	}
 	eg := np.Spec.Egress
 	if len(eg) != 3 {

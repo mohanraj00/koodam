@@ -20,6 +20,10 @@ limitations under the License.
 package e2e
 
 import (
+	"bufio"
+	"context"
+	"fmt"
+	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -34,15 +38,14 @@ import (
 	"github.com/mohanraj00/koodam/test/utils"
 )
 
-// The NetworkPolicy spec applies the chart policy to a probe pod with the Workspace label. It
-// checks each target before and after the apply, so a block comes from the policy. kindnet
-// enforces NetworkPolicy.
+// This spec applies the chart policy to a probe pod with the Workspace label. It checks direct
+// connections before and after it applies the policy. kindnet enforces NetworkPolicy.
 var _ = Describe("Workspace NetworkPolicy", Ordered, Label("workspace"), func() {
-	const npNS, probe = "koodam-e2e-np", "probe"
+	const npNS, sourceNS, probe = "koodam-e2e-np", "koodam-e2e-np-source", "probe"
 
-	// reach is true if the probe pod opens a TCP connection to addr in 5 seconds.
-	reach := func(addr string) bool {
-		_, err := utils.Run(exec.Command("kubectl", "exec", "-n", npNS, probe, "--",
+	// reach is true if the probe in namespace ns opens a TCP connection to addr in 5 seconds.
+	reach := func(ns, addr string) bool {
+		_, err := utils.Run(exec.Command("kubectl", "exec", "-n", ns, probe, "-c", probe, "--",
 			"timeout", "5", "bash", "-c", `exec 3<>"/dev/tcp/$1"`, "--", addr))
 		return err == nil
 	}
@@ -56,20 +59,28 @@ var _ = Describe("Workspace NetworkPolicy", Ordered, Label("workspace"), func() 
 	}
 
 	BeforeAll(func() {
-		ns := &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: npNS}}
-		Expect(k8s.Create(ctx, ns)).To(Succeed())
-		DeferCleanup(func() { Expect(client.IgnoreNotFound(k8s.Delete(ctx, ns))).To(Succeed()) })
-		pod := &corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: probe, Namespace: npNS,
-			Labels: map[string]string{"koodam.dev/workspace": probe}},
-			Spec: corev1.PodSpec{
-				AutomountServiceAccountToken: new(false),
-				Containers: []corev1.Container{{Name: probe, Image: workspaceImage,
-					ImagePullPolicy: corev1.PullIfNotPresent, Command: []string{"sleep", "infinity"}}},
-			}}
-		Expect(k8s.Create(ctx, pod)).To(Succeed())
-		_, err := utils.Run(exec.Command("kubectl", "wait", "-n", npNS, "pod/"+probe,
-			"--for=condition=Ready", "--timeout=2m"))
-		Expect(err).NotTo(HaveOccurred())
+		for _, name := range []string{npNS, sourceNS} {
+			ns := &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: name}}
+			Expect(k8s.Create(ctx, ns)).To(Succeed())
+			DeferCleanup(func() { Expect(client.IgnoreNotFound(k8s.Delete(ctx, ns))).To(Succeed()) })
+			pod := &corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: probe, Namespace: name},
+				Spec: corev1.PodSpec{
+					AutomountServiceAccountToken: new(false),
+					Containers: []corev1.Container{{Name: probe, Image: workspaceImage,
+						ImagePullPolicy: corev1.PullIfNotPresent, Command: []string{"sleep", "infinity"}}},
+				}}
+			if name == npNS {
+				pod.Labels = map[string]string{"koodam.dev/workspace": probe}
+				pod.Spec.Containers = append(pod.Spec.Containers, corev1.Container{
+					Name: "listener", Image: pythonImage,
+					Command: []string{"python", "-m", "http.server", "2222", "--directory", "/tmp"},
+				})
+			}
+			Expect(k8s.Create(ctx, pod)).To(Succeed())
+			_, err := utils.Run(exec.Command("kubectl", "wait", "-n", name, "pod/"+probe,
+				"--for=condition=Ready", "--timeout=2m"))
+			Expect(err).NotTo(HaveOccurred())
+		}
 	})
 
 	It("lets a Workspace pod reach only DNS, the gateway and the public internet", func() {
@@ -82,11 +93,16 @@ var _ = Describe("Workspace NetworkPolicy", Ordered, Label("workspace"), func() 
 		apiAddr, gwSvc := svcAddr("default", "kubernetes", "443"), svcAddr(systemNS, release+"-litellm", "4000")
 		// public is a public address on a permitted port. dnsOut is a public DNS server.
 		const public, dnsOut = "1.1.1.1/443", "1.1.1.1/53"
+		target := &corev1.Pod{}
+		Expect(k8s.Get(ctx, client.ObjectKey{Namespace: npNS, Name: probe}, target)).To(Succeed())
+		sshAddr := target.Status.PodIP + "/2222"
 
 		By("reaching each target before the policy")
 		for _, a := range []string{gw, gwSvc, db, apiAddr, public, dnsOut} {
-			Expect(reach(a)).To(BeTrue(), "The probe cannot reach "+a+" with no policy.")
+			Expect(reach(npNS, a)).To(BeTrue(), "The probe cannot reach "+a+" with no policy.")
 		}
+		Eventually(func() bool { return reach(sourceNS, sshAddr) }, time.Minute, time.Second).Should(BeTrue(),
+			"The probe in the other namespace cannot reach TCP port 2222 with no policy.")
 
 		By("applying the chart policy to the namespace")
 		out, err := utils.Run(exec.Command("helm", "template", release, "charts/koodam", "-n", systemNS,
@@ -100,15 +116,41 @@ var _ = Describe("Workspace NetworkPolicy", Ordered, Label("workspace"), func() 
 		Expect(err).NotTo(HaveOccurred(), out)
 
 		By("blocking the database, the API server and public DNS, and keeping the gateway, DNS and the internet")
-		Eventually(func() bool { return reach(db) }, time.Minute, 2*time.Second).Should(BeFalse(),
+		Eventually(func() bool { return reach(npNS, db) }, time.Minute, 2*time.Second).Should(BeFalse(),
 			"The policy does not block the gateway database.")
-		Expect(reach(apiAddr)).To(BeFalse(), "The policy does not block the API server.")
-		Expect(reach(dnsOut)).To(BeFalse(), "The policy does not block a public DNS server.")
-		Expect(reach(gw)).To(BeTrue(), "The policy blocks the gateway.")
-		Expect(reach(gwSvc)).To(BeTrue(), "The policy blocks the gateway Service.")
-		Expect(reach(public)).To(BeTrue(), "The policy blocks the public internet.")
-		out, err = utils.Run(exec.Command("kubectl", "exec", "-n", npNS, probe, "--",
+		Expect(reach(npNS, apiAddr)).To(BeFalse(), "The policy does not block the API server.")
+		Expect(reach(npNS, dnsOut)).To(BeFalse(), "The policy does not block a public DNS server.")
+		Expect(reach(npNS, gw)).To(BeTrue(), "The policy blocks the gateway.")
+		Expect(reach(npNS, gwSvc)).To(BeTrue(), "The policy blocks the gateway Service.")
+		Expect(reach(npNS, public)).To(BeTrue(), "The policy blocks the public internet.")
+		out, err = utils.Run(exec.Command("kubectl", "exec", "-n", npNS, probe, "-c", probe, "--",
 			"getent", "hosts", "kubernetes.default.svc.cluster.local"))
 		Expect(err).NotTo(HaveOccurred(), "The policy blocks DNS: "+out)
+
+		By("blocking TCP port 2222 from a pod in another namespace")
+		Eventually(func() bool { return reach(sourceNS, sshAddr) }, time.Minute, 2*time.Second).Should(BeFalse(),
+			"The policy permits a pod in another namespace to reach TCP port 2222.")
+
+		By("reaching TCP port 2222 through the port-forward API")
+		forwardCtx, cancel := context.WithTimeout(ctx, time.Minute)
+		defer cancel()
+		cmd := exec.CommandContext(forwardCtx, "kubectl", "-n", npNS, "port-forward",
+			"--address", "127.0.0.1", "pod/"+probe, ":2222")
+		cmd.Stderr = GinkgoWriter
+		stdout, err := cmd.StdoutPipe()
+		Expect(err).NotTo(HaveOccurred())
+		Expect(cmd.Start()).To(Succeed())
+		defer func() {
+			cancel()
+			_ = cmd.Wait()
+		}()
+
+		var port uint16
+		_, err = fmt.Fscanf(bufio.NewReader(stdout), "Forwarding from 127.0.0.1:%d -> 2222\n", &port)
+		Expect(err).NotTo(HaveOccurred(), "The port-forward does not open a local port.")
+		resp, err := httpClient.Get(fmt.Sprintf("http://127.0.0.1:%d/", port))
+		Expect(err).NotTo(HaveOccurred(), "The listener does not answer through the port-forward.")
+		defer resp.Body.Close()
+		Expect(resp.StatusCode).To(Equal(http.StatusOK))
 	})
 })
