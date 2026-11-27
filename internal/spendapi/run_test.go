@@ -20,8 +20,10 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -198,4 +200,60 @@ func TestRunPathInOpenAPI(t *testing.T) {
 	}) {
 		t.Fatal("the OpenAPI document has no RunDetail schema")
 	}
+}
+
+// pagedPods gives the pods in pages of the list limit, in name order, as the API server can.
+type pagedPods struct {
+	client.Reader
+}
+
+func (p pagedPods) List(ctx context.Context, target client.ObjectList, options ...client.ListOption) error {
+	pods, ok := target.(*corev1.PodList)
+	if !ok {
+		return p.Reader.List(ctx, target, options...)
+	}
+	o := (&client.ListOptions{}).ApplyOptions(options)
+	if o.Limit < 1 || o.Limit > maxPage {
+		return errors.New("the pod list needs a limit")
+	}
+	all := &corev1.PodList{}
+	if err := p.Reader.List(ctx, all, client.InNamespace(o.Namespace), client.MatchingLabelsSelector{Selector: o.LabelSelector}); err != nil {
+		return err
+	}
+	slices.SortFunc(all.Items, func(x, y corev1.Pod) int { return strings.Compare(x.Name, y.Name) })
+	start, _ := strconv.Atoi(o.Continue)
+	end := min(start+int(o.Limit), len(all.Items))
+	pods.Items = all.Items[start:end]
+	if end < len(all.Items) {
+		pods.Continue = strconv.Itoa(end)
+	}
+	return nil
+}
+
+// TestRunPodsReadsEachPage puts the pod of the run after more than one page of other pods with the
+// same label: pods of an older Job, and pods of this Job that are older.
+func TestRunPodsReadsEachPage(t *testing.T) {
+	f := newFixture(t, 0)
+	objects := runObjects(f.runKeys[0].hash)
+	for i := range 2 * maxPage {
+		pod := objects[2].DeepCopyObject().(*corev1.Pod)
+		pod.Name = fmt.Sprintf("kd-report-7-a%04d", i)
+		pod.CreationTimestamp = metav1.NewTime(runTime.Add(-time.Hour))
+		if i%2 == 0 {
+			pod.OwnerReferences[0].UID = "uid-of-an-older-job"
+		}
+		objects = append(objects, pod)
+	}
+	f.kube = pagedPods{runClient(t, objects...)}
+	d := decode[runDetail](t, f.call(t, http.MethodGet, testPath, f.token, http.StatusOK))
+	if len(d.Pods) != maxPods || d.Pods[0].Name != podName {
+		t.Fatalf("want the newest %d pods of the Job, with the run pod first: %d pods", maxPods, len(d.Pods))
+	}
+	for i := range maxPodScan {
+		pod := objects[2].DeepCopyObject().(*corev1.Pod)
+		pod.Name = fmt.Sprintf("kd-report-7-b%04d", i)
+		objects = append(objects, pod)
+	}
+	f.kube = pagedPods{runClient(t, objects...)}
+	f.call(t, http.MethodGet, testPath, f.token, http.StatusBadGateway)
 }

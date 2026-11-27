@@ -197,9 +197,10 @@ The response has these fields:
 - `conditions`: the status conditions of the Agent, for example `Provisioned` and `Revoked`.
 - `job`: the run Job in `status.job`, with its counts, times and conditions. If the Agent has no Job,
   or if the Agent does not control the Job of that name, the response has no `job`.
-- `pods`: the pods that the Job controls, newest first, with a maximum of 10. Each pod has its phase,
-  its start time and the state of each init container and container. A container state has the reason
-  and the exit code, but no message, because the termination message comes from the code of the run.
+- `pods`: the pods that the Job controls, newest first, with a maximum of 10. The server reads each
+  page of the pods with the Job label. If more than 500 pods have the label, the response has status 502.
+  Each pod has its phase, its start time and the state of each init container and container. A
+  container state has the reason and the exit code, but no message, because the termination message comes from the code of the run.
 
 ## Read more pages
 

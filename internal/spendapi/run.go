@@ -18,6 +18,7 @@ package spendapi
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"slices"
 	"strings"
@@ -37,7 +38,11 @@ const (
 	runPrefix = runsPath + "/"
 	// maxPods limits the pods of one run in a response. A run Job has no retries, so it has one pod.
 	maxPods = 10
+	// maxPodScan limits the pods with the Job label that one request reads.
+	maxPodScan = 500
 )
+
+var errTooManyPods = errors.New("too many pods have the label of the Job")
 
 // runRef is a path /v1/runs/{namespace}/{name}, with an optional last part.
 type runRef struct {
@@ -123,6 +128,8 @@ func (a *api) serveRun(ctx context.Context, w http.ResponseWriter, r *http.Reque
 		reply(w, r, http.StatusGatewayTimeout, problem{msgTimeLimit})
 	case apierrors.IsNotFound(err):
 		reply(w, r, http.StatusNotFound, problem{"The run does not exist."})
+	case errors.Is(err, errTooManyPods):
+		reply(w, r, http.StatusBadGateway, problem{"Too many pods have the label of the run Job."})
 	case err != nil:
 		reply(w, r, http.StatusBadGateway, problem{"The run data is not available."})
 	default:
@@ -178,16 +185,28 @@ func (a *api) runPods(ctx context.Context, agent *corev1alpha1.Agent) (*batchv1.
 	if err != nil {
 		return nil, nil, err
 	}
-	list := &corev1.PodList{}
-	if err := a.kube.List(ctx, list, client.InNamespace(agent.Namespace),
-		client.MatchingLabels{batchv1.JobNameLabel: job.Name}, client.Limit(maxPods)); err != nil {
-		return nil, nil, err
+	// The list order is not the creation order, and pods of an older Job can have the same label.
+	// Thus the server reads each page, and it keeps the newest pods of this Job.
+	var pods []corev1.Pod
+	for scanned, next := 0, ""; ; {
+		list := &corev1.PodList{}
+		if err := a.kube.List(ctx, list, client.InNamespace(agent.Namespace),
+			client.MatchingLabels{batchv1.JobNameLabel: job.Name}, client.Limit(maxPage), client.Continue(next)); err != nil {
+			return nil, nil, err
+		}
+		scanned += len(list.Items)
+		pods = append(pods, slices.DeleteFunc(list.Items, func(p corev1.Pod) bool { return !metav1.IsControlledBy(&p, job) })...)
+		if next = list.Continue; next == "" {
+			break
+		}
+		if scanned >= maxPodScan {
+			return nil, nil, errTooManyPods
+		}
 	}
-	pods := slices.DeleteFunc(list.Items, func(p corev1.Pod) bool { return !metav1.IsControlledBy(&p, job) })
 	slices.SortStableFunc(pods, func(x, y corev1.Pod) int {
 		return y.CreationTimestamp.Compare(x.CreationTimestamp.Time)
 	})
-	return job, pods, nil
+	return job, pods[:min(len(pods), maxPods)], nil
 }
 
 func conditions(in []metav1.Condition) []condition {
