@@ -1,6 +1,6 @@
 # The Workspace image of the kind test of the nookku plugin (test/e2e/workspace_test.go). It is
 # the Workspace image of Koodam plus the python3 of the official Python image, because the nookku
-# plugin needs python3 3.10 or later (docs/nookku-preset.md). Koodam does not publish this image.
+# plugin needs python3 3.11 or later (docs/nookku-preset.md). Koodam does not publish this image.
 # The 2 bases are Debian 13, so the python3 binary uses the C library of the Workspace image.
 ARG BASE
 ARG PYTHON=docker.io/library/python:3.13-slim-trixie

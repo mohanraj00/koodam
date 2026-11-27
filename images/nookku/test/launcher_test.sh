@@ -44,12 +44,26 @@ unset PYTHONPATH PYTHONSAFEPATH PYTHONNOUSERSITE
 check_pinned_import
 printf 'PASS: The launcher exports the variables and the child imports the pinned lib.\n'
 
-if python3 -I -S -c 'import sys; sys.exit(sys.version_info < (3, 11))'; then
-    mkdir nookku
-    : > nookku/__init__.py
-    printf 'print(__file__)\n' > nookku/__main__.py
-    check_pinned_import
-    printf 'PASS: The child imports the pinned lib with a nookku package in the current folder.\n'
-else
-    printf 'SKIP: The check with a package in the current folder needs Python 3.11 or later.\n'
+if ! python3 -I -S -c 'import sys; sys.exit(sys.version_info < (3, 11))'; then
+    printf 'FAIL: This test needs python3 3.11 or later on the PATH.\n' >&2
+    exit 1
 fi
+mkdir nookku
+: > nookku/__init__.py
+printf 'print(__file__)\n' > nookku/__main__.py
+check_pinned_import
+printf 'PASS: The child imports the pinned lib with a nookku package in the current folder.\n'
+
+# A python3 earlier than 3.11 fails the version check. The launcher must refuse to start.
+mkdir "$work/old"
+printf '#!/bin/sh\nexit 1\n' > "$work/old/python3"
+chmod 0755 "$work/old/python3"
+if err=$(PATH="$work/old:$PATH" sh ../launcher 2>&1); then
+    printf 'FAIL: The launcher started with a python3 earlier than 3.11.\n' >&2
+    exit 1
+fi
+case $err in
+*"needs python3 3.11 or later"*) ;;
+*) printf 'FAIL: The launcher gave the wrong message: %s\n' "$err" >&2; exit 1 ;;
+esac
+printf 'PASS: The launcher refuses a python3 earlier than 3.11.\n'
