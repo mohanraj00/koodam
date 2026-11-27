@@ -100,9 +100,10 @@ The identity of the server needs only these read verbs in each namespace of `-na
 | `get` | `jobs.batch` | The run path reads the Job in `status.job` of the Agent |
 | `list` | `pods` | The run path finds the pods of the Job by the label `batch.kubernetes.io/job-name`. A Job does not name its pods, so `get` is not sufficient. |
 | `get` | `pods/log` | `GET /v1/runs/{namespace}/{name}/log` reads the log of the agent container |
+| `watch` | `agents.core.koodam.dev` | `GET /v1/runs/{namespace}/{name}/watch` gets each change of the status of one Agent |
 
 The server reads the full pod objects, but a response has only the fields in the OpenAPI document. The
-server does not need `watch`, and it never writes to the cluster.
+server never writes to the cluster.
 
 ## Local tokens and limits
 
@@ -232,6 +233,35 @@ limit can cut a PEM private key, so the server redacts the `keyContext` lines be
 If the lines that the server reads have the END line of a key but not its BEGIN line, the server
 redacts each line up to the END line. If the log can have lines before the lines that the server
 reads, the server redacts the lines at the start that can be the body of a key.
+
+## Watch a run
+
+`GET /v1/runs/{namespace}/{name}/watch` sends the Agent status of a run as server-sent events
+(`text/event-stream`). In the viewer mode, the server checks `list` on `agents.core.koodam.dev` in the
+namespace of the path only. The stream has these parts:
+
+1. `retry: 5000`. A client waits 5 s before it connects again.
+2. The event `status` with the current status. The data has `id`, `name`, `namespace`, `phase`,
+   `startedAt`, `completedAt` and the redacted `conditions`.
+3. An event `status` after each change of the data. The server does not send the same data two times.
+4. A comment line `: ping` every 15 s.
+5. The event `deleted` when the Agent is deleted, or the event `end` with a `reason`. The reason
+   `timeLimit` comes after the time limit of the watch. The reason `watchEnded` comes when the watch
+   of the API server ends.
+
+The status event has no Job and no pods. If the phase changes, a client reads the run path again.
+The latency target is 5 s: `TestWatchLatency` in `internal/spendapi/watch_test.go` fails if a phase
+change takes 5 s or more to reach a watch client.
+
+The limits of the watch path are the constants in `internal/spendapi/watch.go`:
+
+- `maxWatchTime`: 5 min for one watch. Then the client connects again, and the server checks the
+  token and the access again.
+- `maxOpenWatches`: 100 open watches for one server. If the server has this count, the response has
+  status 429 and a `Retry-After` header.
+- `watchWriteTime`: 30 s for each write. A client that does not read cannot keep a watch.
+- The request time limit of `-request-timeout` applies to the read of the Agent and to the start of
+  the watch.
 
 ## Redaction
 

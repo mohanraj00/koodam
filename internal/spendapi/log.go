@@ -65,7 +65,7 @@ type runLog struct {
 // needs the viewer mode, because only that mode can check get on pods/log for the caller.
 func (a *api) serveLog(ctx context.Context, w http.ResponseWriter, r *http.Request, ref runRef) {
 	if a.logs == nil {
-		reply(w, r, http.StatusNotFound, problem{"This path does not exist."})
+		reply(w, r, http.StatusNotFound, problem{msgNoPath})
 		return
 	}
 	if a.viewers == nil {
@@ -82,7 +82,7 @@ func (a *api) serveLog(ctx context.Context, w http.ResponseWriter, r *http.Reque
 	case ctx.Err() != nil:
 		reply(w, r, http.StatusGatewayTimeout, problem{msgTimeLimit})
 	case apierrors.IsNotFound(err):
-		reply(w, r, http.StatusNotFound, problem{"The run does not exist."})
+		reply(w, r, http.StatusNotFound, problem{msgNoRun})
 	case errors.Is(err, errNoPod):
 		reply(w, r, http.StatusNotFound, problem{"The run has no pod."})
 	case apierrors.IsBadRequest(err):

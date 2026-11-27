@@ -214,6 +214,49 @@
       "delete": {"summary": "Not allowed.", "security": [], "responses": {"405": {"$ref": "#/components/responses/MethodNotAllowed"}}},
       "options": {"summary": "Not allowed.", "security": [], "responses": {"405": {"$ref": "#/components/responses/MethodNotAllowed"}}}
     },
+    "/v1/runs/{namespace}/{name}/watch": {
+      "parameters": [
+        {"$ref": "#/components/parameters/Namespace"},
+        {"$ref": "#/components/parameters/Name"}
+      ],
+      "get": {
+        "operationId": "watchRun",
+        "summary": "Watch the Agent status of a run as server-sent events.",
+        "description": "The server checks list on Agents in the namespace of the path. The first event is a status event with the current status. Then the server sends a status event after each change of the status, and a comment line every 15 s. The event deleted ends the stream when the Agent is deleted. The event end ends the stream after 5 min or when the watch of the API server ends. Then the client connects again, and the server checks the token and the access again. Each event has JSON data: RunStatus for status and deleted, WatchEnd for end.",
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {"text/event-stream": {"schema": {"type": "string", "description": "Server-sent events: retry, status, deleted and end."}}}
+          },
+          "401": {"$ref": "#/components/responses/Unauthorized"},
+          "403": {"$ref": "#/components/responses/Forbidden"},
+          "400": {"$ref": "#/components/responses/BadRequest"},
+          "404": {"$ref": "#/components/responses/NotFound"},
+          "429": {"$ref": "#/components/responses/TooManyWatches"},
+          "502": {"$ref": "#/components/responses/UpstreamFailure"},
+          "504": {"$ref": "#/components/responses/Timeout"}
+        }
+      },
+      "head": {
+        "operationId": "headRunWatch",
+        "summary": "Check the status of the watch of a run without a body.",
+        "responses": {
+          "200": {"description": "OK"},
+          "401": {"description": "A valid token is necessary."},
+          "403": {"description": "The caller cannot list Agents in the namespace."},
+          "400": {"description": "The path has a query."},
+          "404": {"description": "The run does not exist."},
+          "429": {"description": "Too many watches are open."},
+          "502": {"description": "An upstream read failed."},
+          "504": {"description": "The request time limit expired."}
+        }
+      },
+      "post": {"summary": "Not allowed.", "security": [], "responses": {"405": {"$ref": "#/components/responses/MethodNotAllowed"}}},
+      "put": {"summary": "Not allowed.", "security": [], "responses": {"405": {"$ref": "#/components/responses/MethodNotAllowed"}}},
+      "patch": {"summary": "Not allowed.", "security": [], "responses": {"405": {"$ref": "#/components/responses/MethodNotAllowed"}}},
+      "delete": {"summary": "Not allowed.", "security": [], "responses": {"405": {"$ref": "#/components/responses/MethodNotAllowed"}}},
+      "options": {"summary": "Not allowed.", "security": [], "responses": {"405": {"$ref": "#/components/responses/MethodNotAllowed"}}}
+    },
     "/v1/openapi.json": {
       "get": {
         "operationId": "getOpenAPI",
@@ -341,6 +384,11 @@
       },
       "NoLogYet": {
         "description": "The container has no log yet, for example because it did not start.",
+        "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Problem"}}}
+      },
+      "TooManyWatches": {
+        "description": "Too many watches are open on the server. The Retry-After header gives the wait in seconds.",
+        "headers": {"Retry-After": {"schema": {"type": "integer"}}},
         "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Problem"}}}
       },
       "UpstreamFailure": {
@@ -505,6 +553,24 @@
           "lines": {"type": "array", "maxItems": 1000, "items": {"type": "string"}, "description": "The last lines, oldest first. Each credential that a pattern matches is [redacted]. Control characters are removed."},
           "truncated": {"type": "boolean", "description": "True if the log has more lines than the response."}
         }
+      },
+      "RunStatus": {
+        "type": "object",
+        "required": ["id", "name", "namespace", "conditions"],
+        "properties": {
+          "id": {"type": "string"},
+          "name": {"type": "string"},
+          "namespace": {"type": "string"},
+          "phase": {"type": "string"},
+          "startedAt": {"type": "string", "format": "date-time"},
+          "completedAt": {"type": "string", "format": "date-time"},
+          "conditions": {"type": "array", "items": {"$ref": "#/components/schemas/Condition"}}
+        }
+      },
+      "WatchEnd": {
+        "type": "object",
+        "required": ["reason"],
+        "properties": {"reason": {"type": "string", "enum": ["timeLimit", "watchEnded"]}}
       },
       "Problem": {
         "type": "object",
