@@ -144,6 +144,8 @@ type Span struct {
 	Claimed bool `json:"claimed,omitempty"`
 	// Zone is the zone of the install. It is not the zone of the host.
 	Zone string `json:"zone,omitempty"`
+	// By is the user that started or released a quarantine. Only a control span has it.
+	By string `json:"by,omitempty"`
 }
 
 // Sink receives each span. Write must be safe for concurrent use.
@@ -204,6 +206,12 @@ type Proxy struct {
 	// proxy refuses a host with a declared zone that is not Zone. With no Zone, there is no check.
 	Zone      string
 	HostZones *HostZones
+	// Quarantine is asked for each identified call. If ok is false, the proxy refuses the call
+	// with the reason quarantined. Otherwise the proxy ends the call when stop is called, and it
+	// calls done when the call ends. If done gives true, the span of the call gets the result
+	// denied and the reason quarantined. If Quarantine is nil, there is no quarantine. See
+	// Quarantines.Admit.
+	Quarantine func(sp *Span, stop func()) (done func() bool, ok bool)
 
 	once      sync.Once
 	direct    http.RoundTripper
@@ -262,6 +270,14 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		p.Sink.Write(sp)
 	}()
 	if sp.Result == "" {
+		ctx, end, ok := p.admit(r.Context(), &sp)
+		defer end()
+		if !ok {
+			p.deny(w, &sp, ReasonQuarantined)
+		}
+		r = r.WithContext(ctx)
+	}
+	if sp.Result == "" {
 		switch {
 		case sp.Kind == KindConnect:
 			p.connect(w, r, &sp)
@@ -273,6 +289,27 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			p.deny(w, &sp, reasonNoProxy)
 		}
 	}
+}
+
+// admit asks Quarantine about the call of sp. The context ends when a quarantine of the pod
+// starts. The caller must call end when the call ends, before the span is written. If ok is false,
+// the caller must refuse the call.
+func (p *Proxy) admit(ctx context.Context, sp *Span) (_ context.Context, end func(), ok bool) {
+	if p.Quarantine == nil {
+		return ctx, func() {}, true
+	}
+	ctx, cancel := context.WithCancel(ctx)
+	done, ok := p.Quarantine(sp, cancel)
+	if !ok {
+		cancel()
+		return ctx, func() {}, false
+	}
+	return ctx, func() {
+		cancel()
+		if done() {
+			sp.Result, sp.Reason = ResultDenied, ReasonQuarantined
+		}
+	}, true
 }
 
 func (p *Proxy) deny(w http.ResponseWriter, sp *Span, reason string) {
@@ -309,6 +346,8 @@ func (p *Proxy) connect(w http.ResponseWriter, r *http.Request, sp *Span) {
 		return
 	}
 	defer func() { _ = client.Close() }()
+	// A hijacked connection does not end with the context. A quarantine ends the context.
+	defer context.AfterFunc(r.Context(), func() { _ = client.Close(); _ = upstream.Close() })()
 	sp.Status = http.StatusOK
 	if _, err := io.WriteString(client, "HTTP/1.1 200 Connection Established\r\n\r\n"); err != nil {
 		sp.Result, sp.Reason = ResultError, "client write"

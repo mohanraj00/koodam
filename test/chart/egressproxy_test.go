@@ -19,6 +19,7 @@ package chart
 import (
 	"fmt"
 	"maps"
+	"reflect"
 	"slices"
 	"strings"
 	"testing"
@@ -281,6 +282,25 @@ func TestEgressProxyControllerFlags(t *testing.T) {
 			if slices.Contains(args, f) != want {
 				t.Errorf("with the proxy %v, the controller args %q: %s is wrong", want, args, f)
 			}
+		}
+	}
+}
+
+// The proxy reads the cluster-scoped Holds and Profiles with and without known namespaces. It
+// cannot write them.
+func TestEgressProxyReadsHolds(t *testing.T) {
+	for _, set := range [][]string{nil, {"workspace.networkPolicy.namespaces={dev-a}"}} {
+		out := render(t, proxyValues, set...)
+		crs := decode[rbacv1.ClusterRole](t, out, "ClusterRole", proxyName+"-holds")
+		want := []rbacv1.PolicyRule{{APIGroups: []string{"core.koodam.dev"}, Resources: []string{"holds", "profiles"},
+			Verbs: []string{"get", "list", "watch"}}}
+		if len(crs) != 1 || !reflect.DeepEqual(crs[0].Rules, want) {
+			t.Fatalf("%v: got the Hold ClusterRoles %+v, want 1 with %+v", set, crs, want)
+		}
+		crbs := decode[rbacv1.ClusterRoleBinding](t, out, "ClusterRoleBinding", proxyName+"-holds")
+		if len(crbs) != 1 || crbs[0].RoleRef.Name != proxyName+"-holds" || len(crbs[0].Subjects) != 1 ||
+			crbs[0].Subjects[0].Name != proxyName || crbs[0].Subjects[0].Namespace != releaseNS {
+			t.Fatalf("%v: got the Hold ClusterRoleBindings %+v", set, crbs)
 		}
 	}
 }

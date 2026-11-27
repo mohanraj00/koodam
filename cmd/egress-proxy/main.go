@@ -84,6 +84,8 @@ func run() error {
 			"named namespaces")
 	idle := flag.Duration("idle-timeout", egress.DefaultIdle,
 		"the time limit with no bytes on a tunnel, a request body or a response")
+	holds := flag.Bool("holds", true,
+		"watch the Quarantine Holds and the Profiles, and refuse each call of a quarantined pod. It needs get, list and watch on holds and profiles")
 	zone := flag.String("zone", "", "the zone of the install, in each span. Empty: the install has no zone")
 	hostZones := flag.String("host-zones", "",
 		"the declared zone of egress hosts, as host=zone pairs separated by commas. A host can start with *.")
@@ -140,16 +142,26 @@ func run() error {
 	synced := make(chan error, 1)
 	go func() {
 		err := pods.Watch(ctx, cs, 0, list(*namespaces)...)
+		var dyn dynamic.Interface
+		if err == nil && (*tenantTokens || *holds) {
+			dyn, err = dynamic.NewForConfig(cfg)
+		}
+		if err == nil && *holds {
+			// The quarantines are in sync before the first call, so that a restart does not open
+			// a quarantined pod.
+			q := egress.NewQuarantines()
+			q.Sink = p.Sink
+			if err = q.Watch(ctx, dyn, 0); err == nil {
+				p.Quarantine = q.Admit
+			}
+		}
 		if err == nil && *tenantTokens {
 			// The keys are in sync before the first call. With no key, the proxy refuses a model
 			// call of an App pod.
-			var dyn dynamic.Interface
-			if dyn, err = dynamic.NewForConfig(cfg); err == nil {
-				keys := egress.NewTenantKeys()
-				if err = keys.Watch(ctx, dyn, 0, list(*namespaces)...); err == nil {
-					p.TenantKey = keys.Key
-					p.AppKeyOwner = keys.KeyOwner
-				}
+			keys := egress.NewTenantKeys()
+			if err = keys.Watch(ctx, dyn, 0, list(*namespaces)...); err == nil {
+				p.TenantKey = keys.Key
+				p.AppKeyOwner = keys.KeyOwner
 			}
 		}
 		synced <- err
@@ -161,7 +173,7 @@ func run() error {
 		}
 	case <-time.After(*syncTimeout):
 		// For example, the RBAC refuses the pod watch. A restart shows the problem.
-		return errors.New("the pod caches or the AppVersion caches did not sync in the time limit")
+		return errors.New("the pod, Hold, Profile or AppVersion caches did not sync in the time limit")
 	}
 	p.Identify = pods.Identify
 
