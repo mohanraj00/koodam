@@ -126,6 +126,9 @@ type AgentReconciler struct {
 	BudgetRetry time.Duration
 	// Recorder writes the event of a stop by a Hold. If it is nil, the controller writes no event.
 	Recorder events.EventRecorder
+	// Namespaces are the namespaces that the manager watches. An empty list is each namespace. A
+	// Hold maps only to the workloads of these namespaces (#185).
+	Namespaces []string
 }
 
 // +kubebuilder:rbac:groups=core.koodam.dev,resources=agents,verbs=get;list;watch;update
@@ -996,11 +999,11 @@ func (r *AgentReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		Owns(&batchv1.Job{}).
 		Watches(&corev1alpha1.SpendBudget{}, handler.EnqueueRequestsFromMapFunc(r.waitingFor)).
 		Watches(&corev1alpha1.Hold{},
-			handler.EnqueueRequestsFromMapFunc(holdMapper(r.Client, corev1alpha1.HoldTargetAgent))).
+			handler.EnqueueRequestsFromMapFunc(holdMapper(r.Client, corev1alpha1.HoldTargetAgent, r.Namespaces))).
 		Watches(&corev1.Namespace{},
-			handler.EnqueueRequestsFromMapFunc(profileHoldMapper(r.Client, corev1alpha1.HoldTargetAgent))).
+			handler.EnqueueRequestsFromMapFunc(profileHoldMapper(r.Client, corev1alpha1.HoldTargetAgent, r.Namespaces))).
 		Watches(&corev1alpha1.Profile{},
-			handler.EnqueueRequestsFromMapFunc(profileHoldMapper(r.Client, corev1alpha1.HoldTargetAgent))).
+			handler.EnqueueRequestsFromMapFunc(profileHoldMapper(r.Client, corev1alpha1.HoldTargetAgent, r.Namespaces))).
 		Named("agent").
 		Complete(r)
 }

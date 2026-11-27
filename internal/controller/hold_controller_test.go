@@ -392,7 +392,7 @@ var _ = Describe("Hold stop", func() {
 					Model: testGatewayModel, Budget: resource.MustParse("1"), DeadlineSeconds: 600}}
 			Expect(k8sClient.Create(ctx, a)).To(Succeed())
 			DeferCleanup(func() { Expect(client.IgnoreNotFound(k8sClient.Delete(ctx, a))).To(Succeed()) })
-			reqs := profileHoldMapper(k8sClient, corev1alpha1.HoldTargetAgent)(ctx, o)
+			reqs := profileHoldMapper(k8sClient, corev1alpha1.HoldTargetAgent, nil)(ctx, o)
 			Expect(reqs).To(ConsistOf(reconcile.Request{NamespacedName: client.ObjectKeyFromObject(a)}))
 			c := held(hold)
 			Expect(c.Status).To(Equal(metav1.ConditionFalse))
@@ -464,7 +464,7 @@ var _ = Describe("Hold stop", func() {
 				corev1alpha1.HoldStop)
 			Expect(holdRequests(ctx, k8sClient, &corev1alpha1.Hold{Spec: corev1alpha1.HoldSpec{
 				Target: corev1alpha1.HoldTarget{Kind: corev1alpha1.HoldTargetApp, Namespace: ns, Name: appName}}},
-				corev1alpha1.HoldTargetAppVersion)).To(ConsistOf(reconcile.Request{NamespacedName: nn(name)}))
+				corev1alpha1.HoldTargetAppVersion, nil)).To(ConsistOf(reconcile.Request{NamespacedName: nn(name)}))
 
 			reconcileVersion()
 			Expect(atBlock).To(Equal(1))
@@ -489,9 +489,98 @@ var _ = Describe("Hold stop", func() {
 		})
 	})
 
+	// Two installs in one cluster: each manager watches its own namespaces, and a Profile can bind
+	// namespaces of both installs.
+	Context("a Profile across two installs", func() {
+		var nsA, nsB, profile string
+		newAgent := func(ns string) *corev1alpha1.Agent {
+			a := &corev1alpha1.Agent{ObjectMeta: metav1.ObjectMeta{Name: "installs-run", Namespace: ns},
+				Spec: corev1alpha1.AgentSpec{Image: "example.com/installs:test", Command: []string{"/installs"},
+					Model: testGatewayModel, Budget: resource.MustParse("1"), DeadlineSeconds: 600}}
+			Expect(k8sClient.Create(ctx, a)).To(Succeed())
+			DeferCleanup(func() { Expect(client.IgnoreNotFound(k8sClient.Delete(ctx, a))).To(Succeed()) })
+			return a
+		}
+		// condition reconciles the Hold with r and gives its Held condition, or nil.
+		condition := func(r *HoldReconciler, name string) *metav1.Condition {
+			GinkgoHelper()
+			_, err := r.Reconcile(ctx, reconcile.Request{NamespacedName: types.NamespacedName{Name: name}})
+			Expect(err).NotTo(HaveOccurred())
+			h := &corev1alpha1.Hold{}
+			Expect(k8sClient.Get(ctx, client.ObjectKey{Name: name}, h)).To(Succeed())
+			return meta.FindStatusCondition(h.Status.Conditions, corev1alpha1.HoldHeld)
+		}
+
+		BeforeEach(func() {
+			n++
+			profile = fmt.Sprintf("installs-%d", n)
+			nsA, nsB = profile+"-a", profile+"-b"
+			for _, ns := range []string{nsA, nsB} {
+				o := &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: ns,
+					Labels: map[string]string{corev1alpha1.ProfileLabel: profile}}}
+				Expect(k8sClient.Create(ctx, o)).To(Succeed())
+				DeferCleanup(func() { Expect(client.IgnoreNotFound(k8sClient.Delete(ctx, o))).To(Succeed()) })
+			}
+			p := &corev1alpha1.Profile{ObjectMeta: metav1.ObjectMeta{Name: profile},
+				Spec: corev1alpha1.ProfileSpec{Namespaces: []string{nsA, nsB}}}
+			Expect(k8sClient.Create(ctx, p)).To(Succeed())
+			DeferCleanup(func() { Expect(client.IgnoreNotFound(k8sClient.Delete(ctx, p))).To(Succeed()) })
+		})
+
+		It("maps the Hold only to the watched namespaces, and each install writes the same status", func() {
+			a, b := newAgent(nsA), newAgent(nsB)
+			name := newHold(corev1alpha1.HoldTarget{Kind: corev1alpha1.HoldTargetProfile, Name: profile},
+				corev1alpha1.HoldStop)
+			h := &corev1alpha1.Hold{}
+			Expect(k8sClient.Get(ctx, client.ObjectKey{Name: name}, h)).To(Succeed())
+			// The cache of the install of nsA cannot list nsB.
+			rd := failReader{Reader: k8sClient, ns: nsB}
+			onlyA := []reconcile.Request{{NamespacedName: client.ObjectKeyFromObject(a)}}
+			Expect(holdRequests(ctx, rd, h, corev1alpha1.HoldTargetAgent, []string{nsA})).To(Equal(onlyA))
+			// A failed list of one namespace does not remove the requests of the other namespaces.
+			Expect(holdRequests(ctx, rd, h, corev1alpha1.HoldTargetAgent, nil)).To(Equal(onlyA))
+			p := &corev1alpha1.Profile{}
+			Expect(k8sClient.Get(ctx, client.ObjectKey{Name: profile}, p)).To(Succeed())
+			Expect(profileHoldMapper(rd, corev1alpha1.HoldTargetAgent, []string{nsA})(ctx, p)).To(Equal(onlyA))
+			Expect(profileHoldMapper(rd, corev1alpha1.HoldTargetAgent, []string{nsA})(ctx,
+				&corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: nsB}})).To(BeEmpty())
+
+			// Each install counts the workloads of the two namespaces. Thus the two managers do not
+			// change the status of the other one in a loop.
+			for _, scope := range [][]string{{nsA}, {nsB}} {
+				c := condition(&HoldReconciler{Client: k8sClient, APIReader: k8sClient, AppsEnabled: true,
+					Namespaces: scope}, name)
+				Expect(c).NotTo(BeNil())
+				Expect(c.Message).To(Equal("2 of the 2 workloads of the target wait for the stop."))
+			}
+
+			// Only the install of nsB writes the status of a Hold on an Agent in nsB.
+			direct := newHold(corev1alpha1.HoldTarget{Kind: corev1alpha1.HoldTargetAgent, Namespace: nsB,
+				Name: b.Name}, corev1alpha1.HoldStop)
+			Expect(condition(&HoldReconciler{Client: k8sClient, APIReader: k8sClient, AppsEnabled: true,
+				Namespaces: []string{nsA}}, direct)).To(BeNil())
+		})
+	})
+
 	It("cuts a long event note at a rune boundary", func() {
 		note := eventNote(strings.Repeat("é", maxEventNote))
 		Expect(len(note)).To(BeNumerically("<=", maxEventNote))
 		Expect(strings.ToValidUTF8(note, "?")).To(Equal(note))
 	})
 })
+
+// failReader fails the List of one namespace, like the cache of an install that does not watch the
+// namespace.
+type failReader struct {
+	client.Reader
+	ns string
+}
+
+func (f failReader) List(ctx context.Context, list client.ObjectList, opts ...client.ListOption) error {
+	o := &client.ListOptions{}
+	o.ApplyOptions(opts)
+	if o.Namespace == f.ns {
+		return fmt.Errorf("unable to list: %s because of unknown namespace for the cache", f.ns)
+	}
+	return f.Reader.List(ctx, list, opts...)
+}

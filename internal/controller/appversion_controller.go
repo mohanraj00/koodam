@@ -122,6 +122,9 @@ type AppVersionReconciler struct {
 	Now func() time.Time
 	// Recorder writes the event of a stop by a Hold. If it is nil, the controller writes no event.
 	Recorder events.EventRecorder
+	// Namespaces are the namespaces that the manager watches. An empty list is each namespace. A
+	// Hold maps only to the workloads of these namespaces (#185).
+	Namespaces []string
 
 	renewMu sync.Mutex
 	// renewed has the time of the last renew for each key hash. The hash is not a credential.
@@ -1102,11 +1105,11 @@ func (r *AppVersionReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		Owns(&batchv1.Job{}).
 		Watches(&corev1alpha1.App{}, handler.EnqueueRequestsFromMapFunc(r.versionsOfApp)).
 		Watches(&corev1alpha1.Hold{},
-			handler.EnqueueRequestsFromMapFunc(holdMapper(r.Client, corev1alpha1.HoldTargetAppVersion))).
+			handler.EnqueueRequestsFromMapFunc(holdMapper(r.Client, corev1alpha1.HoldTargetAppVersion, r.Namespaces))).
 		Watches(&corev1.Namespace{},
-			handler.EnqueueRequestsFromMapFunc(profileHoldMapper(r.Client, corev1alpha1.HoldTargetAppVersion))).
+			handler.EnqueueRequestsFromMapFunc(profileHoldMapper(r.Client, corev1alpha1.HoldTargetAppVersion, r.Namespaces))).
 		Watches(&corev1alpha1.Profile{},
-			handler.EnqueueRequestsFromMapFunc(profileHoldMapper(r.Client, corev1alpha1.HoldTargetAppVersion))).
+			handler.EnqueueRequestsFromMapFunc(profileHoldMapper(r.Client, corev1alpha1.HoldTargetAppVersion, r.Namespaces))).
 		Named("appversion").
 		Complete(r)
 }

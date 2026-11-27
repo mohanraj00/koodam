@@ -46,6 +46,12 @@ The owner of a workload cannot clear a stop. Only the controller writes the `Hel
 
 An App and an AppVersion stop only if the App controllers run. If they do not run, the Hold shows the reason `AppsDisabled`.
 
+With two installs in one cluster (see [zones](zones.md)), each manager stops the workloads of its own namespaces only. A Profile can bind namespaces of the two installs. Then each manager counts the workloads of all the bound namespaces, so the two managers write the same status. The status of a Hold on one workload or on one App comes from the install of its namespace.
+
+### Known limit
+
+If `apps.enabled=false` and the pods of an old AppVersion still run, a Profile Hold does not stop them. Without the App controllers, the controller cannot read the AppVersions, so the Hold can show `Held=True` while these pods run. Before you disable the App controllers, retire each AppVersion. A later change fixes this limit.
+
 ### The status of the Hold
 
 The controller writes the condition `Held` on the Hold:

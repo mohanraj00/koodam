@@ -51,6 +51,14 @@ type HoldReconciler struct {
 	// AppsEnabled is true if the App controllers run. Without them, no controller stops an App or
 	// an AppVersion.
 	AppsEnabled bool
+	// APIReader reads the workloads with no cache. Thus each install of the cluster counts the
+	// workloads of all the namespaces of a Profile, and each install writes the same status. If it
+	// is nil, the controller uses the client.
+	APIReader client.Reader
+	// Namespaces are the namespaces that the manager watches. An empty list is each namespace. The
+	// controller writes the status of a Hold on one workload or one App only if it watches the
+	// namespace of the target. The install of that namespace writes it.
+	Namespaces []string
 }
 
 // +kubebuilder:rbac:groups=core.koodam.dev,resources=holds,verbs=get;list;watch
@@ -62,6 +70,9 @@ func (r *HoldReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.
 	h := &corev1alpha1.Hold{}
 	if err := r.Get(ctx, req.NamespacedName, h); err != nil {
 		return ctrl.Result{}, client.IgnoreNotFound(err)
+	}
+	if t := h.Spec.Target; t.Kind != corev1alpha1.HoldTargetProfile && !watched(r.Namespaces, t.Namespace) {
+		return ctrl.Result{}, nil
 	}
 	status, reason, msg, err := r.state(ctx, h)
 	if err != nil {
@@ -128,29 +139,30 @@ func (r *HoldReconciler) count(ctx context.Context, t corev1alpha1.HoldTarget) (
 			waiting++
 		}
 	}
+	rd := r.reader()
 	key := types.NamespacedName{Namespace: t.Namespace, Name: t.Name}
 	switch t.Kind {
 	case corev1alpha1.HoldTargetAgent:
 		a := &corev1alpha1.Agent{}
-		if err := r.Get(ctx, key, a); err != nil {
+		if err := rd.Get(ctx, key, a); err != nil {
 			return 0, 0, client.IgnoreNotFound(err)
 		}
 		add(agentStopped(a))
 	case corev1alpha1.HoldTargetWorkspace:
 		ws := &corev1alpha1.Workspace{}
-		if err := r.Get(ctx, key, ws); err != nil {
+		if err := rd.Get(ctx, key, ws); err != nil {
 			return 0, 0, client.IgnoreNotFound(err)
 		}
 		add(workspaceStopped(ws))
 	case corev1alpha1.HoldTargetAppVersion:
 		av := &corev1alpha1.AppVersion{}
-		if err := r.Get(ctx, key, av); err != nil {
+		if err := rd.Get(ctx, key, av); err != nil {
 			return 0, 0, client.IgnoreNotFound(err)
 		}
 		add(appVersionStopped(av))
 	case corev1alpha1.HoldTargetApp:
 		list := &corev1alpha1.AppVersionList{}
-		if err := r.List(ctx, list, client.InNamespace(t.Namespace)); err != nil {
+		if err := rd.List(ctx, list, client.InNamespace(t.Namespace)); err != nil {
 			return 0, 0, err
 		}
 		for i := range list.Items {
@@ -164,52 +176,74 @@ func (r *HoldReconciler) count(ctx context.Context, t corev1alpha1.HoldTarget) (
 	return total, waiting, nil
 }
 
-// countProfile counts the workloads in each namespace that the Profile binds.
+// countProfile counts the workloads in each namespace that the Profile binds, also in the
+// namespaces of a different install. It counts the AppVersions only if the App controllers run.
 func (r *HoldReconciler) countProfile(ctx context.Context, name string) (total, waiting int, err error) {
-	p := &corev1alpha1.Profile{}
-	if err := r.Get(ctx, types.NamespacedName{Name: name}, p); err != nil {
-		return 0, 0, client.IgnoreNotFound(err)
-	}
 	add := func(stopped bool) {
 		total++
 		if !stopped {
 			waiting++
 		}
 	}
-	for _, ns := range p.Spec.Namespaces {
-		bound, err := boundProfile(ctx, r.Client, ns)
-		if err != nil {
-			return 0, 0, err
-		}
-		if bound != name {
-			continue
-		}
+	rd := r.reader()
+	err = r.eachBound(ctx, name, func(ns string) error {
 		agents := &corev1alpha1.AgentList{}
-		if err := r.List(ctx, agents, client.InNamespace(ns)); err != nil {
-			return 0, 0, err
+		if err := rd.List(ctx, agents, client.InNamespace(ns)); err != nil {
+			return err
 		}
 		for i := range agents.Items {
 			add(agentStopped(&agents.Items[i]))
 		}
 		workspaces := &corev1alpha1.WorkspaceList{}
-		if err := r.List(ctx, workspaces, client.InNamespace(ns)); err != nil {
-			return 0, 0, err
+		if err := rd.List(ctx, workspaces, client.InNamespace(ns)); err != nil {
+			return err
 		}
 		for i := range workspaces.Items {
 			add(workspaceStopped(&workspaces.Items[i]))
 		}
 		if !r.AppsEnabled {
-			continue
+			return nil
 		}
 		versions := &corev1alpha1.AppVersionList{}
-		if err := r.List(ctx, versions, client.InNamespace(ns)); err != nil {
-			return 0, 0, err
+		if err := rd.List(ctx, versions, client.InNamespace(ns)); err != nil {
+			return err
 		}
 		for i := range versions.Items {
 			add(appVersionStopped(&versions.Items[i]))
 		}
+		return nil
+	})
+	return total, waiting, err
+}
+
+// eachBound calls fn for each namespace of the Profile that the Profile binds. It does nothing if
+// the Profile does not exist.
+func (r *HoldReconciler) eachBound(ctx context.Context, name string, fn func(ns string) error) error {
+	p := &corev1alpha1.Profile{}
+	if err := r.Get(ctx, types.NamespacedName{Name: name}, p); err != nil {
+		return client.IgnoreNotFound(err)
 	}
-	return total, waiting, nil
+	for _, ns := range p.Spec.Namespaces {
+		bound, err := boundProfile(ctx, r.Client, ns)
+		if err != nil {
+			return err
+		}
+		if bound != name {
+			continue
+		}
+		if err := fn(ns); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// reader gives the API reader, or the client if the API reader is nil.
+func (r *HoldReconciler) reader() client.Reader {
+	if r.APIReader != nil {
+		return r.APIReader
+	}
+	return r.Client
 }
 
 // agentStopped is true if the run ended and its revoke is complete.

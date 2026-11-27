@@ -136,6 +136,9 @@ type WorkspaceReconciler struct {
 	Now func() time.Time
 	// Recorder writes the event of a stop by a Hold. If it is nil, the controller writes no event.
 	Recorder events.EventRecorder
+	// Namespaces are the namespaces that the manager watches. An empty list is each namespace. A
+	// Hold maps only to the workloads of these namespaces (#185).
+	Namespaces []string
 
 	renewMu sync.Mutex
 	// renewed has the time of the last renew for each key hash.
@@ -743,7 +746,7 @@ func (r *WorkspaceReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		// A TestKey revoke lets the Workspace delete continue (#192).
 		Watches(&corev1alpha1.TestKey{}, handler.EnqueueRequestsFromMapFunc(workspaceForTestKey)).
 		Watches(&corev1alpha1.Hold{},
-			handler.EnqueueRequestsFromMapFunc(holdMapper(r.Client, corev1alpha1.HoldTargetWorkspace))).
+			handler.EnqueueRequestsFromMapFunc(holdMapper(r.Client, corev1alpha1.HoldTargetWorkspace, r.Namespaces))).
 		Named("workspace").
 		Complete(r)
 }

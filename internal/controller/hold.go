@@ -19,6 +19,7 @@ package controller
 import (
 	"context"
 	"fmt"
+	"slices"
 	"unicode/utf8"
 
 	corev1 "k8s.io/api/core/v1"
@@ -128,34 +129,55 @@ func eventNote(s string) string {
 	return s
 }
 
+// watched is true if the manager watches the namespace. An empty list is each namespace. A
+// manager with a list does not see the namespaced objects of the other namespaces, because they
+// belong to a different install of the cluster.
+func watched(namespaces []string, ns string) bool {
+	return len(namespaces) == 0 || slices.Contains(namespaces, ns)
+}
+
 // holdRequests gives a request for each workload of the kind that the Hold can target. For a
 // Profile, it gives each workload of the kind in each namespace of spec.namespaces. The
-// reconciler of the workload then reads the binding.
+// reconciler of the workload then reads the binding. It gives no request for a namespace that the
+// manager does not watch: the install of that namespace stops its own workloads.
 func holdRequests(ctx context.Context, c client.Reader, h *corev1alpha1.Hold,
-	kind corev1alpha1.HoldTargetKind) []reconcile.Request {
+	kind corev1alpha1.HoldTargetKind, namespaces []string) []reconcile.Request {
 	t := h.Spec.Target
 	switch {
-	case t.Kind == kind:
-		return []reconcile.Request{{NamespacedName: types.NamespacedName{Namespace: t.Namespace, Name: t.Name}}}
-	case t.Kind == corev1alpha1.HoldTargetApp && kind == corev1alpha1.HoldTargetAppVersion:
-		return appVersionRequests(ctx, c, t.Namespace, t.Name)
 	case t.Kind == corev1alpha1.HoldTargetProfile:
 		p := &corev1alpha1.Profile{}
 		if err := c.Get(ctx, types.NamespacedName{Name: t.Name}, p); err != nil {
 			return nil
 		}
-		var reqs []reconcile.Request
-		for _, ns := range p.Spec.Namespaces {
-			r, err := workloadRequests(ctx, c, kind, ns)
-			if err != nil {
-				logf.FromContext(ctx).Error(err, "Failed to list the workloads of a Hold", "hold", h.Name)
-				return nil
-			}
-			reqs = append(reqs, r...)
-		}
-		return reqs
+		return namespaceRequests(ctx, c, kind, p.Spec.Namespaces, namespaces)
+	case !watched(namespaces, t.Namespace):
+		return nil
+	case t.Kind == kind:
+		return []reconcile.Request{{NamespacedName: types.NamespacedName{Namespace: t.Namespace, Name: t.Name}}}
+	case t.Kind == corev1alpha1.HoldTargetApp && kind == corev1alpha1.HoldTargetAppVersion:
+		return appVersionRequests(ctx, c, t.Namespace, t.Name)
 	}
 	return nil
+}
+
+// namespaceRequests gives a request for each workload of the kind in each namespace of list that
+// the manager watches. If the list of one namespace fails, it logs the error and keeps the
+// requests of the other namespaces.
+func namespaceRequests(ctx context.Context, c client.Reader, kind corev1alpha1.HoldTargetKind,
+	list, namespaces []string) []reconcile.Request {
+	var reqs []reconcile.Request
+	for _, ns := range list {
+		if !watched(namespaces, ns) {
+			continue
+		}
+		r, err := workloadRequests(ctx, c, kind, ns)
+		if err != nil {
+			logf.FromContext(ctx).Error(err, "Failed to list the workloads of a namespace", "namespace", ns)
+			continue
+		}
+		reqs = append(reqs, r...)
+	}
+	return reqs
 }
 
 // appVersionRequests gives a request for each AppVersion of the App.
@@ -202,28 +224,28 @@ func workloadRequests(ctx context.Context, c client.Reader, kind corev1alpha1.Ho
 }
 
 // holdMapper maps a Hold to the workloads of the kind that it can target. A release also maps,
-// so that a Workspace starts again.
-func holdMapper(c client.Reader, kind corev1alpha1.HoldTargetKind) handler.MapFunc {
+// so that a Workspace starts again. namespaces are the namespaces that the manager watches.
+func holdMapper(c client.Reader, kind corev1alpha1.HoldTargetKind, namespaces []string) handler.MapFunc {
 	return func(ctx context.Context, obj client.Object) []reconcile.Request {
 		h, ok := obj.(*corev1alpha1.Hold)
 		if !ok {
 			return nil
 		}
-		return holdRequests(ctx, c, h, kind)
+		return holdRequests(ctx, c, h, kind, namespaces)
 	}
 }
 
 // profileHoldMapper maps a Namespace or a Profile to the workloads of the kind in it, but only
 // while a Hold with the action Stop targets a Profile. Thus a namespace that a held Profile binds
-// later also stops.
-func profileHoldMapper(c client.Reader, kind corev1alpha1.HoldTargetKind) handler.MapFunc {
+// later also stops. namespaces are the namespaces that the manager watches.
+func profileHoldMapper(c client.Reader, kind corev1alpha1.HoldTargetKind, namespaces []string) handler.MapFunc {
 	return func(ctx context.Context, obj client.Object) []reconcile.Request {
 		list := &corev1alpha1.HoldList{}
 		if err := c.List(ctx, list); err != nil {
 			logf.FromContext(ctx).Error(err, "Failed to list the Holds")
 			return nil
 		}
-		var namespaces []string
+		var names []string
 		for i := range list.Items {
 			h := &list.Items[i]
 			if !activeStop(h) || h.Spec.Target.Kind != corev1alpha1.HoldTargetProfile {
@@ -231,25 +253,16 @@ func profileHoldMapper(c client.Reader, kind corev1alpha1.HoldTargetKind) handle
 			}
 			switch o := obj.(type) {
 			case *corev1.Namespace:
-				namespaces = []string{o.Name}
+				names = []string{o.Name}
 			case *corev1alpha1.Profile:
 				if o.Name == h.Spec.Target.Name {
-					namespaces = o.Spec.Namespaces
+					names = o.Spec.Namespaces
 				}
 			}
-			if namespaces != nil {
+			if names != nil {
 				break
 			}
 		}
-		var reqs []reconcile.Request
-		for _, ns := range namespaces {
-			r, err := workloadRequests(ctx, c, kind, ns)
-			if err != nil {
-				logf.FromContext(ctx).Error(err, "Failed to list the workloads of a namespace", "namespace", ns)
-				return nil
-			}
-			reqs = append(reqs, r...)
-		}
-		return reqs
+		return namespaceRequests(ctx, c, kind, names, namespaces)
 	}
 }

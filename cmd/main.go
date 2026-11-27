@@ -559,6 +559,7 @@ func main() {
 		JobTTL:         int32(jobTTLSeconds),
 		IngressEnabled: agentIngressEnabled,
 		Recorder:       recorder,
+		Namespaces:     watched,
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "Failed to create controller", "controller", "agent")
 		os.Exit(1)
@@ -567,6 +568,8 @@ func main() {
 		Client:      mgr.GetClient(),
 		Recorder:    recorder,
 		AppsEnabled: appsEnabled,
+		APIReader:   mgr.GetAPIReader(),
+		Namespaces:  watched,
 	}); err != nil {
 		setupLog.Error(err, "Failed to create the Hold or the Profile controller")
 		os.Exit(1)
@@ -583,6 +586,7 @@ func main() {
 		GatewayURL:     strings.TrimRight(agentGatewayURL, "/"),
 		Egress:         egress,
 		Recorder:       recorder,
+		Namespaces:     watched,
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "Failed to create controller", "controller", "workspace")
 		os.Exit(1)
@@ -609,6 +613,7 @@ func main() {
 			IngressNamespaces: ingressNamespaces,
 			Claim:             claim,
 			Recorder:          recorder,
+			Namespaces:        watched,
 		}, &controller.TenantQuotaReconciler{Client: mgr.GetClient(), Customers: gw, Interval: tenantUsageInterval})
 		if err != nil {
 			setupLog.Error(err, "Failed to create the App controllers")
