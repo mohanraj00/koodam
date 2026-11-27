@@ -50,7 +50,7 @@ With two installs in one cluster (see [zones](zones.md)), each manager stops the
 
 ## The quarantine
 
-The [egress proxy](traced-egress.md) watches the Holds and the Profiles. While a `Quarantine` Hold has no release, the proxy refuses each call of each pod of the target with the reason `quarantined`. Each refused call has a span with `result: denied` and `reason: quarantined`. When the quarantine starts, the proxy also ends the open calls and the open tunnels of these pods. The proxy reads the Hold and the Profile status from the API server, not from a pod label, so the owner of the workload cannot remove the control.
+The [egress proxy](traced-egress.md) watches the Holds and the Profiles. While a `Quarantine` Hold has no release, the proxy refuses each call of each pod of the target with the reason `quarantined`. Each refused call has a span with `result: denied` and `reason: quarantined`. When the quarantine starts, the proxy also ends the open calls and the open tunnels of these pods. The proxy reads the Hold and the Profile status from the API server, so the owner of the workload cannot remove the Hold. But the proxy finds the pods of an Agent or a Workspace target by the pod labels `koodam.dev/agent` and `koodam.dev/workspace`. A user who can patch the pods can change these labels. See [Failure modes and limits](#failure-modes-and-limits).
 
 | Target | The pods that the proxy refuses |
 |---|---|
@@ -84,6 +84,9 @@ The proxy sees only the calls that go through it. A call in a path with no proxy
 - A Hold that is deleted with no release writes no `released` span. The admission policy refuses this delete.
 - If the delete of an Agent or an AppVersion started before the quarantine, Kubernetes refuses a new finalizer. Then the controller blocks the key and keeps the pods, and the finalizer of the workload keeps it until the release.
 - The finalizer stops the controller and a normal delete of the workload. It does not stop a user who can delete the pods, the Job or the StatefulSet directly, or a delete with `propagationPolicy: Foreground`. Limit these rights in the namespace during an investigation. Issue [#452](https://github.com/mohanraj00/koodam/issues/452) adds an admission policy for this.
+- The proxy finds the pods of an Agent or a Workspace target by the pod labels `koodam.dev/agent` and `koodam.dev/workspace`. A user who can patch the pods can change these labels, and then the proxy does not refuse the calls of the pod. Limit the right to patch pods in the namespace during an investigation ([#452](https://github.com/mohanraj00/koodam/issues/452)).
+- If a user deletes a Workspace before the controller reconciles its quarantine, the Workspace can lose its pod while the Hold is active ([#454](https://github.com/mohanraj00/koodam/issues/454)).
+- If a Profile binds the namespaces of 2 installs and only 1 install has the egress proxy, the Hold can show `Quarantined` while the pods of the other install still send calls out ([#455](https://github.com/mohanraj00/koodam/issues/455)).
 
 ### The status of the Hold
 

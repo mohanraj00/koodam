@@ -2,7 +2,9 @@
 
 This file records the changes for each Koodam version. The newest version is first.
 
-## Unreleased
+## v0.5.0 (2026-11-27)
+
+The API is `v1alpha1` and can change between tags. The App parts are off by default. [Known limits of v0.5.0](#known-limits-of-v050) lists the open limits.
 
 ### Agents
 
@@ -18,9 +20,9 @@ This file records the changes for each Koodam version. The newest version is fir
 
 ### Incident controls
 
-- Add the cluster-scoped `Hold` type with its CRD rules: an incident control with the action `Stop` or `Quarantine` on an Agent, a Workspace, an App, an AppVersion or all the workloads of a Profile. The target, the action, the reason and the user are immutable, and `spec.release` can be set one time. The admission policy `koodam-hold` refuses a `spec.user` or a `spec.release.user` that is not the user of the request, a new Hold with a release, and the delete of a Hold with no release. The chart installs the CRD, the policy (with the name `<release>-hold`) and a read-only viewer role. No controller acts on a Hold in this change. [docs/holds.md](docs/holds.md) has the API ([#185](https://github.com/mohanraj00/koodam/issues/185)).
+- Add the cluster-scoped `Hold` type with its CRD rules: an incident control with the action `Stop` or `Quarantine` on an Agent, a Workspace, an App, an AppVersion or all the workloads of a Profile. The target, the action, the reason and the user are immutable, and `spec.release` can be set one time. The admission policy `koodam-hold` refuses a `spec.user` or a `spec.release.user` that is not the user of the request, a new Hold with a release, and the delete of a Hold with no release. The chart installs the CRD, the policy (with the name `<release>-hold`) and a read-only viewer role. [docs/holds.md](docs/holds.md) has the API ([#185](https://github.com/mohanraj00/koodam/issues/185)).
 
-- The controller does the `Stop` action of a Hold. For an Agent, a Workspace, an AppVersion, an App or a Profile, it blocks the gateway key first and then stops the pods with the revoke path of the kind. A Workspace keeps its home PVC and starts again with a new key after the release. The owner of a workload cannot clear the stop. The Hold shows the condition `Held`, and the controller writes `events.k8s.io/v1` events on the workload and on the Hold. The `Quarantine` action shows the reason `Unsupported` until a later change. The controller role gets `get`, `list` and `watch` on Holds, `update` on `holds/status`, and `create` and `patch` on events. With two installs in one cluster, each manager stops the workloads of its own namespaces only ([#185](https://github.com/mohanraj00/koodam/issues/185)).
+- The controller does the `Stop` action of a Hold. For an Agent, a Workspace, an AppVersion, an App or a Profile, it blocks the gateway key first and then stops the pods with the revoke path of the kind. A Workspace keeps its home PVC and starts again with a new key after the release. The owner of a workload cannot clear the stop. The Hold shows the condition `Held`, and the controller writes `events.k8s.io/v1` events on the workload and on the Hold. The controller role gets `get`, `list` and `watch` on Holds, `update` on `holds/status`, and `create` and `patch` on events. With two installs in one cluster, each manager stops the workloads of its own namespaces only ([#185](https://github.com/mohanraj00/koodam/issues/185)).
 
 - The egress proxy does the `Quarantine` action of a Hold. It watches the Holds and the Profiles, and it is not ready until it reads them. It refuses each call of a quarantined pod with the reason `quarantined`, and it ends the open calls and tunnels of the pod when the quarantine starts. It writes a span of the new kind `control`, with the new optional field `by`, when a quarantine starts and ends. The span version stays 2. The proxy gets `get`, `list` and `watch` on `holds` and `profiles` in a new ClusterRole. [docs/holds.md](docs/holds.md#the-quarantine) has the limits ([#185](https://github.com/mohanraj00/koodam/issues/185)).
 
@@ -59,6 +61,20 @@ This file records the changes for each Koodam version. The newest version is fir
 
 - Add an optional guard hook to the bundled gateway for instructions in untrusted content (`gateway.bundled.guard`, off by default). It examines the tool replies and the documents of each model request with fixed rules, and it records, marks or blocks a match. It writes one log line with the policy version and a digest for each new block, and no content. It is a tripwire for known forms, not a defense. The [gateway guard](docs/gateway-guard.md) page lists what it cannot detect. The gateway `callbacks` setting is now a list ([#248](https://github.com/mohanraj00/koodam/issues/248)).
 - With the guard on, the chart sets `allow_dynamic_callback_disabling: false`, so a request or a key cannot turn off a gateway hook. The hook examines a large block in pieces, so its memory does not grow with the block. `make guard-image-check` runs the hook in the pinned gateway image with docker ([#248](https://github.com/mohanraj00/koodam/issues/248)).
+
+### Known limits of v0.5.0
+
+- The AppVersion controller has no watch on NetworkPolicy. If a user deletes or changes the policy of a version or of a gate pod, the controller restores it at the next reconcile ([#359](https://github.com/mohanraj00/koodam/issues/359)).
+- A valid signed approval record does not show that it is the current selection ([#364](https://github.com/mohanraj00/koodam/issues/364)).
+- With the signed claim check on, the gate pod has no claim, so each gate message gets a refusal and the gate gives `Evidence=False/Failed` ([#354](https://github.com/mohanraj00/koodam/issues/354)).
+- A foreground delete of a quarantined workload, or a direct delete of its pods, Job, StatefulSet or PVC, can still stop the quarantined processes. A finalizer cannot prevent it ([#452](https://github.com/mohanraj00/koodam/issues/452)).
+- The egress proxy finds the pods of an Agent or a Workspace target by the pod labels `koodam.dev/agent` and `koodam.dev/workspace`. A user who can patch the pods can change these labels, and then the proxy does not refuse the calls of the pod ([#452](https://github.com/mohanraj00/koodam/issues/452)).
+- If a user deletes a Workspace before the controller reconciles its quarantine, the Workspace can lose its pod while the Hold is active ([#454](https://github.com/mohanraj00/koodam/issues/454)).
+- If a Profile binds the namespaces of 2 installs and only 1 install has the egress proxy, the Hold can show `Quarantined` while the pods of the other install still send calls out ([#455](https://github.com/mohanraj00/koodam/issues/455)).
+- Each pod of an App has its own token bucket, so a tenant can get one request from each pod at one time ([#428](https://github.com/mohanraj00/koodam/issues/428)). The request limit of a tenant comes from a read of the gateway count at an interval, so a tenant can go past it until each pod has the quota mark ([#429](https://github.com/mohanraj00/koodam/issues/429)).
+- The zone placement policy refuses a list of placements. A cluster with nodes of 2 zones also needs a control of the cluster ([#433](https://github.com/mohanraj00/koodam/issues/433)).
+- The chart does not deploy `spend-api`. Run its image in your own Deployment.
+- [docs/tracing.md](docs/tracing.md) is a design for v0.6. No code uses it yet ([#188](https://github.com/mohanraj00/koodam/issues/188)).
 
 ## v0.4.0 (2026-11-20)
 
