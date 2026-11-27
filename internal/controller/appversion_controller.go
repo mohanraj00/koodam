@@ -81,6 +81,9 @@ const (
 	reasonIssuing = "Issuing"
 	// reasonNoModel is the reason of the condition GatewayKey of a version with no model.
 	reasonNoModel = "NoModel"
+	// reasonAPIServerEgress is the reason of the condition TracedEgress for a version with
+	// template.rules and API server egress rules. The calls to the API server have no span.
+	reasonAPIServerEgress = "ProxyAndAPIServer"
 	// reasonNoEgressPolicy is the reason of the condition TracedEgress while the version has no
 	// NetworkPolicy that enforces the egress path of its pods.
 	reasonNoEgressPolicy = "NoEgressPolicy"
@@ -473,7 +476,11 @@ func (r *AppVersionReconciler) egressCondition(ctx context.Context, av *corev1al
 		c.Message = "The pod DNS goes to the egress proxy, but no NetworkPolicy enforces the egress path " +
 			"of the pods of this version."
 	case len(r.APIServerEgress) > 0 && len(av.Spec.Template.Rules) > 0:
-		c.Message = "The pod DNS goes to the egress proxy, and the version has a NetworkPolicy. The API server path uses direct egress."
+		// The NetworkPolicy still limits the egress, so the claim check stays enforced. The reason
+		// shows that the calls to the API server have no span.
+		c.Reason = reasonAPIServerEgress
+		c.Message = "The pod DNS goes to the egress proxy, and a NetworkPolicy permits egress to the proxy " +
+			"and to the API server only. The calls to the API server have no span."
 	default:
 		c.Message = "The pod DNS goes to the egress proxy, and a NetworkPolicy permits egress to the proxy only."
 	}

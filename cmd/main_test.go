@@ -53,7 +53,16 @@ func TestLoadAppAPIServerEgress(t *testing.T) {
 			t.Errorf("%q gave %v rules and %v, want no rules", value, got, err)
 		}
 	}
-	for _, value := range []string{"{}", "null", "[null]", `[{"peer":[]}]`, "[] []"} {
+	for _, value := range []string{"{}", "null", "[null]", `[{"peer":[]}]`, "[] []",
+		`[{"ports":[{"port":6443}]}]`,
+		`[{"to":[{"ipBlock":{"cidr":"192.0.2.1/32"}}]}]`,
+		`[{"to":[{"ipBlock":{"cidr":"0.0.0.0/0"}}],"ports":[{"port":6443}]}]`,
+		`[{"to":[{"ipBlock":{"cidr":"192.0.2.0/24"}}],"ports":[{"port":6443}]}]`,
+		`[{"to":[{"ipBlock":{"cidr":"192.0.2.1/32","except":["192.0.2.1/32"]}}],"ports":[{"port":6443}]}]`,
+		`[{"to":[{"podSelector":{}}],"ports":[{"port":6443}]}]`,
+		`[{"to":[{"ipBlock":{"cidr":"192.0.2.1/32"}}],"ports":[{"protocol":"TCP"}]}]`,
+		`[{"to":[{"ipBlock":{"cidr":"192.0.2.1/32"}}],"ports":[{"port":6443,"endPort":6450}]}]`,
+	} {
 		if _, err := loadAppAPIServerEgress(value, proxy); err == nil {
 			t.Errorf("accepted %q, want an error", value)
 		}

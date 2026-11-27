@@ -197,6 +197,8 @@ var _ = Describe("AppVersion admission policy", Ordered, func() {
 			Fail("The policy has no apiServerEgress variable")
 		}
 		setExpression(`request.namespace in ["default"]`)
+		// Restore the shared policy if an assertion fails, so the other specs see the default.
+		DeferCleanup(setExpression, "false")
 		withRules := func(av *corev1alpha1.AppVersion) { av.Spec.Template.Rules = appPolicyRules() }
 		Eventually(func() error {
 			return create(newVersion("policy-allow-create", withRules))

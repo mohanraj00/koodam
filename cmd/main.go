@@ -261,6 +261,9 @@ func loadAppAPIServerEgress(raw string, e controller.EgressProxy) ([]networkingv
 		if rule == nil {
 			return nil, errors.New("the list must not contain null")
 		}
+		if err := checkAPIServerRule(*rule); err != nil {
+			return nil, err
+		}
 		// Use the default of the API server so the controller can compare the policies.
 		for i := range rule.Ports {
 			if rule.Ports[i].Protocol == nil {
@@ -270,6 +273,30 @@ func loadAppAPIServerEgress(raw string, e controller.EgressProxy) ([]networkingv
 		rules = append(rules, *rule)
 	}
 	return rules, nil
+}
+
+// checkAPIServerRule accepts only a rule to API server endpoint addresses. Each rule needs one or
+// more peers and one or more ports. Each peer is an ipBlock with one address (/32 or /128) and no
+// except list, so a rule cannot open a wide range or a pod selector.
+func checkAPIServerRule(rule networkingv1.NetworkPolicyEgressRule) error {
+	if len(rule.To) == 0 || len(rule.Ports) == 0 {
+		return errors.New("each rule needs a peer in to and a port")
+	}
+	for _, peer := range rule.To {
+		if peer.IPBlock == nil || peer.PodSelector != nil || peer.NamespaceSelector != nil {
+			return errors.New("each peer must be an ipBlock with the address of an API server endpoint")
+		}
+		prefix, err := netip.ParsePrefix(peer.IPBlock.CIDR)
+		if err != nil || prefix.Bits() != prefix.Addr().BitLen() || len(peer.IPBlock.Except) > 0 {
+			return fmt.Errorf("the ipBlock %q must be one address (/32 or /128) with no except list", peer.IPBlock.CIDR)
+		}
+	}
+	for _, port := range rule.Ports {
+		if port.Port == nil || port.EndPort != nil {
+			return errors.New("each port of a rule must be one port number")
+		}
+	}
+	return nil
 }
 
 // checkEgress refuses an egress proxy IP that is not an IPv4 address, and a port or a cluster
