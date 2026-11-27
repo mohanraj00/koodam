@@ -1,6 +1,28 @@
 {
   "name": "data-grid",
-  "description": "An editable grid with column headers, row headers and typed cells. A person moves between the cells with the keyboard and edits a cell in place. Each saved change goes to the application as one action, and the cell shows a text marker until the receipt comes back. The kit computes no formula.",
+  "description": "A grid with typed cells. The status gives the reason for a wait. If no receipt comes back, the grid offers Retry and Cancel. Cancel keeps the sent edit Changed if it is the last edit of the cell. A newer edit stays ready to send. A successful receipt shows Done. The kit computes no formula.",
+  "parts": [
+    {"name": "authorship", "description": "Type and ID of the author, with a name when available.", "guardrail": true},
+    {"name": "cancel", "description": "Button that cancels a pending edit.", "guardrail": true},
+    {"name": "cell", "description": "One grid cell.", "guardrail": false},
+    {"name": "changed", "description": "Marker for the state of an edited cell.", "guardrail": true},
+    {"name": "copy", "description": "Button that copies text.", "guardrail": true},
+    {"name": "copy-status", "description": "Result of the copy operation.", "guardrail": true},
+    {"name": "data-grid", "description": "Group that contains the grid.", "guardrail": false},
+    {"name": "details", "description": "Control and technical details of a refusal.", "guardrail": true},
+    {"name": "editor", "description": "Input for an editable cell.", "guardrail": false},
+    {"name": "empty", "description": "Message that shows when there are no items.", "guardrail": false},
+    {"name": "exit", "description": "Controls for a pending edit.", "guardrail": true},
+    {"name": "next", "description": "Next step after a refusal.", "guardrail": true},
+    {"name": "pending", "description": "State and reason for a pending edit.", "guardrail": true},
+    {"name": "reason", "description": "Reason for a refusal or an edit error.", "guardrail": true},
+    {"name": "reference", "description": "Reference from the receipt.", "guardrail": true},
+    {"name": "retry", "description": "Button that tries the pending edit again.", "guardrail": true},
+    {"name": "scroll", "description": "Scroll area of the grid.", "guardrail": false},
+    {"name": "status", "description": "Result or state of a grid edit.", "guardrail": true},
+    {"name": "title", "description": "Title of the grid.", "guardrail": true},
+    {"name": "value", "description": "Value shown in a grid cell.", "guardrail": false}
+  ],
   "data": {
     "label": {"type": "text", "required": true, "min_length": 1, "size": "title"},
     "columns": {
@@ -18,14 +40,14 @@
   },
   "states": ["+empty", "+disabled", "+pending", "+error", "+refused"],
   "tokens": [
-    "color.text", "color.text-muted", "color.surface", "color.border", "color.danger", "space.1", "space.2", "space.3",
+    "color.text", "color.text-muted", "color.surface", "color.border", "color.danger", "color.success", "space.1", "space.2", "space.3",
     "radius.1", "type.body", "type.caption", "type.weight-strong"
   ],
   "accessibility": {
     "role": "group",
     "name": {"field": "label"},
     "keyboard": [
-      "Tab", "Shift+Tab", "Enter", "Escape", "ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight", "Home", "End"
+      "Tab", "Shift+Tab", "Enter", "Escape", "ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight", "Home", "End", "Space"
     ]
   }
 }

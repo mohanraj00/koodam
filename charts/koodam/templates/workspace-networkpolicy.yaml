@@ -18,10 +18,14 @@ spec:
   policyTypes:
   - Ingress
   - Egress
+  {{- with $np.sshFrom }}
   ingress:
-  - ports:
+  - from:
+    {{- toYaml . | nindent 4 }}
+    ports:
     - protocol: TCP
       port: 2222
+  {{- end }}
   egress:
   {{- if $ep.enabled }}
   {{- include "koodam.proxyEgress" $ | nindent 2 }}

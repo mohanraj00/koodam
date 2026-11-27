@@ -1,0 +1,19 @@
+{
+  "name": "badge",
+  "description": "A short label with a tone. The text gives its meaning.",
+  "ai_content": false,
+  "parts": [
+    {"name": "copy", "description": "Button that copies text.", "guardrail": true},
+    {"name": "copy-status", "description": "Result of the copy operation.", "guardrail": true},
+    {"name": "details", "description": "Control and technical details of a refusal.", "guardrail": true},
+    {"name": "label", "description": "Visible badge text.", "guardrail": true},
+    {"name": "next", "description": "Next step after a refusal.", "guardrail": true},
+    {"name": "reason", "description": "Reason for a refusal.", "guardrail": true}
+  ],
+  "data": {
+    "text": {"type": "text", "required": true, "min_length": 1, "size": "short"},
+    "tone": {"type": "enum", "required": true, "values": ["neutral", "info", "success", "warning", "danger"]}
+  },
+  "states": ["+refused"],
+  "tokens": ["+color.surface", "+color.info", "+color.on-info", "+color.success", "+color.on-success", "+color.warning", "+color.on-warning", "+color.danger", "+radius.2", "+space.1", "+space.2", "+type.caption"]
+}

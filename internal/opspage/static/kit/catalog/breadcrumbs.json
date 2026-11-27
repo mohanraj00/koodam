@@ -1,0 +1,35 @@
+{
+  "name": "breadcrumbs",
+  "description": "A named navigation landmark with an ordered list of links. Each item before the current page has a relative path or an HTTPS address with an ASCII DNS host and an optional port. The last item shows the current page as text.",
+  "ai_content": false,
+  "parts": [
+    {"name": "copy", "description": "Button that copies text.", "guardrail": true},
+    {"name": "copy-status", "description": "Result of the copy operation.", "guardrail": true},
+    {"name": "current", "description": "Text that identifies the current page.", "guardrail": true},
+    {"name": "details", "description": "Control and technical details of a refusal.", "guardrail": true},
+    {"name": "link", "description": "Link to a page in the path.", "guardrail": true},
+    {"name": "list", "description": "Ordered list of pages in the path.", "guardrail": true},
+    {"name": "nav", "description": "Named navigation landmark.", "guardrail": true},
+    {"name": "next", "description": "Next step after a refusal.", "guardrail": true},
+    {"name": "reason", "description": "Reason for a refusal.", "guardrail": true},
+    {"name": "separator", "description": "Visual mark between pages in the path.", "guardrail": false}
+  ],
+  "data": {
+    "label": {"type": "text", "required": true, "min_length": 1, "size": "line"},
+    "items": {
+      "type": "list", "required": true, "min_items": 1, "max_items": 20,
+      "items": {
+        "type": "record",
+        "fields": {
+          "label": {"type": "text", "required": true, "min_length": 1, "size": "line"},
+          "href": {"type": "text", "min_length": 1, "size": "long"}
+        }
+      }
+    }
+  },
+  "states": ["+refused"],
+  "tokens": ["+color.accent", "+color.focus", "+space.2"],
+  "accessibility": {
+    "role": "navigation", "name": {"field": "label"}, "keyboard": ["Tab", "Shift+Tab", "Enter"]
+  }
+}

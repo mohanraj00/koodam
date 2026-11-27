@@ -1,0 +1,34 @@
+{
+  "name": "tabs",
+  "description": "A named list of tabs with one selected tab and one page content slot for each panel.",
+  "ai_content": false,
+  "parts": [
+    {"name": "copy", "description": "Button that copies text.", "guardrail": true},
+    {"name": "copy-status", "description": "Result of the copy operation.", "guardrail": true},
+    {"name": "details", "description": "Control and technical details of a refusal.", "guardrail": true},
+    {"name": "next", "description": "Next step after a refusal.", "guardrail": true},
+    {"name": "panel", "description": "Container for page content. The selected tab shows its panel.", "guardrail": true},
+    {"name": "reason", "description": "Reason for a refusal.", "guardrail": true},
+    {"name": "tab", "description": "Button that selects its panel.", "guardrail": true},
+    {"name": "tablist", "description": "Named container for the tab buttons.", "guardrail": true}
+  ],
+  "data": {
+    "label": {"type": "text", "required": true, "min_length": 1, "size": "line"},
+    "tabs": {
+      "type": "list", "required": true, "min_items": 1, "max_items": 20,
+      "items": {
+        "type": "record",
+        "fields": {
+          "label": {"type": "text", "required": true, "min_length": 1, "size": "line"},
+          "name": {"type": "text", "required": true, "min_length": 1, "size": "short", "format": "name"}
+        }
+      }
+    }
+  },
+  "states": ["+refused"],
+  "tokens": ["+color.surface", "+color.focus", "+color.accent", "+space.2", "+space.3", "+radius.2", "+motion.fast"],
+  "accessibility": {
+    "role": "tablist", "name": {"field": "label"},
+    "keyboard": ["Tab", "Shift+Tab", "Enter", "Space", "ArrowLeft", "ArrowRight", "Home", "End"]
+  }
+}

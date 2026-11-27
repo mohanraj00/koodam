@@ -174,6 +174,31 @@ helm install koodam charts/koodam -n koodam-system -f charts/koodam/values-bundl
 
 The reference must end with `@sha256:` and 64 lower-case hex characters. If not, the chart fails. The default is empty. Then the chart passes no flag, and a harness with the nookku plugin gets no Nookku files.
 
+## Workspace NetworkPolicy
+
+The chart adds the policy in each namespace in `workspace.networkPolicy.namespaces`. Use a CNI
+that enforces NetworkPolicy. By default, the policy blocks direct connections from other pods
+to the Workspace SSH port.
+
+If a pod needs direct SSH access, set `workspace.networkPolicy.sshFrom` before you upgrade.
+The policy permits TCP port 2222 from the peers in that list. This example permits pods with
+the label `app: bastion` in the `access` namespace.
+
+```yaml
+workspace:
+  networkPolicy:
+    sshFrom:
+    - namespaceSelector:
+        matchLabels:
+          kubernetes.io/metadata.name: access
+      podSelector:
+        matchLabels:
+          app: bastion
+```
+
+`koodam ssh` and `kubectl port-forward` use the Kubernetes port-forward API. The kubelet
+connects in the pod network namespace. These connections work with an empty `sshFrom` list.
+
 ## Values
 
 | Value | Default | Description |
@@ -182,6 +207,7 @@ The reference must end with `@sha256:` and 64 lower-case hex characters. If not,
 | `workspace.image.repository`, `workspace.image.tag` | `ghcr.io/mohanraj00/koodam-workspace`, empty | The image for a Workspace with no `spec.image`. If the tag is empty, the chart uses the chart `appVersion`. |
 | `nookku.image` | empty | The Nookku data image, with a digest. If it is set, the chart passes `--nookku-image`. See [The Nookku data image](#the-nookku-data-image). |
 | `workspace.networkPolicy.namespaces` | empty | The namespaces that get a NetworkPolicy for the Workspace pods. With `egressProxy.enabled`, the policy is default-deny egress, and the Agent pods get one too. See [The Workspace network](../../docs/profiles.md#the-workspace-network). |
+| `workspace.networkPolicy.sshFrom` | `[]` | The list of peers (`NetworkPolicyPeer`) that can connect to TCP port 2222. An empty list gives the policy no ingress rules. |
 | `workspace.networkPolicy.dns.namespace`, `.podLabels` | `kube-system`, `k8s-app: kube-dns` | The DNS pods that the Workspace pods can reach on port 53. |
 | `workspace.networkPolicy.publicInternet` | `true` | If `true`, the Workspace pods can reach each public address. |
 | `workspace.networkPolicy.publicInternetPorts` | TCP 443, 80, 22 | The ports of the public internet rule. An empty list permits all ports. |

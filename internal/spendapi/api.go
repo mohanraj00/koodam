@@ -30,6 +30,7 @@ import (
 	"strings"
 	"time"
 
+	authorizationv1 "k8s.io/api/authorization/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/util/validation"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -47,6 +48,8 @@ const (
 	specPath      = "/v1/openapi.json"
 	// msgTimeLimit is the problem detail when the request time limit expires.
 	msgTimeLimit = "The request time limit expired."
+	// msgForbidden is the problem detail when the caller cannot list Agents in a target namespace.
+	msgForbidden = "The caller cannot list Agents in a namespace of this server."
 )
 
 var errCursor = errors.New("the page cursor is not valid")
@@ -59,6 +62,8 @@ type Config struct {
 	GatewayURL string
 	MasterKey  string
 	Timeout    time.Duration
+	// Logs opens the log of a container for the log path. If it is nil, the server has no log path.
+	Logs LogSource
 
 	Claims       appclaim.Config
 	Keys         *appclaim.KeySet
@@ -72,6 +77,7 @@ type api struct {
 	viewers    *Viewers
 	gateway    *liteLLM
 	timeout    time.Duration
+	logs       LogSource
 	claims     appclaim.Config
 	keys       *appclaim.KeySet
 	tokens     [][sha256.Size]byte
@@ -107,7 +113,7 @@ func New(c Config) (http.Handler, error) {
 	}
 	a := &api{
 		kube: c.Kube, namespaces: slices.Clone(c.Namespaces), viewers: c.Viewers,
-		gateway: l, timeout: c.Timeout, claims: c.Claims, keys: c.Keys,
+		gateway: l, timeout: c.Timeout, logs: c.Logs, claims: c.Claims, keys: c.Keys,
 	}
 	a.tokens = make([][sha256.Size]byte, 0, len(c.StaticTokens))
 	for _, token := range c.StaticTokens {
@@ -141,14 +147,18 @@ func bearer(r *http.Request) (string, bool) {
 	return token, ok && token != "" && strings.EqualFold(scheme, "Bearer")
 }
 
-// scope gives the namespaces that the caller can read, or the HTTP status of the refusal.
-func (a *api) scope(ctx context.Context, r *http.Request) ([]string, int, problem) {
+// scope gives the namespaces of targets that the caller can read, or the HTTP status of the refusal.
+func (a *api) scope(ctx context.Context, r *http.Request, targets []string,
+	checks []authorizationv1.ResourceAttributes) ([]string, int, problem) {
 	token, ok := bearer(r)
 	if !ok || (a.viewers == nil && !a.authorized(token)) {
 		return nil, http.StatusUnauthorized, problem{"A valid bearer token is necessary."}
 	}
 	if a.viewers == nil {
-		return a.namespaces, http.StatusOK, problem{}
+		if len(targets) == 0 {
+			return nil, http.StatusForbidden, problem{msgForbidden}
+		}
+		return targets, http.StatusOK, problem{}
 	}
 	user, err := a.viewers.user(ctx, token)
 	if errors.Is(err, errNotAuthenticated) {
@@ -156,7 +166,7 @@ func (a *api) scope(ctx context.Context, r *http.Request) ([]string, int, proble
 	}
 	var namespaces []string
 	if err == nil {
-		namespaces, err = a.viewers.allowed(ctx, user, a.namespaces)
+		namespaces, err = a.viewers.allowed(ctx, user, targets, checks)
 	}
 	switch {
 	case ctx.Err() != nil:
@@ -164,7 +174,7 @@ func (a *api) scope(ctx context.Context, r *http.Request) ([]string, int, proble
 	case err != nil:
 		return nil, http.StatusBadGateway, problem{"The Kubernetes access review is not available."}
 	case len(namespaces) == 0:
-		return nil, http.StatusForbidden, problem{"The caller cannot list Agents in a namespace of this server."}
+		return nil, http.StatusForbidden, problem{msgForbidden}
 	}
 	return namespaces, http.StatusOK, problem{}
 }
@@ -192,7 +202,19 @@ func (a *api) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		reply(w, r, http.StatusMethodNotAllowed, problem{"Use GET or HEAD."})
 		return
 	}
-	namespaces, status, refusal := a.scope(ctx, r)
+	// A run path reads one namespace, so the server checks the access to that namespace only.
+	targets, checks := a.namespaces, []authorizationv1.ResourceAttributes{listAgents}
+	ref, isRun := parseRun(r.URL.Path)
+	if isRun {
+		targets = nil
+		if slices.Contains(a.namespaces, ref.namespace) {
+			targets = []string{ref.namespace}
+		}
+		if ref.part == logPart {
+			checks = append(checks, readLog)
+		}
+	}
+	namespaces, status, refusal := a.scope(ctx, r, targets, checks)
 	if status != http.StatusOK {
 		if status == http.StatusUnauthorized {
 			w.Header().Set("WWW-Authenticate", "Bearer")
@@ -200,16 +222,20 @@ func (a *api) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		reply(w, r, status, refusal)
 		return
 	}
-	switch r.URL.Path {
-	case specPath:
+	switch path := r.URL.Path; {
+	case isRun && ref.part == logPart:
+		a.serveLog(ctx, w, r, ref)
+	case isRun:
+		a.serveRun(ctx, w, r, ref)
+	case path == specPath:
 		if r.Method == http.MethodGet {
 			_, _ = w.Write([]byte(docs.SpendOpenAPI))
 		} else {
 			w.WriteHeader(http.StatusOK)
 		}
-	case runsPath, spendPath:
+	case path == runsPath || path == spendPath:
 		a.list(ctx, w, r, namespaces)
-	case budgetsPath:
+	case path == budgetsPath:
 		a.listBudgets(ctx, w, r, namespaces)
 	default:
 		reply(w, r, http.StatusNotFound, problem{"This path does not exist."})

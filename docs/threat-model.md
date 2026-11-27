@@ -56,12 +56,13 @@ A key that stays valid after the run lets a copy of the key spend more.
 
 A Workspace pod runs code that the user and the harnesses start. The pod is the trust boundary of that code.
 
-- **Control.** The pod meets the Pod Security `restricted` profile. It runs as uid 1000 with no privilege escalation, all capabilities dropped, the `RuntimeDefault` seccomp profile and no hostPath volume. It has no ServiceAccount token, so it has no Kubernetes API access. It has no Service and no public port. `koodam tunnel` connects through the Kubernetes API, with the RBAC of the developer for `pods/portforward`. sshd listens on port 2222 and accepts only the public keys of `spec.sshPublicKeys`. With `workspace.networkPolicy`, the chart permits ingress to port 2222 from each source.
-- **Test.** `internal/controller/workspace_controller_test.go`: "meets the Pod Security restricted profile". `test/e2e/networkpolicy_test.go`: "lets a Workspace pod reach only DNS, the gateway and the public internet".
+- **Control.** The pod meets the Pod Security `restricted` profile. It runs as uid 1000 with no privilege escalation, all capabilities dropped, the `RuntimeDefault` seccomp profile and no hostPath volume. It has no ServiceAccount token, so it has no Kubernetes API access. It has no Service and no public port. sshd listens on TCP port 2222 and accepts only the public keys of `spec.sshPublicKeys`. The chart applies the Workspace NetworkPolicy in each namespace in `workspace.networkPolicy.namespaces`. The policy blocks direct connections from other pods by default. If `workspace.networkPolicy.sshFrom` lists peers, the policy permits only those peers on TCP port 2222. `koodam tunnel` uses the developer's `pods/portforward` permission. The kubelet connects in the pod network namespace.
+- **Test.** `internal/controller/workspace_controller_test.go` checks the Pod Security `restricted` profile. The chart tests `TestWorkspaceNetworkPolicy` and `TestWorkspaceNetworkPolicySSHFrom` check ingress with an empty list and with one peer. `test/e2e/networkpolicy_test.go` checks egress. It checks that a pod in another namespace cannot connect to TCP port 2222. It checks that a port-forward reaches the same port.
 - **Residual risk.**
   - The pod holds the gateway key, the login Secret and the home PVC. Code in the pod can read them. Treat each harness in a Workspace as able to use them.
   - A person who has `pods/exec` or `pods/portforward` in the namespace can reach the pod.
-  - A caller that can reach the pod IP can connect to port 2222 directly, with no `pods/portforward` permission. The SSH key is then the only control. A removal of the RBAC permission does not stop this caller. Remove the key from `spec.sshPublicKeys` to stop it.
+  - The policy needs a CNI that enforces NetworkPolicy. Other NetworkPolicies can permit more sources.
+  - A namespace that is not in `workspace.networkPolicy.namespaces` gets no policy. There, a caller that can reach the pod IP can connect to port 2222 directly, and the SSH key is the only control. Remove the key from `spec.sshPublicKeys` to stop this caller.
   - The pod shares the node kernel. Set `runtimeClassName: gvisor` in `spec.podTemplate` for a stronger boundary. See [workspaces.md](workspaces.md).
 
 ## T5. A pod template reads a Secret of Koodam
@@ -103,10 +104,13 @@ The spend API and the operations page show the runs and the spend.
 - **Test.** Each row is a test on `main`:
   - `internal/spendapi/api_test.go`, `TestServeRunsAndSpend`. Each call of this test checks that no body has a key value, a key hash or the token.
   - `internal/spendapi/viewer_test.go`, `TestViewerSeesOnlyPermittedNamespaces` and `TestViewerRefusals`.
+  - `internal/spendapi/run_test.go`, `TestViewerReadsOneRun` and `TestRunDetail`. The run path checks the namespace of the path only, and a container state has no termination message.
+  - `internal/spendapi/redact_test.go`, `TestEachRedactionPattern`, has a test for each redaction pattern. `internal/spendapi/run_test.go`, `TestConditionMessagesAreRedacted`.
+  - `internal/spendapi/log_test.go`, `TestLogHasNoCredential` and `TestLogLimitsAndReviews`. A log response has no key value, key hash, token or login value, and the log path needs `get` on `pods/log`.
   - `internal/opspage/page_test.go`, `TestPolicyAndPageHaveNoInlineCode` and `TestPageKeepsTheTokenInMemory`.
   - `examples/operations-page/main_test.go`, `TestExample`.
   - `internal/spendapi/budgets_test.go`, `TestServeBudgets`. `/v1/budgets` uses the same namespace scope as the other paths.
-- **Residual risk.** The static token mode and the claim mode show each configured namespace to each valid caller. Use the viewer mode for people. In the viewer mode, the server needs `create` on `tokenreviews` and `subjectaccessreviews`. Give this access to the ServiceAccount of the spend API only.
+- **Residual risk.** The static token mode and the claim mode show each configured namespace to each valid caller. Use the viewer mode for people. In the viewer mode, the server needs `create` on `tokenreviews` and `subjectaccessreviews`. Give this access to the ServiceAccount of the spend API only. The log path redacts only the credentials that a fixed pattern matches. A credential in another form, for example a password with no field name, stays in a log response. A viewer who can get `pods/log` can read the same log with `kubectl logs` and no redaction.
 
 ## T10. A tenant or a zone goes past its limit
 

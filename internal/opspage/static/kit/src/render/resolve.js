@@ -37,6 +37,9 @@ function resolvedField(key, field, path, defaults, errors, tier = 'field') {
       else if (!own(field, 'max_length')) full.push(['max_length', defaults.sizes[value]]);
     } else if (name === 'items') {
       full.push(['items', resolvedField(key, value, path + '.items', defaults, errors, 'item')]);
+    } else if (name === 'fields') {
+      full.push(['fields', Object.fromEntries(Object.entries(value).map(([key, field]) =>
+        [key, resolvedField(key, field, path + '.fields.' + key, defaults, errors)]))]);
     } else {
       full.push([name, value]);
     }
@@ -64,7 +67,9 @@ export function resolveContract(contract, { defaults = DEFAULTS, checked = true 
     kind: stated(contract, 'kind', base.kind),
     description: contract.description,
     ai_content: aiContent,
+    ...(own(contract, 'field') ? { field: contract.field } : {}),
     slots: { ...(aiContent ? base.slots : {}), ...stated(contract, 'slots', {}) },
+    ...(own(contract, 'parts') ? { parts: contract.parts } : {}),
     data: Object.fromEntries(Object.entries(contract.data).map(([key, field]) =>
       [key, resolvedField(key, field, 'data.' + key, defaults, errors)])),
     states: mergedList(stated(contract, 'states', undefined), base.states, 'states', errors),
@@ -73,7 +78,8 @@ export function resolveContract(contract, { defaults = DEFAULTS, checked = true 
       .filter((key) => own(access, key)).map((key) => [key, access[key]])),
   };
   if (errors.length) return { contract: undefined, errors };
-  const keys = Object.keys(CONTRACT_SCHEMA.properties).filter((key) => key !== 'slots' || Object.keys(values.slots).length);
+  const keys = Object.keys(CONTRACT_SCHEMA.properties)
+    .filter((key) => own(values, key) && (key !== 'slots' || Object.keys(values.slots).length));
   // The result is a copy, so a change to it does not change the defaults or the short contract.
   return { contract: structuredClone(Object.fromEntries(keys.map((key) => [key, values[key]]))), errors: [] };
 }

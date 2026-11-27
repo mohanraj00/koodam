@@ -2,6 +2,18 @@
 
 This file records the changes for each Koodam version. The newest version is first.
 
+## Unreleased
+
+### Agents
+
+- Add `GET /v1/runs/{namespace}/{name}` to the [spend API](docs/spend-api.md#read-one-run). It gives one run with the Agent status conditions, the run Job and its pods. In the viewer mode, the server checks the access to the namespace of the path only. The server identity needs `get` on `agents`, `get` on `jobs` and `list` on `pods` ([#399](https://github.com/mohanraj00/koodam/issues/399)).
+- Redact the condition messages of the run path with a fixed pattern list: private keys, JSON Web Tokens, `sk-` keys, GitHub, AWS and Slack tokens, SHA-256 values, `Authorization` values, URL logins and the values of credential fields. Each pattern has a test. [docs/spend-api.md](docs/spend-api.md#redaction) lists the patterns ([#399](https://github.com/mohanraj00/koodam/issues/399)).
+- Add `GET /v1/runs/{namespace}/{name}/log` to the [spend API](docs/spend-api.md#read-the-log-of-a-run). It gives the last lines of the agent container, 200 by default and 1000 at most, with a byte limit. The server redacts each line with the same pattern list before the bytes leave the server. Only the viewer mode serves the path, and the caller also needs `get` on `pods/log` in the namespace. The server identity needs `get` on `pods/log` ([#399](https://github.com/mohanraj00/koodam/issues/399)).
+
+### Approvals
+
+- Add the API of an Agent that waits for a signed approval record before its Job starts. The Agent gets `spec.approval` with `waitSeconds`, which is immutable, the condition `Approval` with its reasons, `status.approval` with the request document and its subject digest for an approver integration, and `status.evidence`. The new namespaced `ApprovalRecord` type carries the signed decision: `spec.target` is the Agent name, `spec.signedRecord` has 1,000,000 bytes or fewer, and `spec.snapshotRecord` and `spec.manifest` have the 2 documents that bind the decision to the run. Its spec is immutable, and it has no authority fields. The Profile gets `spec.approval` with the key set, the expected `scope`, the expected `function` and the required `maxAgeSeconds`, so only the admin selects the trust and the expiry. The chart installs the CRD and the role `<release>-approvalrecord-creator`, which gives only `create`. The manager role gets `list` and `watch` on `approvalrecords`. No controller checks an approval record in this change. Thus the Agent controller does not start an Agent with `spec.approval`: the run waits, with no key and no pod ([#246](https://github.com/mohanraj00/koodam/issues/246)).
+
 ## v0.5.0 (2026-11-27)
 
 The API is `v1alpha1` and can change between tags. The App parts are off by default. [Known limits of v0.5.0](#known-limits-of-v050) lists the open limits.

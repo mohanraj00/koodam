@@ -2,6 +2,7 @@
   "name": "diff-change",
   "description": "One change of a diff: a label, the kind of the change, and the value before and after.",
   "ai_content": false,
+  "parts": [],
   "data": {
     "label": {"type": "text", "required": true, "min_length": 1, "size": "title"},
     "change": {"type": "enum", "required": true, "values": ["added", "removed", "changed", "unchanged"]},

@@ -67,6 +67,18 @@ metadata:
     {{- include "koodam.labels" . | nindent 4 }}
 rules:
 {{ include "koodam.rules" (dict "ctx" . "file" "files/hold-viewer-role.yaml") }}
+---
+# The create of an ApprovalRecord, for the approver integration. Bind it with a RoleBinding in the
+# namespace of the Agents. The signature of the record is the check, so this role cannot approve
+# or stop a run with no signing key. This role has no aggregate label.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ $fullname }}-approvalrecord-creator
+  labels:
+    {{- include "koodam.labels" . | nindent 4 }}
+rules:
+{{ include "koodam.rules" (dict "ctx" . "file" "files/approvalrecord-creator-role.yaml") }}
 {{- if .Values.leaderElection }}
 ---
 # The leader election rules, in the release namespace only.

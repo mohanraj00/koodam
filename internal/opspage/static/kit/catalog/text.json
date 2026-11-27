@@ -3,6 +3,16 @@
   "kind": "primitive",
   "description": "A run of text. The kit always shows the value as text, never as markup.",
   "ai_content": false,
+  "parts": [
+    {"name": "copy", "description": "Button that copies text.", "guardrail": true},
+    {"name": "copy-status", "description": "Result of the copy operation.", "guardrail": true},
+    {"name": "details", "description": "Control and technical details of a refusal.", "guardrail": true},
+    {"name": "next", "description": "Next step after a refusal.", "guardrail": true},
+    {"name": "read-more-content", "description": "Full text with a limit on its initial height.", "guardrail": true},
+    {"name": "read-more-toggle", "description": "Button that shows more or less text.", "guardrail": true},
+    {"name": "reason", "description": "Reason for a refusal or an edit error.", "guardrail": true},
+    {"name": "text", "description": "Text of the component.", "guardrail": false}
+  ],
   "data": {
     "text": {"type": "text", "required": true, "max_length": 10000},
     "variant": {"type": "enum", "values": ["body", "strong", "caption"]},

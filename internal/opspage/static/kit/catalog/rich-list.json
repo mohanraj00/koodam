@@ -1,6 +1,7 @@
 {
   "name": "rich-list",
   "description": "A list node of rich text, with bullets or with numbers. Each item is a paragraph node.",
+  "parts": [],
   "data": {
     "ordered": {"type": "boolean", "label": "Numbered list"},
     "items": {

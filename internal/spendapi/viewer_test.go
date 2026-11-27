@@ -47,6 +47,8 @@ type viewerFixture struct {
 	mu                      sync.Mutex
 	reviews                 []authorizationv1.SubjectAccessReviewSpec
 	accessErr               error
+	// denyLog refuses get on pods/log to each user.
+	denyLog bool
 }
 
 func newViewerFixture(t *testing.T, audiences ...string) *viewerFixture {
@@ -81,7 +83,8 @@ func newViewerFixture(t *testing.T, audiences ...string) *viewerFixture {
 		}
 		f.reviews = append(f.reviews, review.Spec)
 		ns := review.Spec.ResourceAttributes.Namespace
-		review.Status.Allowed = review.Spec.User == "admin" || (review.Spec.User == readerName && ns == testNamespace)
+		review.Status.Allowed = (review.Spec.User == "admin" || (review.Spec.User == readerName && ns == testNamespace)) &&
+			(!f.denyLog || review.Spec.ResourceAttributes.Subresource != "log")
 		return true, review, nil
 	})
 	f.viewers = &Viewers{

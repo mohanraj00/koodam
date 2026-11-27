@@ -5,9 +5,8 @@
 
 *, *::before, *::after { box-sizing: border-box; }
 
-:root { color-scheme: light dark; -webkit-text-size-adjust: 100%; text-size-adjust: 100%; }
-:root[data-mu-theme="light"] { color-scheme: light; }
-:root[data-mu-theme="dark"] { color-scheme: dark; }
+:root { -webkit-text-size-adjust: 100%; text-size-adjust: 100%; }
+:root[data-mu-page="full"] { --mu-size-page: 100%; }
 
 body {
   margin: 0; min-height: 100vh;
@@ -62,7 +61,7 @@ blockquote {
 /* Links. The underline stays, so that color is not the only signal. */
 a {
   color: var(--mu-color-accent); text-decoration-thickness: 1px; text-underline-offset: 0.18em;
-  transition: text-decoration-thickness var(--mu-motion-fast);
+  transition: text-decoration-thickness var(--mu-motion-fast) var(--mu-easing-standard);
 }
 a:hover { text-decoration-thickness: 2px; }
 
@@ -86,10 +85,15 @@ button, input, select, textarea { font: inherit; color: inherit; }
 button, select {
   min-height: 2.75rem; min-width: 2.75rem; padding: 0 var(--mu-space-3); cursor: pointer;
   background: var(--mu-color-surface); border: 1px solid var(--mu-color-border); border-radius: var(--mu-radius-2);
-  transition: border-color var(--mu-motion-fast);
+  transition: border-color var(--mu-motion-fast) var(--mu-easing-standard);
 }
-button:hover, select:hover { border-color: var(--mu-color-text); }
-button[aria-pressed="true"] { border-color: var(--mu-color-accent); box-shadow: inset 0 0 0 1px var(--mu-color-accent); }
+button:hover:where(:not(:disabled)), select:hover:where(:not(:disabled)) {
+  background: var(--mu-color-hover); color: var(--mu-color-on-hover); border-color: var(--mu-color-on-hover);
+}
+button[aria-pressed="true"] {
+  background: var(--mu-color-selected); color: var(--mu-color-on-selected);
+  border-color: var(--mu-color-on-selected); box-shadow: inset 0 0 0 1px var(--mu-color-on-selected);
+}
 button:disabled, select:disabled { cursor: default; color: var(--mu-color-text-muted); border-style: dashed; }
 label { font: var(--mu-type-caption); }
 :focus-visible { outline: 2px solid var(--mu-color-focus); outline-offset: 2px; }
@@ -103,7 +107,9 @@ label { font: var(--mu-type-caption); }
   body > header, body > footer, hr, blockquote, pre, :not(pre) > code, kbd, th, td { border-color: CanvasText; }
   body > header p, body > footer, small, blockquote { color: CanvasText; }
   a { color: LinkText; }
-  button, select { background: ButtonFace; color: ButtonText; border-color: ButtonText; }
+  button, select, button:hover:where(:not(:disabled)), select:hover:where(:not(:disabled)) {
+    background: ButtonFace; color: ButtonText; border-color: ButtonText;
+  }
   button[aria-pressed="true"] { border-color: Highlight; box-shadow: none; outline: 2px solid Highlight; outline-offset: -4px; }
   button:disabled, select:disabled { color: GrayText; border-color: GrayText; }
   :focus-visible { outline-color: Highlight; }
