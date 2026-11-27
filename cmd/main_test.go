@@ -29,8 +29,57 @@ import (
 	"testing"
 	"time"
 
+	corev1 "k8s.io/api/core/v1"
+
 	"github.com/mohanraj00/koodam/internal/controller"
 )
+
+func TestLoadAppAPIServerEgress(t *testing.T) {
+	proxy := controller.EgressProxy{
+		IP: "10.96.0.50", Namespace: "proxy-system", PodLabels: map[string]string{"app": "proxy"},
+	}
+	const raw = `[{"to":[{"ipBlock":{"cidr":"192.0.2.1/32"}}],"ports":[{"port":6443}]}]`
+	for _, value := range []string{
+		raw,
+		`[{"to":[{"ipBlock":{"cidr":"192.0.2.1/32"}}],"ports":[{"port":6443,"protocol":"TCP"}]}]`,
+	} {
+		rules, err := loadAppAPIServerEgress(value, proxy)
+		if err != nil || len(rules) != 1 {
+			t.Fatalf("%q gave %v rules and %v, want one rule", value, rules, err)
+		}
+		port := rules[0].Ports[0]
+		if port.Protocol == nil || *port.Protocol != corev1.ProtocolTCP || port.Port.IntVal != 6443 {
+			t.Errorf("%q gave port %+v, want TCP 6443", value, port)
+		}
+	}
+	if _, err := loadAppAPIServerEgress(raw, controller.EgressProxy{}); err == nil {
+		t.Error("the rules require the proxy settings")
+	}
+	for _, value := range []string{"", "[]"} {
+		if got, err := loadAppAPIServerEgress(value, controller.EgressProxy{}); err != nil || len(got) != 0 {
+			t.Errorf("%q gave %v rules and %v, want no rules", value, got, err)
+		}
+	}
+	for _, value := range []string{"{}", "null", "[null]", `[{"peer":[]}]`, "[] []",
+		`[{"ports":[{"port":6443}]}]`,
+		`[{"to":[{"ipBlock":{"cidr":"192.0.2.1/32"}}]}]`,
+		`[{"to":[{"ipBlock":{"cidr":"0.0.0.0/0"}}],"ports":[{"port":6443}]}]`,
+		`[{"to":[{"ipBlock":{"cidr":"192.0.2.0/24"}}],"ports":[{"port":6443}]}]`,
+		`[{"to":[{"ipBlock":{"cidr":"192.0.2.1/32","except":["192.0.2.1/32"]}}],"ports":[{"port":6443}]}]`,
+		`[{"to":[{"podSelector":{}}],"ports":[{"port":6443}]}]`,
+		`[{"to":[{"ipBlock":{"cidr":"192.0.2.1/32"}}],"ports":[{"protocol":"TCP"}]}]`,
+		`[{"to":[{"ipBlock":{"cidr":"192.0.2.1/32"}}],"ports":[{"port":6443,"endPort":6450}]}]`,
+		`[{"to":[{"ipBlock":{"cidr":"192.0.2.1/32"}}],"ports":[{"port":"https"}]}]`,
+		`[{"to":[{"ipBlock":{"cidr":"192.0.2.1/32"}}],"ports":[{"port":0}]}]`,
+		`[{"to":[{"ipBlock":{"cidr":"192.0.2.1/32"}}],"ports":[{"port":65536}]}]`,
+		`[{"to":[{"ipBlock":{"cidr":"192.0.2.1/32"}}],"ports":[{"port":6443,"protocol":"UDP"}]}]`,
+		`[{"to":[{"ipBlock":{"cidr":"192.0.2.1/32"}}],"ports":[{"port":6443,"protocol":"SCTP"}]}]`,
+	} {
+		if _, err := loadAppAPIServerEgress(value, proxy); err == nil {
+			t.Errorf("accepted %q, want an error", value)
+		}
+	}
+}
 
 // TestWorkspaceImageFor checks the tag rule of the default workspace image.
 func TestDigestImage(t *testing.T) {

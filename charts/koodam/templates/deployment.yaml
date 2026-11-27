@@ -8,6 +8,15 @@
 {{- if and $claim (not .Values.egressProxy.enabled) }}
 {{- fail "apps.claimCheck needs egressProxy.enabled, because only the NetworkPolicy of a version blocks a call with no claim." }}
 {{- end }}
+{{- $appAPIServerEgress := and .Values.apps.enabled .Values.apps.apiServerEgress }}
+{{- if $appAPIServerEgress }}
+{{- if not (kindIs "slice" $appAPIServerEgress) }}
+{{- fail "apps.apiServerEgress must be a list of NetworkPolicyEgressRule." }}
+{{- end }}
+{{- if not (and .Values.egressProxy.enabled .Values.apps.sharedResources) }}
+{{- fail "apps.apiServerEgress needs egressProxy.enabled and apps.sharedResources to configure the AppVersion NetworkPolicy and admission policy." }}
+{{- end }}
+{{- end }}
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -107,6 +116,9 @@ spec:
         {{- end }}
         {{- if .Values.apps.enabled }}
         - --apps-enabled
+        {{- with $appAPIServerEgress }}
+        - {{ printf "--app-api-server-egress=%s" (mustToJson .) | quote }}
+        {{- end }}
         - {{ printf "--tenant-usage-interval=%s" .Values.tenants.usageInterval | quote }}
         {{- $rate := .Values.tenants.defaultQuota.rateLimit }}
         {{- if or .Values.tenants.refuseUnknown $rate.requestsPerSecond $rate.burst }}
@@ -124,7 +136,7 @@ spec:
         {{- end }}
         {{- end }}
         {{- if .Values.egressProxy.enabled }}
-        # Each AppVersion gets a NetworkPolicy with egress to these pods only.
+        # The NetworkPolicy of each AppVersion permits egress to these pods.
         - --egress-proxy-namespace={{ .Release.Namespace }}
         {{- $labels := list }}
         {{- range $k, $v := include "koodam.gatewaySelector" (list . "egress-proxy") | fromYaml }}

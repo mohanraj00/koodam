@@ -38,6 +38,24 @@ const (
 	gateDNSPort = 53
 )
 
+// versionPolicy makes the NetworkPolicy of the app pods.
+func (r *AppVersionReconciler) versionPolicy(av *corev1alpha1.AppVersion, ports []corev1.ContainerPort) *networkingv1.NetworkPolicy {
+	policy := r.Egress.policy(appVersionMeta(av), appVersionLabels(av), ports, r.IngressNamespaces)
+	if policy == nil {
+		return nil
+	}
+	if len(av.Spec.Template.Rules) > 0 {
+		for _, rule := range r.APIServerEgress {
+			policy.Spec.Egress = append(policy.Spec.Egress, *rule.DeepCopy())
+		}
+	}
+	if gateOpen(av) {
+		// The gate pod sends test messages to the app pods until the gate ends.
+		policy.Spec.Ingress = append(policy.Spec.Ingress, gateIngress(av, ports))
+	}
+	return policy
+}
+
 // gatePassed is true if the weights of the spec apply to the version: the version has no gate, or
 // the controller accepted a record with the verdict pass.
 func gatePassed(av *corev1alpha1.AppVersion) bool {

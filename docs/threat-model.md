@@ -89,6 +89,7 @@ With traced egress, the egress proxy records each call of a pod. A pod that goes
   - The proxy does not decrypt TLS. It does not stop a tunnel or DNS over HTTPS inside an allowed call.
   - A managed cluster can have more paths out, for example the cloud metadata service. The e2e test checks kind only.
   - A call to the API server or to an `extraEgress` peer has no span.
+  - With `apps.apiServerEgress` set, an App pod with `template.rules` can reach the API server directly. The API server uses the pod's ServiceAccount permissions to check its calls.
 
 ## T8. A caller of an App forges an identity
 

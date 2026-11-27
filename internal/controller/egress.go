@@ -39,8 +39,8 @@ type EgressProxy struct {
 	Port int
 	// ClusterDomain is the DNS domain of the cluster, for example cluster.local.
 	ClusterDomain string
-	// Namespace and PodLabels select the pods of the proxy. The NetworkPolicy of an App pod
-	// permits egress to these pods only. If one is empty, the controller makes no NetworkPolicy.
+	// Namespace and PodLabels select the pods of the proxy for the NetworkPolicy of an App pod.
+	// If one is empty, the controller makes no NetworkPolicy.
 	Namespace string
 	PodLabels map[string]string
 }

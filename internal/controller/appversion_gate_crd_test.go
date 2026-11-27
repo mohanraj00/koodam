@@ -52,7 +52,7 @@ var _ = Describe("AppVersion gate CRD", func() {
 		return &corev1alpha1.AppVersion{
 			ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: ns},
 			Spec: corev1alpha1.AppVersionSpec{
-				AppRef: corev1alpha1.AppReference{Name: "shop"},
+				AppRef: corev1alpha1.AppReference{Name: appName},
 				Gate:   gate,
 				Template: corev1alpha1.AppVersionTemplate{PodTemplate: corev1alpha1.PodTemplate{
 					Spec: corev1.PodSpec{Containers: []corev1.Container{{
