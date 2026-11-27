@@ -1,6 +1,20 @@
 {
   "name": "image",
   "description": "An image in a fixed box with an optional caption. Page code permits origins. Only http and https URLs can load. A text alternative is required unless decorative is true. Loading and error keep the box. Error shows the alternative. A native dialog gives the full-size view and returns focus on close.",
+  "parts": [
+    {"name": "authorship", "description": "Type and ID of the author, with a name when available.", "guardrail": true},
+    {"name": "box", "description": "Image area with its display ratio and state notice.", "guardrail": true},
+    {"name": "caption", "description": "Caption of the image.", "guardrail": true},
+    {"name": "copy", "description": "Button that copies text.", "guardrail": true},
+    {"name": "copy-status", "description": "Result of the copy operation.", "guardrail": true},
+    {"name": "details", "description": "Control and technical details of a refusal.", "guardrail": true},
+    {"name": "dialog", "description": "Full-size image and its close control.", "guardrail": true},
+    {"name": "image", "description": "Container for the image and its caption.", "guardrail": false},
+    {"name": "next", "description": "Next step after a refusal.", "guardrail": true},
+    {"name": "open", "description": "Button that opens the full-size image.", "guardrail": true},
+    {"name": "reason", "description": "Reason for a refusal or an edit error.", "guardrail": true},
+    {"name": "status", "description": "Loading or failure notice.", "guardrail": true}
+  ],
   "data": {
     "url": {"type": "text", "label": "Image URL", "required": true, "min_length": 1, "max_length": 2048},
     "alt": {"type": "text", "label": "Text alternative", "required": true, "min_length": 0, "max_length": 500},

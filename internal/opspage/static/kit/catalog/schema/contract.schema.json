@@ -12,6 +12,7 @@
     "kind": {"enum": ["primitive", "component"]},
     "description": {"type": "string", "minLength": 1, "maxLength": 300},
     "ai_content": {"type": "boolean"},
+    "field": {"type": "boolean"},
     "slots": {
       "type": "object",
       "minProperties": 1,
@@ -21,6 +22,7 @@
         "citation": {"$ref": "#/$defs/slot"}
       }
     },
+    "parts": {"type": "array", "maxItems": 40, "items": {"$ref": "#/$defs/part"}},
     "data": {
       "type": "object",
       "maxProperties": 40,
@@ -32,7 +34,7 @@
       "minItems": 1,
       "maxItems": 12,
       "uniqueItems": true,
-      "items": {"enum": ["default", "empty", "loading", "disabled", "confirm", "pending", "done", "error", "refused", "expanded", "collapsed"]}
+      "items": {"enum": ["default", "empty", "loading", "disabled", "confirm", "pending", "done", "error", "refused", "expanded", "collapsed", "open"]}
     },
     "tokens": {
       "type": "array",
@@ -45,7 +47,7 @@
       "required": ["role", "keyboard", "forced_colors", "reduced_motion"],
       "additionalProperties": false,
       "properties": {
-        "role": {"enum": ["article", "button", "form", "group", "list", "region", "status", "textbox", "none"]},
+        "role": {"enum": ["article", "button", "checkbox", "combobox", "dialog", "form", "group", "img", "list", "menu", "navigation", "progressbar", "region", "slider", "status", "switch", "tablist", "textbox", "tooltip", "none"]},
         "name": {
           "oneOf": [
             {"type": "object", "required": ["field"], "additionalProperties": false, "properties": {"field": {"$ref": "#/$defs/field_name"}}},
@@ -56,7 +58,7 @@
           "type": "array",
           "maxItems": 12,
           "uniqueItems": true,
-          "items": {"enum": ["Tab", "Shift+Tab", "Enter", "Space", "Escape", "ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight", "Home", "End"]}
+          "items": {"enum": ["Tab", "Shift+Tab", "Enter", "Space", "Escape", "ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight", "Home", "End", "PageUp", "PageDown"]}
         },
         "forced_colors": {"const": true},
         "reduced_motion": {"const": true}
@@ -65,6 +67,16 @@
   },
   "$defs": {
     "name": {"type": "string", "maxLength": 40, "pattern": "^[a-z][a-z0-9]*(-[a-z0-9]+)*$"},
+    "part": {
+      "type": "object",
+      "required": ["name", "description", "guardrail"],
+      "additionalProperties": false,
+      "properties": {
+        "name": {"type": "string", "maxLength": 40, "pattern": "^[a-z0-9-]+$"},
+        "description": {"type": "string", "minLength": 1, "maxLength": 300},
+        "guardrail": {"type": "boolean"}
+      }
+    },
     "field_name": {"type": "string", "maxLength": 40, "pattern": "^[a-z][a-z0-9]*(_[a-z0-9]+)*$"},
     "label": {"type": "string", "minLength": 1, "maxLength": 80},
     "slot": {
@@ -77,12 +89,14 @@
       "oneOf": [
         {"$ref": "#/$defs/text_field"},
         {"$ref": "#/$defs/number_field"},
+        {"$ref": "#/$defs/number_or_pair_field"},
         {"$ref": "#/$defs/boolean_field"},
         {"$ref": "#/$defs/date_field"},
         {"$ref": "#/$defs/enum_field"},
         {"$ref": "#/$defs/list_field"},
         {"$ref": "#/$defs/component_field"},
-        {"$ref": "#/$defs/components_field"}
+        {"$ref": "#/$defs/components_field"},
+        {"$ref": "#/$defs/input_component"}
       ]
     },
     "scalar_field": {
@@ -103,6 +117,7 @@
         "label": {"$ref": "#/$defs/label"},
         "required": {"type": "boolean"},
         "editable": {"type": "boolean"},
+        "format": {"const": "name"},
         "min_length": {"type": "integer", "minimum": 0, "maximum": 10000},
         "max_length": {"type": "integer", "minimum": 1, "maximum": 10000}
       }
@@ -118,6 +133,17 @@
         "editable": {"type": "boolean"},
         "minimum": {"type": "number"},
         "maximum": {"type": "number"}
+      }
+    },
+    "number_or_pair_field": {
+      "type": "object",
+      "required": ["type", "label", "required"],
+      "additionalProperties": false,
+      "properties": {
+        "type": {"const": "number-or-pair"},
+        "label": {"$ref": "#/$defs/label"},
+        "required": {"type": "boolean"},
+        "editable": {"type": "boolean"}
       }
     },
     "boolean_field": {
@@ -162,14 +188,47 @@
         "type": {"const": "list"},
         "label": {"$ref": "#/$defs/label"},
         "required": {"type": "boolean"},
+        "editable": {"type": "boolean"},
+        "min_items": {"type": "integer", "minimum": 0, "maximum": 500},
         "max_items": {"type": "integer", "minimum": 1, "maximum": 500},
+        "unique_items": {"type": "boolean"},
         "items": {
           "oneOf": [
             {"$ref": "#/$defs/scalar_field"},
+            {"$ref": "#/$defs/record_item"},
             {"$ref": "#/$defs/component_field"},
-            {"$ref": "#/$defs/components_field"}
+            {"$ref": "#/$defs/components_field"},
+            {"$ref": "#/$defs/input_component"}
           ]
         }
+      }
+    },
+    "record_item": {
+      "type": "object",
+      "required": ["type", "label", "required", "fields"],
+      "additionalProperties": false,
+      "properties": {
+        "type": {"const": "record"},
+        "label": {"$ref": "#/$defs/label"},
+        "required": {"type": "boolean"},
+        "fields": {
+          "type": "object",
+          "minProperties": 1,
+          "maxProperties": 40,
+          "propertyNames": {"$ref": "#/$defs/field_name"},
+          "additionalProperties": {"$ref": "#/$defs/scalar_field"}
+        }
+      }
+    },
+    "input_component": {
+      "type": "object",
+      "required": ["type", "label", "required", "field"],
+      "additionalProperties": false,
+      "properties": {
+        "type": {"const": "component"},
+        "label": {"$ref": "#/$defs/label"},
+        "required": {"type": "boolean"},
+        "field": {"const": true}
       }
     },
     "component_field": {

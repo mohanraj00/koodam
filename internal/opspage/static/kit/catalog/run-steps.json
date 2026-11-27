@@ -1,0 +1,45 @@
+{
+  "name": "run-steps",
+  "description": "An ordered list of one agent run. Each step has a unique id and a state in text. A button opens the detail or tool call. A new fill keeps an open or focused button for the same id. A polite status gives changes to existing steps after the first fill.",
+  "parts": [
+    {"name": "announcement", "description": "Polite status for changes to step states.", "guardrail": true},
+    {"name": "arguments", "description": "Tool arguments as plain text.", "guardrail": true},
+    {"name": "authorship", "description": "Author of the run steps.", "guardrail": true},
+    {"name": "copy", "description": "Button that copies text.", "guardrail": true},
+    {"name": "copy-status", "description": "Result of the copy operation.", "guardrail": true},
+    {"name": "detail", "description": "Additional information for a step.", "guardrail": true},
+    {"name": "details", "description": "Control and technical details of a refusal.", "guardrail": true},
+    {"name": "list", "description": "Named ordered list of run steps.", "guardrail": true},
+    {"name": "name", "description": "Visible step name.", "guardrail": true},
+    {"name": "next", "description": "Next step after a refusal.", "guardrail": true},
+    {"name": "panel", "description": "Panel opened by the step button.", "guardrail": true},
+    {"name": "reason", "description": "Reason for a refusal.", "guardrail": true},
+    {"name": "result", "description": "Tool result as plain text.", "guardrail": true},
+    {"name": "state", "description": "Visible step state.", "guardrail": true},
+    {"name": "step", "description": "One step in the list.", "guardrail": false},
+    {"name": "toggle", "description": "Button that opens or closes step details.", "guardrail": true},
+    {"name": "tool", "description": "Tool name as plain text.", "guardrail": true}
+  ],
+  "data": {
+    "label": {"type": "text", "required": true, "min_length": 1, "size": "line"},
+    "steps": {
+      "type": "list", "required": true, "min_items": 1, "max_items": 20,
+      "items": {
+        "type": "record", "fields": {
+          "id": {"type": "text", "required": true, "min_length": 1, "size": "line"},
+          "name": {"type": "text", "required": true, "min_length": 1, "size": "title"},
+          "state": {"type": "enum", "required": true, "values": ["pending", "running", "done", "failed"]},
+          "detail": {"type": "text", "min_length": 1, "size": "long"},
+          "tool_name": {"type": "text", "min_length": 1, "size": "line"},
+          "tool_arguments": {"type": "text", "size": "long"},
+          "tool_result": {"type": "text", "size": "long"}
+        }
+      }
+    }
+  },
+  "states": ["+refused"],
+  "tokens": ["+color.surface", "+color.focus", "+type.caption", "+type.code", "+space.1", "+space.2", "+radius.2", "+motion.fast"],
+  "accessibility": {
+    "role": "list", "name": {"field": "label"}, "keyboard": ["Tab", "Shift+Tab", "Enter", "Space"]
+  }
+}

@@ -1,6 +1,19 @@
 {
   "name": "chart",
   "description": "An SVG chart with a table view. Categories and series must not be empty. Each series has one value per category. Stacks keep positive and negative totals separate. Arrow keys move through points in series order and wrap at each end. A new fill resets the point and closes the table.",
+  "parts": [
+    {"name": "authorship", "description": "Type and ID of the author, with a name when available.", "guardrail": true},
+    {"name": "bar", "description": "Bar in the chart.", "guardrail": true},
+    {"name": "chart", "description": "Chart with its labels and controls.", "guardrail": true},
+    {"name": "copy", "description": "Button that copies text.", "guardrail": true},
+    {"name": "copy-status", "description": "Result of the copy operation.", "guardrail": true},
+    {"name": "details", "description": "Control and technical details of a refusal.", "guardrail": true},
+    {"name": "next", "description": "Next step after a refusal.", "guardrail": true},
+    {"name": "point", "description": "Data point that can receive focus.", "guardrail": true},
+    {"name": "reason", "description": "Reason for a refusal or an edit error.", "guardrail": true},
+    {"name": "segment", "description": "Line between two data points.", "guardrail": true},
+    {"name": "value", "description": "Value of the current data point.", "guardrail": true}
+  ],
   "data": {
     "title": {"type": "text", "label": "Chart title", "required": true, "min_length": 1, "size": "title"},
     "type": {"type": "enum", "label": "Chart type", "required": true, "values": ["bar", "line", "stacked_bar"]},

@@ -1,0 +1,30 @@
+{
+  "name": "steps",
+  "description": "A named ordered list of wizard steps. The current index starts at zero and must be within the list. Each step shows its position and its state as text. A button for a done step sends a mu-step-change event with the index. Page code changes the step and moves focus.",
+  "ai_content": false,
+  "parts": [
+    {"name": "back", "description": "Button that requests a done step.", "guardrail": true},
+    {"name": "copy", "description": "Button that copies text.", "guardrail": true},
+    {"name": "copy-status", "description": "Result of the copy operation.", "guardrail": true},
+    {"name": "details", "description": "Control and technical details of a refusal.", "guardrail": true},
+    {"name": "list", "description": "Named ordered list of steps.", "guardrail": true},
+    {"name": "next", "description": "Next step after a refusal.", "guardrail": true},
+    {"name": "position", "description": "Position of the step in the list.", "guardrail": true},
+    {"name": "reason", "description": "Reason for a refusal.", "guardrail": true},
+    {"name": "state", "description": "Text that shows Done, Current or Next.", "guardrail": true},
+    {"name": "step", "description": "One step in the list, with a mark for the current step.", "guardrail": true}
+  ],
+  "data": {
+    "label": {"type": "text", "required": true, "min_length": 1, "size": "line"},
+    "labels": {
+      "type": "list", "required": true, "min_items": 1, "max_items": 20,
+      "items": {"type": "text", "label": "Step label", "min_length": 1, "size": "line"}
+    },
+    "current": {"type": "integer", "required": true, "minimum": 0, "maximum": 19}
+  },
+  "states": ["+refused"],
+  "tokens": ["+color.surface", "+color.focus", "+space.2", "+radius.2", "+motion.fast"],
+  "accessibility": {
+    "role": "list", "name": {"field": "label"}, "keyboard": ["Tab", "Shift+Tab", "Enter", "Space"]
+  }
+}

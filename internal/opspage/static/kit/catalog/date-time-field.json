@@ -1,0 +1,39 @@
+{
+  "name": "date-time-field",
+  "kind": "primitive",
+  "description": "A labeled native input with a required date and time as YYYY-MM-DDTHH:MM. The calendar date and clock time must exist. The required time zone name has the form Area/Location and shows as fixed text. The value has no offset.",
+  "ai_content": false,
+  "field": true,
+  "parts": [
+    {"name": "copy", "description": "Button that copies text.", "guardrail": true},
+    {"name": "copy-status", "description": "Result of the copy operation.", "guardrail": true},
+    {"name": "details", "description": "Control and technical details of a refusal.", "guardrail": true},
+    {"name": "edit-type", "description": "Choices for the type of edit.", "guardrail": true},
+    {"name": "input", "description": "Input for the local date and time.", "guardrail": true},
+    {"name": "label", "description": "Label of the field.", "guardrail": true},
+    {"name": "next", "description": "Next step after a refusal.", "guardrail": true},
+    {"name": "problem", "description": "Reason that a field value is invalid.", "guardrail": true},
+    {"name": "reason", "description": "Reason for a refusal or an edit error.", "guardrail": true},
+    {"name": "time-zone", "description": "Text that gives the time zone.", "guardrail": true}
+  ],
+  "data": {
+    "name": {"type": "text", "size": "short"},
+    "label": {"type": "text", "required": true, "min_length": 1, "size": "line"},
+    "value": {"type": "text", "required": true, "editable": true, "min_length": 16, "max_length": 16},
+    "time_zone": {"type": "text", "required": true, "size": "line"},
+    "hint": {"type": "text", "size": "summary"},
+    "error": {"type": "text", "size": "summary"},
+    "disabled": {"type": "boolean"},
+    "typed": {"type": "boolean"}
+  },
+  "states": ["+disabled", "+error"],
+  "tokens": [
+    "color.surface", "color.text", "color.text-muted", "color.border", "color.focus", "color.danger", "space.1",
+    "space.2", "radius.1", "type.body", "type.caption", "motion.fast"
+  ],
+  "accessibility": {
+    "role": "textbox",
+    "name": {"field": "label"},
+    "keyboard": ["Tab", "Shift+Tab", "ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight", "Space"]
+  }
+}

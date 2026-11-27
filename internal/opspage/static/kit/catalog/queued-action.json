@@ -1,0 +1,14 @@
+{
+  "name": "queued-action",
+  "description": "One entry in the offline queue, with its state as text. The state is queued, sent, stalled, rejected or unreadable. No state is done.",
+  "ai_content": false,
+  "parts": [],
+  "data": {
+    "key": {"type": "text", "required": true, "min_length": 1, "max_length": 128},
+    "label": {"type": "text", "required": true, "min_length": 1, "size": "title"},
+    "state": {"type": "enum", "required": true, "values": ["queued", "sent", "stalled", "rejected", "unreadable"]},
+    "tries": {"type": "integer", "minimum": 0},
+    "message": {"type": "text", "min_length": 1, "size": "summary"},
+    "queued": {"type": "text", "min_length": 1, "size": "short"}
+  }
+}

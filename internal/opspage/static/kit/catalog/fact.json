@@ -1,6 +1,7 @@
 {
   "name": "fact",
   "description": "A label and a value in a card.",
+  "parts": [],
   "data": {
     "label": {"type": "text", "required": true, "size": "short"},
     "value": {"type": "text", "required": true, "size": "summary"}

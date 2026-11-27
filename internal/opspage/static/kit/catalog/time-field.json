@@ -1,0 +1,40 @@
+{
+  "name": "time-field",
+  "kind": "primitive",
+  "description": "A labeled native time input with a required value as HH:MM in 24-hour form. The time must exist and stay within the optional limits. The optional step is in minutes from the earliest time, or from 00:00 when there is no earliest time. The default step is one minute.",
+  "ai_content": false,
+  "field": true,
+  "parts": [
+    {"name": "copy", "description": "Button that copies text.", "guardrail": true},
+    {"name": "copy-status", "description": "Result of the copy operation.", "guardrail": true},
+    {"name": "details", "description": "Control and technical details of a refusal.", "guardrail": true},
+    {"name": "edit-type", "description": "Choices for the type of edit.", "guardrail": true},
+    {"name": "input", "description": "Input for the time.", "guardrail": true},
+    {"name": "label", "description": "Label of the field.", "guardrail": true},
+    {"name": "next", "description": "Next step after a refusal.", "guardrail": true},
+    {"name": "problem", "description": "Reason that a field value is invalid.", "guardrail": true},
+    {"name": "reason", "description": "Reason for a refusal or an edit error.", "guardrail": true}
+  ],
+  "data": {
+    "name": {"type": "text", "size": "short"},
+    "label": {"type": "text", "required": true, "min_length": 1, "size": "line"},
+    "value": {"type": "text", "required": true, "editable": true, "min_length": 5, "max_length": 5},
+    "earliest": {"type": "text", "min_length": 5, "max_length": 5},
+    "latest": {"type": "text", "min_length": 5, "max_length": 5},
+    "step": {"type": "integer", "minimum": 1},
+    "hint": {"type": "text", "size": "summary"},
+    "error": {"type": "text", "size": "summary"},
+    "disabled": {"type": "boolean"},
+    "typed": {"type": "boolean"}
+  },
+  "states": ["+disabled", "+error"],
+  "tokens": [
+    "color.surface", "color.text", "color.text-muted", "color.border", "color.focus", "color.danger", "space.1",
+    "space.2", "radius.1", "type.body", "type.caption", "motion.fast"
+  ],
+  "accessibility": {
+    "role": "textbox",
+    "name": {"field": "label"},
+    "keyboard": ["Tab", "Shift+Tab", "ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight", "Space"]
+  }
+}

@@ -1,0 +1,64 @@
+{
+  "name": "multi-choice-field",
+  "kind": "primitive",
+  "description": "A labeled field for more than one choice. Up to seven choices show as checkboxes. Longer lists use removable tags and a search box. Give unique values in choice order within the optional count limits. An omitted value gives an empty list.",
+  "ai_content": false,
+  "field": true,
+  "parts": [
+    {"name": "checkbox", "description": "Checkbox for one choice.", "guardrail": true},
+    {"name": "checkbox-label", "description": "Label and target of one checkbox.", "guardrail": true},
+    {"name": "copy", "description": "Button that copies text.", "guardrail": true},
+    {"name": "copy-status", "description": "Result of the copy operation.", "guardrail": true},
+    {"name": "details", "description": "Control and technical details of a refusal.", "guardrail": true},
+    {"name": "edit-type", "description": "Choices for the type of edit.", "guardrail": true},
+    {"name": "group", "description": "Group of controls for the choices.", "guardrail": true},
+    {"name": "label", "description": "Label of the field.", "guardrail": true},
+    {"name": "listbox", "description": "List of available choices.", "guardrail": true},
+    {"name": "next", "description": "Next step after a refusal.", "guardrail": true},
+    {"name": "option", "description": "One available choice.", "guardrail": true},
+    {"name": "popup", "description": "Container for the list of choices.", "guardrail": true},
+    {"name": "problem", "description": "Reason that a field value is invalid.", "guardrail": true},
+    {"name": "reason", "description": "Reason for a refusal or an edit error.", "guardrail": true},
+    {"name": "remove", "description": "Button that removes a selected choice.", "guardrail": true},
+    {"name": "search", "description": "Input that filters the choices.", "guardrail": true},
+    {"name": "status", "description": "Result of the search.", "guardrail": true},
+    {"name": "tag", "description": "Group for one selected choice.", "guardrail": false},
+    {"name": "tag-text", "description": "Name of the selected choice.", "guardrail": true},
+    {"name": "tags", "description": "List of selected tags.", "guardrail": false}
+  ],
+  "data": {
+    "name": {"type": "text", "size": "short"},
+    "label": {"type": "text", "required": true, "min_length": 1, "size": "line"},
+    "value": {
+      "type": "list",
+      "editable": true,
+      "max_items": 500,
+      "unique_items": true,
+      "items": {"type": "text", "label": "Choice", "min_length": 1, "size": "line"}
+    },
+    "choices": {
+      "type": "list",
+      "required": true,
+      "min_items": 1,
+      "max_items": 500,
+      "unique_items": true,
+      "items": {"type": "text", "label": "Choice", "min_length": 1, "size": "line"}
+    },
+    "min_items": {"type": "integer", "minimum": 0, "maximum": 500},
+    "max_items": {"type": "integer", "minimum": 0, "maximum": 500},
+    "hint": {"type": "text", "size": "summary"},
+    "error": {"type": "text", "size": "summary"},
+    "disabled": {"type": "boolean"},
+    "typed": {"type": "boolean"}
+  },
+  "states": ["+disabled", "+error"],
+  "tokens": [
+    "+color.surface", "+color.text-muted", "+color.accent", "+color.focus", "+color.danger", "+space.1",
+    "+space.2", "+radius.1", "+type.caption", "+type.weight-strong", "+motion.fast"
+  ],
+  "accessibility": {
+    "role": "group",
+    "name": {"field": "label"},
+    "keyboard": ["Tab", "Shift+Tab", "Enter", "Space", "Escape", "ArrowUp", "ArrowDown", "Home", "End"]
+  }
+}

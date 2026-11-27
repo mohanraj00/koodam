@@ -1,0 +1,22 @@
+{
+  "name": "empty-state",
+  "description": "A heading and short text for an empty result, with an optional action from the page.",
+  "ai_content": false,
+  "parts": [
+    {"name": "action", "description": "Slot for an optional control from the page.", "guardrail": true},
+    {"name": "copy", "description": "Button that copies text.", "guardrail": true},
+    {"name": "copy-status", "description": "Result of the copy operation.", "guardrail": true},
+    {"name": "details", "description": "Control and technical details of a refusal.", "guardrail": true},
+    {"name": "next", "description": "Next step after a refusal.", "guardrail": true},
+    {"name": "reason", "description": "Reason for a refusal.", "guardrail": true},
+    {"name": "text", "description": "Text that explains the empty result.", "guardrail": true},
+    {"name": "title", "description": "Heading of the empty state.", "guardrail": true}
+  ],
+  "data": {
+    "title": {"type": "text", "required": true, "min_length": 1, "size": "title"},
+    "text": {"type": "text", "required": true, "min_length": 1, "size": "summary"}
+  },
+  "states": ["+empty", "+refused"],
+  "tokens": ["+color.surface", "+color.focus", "+radius.2", "+space.2", "+space.4", "+type.heading-3"],
+  "accessibility": {"role": "group", "name": {"field": "title"}, "keyboard": ["Tab", "Shift+Tab", "Enter", "Space"]}
+}

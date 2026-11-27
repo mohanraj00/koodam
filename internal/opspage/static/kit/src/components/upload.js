@@ -4,8 +4,10 @@
 // It sends no data. The application sends each file with its own transport and gives the receipt.
 // src/components/upload.md gives the rules.
 import { MuElement } from '../primitives/base.js';
-import { bindingErrors } from '../actions/action.js';
+import { ActionState, bindingErrors } from '../actions/action.js';
 import { el, sheet } from '../render/dom.js';
+import { PATIENCE, patienceOf, ReceiptTimer } from './pending.js';
+import { ACTION_RESULT_CSS, REFERENCE_CSS, showReference } from './receipt.js';
 
 const KEYS = new Set(['tool', 'arguments', 'label', 'accept', 'max_size', 'max_files']);
 // The values of a file that each request sends. A bound argument cannot have one of these names.
@@ -15,21 +17,17 @@ const EXTENSION = /^\.[a-z0-9]{1,16}$/;
 const MAX_ACCEPT = 20;
 const MAX_FILES = 20;
 const MAX_SIZE = 1000000000;
-// A receipt has a message of 200 characters at most and a reference of 80 characters at most, as each action.
-const MAX_MESSAGE = 200;
-const MAX_REFERENCE = 80;
 // The text of each file state. Done shows only after a receipt with ok.
-const STATES = Object.freeze({ pending: 'Pending', uploading: 'Uploading', done: 'Done', error: 'Not done' });
+const STATES = Object.freeze({ pending: 'Pending', uploading: 'Uploading', stalled: 'Pending', done: 'Done', error: 'Not done' });
 const UNAVAILABLE = 'This upload is not available.';
 
 const integer = (value, max) => Number.isInteger(value) && value >= 1 && value <= max;
 const files = (count) => (count === 1 ? '1 file' : `${count} files`);
 
-function short(value, max) {
-  if (typeof value !== 'string' || value.length > max * 2) return false;
-  let count = 0;
-  for (const _ of value) count += 1;
-  return count <= max;
+function fileState(action) {
+  if (action.state === 'default') return 'pending';
+  if (action.state === 'pending') return action.wait === 'stalled' ? 'stalled' : 'uploading';
+  return action.state;
 }
 
 // The size of a file as text, with decimal units.
@@ -100,17 +98,21 @@ export class MuUpload extends MuElement {
       padding: var(--mu-space-2); border: 1px solid var(--mu-color-border); border-radius: var(--mu-radius-1);
     }
     .file > span { grid-column: 1; min-width: 0; overflow-wrap: anywhere; }
-    .file > button { grid-column: 2; grid-row: 1 / span 3; }
+    .file-controls { grid-column: 2; grid-row: 1 / span 3; display: flex; flex-wrap: wrap; gap: var(--mu-space-2); }
+    .file[data-state="stalled"] .file-controls { grid-column: 1 / -1; grid-row: auto; }
+    .file-controls[hidden] { display: none; }
     .state { font-weight: var(--mu-type-weight-strong); }
+    .file[data-state="done"] { border-color: var(--mu-color-success); }
+    .file[data-state="done"] .state, .notes .done { color: var(--mu-color-success); }
     .file[data-state="error"] .state, .problems { color: var(--mu-color-danger); }
     .notes { display: flex; flex-direction: column; gap: var(--mu-space-1); font: var(--mu-type-caption); min-height: 1.5em; }
     @media (forced-colors: active) {
-      .drop, .file { border-color: CanvasText; }
+      .drop, .file, .file[data-state="done"] { border-color: CanvasText; }
       .drop.over { border-color: Highlight; }
-      .muted, .problems, .file[data-state="error"] .state { color: CanvasText; }
+      .muted, .problems, .file[data-state="error"] .state, .file[data-state="done"] .state, .notes .done { color: CanvasText; }
       button, button[part="send"] { background: ButtonFace; color: ButtonText; border-color: ButtonText; forced-color-adjust: none; }
     }
-  `)];
+  `), REFERENCE_CSS, ACTION_RESULT_CSS];
 
   #binding = null;
   // The files of the list. Each entry has the file, its state and the nodes of its row.
@@ -119,6 +121,7 @@ export class MuUpload extends MuElement {
   #problems = [];
   #view = Object.freeze(Object.defineProperty({}, 'state', { get: () => this.#actionState(), enumerable: true }));
   #nodes = null;
+  #patience = PATIENCE;
 
   // The state of the upload can only be read: disabled with no binding, pending while a file waits for its
   // receipt, and default.
@@ -136,6 +139,7 @@ export class MuUpload extends MuElement {
       arguments: Object.freeze({ ...(binding.arguments ?? {}) }), accept: Object.freeze([...binding.accept]),
       max_size: binding.max_size, max_files: binding.max_files });
     // A new binding is a new target with new limits, so no file of the old binding stays.
+    for (const entry of this.#files) entry.timer.clear();
     this.#files = [];
     this.#problems = [];
     if (this.fill) this.fill = this.fill;
@@ -143,22 +147,26 @@ export class MuUpload extends MuElement {
 
   #actionState() {
     if (!this.#binding) return 'disabled';
-    return this.#files.some((entry) => entry.state === 'uploading') ? 'pending' : 'default';
+    return this.#files.some(({ action }) => action.state === 'pending') ? 'pending' : 'default';
+  }
+
+  get patience() {
+    return this.#patience;
+  }
+
+  set patience(value) {
+    this.#patience = patienceOf(value);
   }
 
   // Returns true if the receipt belongs to a file that waits for it. Only a receipt with ok shows Done.
   receipt(value) {
-    if (value === null || typeof value !== 'object' || typeof value.id !== 'string' || typeof value.ok !== 'boolean') return false;
-    const entry = this.#files.find((item) => item.state === 'uploading' && item.id === value.id);
-    const message = value.message ?? '';
-    const reference = value.reference ?? '';
-    if (!entry || !short(message, MAX_MESSAGE) || !short(reference, MAX_REFERENCE)) return false;
-    entry.state = value.ok ? 'done' : 'error';
-    entry.message = message;
-    entry.reference = reference;
+    const entry = this.#files.find(({ action }) => action.receipt(value));
+    if (!entry) return false;
+    entry.timer.clear();
+    const { state, message, reference } = entry.action;
     this.#refresh();
     this.dispatchEvent(new CustomEvent('mu-receipt', { bubbles: true, composed: true,
-      detail: Object.freeze({ id: entry.id, name: entry.file.name, size: entry.file.size, ok: value.ok, message, reference }) }));
+      detail: Object.freeze({ id: entry.id, name: entry.file.name, size: entry.file.size, ok: state === 'done', message, reference }) }));
     return true;
   }
 
@@ -179,17 +187,18 @@ export class MuUpload extends MuElement {
 
   state() {
     if (!this.#binding) return 'disabled';
-    const states = this.#files.map((entry) => entry.state);
-    if (states.includes('uploading')) return 'pending';
+    const states = this.#files.map(({ action }) => action.state);
+    if (states.includes('pending')) return 'pending';
     if (states.includes('error')) return 'error';
     return states.length > 0 && states.every((item) => item === 'done') ? 'done' : 'default';
   }
 
   render(data) {
     const binding = this.#binding;
-    // New data keeps the focus on the same control: the Upload button, the Remove button of a file, or Choose files.
+    // New data keeps the focus on the same control.
     const active = this.shadowRoot.activeElement;
-    const held = active === null ? null : this.#files.find((entry) => entry.remove === active) ?? (active === this.#nodes?.send ? 'send' : 'choose');
+    const held = active && this.#files.find((entry) => entry.controls.contains(active));
+    const heldPart = active?.getAttribute('part');
     const input = el('input', { type: 'file' });
     input.hidden = true;
     input.multiple = Boolean(binding && binding.max_files > 1);
@@ -228,11 +237,11 @@ export class MuUpload extends MuElement {
     send.addEventListener('click', () => this.#send());
     for (const entry of this.#files) list.append(this.#row(entry));
     this.#refresh();
-    if (held) {
+    if (active) {
       queueMicrotask(() => {
-        const node = held === 'send' ? send : held === 'choose' ? choose : held.remove;
+        const node = held ? held[heldPart] : heldPart === 'send' ? send : choose;
         if (!choose.isConnected) return;
-        (node.isConnected && !node.hidden ? node : choose).focus();
+        (node?.isConnected && !node.hidden ? node : choose).focus();
       });
     }
     const author = this.fill.slots.authorship;
@@ -266,7 +275,10 @@ export class MuUpload extends MuElement {
         this.#problems.push({ name: file.name, reason });
         continue;
       }
-      const entry = { file, state: 'pending', id: '', message: '', reference: '' };
+      const action = new ActionState();
+      const { tool, arguments: args } = this.#binding;
+      action.bind({ tool, arguments: args, editable: { name: 'Name', size: 'Size', type: 'Type' } });
+      const entry = { file, action, timer: new ReceiptTimer() };
       this.#files.push(entry);
       this.#nodes.list.append(this.#row(entry));
     }
@@ -275,19 +287,35 @@ export class MuUpload extends MuElement {
 
   #row(entry) {
     const remove = el('button', { type: 'button', part: 'remove', 'aria-label': `Remove ${entry.file.name}` }, 'Remove');
+    const retry = el('button', { type: 'button', part: 'retry', 'aria-label': `Retry ${entry.file.name}` }, 'Retry');
+    const cancel = el('button', { type: 'button', part: 'cancel', 'aria-label': `Cancel ${entry.file.name}` }, 'Cancel');
     remove.addEventListener('click', () => this.#remove(entry));
+    retry.addEventListener('click', () => {
+      if (!this.#files.includes(entry) || !this.fill) return;
+      const request = entry.action.retry();
+      if (!request) return;
+      this.#refresh();
+      this.#dispatch(entry, request);
+    });
+    cancel.addEventListener('click', () => {
+      if (this.#files.includes(entry) && entry.action.cancel()) this.#refresh();
+    });
     entry.status = el('span', { class: 'state', part: 'state' });
-    entry.detail = el('span', { class: 'muted', part: 'reference' });
+    entry.detail = el('span', { class: 'reference-row' });
     entry.remove = remove;
+    entry.retry = retry;
+    entry.cancel = cancel;
+    entry.controls = el('div', { class: 'file-controls' }, remove, retry, cancel);
     entry.row = el('li', { class: 'file', part: 'file' }, el('span', { part: 'name' }, entry.file.name),
-      el('span', { class: 'muted', part: 'size' }, bytes(entry.file.size)), entry.status, entry.detail, remove);
+      el('span', { class: 'muted', part: 'size' }, bytes(entry.file.size)), entry.status, entry.detail, entry.controls);
     return entry.row;
   }
 
   // A person can remove a file before its upload, and a file that is not done.
   #remove(entry) {
-    if (entry.state !== 'pending' && entry.state !== 'error') return;
+    if (entry.action.state !== 'default' && entry.action.state !== 'error') return;
     const index = this.#files.indexOf(entry);
+    if (index < 0) return;
     this.#files.splice(index, 1);
     entry.row.remove();
     this.#problems = [];
@@ -299,46 +327,63 @@ export class MuUpload extends MuElement {
   // Sends one request for each file that waits. The request has the file, and the control reads no content.
   #send() {
     if (!this.#binding || this.dataset.state === 'refused') return;
-    const waiting = this.#files.filter((entry) => entry.state === 'pending' || entry.state === 'error');
+    const waiting = this.#files.filter(({ action }) => action.state === 'default' || action.state === 'error');
     if (!waiting.length) return;
-    const requests = waiting.map((entry) => {
-      entry.id = crypto.randomUUID();
-      entry.state = 'uploading';
-      entry.message = '';
-      entry.reference = '';
+    const sends = waiting.map((entry) => {
       const { name, size, type } = entry.file;
-      return Object.freeze({ id: entry.id, tool: this.#binding.tool,
-        arguments: Object.freeze({ name, size, type, ...this.#binding.arguments }), file: entry.file });
+      return [entry, entry.action.start({ name, size, type })];
     });
     this.#problems = [];
     this.#refresh();
-    for (const request of requests) {
-      this.dispatchEvent(new CustomEvent('mu-upload', { bubbles: true, composed: true, detail: request }));
-    }
+    for (const [entry, request] of sends) this.#dispatch(entry, request);
+  }
+
+  #dispatch(entry, request) {
+    if (!this.#files.includes(entry) || entry.action.key !== request.key) return;
+    entry.id = request.id;
+    entry.timer.watch(entry.action.wait, this.#patience, () => {
+      if (entry.action.noReceipt(request.id)) this.#refresh();
+    });
+    const detail = Object.freeze({ ...request, file: entry.file });
+    this.dispatchEvent(new CustomEvent('mu-upload', { bubbles: true, composed: true, detail }));
   }
 
   // Shows the state of each file, the summary and the reasons as text. A row keeps its nodes, so the focus stays.
   #refresh() {
     if (!this.#nodes) return;
     const { choose, send, summary, problems } = this.#nodes;
-    const count = { pending: 0, uploading: 0, done: 0, error: 0 };
+    const count = { pending: 0, uploading: 0, stalled: 0, done: 0, error: 0 };
+    const active = this.shadowRoot.activeElement;
+    let next = null;
     for (const entry of this.#files) {
-      count[entry.state] += 1;
-      entry.row.dataset.state = entry.state;
-      entry.status.textContent = STATES[entry.state] + (entry.message ? ': ' + entry.message : '');
-      entry.detail.textContent = entry.reference ? 'Reference: ' + entry.reference : '';
-      entry.remove.hidden = entry.state !== 'pending' && entry.state !== 'error';
+      const state = fileState(entry.action);
+      const { message, reference } = entry.action;
+      count[state] += 1;
+      entry.row.dataset.state = state;
+      entry.status.textContent = STATES[state] + (message ? ': ' + message : '');
+      showReference(entry.detail, reference);
+      entry.remove.hidden = state !== 'pending' && state !== 'error';
+      entry.retry.hidden = state !== 'stalled';
+      entry.cancel.hidden = entry.retry.hidden;
+      entry.controls.hidden = entry.remove.hidden && entry.retry.hidden;
+      if (entry.controls.contains(active) && active.hidden) next = entry.remove.hidden ? send : entry.remove;
     }
     const bound = Boolean(this.#binding);
     choose.setAttribute('aria-disabled', bound ? 'false' : 'true');
     send.setAttribute('aria-disabled', bound && count.pending + count.error > 0 ? 'false' : 'true');
+    const state = this.state();
+    send.dataset.state = state;
+    choose.dataset.state = bound ? 'default' : 'disabled';
+    summary.classList.toggle('done', state === 'done');
     const words = [];
     if (count.pending) words.push(`${files(count.pending)} to upload.`);
     if (count.uploading) words.push(`Uploading ${files(count.uploading)}.`);
+    if (count.stalled) words.push(`No receipt came back for ${files(count.stalled)}.`);
     if (count.done) words.push(`Done: ${files(count.done)}.`);
     if (count.error) words.push(`Not done: ${files(count.error)}.`);
     summary.textContent = words.join(' ');
     problems.replaceChildren(...this.#problems.map((item) => el('li', {}, `${item.name}: ${item.reason}`)));
-    if (this.fill) this.dataset.state = this.state();
+    if (this.fill) this.dataset.state = state;
+    next?.focus();
   }
 }

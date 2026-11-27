@@ -3,6 +3,18 @@
   "kind": "primitive",
   "description": "A labeled input for long text in more than one line. A person edits the text.",
   "ai_content": false,
+  "field": true,
+  "parts": [
+    {"name": "copy", "description": "Button that copies text.", "guardrail": true},
+    {"name": "copy-status", "description": "Result of the copy operation.", "guardrail": true},
+    {"name": "details", "description": "Control and technical details of a refusal.", "guardrail": true},
+    {"name": "edit-type", "description": "Choices for the type of edit.", "guardrail": true},
+    {"name": "input", "description": "Text area for the field value.", "guardrail": true},
+    {"name": "label", "description": "Label of the field.", "guardrail": true},
+    {"name": "next", "description": "Next step after a refusal.", "guardrail": true},
+    {"name": "problem", "description": "Reason that a field value is invalid.", "guardrail": true},
+    {"name": "reason", "description": "Reason for a refusal or an edit error.", "guardrail": true}
+  ],
   "data": {
     "name": {"type": "text", "size": "short"},
     "label": {"type": "text", "required": true, "min_length": 1, "size": "line"},
