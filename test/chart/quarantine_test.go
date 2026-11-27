@@ -159,7 +159,8 @@ func TestQuarantinePolicyRules(t *testing.T) {
 	}
 	podSpec := corev1.PodSpec{RestartPolicy: corev1.RestartPolicyNever,
 		Containers: []corev1.Container{{Name: "c", Image: "example.com/quarantine:test"}}}
-	template := corev1.PodTemplateSpec{ObjectMeta: metav1.ObjectMeta{Labels: map[string]string{"workload": "q"}}, Spec: podSpec}
+	template := corev1.PodTemplateSpec{ObjectMeta: metav1.ObjectMeta{Labels: map[string]string{"workload": "q"}},
+		Spec: podSpec}
 	selector := &metav1.LabelSelector{MatchLabels: map[string]string{"workload": "q"}}
 	always := template.DeepCopy()
 	always.Spec.RestartPolicy = corev1.RestartPolicyAlways
