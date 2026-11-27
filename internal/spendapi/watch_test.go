@@ -18,6 +18,7 @@ package spendapi
 
 import (
 	"bufio"
+	"context"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -26,6 +27,7 @@ import (
 	"testing"
 	"time"
 
+	"k8s.io/apimachinery/pkg/watch"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	corev1alpha1 "github.com/mohanraj00/koodam/api/v1alpha1"
@@ -206,5 +208,26 @@ func TestWatchRefusals(t *testing.T) {
 	f.call(t, http.MethodGet, watchPath, f.reader, http.StatusNotFound)
 	if f.watches.Load() != 0 {
 		t.Fatal("the count of open watches is not 0 after the refusals")
+	}
+}
+
+// stalledWatch is a watch that does not start before its context ends.
+type stalledWatch struct{}
+
+func (stalledWatch) Watch(ctx context.Context, _ client.ObjectList, _ ...client.ListOption) (watch.Interface, error) {
+	<-ctx.Done()
+	return nil, ctx.Err()
+}
+
+func TestWatchStartHasTheRequestTimeLimit(t *testing.T) {
+	f, _, _ := newWatchFixture(t)
+	f.timeout, f.watcher = 100*time.Millisecond, stalledWatch{}
+	start := time.Now()
+	f.call(t, http.MethodGet, watchPath, f.reader, http.StatusGatewayTimeout)
+	if d := time.Since(start); d > latencyTarget {
+		t.Fatalf("the start of the watch took %s, want the request time limit", d)
+	}
+	if f.watches.Load() != 0 {
+		t.Fatal("the count of open watches is not 0 after the time limit")
 	}
 }

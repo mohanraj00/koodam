@@ -111,9 +111,15 @@ func (a *api) serveWatch(ctx context.Context, w http.ResponseWriter, r *http.Req
 	watchCtx, cancel := context.WithTimeout(r.Context(), a.watchTime)
 	defer cancel()
 	if err == nil && r.Method == http.MethodGet {
+		// The stream lives in watchCtx, but the request time limit also limits the start of the watch.
+		stop := context.AfterFunc(ctx, cancel)
 		stream, err = a.watcher.Watch(watchCtx, &corev1alpha1.AgentList{}, client.InNamespace(ref.namespace),
 			&client.ListOptions{FieldSelector: fields.OneTermEqualSelector("metadata.name", ref.name),
 				Raw: &metav1.ListOptions{ResourceVersion: agent.ResourceVersion}})
+		stop()
+	}
+	if stream != nil {
+		defer stream.Stop()
 	}
 	switch {
 	case ctx.Err() != nil:
@@ -128,12 +134,10 @@ func (a *api) serveWatch(ctx context.Context, w http.ResponseWriter, r *http.Req
 	}
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("X-Accel-Buffering", "no")
+	w.WriteHeader(http.StatusOK)
 	if stream == nil {
-		w.WriteHeader(http.StatusOK)
 		return
 	}
-	defer stream.Stop()
-	w.WriteHeader(http.StatusOK)
 	sendEvents(watchCtx, w, http.NewResponseController(w), stream, agent)
 }
 
