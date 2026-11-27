@@ -11,5 +11,5 @@ COPY --from=python /usr/local/bin/python3.13 /usr/local/bin/python3
 COPY --from=python /usr/local/lib/libpython3.13.so.1.0 /usr/local/lib/
 COPY --from=python /usr/local/lib/python3.13 /usr/local/lib/python3.13
 USER 0:0
-RUN ldconfig && python3 -c 'import sys; sys.exit(sys.version_info < (3, 10))'
+RUN ldconfig && python3 -c 'import sys; sys.exit(sys.version_info < (3, 11))'
 USER 1000:1000

@@ -2,6 +2,11 @@
 # Run this test with sh images/nookku/test/launcher_test.sh.
 set -eu
 
+if ! python3 -I -S -c 'import sys; sys.exit(sys.version_info < (3, 11))'; then
+    printf 'FAIL: This test needs python3 3.11 or later on the PATH.\n' >&2
+    exit 1
+fi
+
 here=$(cd "$(dirname "$0")/.." && pwd)
 work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT
@@ -44,10 +49,6 @@ unset PYTHONPATH PYTHONSAFEPATH PYTHONNOUSERSITE
 check_pinned_import
 printf 'PASS: The launcher exports the variables and the child imports the pinned lib.\n'
 
-if ! python3 -I -S -c 'import sys; sys.exit(sys.version_info < (3, 11))'; then
-    printf 'FAIL: This test needs python3 3.11 or later on the PATH.\n' >&2
-    exit 1
-fi
 mkdir nookku
 : > nookku/__init__.py
 printf 'print(__file__)\n' > nookku/__main__.py
