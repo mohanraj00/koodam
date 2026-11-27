@@ -216,6 +216,20 @@ func setupApps(mgr ctrl.Manager, versions *controller.AppVersionReconciler,
 
 // checkClaimPolicy refuses the App claim check if the controller cannot make the NetworkPolicy
 // of a version. With no policy, a pod of the cluster can call the app container with no claim.
+// setupHoldAndProfile sets up the Hold and the Profile controllers.
+func setupHoldAndProfile(mgr ctrl.Manager, holds *controller.HoldReconciler) error {
+	if err := holds.SetupWithManager(mgr); err != nil {
+		return fmt.Errorf("hold: %w", err)
+	}
+	if err := (&controller.ProfileReconciler{
+		Client: mgr.GetClient(),
+		Scheme: mgr.GetScheme(),
+	}).SetupWithManager(mgr); err != nil {
+		return fmt.Errorf("profile: %w", err)
+	}
+	return nil
+}
+
 func checkClaimPolicy(c controller.AppClaimCheck, e controller.EgressProxy) error {
 	if c.Issuer != "" && (e.IP == "" || e.Namespace == "" || len(e.PodLabels) == 0) {
 		return errors.New("the App claim check needs --egress-proxy-ip, --egress-proxy-namespace and " +
@@ -530,6 +544,8 @@ func main() {
 	}
 	agentGatewayURL = egress.GatewayURL(agentGatewayURL)
 	gw := gateway.NewLiteLLM(gatewayURL, strings.TrimSpace(string(masterKey)))
+	// The events of a stop by a Hold (#185).
+	recorder := mgr.GetEventRecorder("koodam")
 	if err := (&controller.AgentReconciler{
 		Client:         mgr.GetClient(),
 		Scheme:         mgr.GetScheme(),
@@ -542,15 +558,20 @@ func main() {
 		NookkuImage:    nookkuImage,
 		JobTTL:         int32(jobTTLSeconds),
 		IngressEnabled: agentIngressEnabled,
+		Recorder:       recorder,
+		Namespaces:     watched,
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "Failed to create controller", "controller", "agent")
 		os.Exit(1)
 	}
-	if err := (&controller.ProfileReconciler{
-		Client: mgr.GetClient(),
-		Scheme: mgr.GetScheme(),
-	}).SetupWithManager(mgr); err != nil {
-		setupLog.Error(err, "Failed to create controller", "controller", "profile")
+	if err := setupHoldAndProfile(mgr, &controller.HoldReconciler{
+		Client:      mgr.GetClient(),
+		Recorder:    recorder,
+		AppsEnabled: appsEnabled,
+		APIReader:   mgr.GetAPIReader(),
+		Namespaces:  watched,
+	}); err != nil {
+		setupLog.Error(err, "Failed to create the Hold or the Profile controller")
 		os.Exit(1)
 	}
 	if err := (&controller.WorkspaceReconciler{
@@ -564,6 +585,8 @@ func main() {
 		Gateway:        gw,
 		GatewayURL:     strings.TrimRight(agentGatewayURL, "/"),
 		Egress:         egress,
+		Recorder:       recorder,
+		Namespaces:     watched,
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "Failed to create controller", "controller", "workspace")
 		os.Exit(1)
@@ -589,6 +612,8 @@ func main() {
 			Egress:            egress,
 			IngressNamespaces: ingressNamespaces,
 			Claim:             claim,
+			Recorder:          recorder,
+			Namespaces:        watched,
 		}, &controller.TenantQuotaReconciler{Client: mgr.GetClient(), Customers: gw, Interval: tenantUsageInterval})
 		if err != nil {
 			setupLog.Error(err, "Failed to create the App controllers")

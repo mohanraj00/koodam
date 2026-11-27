@@ -73,6 +73,7 @@ rules:
   resources:
   - agents/finalizers
   - agents/status
+  - holds/status
   - profiles/status
   - spendbudgets/status
   - testkeys/finalizers
@@ -84,12 +85,20 @@ rules:
 - apiGroups:
   - core.koodam.dev
   resources:
+  - holds
   - profiles
   - spendbudgets
   verbs:
   - get
   - list
   - watch
+- apiGroups:
+  - events.k8s.io
+  resources:
+  - events
+  verbs:
+  - create
+  - patch
 - apiGroups:
   - rbac.authorization.k8s.io
   resources:

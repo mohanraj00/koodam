@@ -258,6 +258,49 @@ var _ = Describe("Workspaces", Ordered, Label("workspace"), func() {
 		}, 2*time.Minute, 5*time.Second).Should(Succeed(), "The home PVC did not keep the file.")
 	})
 
+	It("stops the Workspace for a Profile Hold and starts it with a new key after the release", func() {
+		key, hash := holdKey(ws)
+
+		By("holding the Profile " + wsProfile)
+		h := makeHold("e2e-profile-stop", corev1alpha1.HoldTarget{Kind: corev1alpha1.HoldTargetProfile,
+			Name: wsProfile})
+		waitPhase(ws, corev1alpha1.WorkspaceSuspended)
+		Expect(meta.IsStatusConditionTrue(ws.Status.Conditions, corev1alpha1.HoldHeld)).To(BeTrue(),
+			"The Workspace has no true Held condition.")
+		Expect(ws.Spec.Suspend).To(BeFalse(), "The Hold changed the spec of the Workspace.")
+
+		By("checking that the gateway refuses the key and has it blocked")
+		Eventually(func(g Gomega) {
+			code, errType := modelCall(ctx, key)
+			g.Expect(code == http.StatusUnauthorized && errType == "auth_error").To(BeTrue(), fmt.Sprintf(
+				"The gateway did not refuse the key: status %d, error type %q.", code, errType))
+			g.Expect(keyInfo(hash).Blocked).To(BeTrue(), "The gateway did not block the key.")
+		}, 30*time.Second, time.Second).Should(Succeed())
+
+		By("checking that the pod stopped and the home PVC stays")
+		Eventually(func() int {
+			pods := &corev1.PodList{}
+			_ = k8s.List(ctx, pods, client.InNamespace(wsNS), client.MatchingLabels{wsLabel: wsName})
+			return len(pods.Items)
+		}, 2*time.Minute, time.Second).Should(BeZero(), "The Workspace pod did not stop.")
+		pvc := &corev1.PersistentVolumeClaim{}
+		Expect(k8s.Get(ctx, client.ObjectKey{Namespace: wsNS, Name: "home-" + wsName + "-0"}, pvc)).To(Succeed())
+		Expect(pvc.DeletionTimestamp).To(BeNil(), "The home PVC is in deletion.")
+		expectHeld(h)
+		expectStopEvent(wsNS, wsName, h.Name)
+
+		By("releasing the Hold and reading the file from the first session")
+		releaseHold(h)
+		waitPhase(ws, corev1alpha1.WorkspaceRunning)
+		_, next := holdKey(ws)
+		Expect(next).NotTo(Equal(hash), "The Workspace got the blocked key again.")
+		Eventually(func(g Gomega) {
+			out, err := ssh("cat ~/e2e-marker")
+			g.Expect(err).NotTo(HaveOccurred())
+			g.Expect(strings.TrimSpace(out)).To(Equal(marker))
+		}, 2*time.Minute, 5*time.Second).Should(Succeed(), "The home PVC did not keep the file.")
+	})
+
 	// The M1 exit test of v0.4 (#287): one Nookku test uses its own gateway key (#192).
 	It("gives one Nookku test its own gateway key and revokes it after the TTL", func() {
 		By("building the Workspace image with python3 and loading it on kind")

@@ -38,6 +38,7 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/validation"
+	"k8s.io/client-go/tools/events"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
@@ -123,6 +124,11 @@ type AgentReconciler struct {
 	// BudgetRetry is the most time that a run waits for a SpendBudget before a new check. If it is 0
 	// or less, the controller uses DefaultBudgetRetry.
 	BudgetRetry time.Duration
+	// Recorder writes the event of a stop by a Hold. If it is nil, the controller writes no event.
+	Recorder events.EventRecorder
+	// Namespaces are the namespaces that the manager watches. An empty list is each namespace. A
+	// Hold maps only to the workloads of these namespaces (#185).
+	Namespaces []string
 }
 
 // +kubebuilder:rbac:groups=core.koodam.dev,resources=agents,verbs=get;list;watch;update
@@ -155,12 +161,25 @@ func (r *AgentReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl
 		}
 		return ctrl.Result{}, nil
 	}
+	var hold *corev1alpha1.Hold
+	if !ended && a.DeletionTimestamp.IsZero() {
+		h, err := stopHold(ctx, r.Client, corev1alpha1.HoldTargetAgent, a.Namespace, a.Name, "")
+		if err != nil {
+			return ctrl.Result{}, err
+		}
+		hold = h
+	}
 	switch {
 	case !a.DeletionTimestamp.IsZero():
 		return ctrl.Result{}, r.fail(ctx, a, corev1alpha1.AgentFailed, "AgentDeleted")
 	case ended:
 		// A revoke started before and did not complete.
 		return ctrl.Result{}, r.revoke(ctx, a)
+	case hold != nil:
+		// A Hold stops the run, also a run that waits. The revoke blocks the key before it deletes
+		// the Job. The run does not start again after the release.
+		holdEvent(r.Recorder, a, hold)
+		return ctrl.Result{}, r.fail(ctx, a, corev1alpha1.AgentFailed, reasonStopped)
 	case r.ingressPaused(a):
 		// The pause comes before the Running case, because a Running phase with no key hash is not an
 		// enrolled run attempt. The controller makes no finalizer, Secret, key or Job, and it keeps the
@@ -979,6 +998,12 @@ func (r *AgentReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		For(&corev1alpha1.Agent{}).
 		Owns(&batchv1.Job{}).
 		Watches(&corev1alpha1.SpendBudget{}, handler.EnqueueRequestsFromMapFunc(r.waitingFor)).
+		Watches(&corev1alpha1.Hold{},
+			handler.EnqueueRequestsFromMapFunc(holdMapper(r.Client, corev1alpha1.HoldTargetAgent, r.Namespaces))).
+		Watches(&corev1.Namespace{},
+			handler.EnqueueRequestsFromMapFunc(profileHoldMapper(r.Client, corev1alpha1.HoldTargetAgent, r.Namespaces))).
+		Watches(&corev1alpha1.Profile{},
+			handler.EnqueueRequestsFromMapFunc(profileHoldMapper(r.Client, corev1alpha1.HoldTargetAgent, r.Namespaces))).
 		Named("agent").
 		Complete(r)
 }
