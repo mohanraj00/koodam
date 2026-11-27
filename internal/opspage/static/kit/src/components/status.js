@@ -20,9 +20,12 @@ export class MuStatus extends MuElement {
     .label {
       border: 3px solid var(--mu-color-border); border-radius: var(--mu-radius-2);
       padding: var(--mu-space-1) var(--mu-space-3); font-weight: var(--mu-type-weight-strong);
+      background-clip: padding-box;
     }
-    .pending { border-style: dashed; }
-    .passed { border-style: solid; }
+    .pending { border-style: dashed; border-color: var(--mu-color-warning);
+      background-color: var(--mu-color-warning); color: var(--mu-color-on-warning); }
+    .passed { border-color: var(--mu-color-success);
+      background-color: var(--mu-color-success); color: var(--mu-color-on-success); }
     .failed { border-style: double; }
     .unknown { border-style: dotted; }
     .text { overflow-wrap: anywhere; white-space: pre-wrap; min-width: 0; }

@@ -30,6 +30,8 @@ import (
 	"syscall"
 	"time"
 
+	batchv1 "k8s.io/api/batch/v1"
+	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/meta"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
@@ -160,8 +162,10 @@ func setupKube(c *spendapi.Config, rules *clientcmd.ClientConfigLoadingRules) er
 		c.Viewers.Access = clients.AuthorizationV1().SubjectAccessReviews()
 	}
 	scheme := runtime.NewScheme()
-	if err := corev1alpha1.AddToScheme(scheme); err != nil {
-		return errors.New("the Agent scheme could not be registered")
+	for _, add := range []func(*runtime.Scheme) error{corev1alpha1.AddToScheme, batchv1.AddToScheme, corev1.AddToScheme} {
+		if err := add(scheme); err != nil {
+			return errors.New("the Agent, Job and pod schemes could not be registered")
+		}
 	}
 	c.Kube, err = client.New(cfg, client.Options{Scheme: scheme, Mapper: kubeMapper()})
 	if err != nil {
@@ -202,7 +206,11 @@ func serve(address string, timeout time.Duration, handler http.Handler) error {
 // server.
 func kubeMapper() meta.RESTMapper {
 	gv := corev1alpha1.GroupVersion
-	mapper := meta.NewDefaultRESTMapper([]schema.GroupVersion{gv})
+	mapper := meta.NewDefaultRESTMapper([]schema.GroupVersion{gv, batchv1.SchemeGroupVersion, corev1.SchemeGroupVersion})
+	mapper.AddSpecific(batchv1.SchemeGroupVersion.WithKind("Job"), batchv1.SchemeGroupVersion.WithResource("jobs"),
+		batchv1.SchemeGroupVersion.WithResource("job"), meta.RESTScopeNamespace)
+	mapper.AddSpecific(corev1.SchemeGroupVersion.WithKind("Pod"), corev1.SchemeGroupVersion.WithResource("pods"),
+		corev1.SchemeGroupVersion.WithResource("pod"), meta.RESTScopeNamespace)
 	mapper.AddSpecific(gv.WithKind("Agent"), gv.WithResource("agents"), gv.WithResource("agent"), meta.RESTScopeNamespace)
 	mapper.AddSpecific(gv.WithKind("SpendBudget"), gv.WithResource("spendbudgets"), gv.WithResource("spendbudget"),
 		meta.RESTScopeNamespace)

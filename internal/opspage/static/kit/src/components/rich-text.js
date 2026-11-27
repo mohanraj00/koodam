@@ -1,54 +1,26 @@
 // Rich text as a tree of typed nodes (catalog/rich-text.json). A fill gives data only. The kit makes each
 // element from the fixed tables below, and each text goes into a text node. Page code owns the link
-// schemes and the first heading level. src/components/rich-text.md gives the rules.
+// schemes, the first heading level and the approval marks. src/components/rich-text.md gives the rules.
 import { ReadMoreElement, READ_MORE_CSS } from '../primitives/read-more.js';
+import { APPROVAL_MARK_CSS, APPROVAL_STATES, approvalMark } from '../primitives/badge.js';
 import { copyControl, el, sheet, text } from '../render/dom.js';
+import { richTextLinkSchemes, richTextRules, setRichTextLinkSchemes } from '../render/rich-text.js';
+import { isLocalDateTime, parseLinkURL, schemaErrors } from '../render/validate.js';
 
-// The schemes that page code can permit. No other scheme can open.
-const SCHEMES = Object.freeze(['https:', 'http:', 'mailto:']);
 // The element of each heading level of the page, from level 2 to level 6.
 const HEADINGS = Object.freeze(['h2', 'h3', 'h4', 'h5', 'h6']);
 const MARKS = Object.freeze({ emphasis: 'em', strong: 'strong', code: 'code' });
-// The maximum number of inline nodes in one rich text. The contract limits each list, not the total.
-const MAX_INLINE = 2000;
+const APPROVAL_KEYS = new Set(['block', 'state', 'by', 'at']);
+const UTC_SECONDS = /^:[0-5][0-9](\.[0-9]{1,3})?Z$/;
 
-let schemes = Object.freeze(['https:']);
 let first = 2;
 // The number of the current page policy. An element renders again if its render used an older policy.
 let policy = 0;
 const connected = new Set();
 
-// The target of a link, or null if the page does not permit it. The kit opens only the parsed address.
-function linkURL(value) {
-  let url;
-  try {
-    url = new URL(value);
-  } catch {
-    return null;
-  }
-  if (!schemes.includes(url.protocol)) return null;
-  // A mail link has an address only. It cannot set a subject, a body or a second receiver.
-  if (url.protocol === 'mailto:') return url.pathname && !url.search && !url.hash ? url : null;
-  return url.hostname && !url.username && !url.password ? url : null;
-}
-
-// The inline content of each paragraph, heading, list item and quote paragraph, with its path in the fill.
-function* runs(blocks) {
-  for (const [index, { component, data }] of blocks.entries()) {
-    const at = `data.blocks[${index}].data`;
-    if (component === 'rich-paragraph' || component === 'rich-heading') yield [at, data.content];
-    if (component === 'rich-list') {
-      for (const [item, node] of data.items.entries()) yield [`${at}.items[${item}].data`, node.data.content];
-    }
-    if (component === 'rich-quote') {
-      for (const [item, node] of data.paragraphs.entries()) yield [`${at}.paragraphs[${item}].data`, node.data.content];
-    }
-  }
-}
-
 export class MuRichText extends ReadMoreElement {
   static component = 'rich-text';
-  static styles = [READ_MORE_CSS, sheet(`
+  static styles = [READ_MORE_CSS, APPROVAL_MARK_CSS, sheet(`
     :host { display: block; min-width: 0; }
     .rich {
       color: var(--mu-color-text); font: var(--mu-type-body); overflow-wrap: anywhere;
@@ -56,6 +28,7 @@ export class MuRichText extends ReadMoreElement {
     }
     p, h2, h3, h4, h5, h6, ul, ol, pre, blockquote { margin: 0; }
     p, li, .heading { white-space: pre-wrap; }
+    [part="approval-mark"] { margin-block-end: calc(var(--mu-space-1) - var(--mu-space-2)); }
     .heading { font: var(--mu-type-body); font-weight: var(--mu-type-weight-strong); }
     .level-1 { font-size: 1.25em; }
     .level-2 { font-size: 1.125em; }
@@ -100,19 +73,94 @@ export class MuRichText extends ReadMoreElement {
 
   // The policy that this element used for its last render.
   #policy = -1;
+  #renderedFill = null;
+  #refreshing = false;
+  #fillRevision = 0;
   #targets = 0;
+  #blocks = [];
+  #marks = [];
+  #approvals = new Map();
+
+  get fillRevision() {
+    return this.#fillRevision;
+  }
+
+  setApprovals(list, revision) {
+    if (!this.#checkRevision(revision)) return;
+    const errors = [];
+    const approvals = new Map();
+    if (!Array.isArray(list)) errors.push('approvals: must be a list');
+    else {
+      for (let index = 0; index < list.length; index += 1) {
+        const item = list[index];
+        const path = `approvals[${index}]`;
+        if (item === null || typeof item !== 'object' || Array.isArray(item)) {
+          errors.push(path + ': must be an object');
+          continue;
+        }
+        for (const key of Reflect.ownKeys(item)) {
+          if (!APPROVAL_KEYS.has(key)) errors.push(path + '.' + String(key) + ': unknown key');
+        }
+        const { block, state } = item;
+        const by = Object.hasOwn(item, 'by') ? item.by : undefined;
+        const at = Object.hasOwn(item, 'at') ? item.at : undefined;
+        if (!Object.hasOwn(item, 'block') || !Number.isInteger(block) || block < 0 || block >= this.#blocks.length) {
+          errors.push(path + '.block: must be an index of a top-level block');
+        } else if (approvals.has(block)) {
+          errors.push(path + '.block: must be unique');
+        } else {
+          approvals.set(block, { state, by, at });
+        }
+        if (!Object.hasOwn(item, 'state') || typeof state !== 'string' || !Object.hasOwn(APPROVAL_STATES, state)) {
+          errors.push(path + '.state: must be approved, pending or rejected');
+        }
+        if (Object.hasOwn(item, 'by')) {
+          errors.push(...schemaErrors(by, { type: 'string', maxLength: 80 }, undefined, path + '.by'));
+        }
+        if (Object.hasOwn(item, 'at') && (typeof at !== 'string' || !at.endsWith('Z')
+          || !isLocalDateTime(at.slice(0, 16)) || !UTC_SECONDS.test(at.slice(16)))) {
+          errors.push(path + '.at: must be an ISO 8601 date and time in UTC');
+        }
+      }
+    }
+
+    // Page code can set a new fill while the kit reads the list.
+    if (!this.#checkRevision(revision)) return;
+    for (const mark of this.#marks) mark.remove();
+    this.#marks = [];
+    if (errors.length) {
+      this.#approvals.clear();
+      this.dispatchEvent(new CustomEvent('mu-refused', { bubbles: true, composed: true, detail: { errors } }));
+      return;
+    }
+    this.#approvals = approvals;
+    this.#showApprovals();
+  }
+
+  #checkRevision(revision) {
+    if (this.#renderedFill && revision === this.#fillRevision) return true;
+    const errors = [`revision: stale, the current revision is ${this.#fillRevision}`];
+    this.dispatchEvent(new CustomEvent('mu-refused', { bubbles: true, composed: true, detail: { errors } }));
+    return false;
+  }
+
+  #showApprovals() {
+    for (const [index, approval] of this.#approvals) {
+      const block = this.#blocks[index];
+      const mark = approvalMark(approval);
+      block.parentNode.insertBefore(mark, block);
+      this.#marks.push(mark);
+    }
+  }
 
   // The schemes that a link can have. This policy applies to each rich text on the page, including the
   // rich text of a thread. A fill cannot set it.
   static get linkSchemes() {
-    return schemes;
+    return richTextLinkSchemes();
   }
 
   static set linkSchemes(values) {
-    if (!Array.isArray(values) || !values.every((value) => SCHEMES.includes(value))) {
-      throw new TypeError('link schemes: must be an array of ' + SCHEMES.join(', '));
-    }
-    schemes = Object.freeze([...new Set(values)]);
+    setRichTextLinkSchemes(values);
     MuRichText.#changed();
   }
 
@@ -145,43 +193,53 @@ export class MuRichText extends ReadMoreElement {
 
   // Validates and renders the fill again, if the page policy changed after the last render.
   #refresh() {
-    if (this.fill && this.#policy !== policy) this.fill = this.fill;
+    if (!this.#renderedFill || this.#policy === policy) return;
+    this.#refreshing = true;
+    try {
+      this.fill = this.#renderedFill;
+    } finally {
+      this.#refreshing = false;
+    }
   }
 
-  // The contract format cannot give these rules: the heading order, the total size and the page policy of a link.
   check(data) {
-    let level = 0;
-    for (const [index, block] of data.blocks.entries()) {
-      if (block.component !== 'rich-heading') continue;
-      if (block.data.level > level + 1) return [`data.blocks[${index}].data.level: a heading cannot skip a level`];
-      level = block.data.level;
-    }
-    let count = 0;
-    for (const [at, content] of runs(data.blocks)) {
-      count += content.length;
-      if (count > MAX_INLINE) return [`data.blocks: more than ${MAX_INLINE} inline nodes`];
-      for (const [index, node] of content.entries()) {
-        if (node.component === 'rich-link' && !linkURL(node.data.url)) {
-          return [`${at}.content[${index}].data.url: the page does not permit this link`];
-        }
-      }
-    }
-    return [];
+    return richTextRules(data);
   }
 
   state(data) {
     return data.blocks.length ? 'default' : 'empty';
   }
 
+  refuse(errors) {
+    this.#fillRevision += 1;
+    this.#renderedFill = null;
+    this.#refreshing = false;
+    this.#approvals.clear();
+    this.#blocks = [];
+    this.#marks = [];
+    super.refuse(errors);
+  }
+
   render(data) {
     this.#policy = policy;
     this.#targets = 0;
+    // A new fill clears the marks. A change of page policy keeps the revision and marks.
+    if (!this.#refreshing) {
+      this.#fillRevision += 1;
+      this.#approvals.clear();
+      // Keep the fill that supplied the displayed text for the next policy change.
+      this.#renderedFill = structuredClone(this.fill);
+    }
+    this.#refreshing = false;
+    this.#marks = [];
+    this.#blocks = data.blocks.map((block) => this.#block(block));
     const author = this.fill.slots.authorship;
     const name = author.name ? ` (${author.name})` : '';
-    const blocks = data.blocks.length ? data.blocks.map((block) => this.#block(block))
+    const blocks = this.#blocks.length ? this.#blocks
       : [el('p', { class: 'muted', part: 'empty' }, 'No text. Ask for the text again.')];
     const authorText = el('p', { class: 'muted', part: 'authorship' }, `Author: ${author.type} ${author.id}${name}`);
     const content = el('div', { class: 'rich', part: 'rich-text' }, ...blocks);
+    this.#showApprovals();
     if (data.clamp === undefined) {
       this.readMore(content);
       content.append(authorText);
@@ -198,11 +256,12 @@ export class MuRichText extends ReadMoreElement {
       case 'rich-heading':
         return el(HEADINGS[Math.min(first + data.level - 1, 6) - 2], { class: 'heading level-' + data.level }, ...this.#inline(data.content));
       case 'rich-list':
-        return el(data.ordered ? 'ol' : 'ul', {}, ...data.items.map((item) => el('li', {}, ...this.#inline(item.data.content))));
+        return el(data.ordered ? 'ol' : 'ul', {}, ...data.items.map(({ data }) =>
+          el('li', {}, ...this.#inline(data.content))));
       case 'rich-code':
         return el('div', { class: 'code' }, el('pre', { part: 'code' }, el('code', {}, data.text)), copyControl(data.text, 'code'));
       case 'rich-quote':
-        return el('blockquote', {}, ...data.paragraphs.map((item) => el('p', {}, ...this.#inline(item.data.content))));
+        return el('blockquote', {}, ...data.paragraphs.map((item) => this.#block(item)));
       default:
         return el('p', { class: 'refused' }, 'Refused: the kit has no element for this node.');
     }
@@ -218,7 +277,7 @@ export class MuRichText extends ReadMoreElement {
   // A link is a button, and no element has an address attribute. The target shows as text on hover and
   // on focus. The target opens only after a person presses the button, and the application can cancel it.
   #link(data) {
-    const url = linkURL(data.url);
+    const url = parseLinkURL(data.url, richTextLinkSchemes());
     if (!url) return text(data.text);
     const id = `target-${++this.#targets}`;
     const target = el('span', { class: 'target', id, part: 'target' }, `Opens ${url.href}`);
@@ -242,9 +301,9 @@ export class MuRichText extends ReadMoreElement {
     });
     button.addEventListener('click', () => {
       // Check the policy again at the only sink.
-      const now = linkURL(data.url);
+      const now = parseLinkURL(data.url, richTextLinkSchemes());
       if (!now) {
-        this.fill = this.fill;
+        this.#refresh();
         return;
       }
       const event = new CustomEvent('mu-open', { bubbles: true, composed: true, cancelable: true, detail: { locator: now.href } });

@@ -3,6 +3,14 @@
   "kind": "primitive",
   "description": "A labeled group that puts its child elements in columns of equal width.",
   "ai_content": false,
+  "parts": [
+    {"name": "copy", "description": "Button that copies text.", "guardrail": true},
+    {"name": "copy-status", "description": "Result of the copy operation.", "guardrail": true},
+    {"name": "details", "description": "Control and technical details of a refusal.", "guardrail": true},
+    {"name": "layout", "description": "Grid that arranges its children.", "guardrail": false},
+    {"name": "next", "description": "Next step after a refusal.", "guardrail": true},
+    {"name": "reason", "description": "Reason for a refusal or an edit error.", "guardrail": true}
+  ],
   "data": {
     "label": {"type": "text", "required": true, "min_length": 1, "size": "line"},
     "min_column": {"type": "enum", "label": "Minimum column width", "values": ["narrow", "medium", "wide"]},

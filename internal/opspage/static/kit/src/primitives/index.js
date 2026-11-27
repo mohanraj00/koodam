@@ -2,9 +2,31 @@
 import { MuElement } from './base.js';
 import { ReadMoreElement, READ_MORE_CSS } from './read-more.js';
 import { el, sheet } from '../render/dom.js';
-import { FIELDS } from './fields.js';
+import { FieldElement, MuChoiceField, MuDateField, MuField, MuLongTextField, MuNumberField, MuToggleField } from './fields.js';
+import { MuDateRangeField, MuDateTimeField, MuTimeField } from './date-time-fields.js';
+import { MuMultiChoiceField } from './multi-choice-field.js';
+import { MuRangeField } from './range-field.js';
+import { MuRichTextField } from './rich-text-field.js';
+import { MuSelectField } from './select-field.js';
 
-export { FieldElement, FIELDS, MuChoiceField, MuDateField, MuField, MuLongTextField, MuNumberField } from './fields.js';
+export { FieldElement, MuChoiceField, MuDateField, MuField, MuLongTextField, MuMultiChoiceField, MuNumberField, MuRangeField, MuRichTextField, MuSelectField, MuToggleField };
+export { MuDateRangeField, MuDateTimeField, MuTimeField };
+
+export const FIELDS = Object.freeze({
+  field: ['mu-field', MuField],
+  'rich-text-field': ['mu-rich-text-field', MuRichTextField],
+  'long-text-field': ['mu-long-text-field', MuLongTextField],
+  'number-field': ['mu-number-field', MuNumberField],
+  'date-field': ['mu-date-field', MuDateField],
+  'choice-field': ['mu-choice-field', MuChoiceField],
+  'toggle-field': ['mu-toggle-field', MuToggleField],
+  'range-field': ['mu-range-field', MuRangeField],
+  'select-field': ['mu-select-field', MuSelectField],
+  'multi-choice-field': ['mu-multi-choice-field', MuMultiChoiceField],
+  'date-range-field': ['mu-date-range-field', MuDateRangeField],
+  'time-field': ['mu-time-field', MuTimeField],
+  'date-time-field': ['mu-date-time-field', MuDateTimeField],
+});
 
 const GAPS = { small: 'var(--mu-space-1)', medium: 'var(--mu-space-2)', large: 'var(--mu-space-4)' };
 const COLUMNS = { narrow: 'var(--mu-size-column-narrow)', medium: 'var(--mu-size-column-medium)', wide: 'var(--mu-size-column-wide)' };

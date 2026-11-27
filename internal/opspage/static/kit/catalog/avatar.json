@@ -1,0 +1,19 @@
+{
+  "name": "avatar",
+  "description": "A name shown as one or two initials, with a question mark for a name with no letter.",
+  "ai_content": false,
+  "parts": [
+    {"name": "copy", "description": "Button that copies text.", "guardrail": true},
+    {"name": "copy-status", "description": "Result of the copy operation.", "guardrail": true},
+    {"name": "details", "description": "Control and technical details of a refusal.", "guardrail": true},
+    {"name": "initials", "description": "Visible initials or fallback mark, with the full name for assistive technology.", "guardrail": true},
+    {"name": "next", "description": "Next step after a refusal.", "guardrail": true},
+    {"name": "reason", "description": "Reason for a refusal.", "guardrail": true}
+  ],
+  "data": {
+    "name": {"type": "text", "required": true, "min_length": 1, "size": "line"}
+  },
+  "states": ["+refused"],
+  "tokens": ["+color.surface", "+space.1", "+type.caption", "+type.weight-strong"],
+  "accessibility": {"role": "img", "name": {"field": "name"}}
+}

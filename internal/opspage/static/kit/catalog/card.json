@@ -1,7 +1,29 @@
 {
   "name": "card",
-  "description": "A card with a title, optional details and an optional collapse control.",
+  "description": "A labeled card with a title, optional details and an optional collapse control. Each fact label and its value align on the baseline. In a thread, the card uses a subtle surface. If the author is the message actor, the visible line is shorter and a screen reader reads the full author.",
   "slots": {"citation": {"required": false}},
+  "parts": [
+    {"name": "actions", "description": "Area for action buttons.", "guardrail": false},
+    {"name": "authorship", "description": "Type and ID of the author, with a name when available.", "guardrail": true},
+    {"name": "body", "description": "Content that shows when the card is expanded.", "guardrail": true},
+    {"name": "card", "description": "Card container.", "guardrail": false},
+    {"name": "citation", "description": "Source of the content.", "guardrail": true},
+    {"name": "collapsed-summary", "description": "Short text that shows when the card is collapsed.", "guardrail": false},
+    {"name": "copy", "description": "Button that copies text.", "guardrail": true},
+    {"name": "copy-status", "description": "Result of the copy operation.", "guardrail": true},
+    {"name": "details", "description": "Control and technical details of a refusal.", "guardrail": true},
+    {"name": "facts", "description": "List of facts.", "guardrail": false},
+    {"name": "icon", "description": "Chevron of the collapse control.", "guardrail": true},
+    {"name": "locator", "description": "Location in the source.", "guardrail": true},
+    {"name": "next", "description": "Next step after a refusal.", "guardrail": true},
+    {"name": "open", "description": "Button that opens the source.", "guardrail": true},
+    {"name": "provenance", "description": "Group that shows the author and the source.", "guardrail": true},
+    {"name": "reason", "description": "Reason for a refusal or an edit error.", "guardrail": true},
+    {"name": "status", "description": "State text of the card.", "guardrail": true},
+    {"name": "title", "description": "Title of the card.", "guardrail": false},
+    {"name": "toggle", "description": "Button with a chevron that expands or collapses the card. It keeps its name and expanded state in text display.", "guardrail": true},
+    {"name": "tooltip", "description": "Name of the icon control on hover or focus. Escape closes it.", "guardrail": true}
+  ],
   "data": {
     "title": {"type": "text", "required": true, "min_length": 1, "size": "title"},
     "summary": {"type": "text", "max_length": 1000},
@@ -15,8 +37,8 @@
   },
   "states": ["+expanded", "+collapsed"],
   "tokens": [
-    "color.surface", "color.text", "color.text-muted", "color.border", "space.2", "space.3", "space.4", "radius.2",
-    "type.body", "type.caption", "type.weight-strong", "color.focus"
+    "color.surface", "color.surface-subtle", "color.text", "color.text-muted", "color.border", "space.1", "space.2", "space.3",
+    "space.4", "radius.2", "type.body", "type.caption", "type.weight-strong", "color.focus", "motion.fast"
   ],
-  "accessibility": {"role": "article", "name": {"field": "title"}, "keyboard": ["Tab", "Enter", "Space"]}
+  "accessibility": {"role": "article", "name": {"field": "title"}, "keyboard": ["Tab", "Enter", "Space", "Escape"]}
 }

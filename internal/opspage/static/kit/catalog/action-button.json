@@ -1,15 +1,34 @@
 {
   "name": "action-button",
-  "description": "A button for one action. The application binds the tool. The button can ask a person to confirm. It shows done only after the receipt comes back.",
+  "description": "A button that can ask for confirmation. A pending action can offer retry and cancel. The icon and display must match the binding. The icon display shows the label on hover and focus. After a successful receipt, the button shows Done and uses a check in an icon display.",
   "ai_content": false,
+  "parts": [
+    {"name": "accept", "description": "Button that confirms the action.", "guardrail": true},
+    {"name": "button", "description": "Button that starts the action.", "guardrail": false},
+    {"name": "cancel", "description": "Button that cancels a confirmation or an action.", "guardrail": true},
+    {"name": "confirm", "description": "Question and controls for confirmation.", "guardrail": true},
+    {"name": "copy", "description": "Button that copies text.", "guardrail": true},
+    {"name": "copy-status", "description": "Result of the copy operation.", "guardrail": true},
+    {"name": "details", "description": "Control and technical details of a refusal.", "guardrail": true},
+    {"name": "exit", "description": "Controls for a pending action.", "guardrail": true},
+    {"name": "icon", "description": "Graphic of the action button.", "guardrail": true},
+    {"name": "next", "description": "Next step after a refusal.", "guardrail": true},
+    {"name": "reason", "description": "Reason for a refusal or an edit error.", "guardrail": true},
+    {"name": "reference", "description": "Reference from the receipt.", "guardrail": true},
+    {"name": "retry", "description": "Button that tries the pending action again.", "guardrail": true},
+    {"name": "status", "description": "State of the action.", "guardrail": true},
+    {"name": "tooltip", "description": "Label that shows on hover and focus in icon display.", "guardrail": true}
+  ],
   "data": {
     "label": {"type": "text", "required": true, "min_length": 1, "size": "short"},
-    "description": {"type": "text", "size": "summary"}
+    "description": {"type": "text", "size": "summary"},
+    "icon": {"type": "enum", "values": ["check", "cross", "edit", "delete", "send", "retry"]},
+    "display": {"type": "enum", "values": ["text", "icon", "both"]}
   },
   "states": ["+disabled", "+confirm", "+pending", "+done", "+error"],
   "tokens": [
-    "color.accent", "color.on-accent", "color.text-muted", "color.danger", "color.focus", "space.1", "space.2",
+    "color.accent", "color.on-accent", "color.surface", "color.text", "color.border", "color.text-muted", "color.danger", "color.success", "color.focus", "space.1", "space.2",
     "space.3", "radius.2", "type.body", "type.caption", "motion.fast"
   ],
-  "accessibility": {"role": "button", "name": {"field": "label"}, "keyboard": ["Tab", "Shift+Tab", "Enter", "Space"]}
+  "accessibility": {"role": "button", "name": {"field": "label"}, "keyboard": ["Tab", "Shift+Tab", "Enter", "Space", "Escape"]}
 }

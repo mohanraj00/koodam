@@ -1,6 +1,38 @@
 {
   "name": "form-card",
-  "description": "A long form in sections that shows each field as a label and a value. A person edits one field in place and sends the changes as one action.",
+  "description": "A long form in sections that shows each field as a label and a value. A person edits one field in place and sends the changes as one action. A pending action with no receipt offers a retry and a cancel.",
+  "parts": [
+    {"name": "accept", "description": "Button that confirms the action.", "guardrail": true},
+    {"name": "authorship", "description": "Type and ID of the author, with a name when available.", "guardrail": true},
+    {"name": "button", "description": "Button that starts the action.", "guardrail": false},
+    {"name": "cancel", "description": "Button that cancels a confirmation or an action.", "guardrail": true},
+    {"name": "changed", "description": "Marker for a changed value.", "guardrail": true},
+    {"name": "citation", "description": "Source of the content.", "guardrail": true},
+    {"name": "confirm", "description": "Question and controls for confirmation.", "guardrail": true},
+    {"name": "copy", "description": "Button that copies text.", "guardrail": true},
+    {"name": "copy-status", "description": "Result of the copy operation.", "guardrail": true},
+    {"name": "details", "description": "Control and technical details of a refusal.", "guardrail": true},
+    {"name": "editor", "description": "Group that contains the field and its controls.", "guardrail": false},
+    {"name": "exit", "description": "Controls for a pending action.", "guardrail": true},
+    {"name": "form", "description": "Form that contains the fields and the submit button.", "guardrail": false},
+    {"name": "label", "description": "Label of a form line.", "guardrail": false},
+    {"name": "line", "description": "Row for one field.", "guardrail": false},
+    {"name": "line-number", "description": "Number of a form line.", "guardrail": false},
+    {"name": "lines", "description": "List of lines in a section.", "guardrail": false},
+    {"name": "locator", "description": "Location in the source.", "guardrail": true},
+    {"name": "next", "description": "Next step after a refusal.", "guardrail": true},
+    {"name": "note", "description": "Reason that a submit sent no action.", "guardrail": true},
+    {"name": "open", "description": "Button that opens the source.", "guardrail": true},
+    {"name": "provenance", "description": "Group that shows the author and the source.", "guardrail": true},
+    {"name": "read-only", "description": "Marker for a value that a person cannot edit.", "guardrail": true},
+    {"name": "reason", "description": "Reason for a refusal or an edit error.", "guardrail": true},
+    {"name": "reference", "description": "Reference from the receipt.", "guardrail": true},
+    {"name": "retry", "description": "Button that tries the pending action again.", "guardrail": true},
+    {"name": "save", "description": "Button that saves a field edit.", "guardrail": false},
+    {"name": "section", "description": "Group of related fields.", "guardrail": false},
+    {"name": "status", "description": "State of the action.", "guardrail": true},
+    {"name": "value", "description": "Value of a form line.", "guardrail": false}
+  ],
   "data": {
     "title": {"type": "text", "required": true, "min_length": 1, "size": "title"},
     "sections": {
@@ -14,7 +46,7 @@
   "states": ["+disabled", "+confirm", "+pending", "+done", "+error"],
   "tokens": [
     "color.surface", "color.text", "color.text-muted", "color.border", "color.accent", "color.on-accent",
-    "color.danger", "color.focus", "space.1", "space.2", "space.3", "space.4", "radius.2", "type.body", "type.caption",
+    "color.danger", "color.success", "color.focus", "space.1", "space.2", "space.3", "space.4", "radius.2", "type.body", "type.caption",
     "type.weight-strong", "motion.fast"
   ],
   "accessibility": {

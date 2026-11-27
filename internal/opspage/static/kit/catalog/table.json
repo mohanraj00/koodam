@@ -1,6 +1,17 @@
 {
   "name": "table",
   "description": "Text columns and rows with optional status text. Columns must not be empty. Each row has one cell per column. Each status is in status_values. The sort key is a zero-based column index. Sort direction needs a sort key. Equal cells keep their input order. A new fill resets the sort.",
+  "parts": [
+    {"name": "authorship", "description": "Type and ID of the author, with a name when available.", "guardrail": true},
+    {"name": "copy", "description": "Button that copies text.", "guardrail": true},
+    {"name": "copy-status", "description": "Result of the copy operation.", "guardrail": true},
+    {"name": "details", "description": "Control and technical details of a refusal.", "guardrail": true},
+    {"name": "empty", "description": "Message that shows when there are no items.", "guardrail": false},
+    {"name": "next", "description": "Next step after a refusal.", "guardrail": true},
+    {"name": "reason", "description": "Reason for a refusal or an edit error.", "guardrail": true},
+    {"name": "sort-status", "description": "Text that gives the sort column and direction.", "guardrail": true},
+    {"name": "table", "description": "Scroll area that contains the table.", "guardrail": false}
+  ],
   "data": {
     "label": {"type": "text", "label": "Table name", "required": true, "min_length": 1, "size": "title"},
     "columns": {

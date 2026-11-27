@@ -1,6 +1,7 @@
 {
   "name": "choice-cell",
   "description": "A cell of a data grid with one of the choices of its column. A cell with no value is empty.",
+  "parts": [],
   "data": {
     "value": {"type": "text", "min_length": 1, "size": "line"},
     "read_only": {"type": "boolean", "label": "Read-only"}
