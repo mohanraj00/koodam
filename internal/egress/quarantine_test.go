@@ -23,6 +23,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -202,6 +203,98 @@ func TestQuarantinesProfile(t *testing.T) {
 	q.removeProfile(qProfile)
 	if _, ok := q.Admit(&Span{Namespace: ns}, func() {}); !ok {
 		t.Fatal("a pod of a deleted Profile is refused")
+	}
+}
+
+type quarantineSinkFunc func(Span)
+
+func (f quarantineSinkFunc) Write(sp Span) { f(sp) }
+
+func TestQuarantinesProfileReleaseSpanOrder(t *testing.T) {
+	startHold := hold(qHold, holdQuarantine, targetProfile, "", qProfile, "")
+	releaseHold := hold(qHold, holdQuarantine, targetProfile, "", qProfile, qRelease)
+	initialProfile := profile(qProfile, ns)
+	updatedProfile := profile(qProfile, ns, otherNS)
+	for i := range 200 {
+		var spans []Span
+		var spansMu sync.Mutex
+		q := NewQuarantines()
+		q.Sink = quarantineSinkFunc(func(sp Span) {
+			// The sink delays the start span of the new namespace.
+			if sp.Result == ResultQuarantined && sp.Namespace == otherNS {
+				time.Sleep(time.Millisecond)
+			}
+			spansMu.Lock()
+			spans = append(spans, sp)
+			spansMu.Unlock()
+		})
+		q.setProfile(initialProfile)
+		q.setHold(startHold)
+
+		start := make(chan struct{})
+		var changes sync.WaitGroup
+		changes.Go(func() {
+			<-start
+			q.setProfile(updatedProfile)
+		})
+		changes.Go(func() {
+			<-start
+			q.setHold(releaseHold)
+		})
+		close(start)
+		changes.Wait()
+
+		var starts, releases int
+		for _, sp := range spans {
+			switch sp.Result {
+			case ResultQuarantined:
+				if releases > 0 {
+					t.Fatalf("iteration %d: quarantined span for %s after a released span", i, sp.Namespace)
+				}
+				starts++
+			case ResultReleased:
+				releases++
+			}
+		}
+		if starts == 0 || starts != releases {
+			t.Fatalf("iteration %d: %d quarantined spans and %d released spans", i, starts, releases)
+		}
+	}
+}
+
+func TestQuarantinesAdmitDuringControlWrite(t *testing.T) {
+	q := NewQuarantines()
+	writing := make(chan struct{})
+	resume := make(chan struct{})
+	q.Sink = quarantineSinkFunc(func(Span) {
+		close(writing)
+		<-resume
+	})
+	var pending sync.WaitGroup
+	defer func() {
+		close(resume)
+		pending.Wait()
+	}()
+	pending.Go(func() {
+		q.setHold(hold(qHold, holdQuarantine, targetAgent, ns, qAgent, ""))
+	})
+	select {
+	case <-writing:
+	case <-time.After(time.Second):
+		t.Fatal("the sink did not get a control span")
+	}
+	admitted := make(chan bool, 1)
+	pending.Go(func() {
+		_, ok := q.Admit(&Span{Namespace: ns, Agent: qAgent}, func() {})
+		admitted <- ok
+	})
+	select {
+	case ok := <-admitted:
+		if ok {
+			t.Fatal("a call of a quarantined pod is admitted")
+		}
+	case <-time.After(time.Second):
+		t.Fatal("Admit waits for the sink")
 	}
 }
 
