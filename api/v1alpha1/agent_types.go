@@ -296,6 +296,24 @@ type AgentOutputStatus struct {
 	Reason string `json:"reason,omitempty"`
 }
 
+// AgentApprovalStatus is the approval request of a run. The controller writes it while the run
+// waits. A change of the spec of the Agent gives a new request and a new subject.
+type AgentApprovalStatus struct {
+	// Request is the request document of the run, as JSON text of the format
+	// koodam.dev/approval-request/v1. It has the namespace, the name and the UID of the Agent, the
+	// SHA-256 of its spec and the requested grant. The approver gives these exact bytes to the
+	// issuer as the one content item of the approval.
+	// +optional
+	// +kubebuilder:validation:MaxLength=8192
+	Request string `json:"request,omitempty"`
+
+	// Subject is sha256: and the SHA-256 of the bytes of request, as 64 lower-case hex
+	// characters. A signed approval record must name this digest.
+	// +optional
+	// +kubebuilder:validation:Pattern=`^sha256:[0-9a-f]{64}$`
+	Subject string `json:"subject,omitempty"`
+}
+
 // AgentStatus is the observed state of an Agent.
 type AgentStatus struct {
 	// RunID is the identity of the run. It is the UID of the Agent, so it is the same after a
@@ -354,6 +372,12 @@ type AgentStatus struct {
 	// Usage is the gateway count after the revoke.
 	// +optional
 	Usage *AgentUsage `json:"usage,omitempty"`
+
+	// Approval is the approval request of the run. Only an Agent with spec.approval has it. An
+	// approver integration reads the request and the subject from these fields, and not from the
+	// message of a condition.
+	// +optional
+	Approval *AgentApprovalStatus `json:"approval,omitempty"`
 
 	// Evidence is the record of the approval that the controller accepted for the run: an accept
 	// or a reject. Only an Agent with spec.approval has it. The controller writes it one time.

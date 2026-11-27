@@ -19,6 +19,7 @@ package controller
 import (
 	"bytes"
 	"context"
+	"strings"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
@@ -112,6 +113,12 @@ var _ = Describe("Approval CRD rules", func() {
 		invalid(k8sClient.Update(ctx, a), "spec.approval is immutable")
 		a.Spec.Approval = nil
 		invalid(k8sClient.Update(ctx, a), "spec.approval is immutable")
+
+		// The status takes the request and a subject of the fixed form.
+		a.Status.Approval = &corev1alpha1.AgentApprovalStatus{Request: "{}", Subject: "sha256:" + strings.Repeat("0", 64)}
+		Expect(k8sClient.Status().Update(ctx, a)).To(Succeed())
+		a.Status.Approval.Subject = "sha256:short"
+		invalid(k8sClient.Status().Update(ctx, a), "status.approval.subject")
 
 		none := agent(nil)
 		Expect(create(none)).To(Succeed())

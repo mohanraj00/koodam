@@ -9132,6 +9132,27 @@ spec:
           status:
             description: status defines the observed state of Agent
             properties:
+              approval:
+                description: |-
+                  Approval is the approval request of the run. Only an Agent with spec.approval has it. An
+                  approver integration reads the request and the subject from these fields, and not from the
+                  message of a condition.
+                properties:
+                  request:
+                    description: |-
+                      Request is the request document of the run, as JSON text of the format
+                      koodam.dev/approval-request/v1. It has the namespace, the name and the UID of the Agent, the
+                      SHA-256 of its spec and the requested grant. The approver gives these exact bytes to the
+                      issuer as the one content item of the approval.
+                    maxLength: 8192
+                    type: string
+                  subject:
+                    description: |-
+                      Subject is sha256: and the SHA-256 of the bytes of request, as 64 lower-case hex
+                      characters. A signed approval record must name this digest.
+                    pattern: ^sha256:[0-9a-f]{64}$
+                    type: string
+                type: object
               budget:
                 description: |-
                   Budget is the run budget that the key got, as a decimal number. The controller writes it with
