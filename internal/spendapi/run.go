@@ -161,7 +161,7 @@ func (a *api) runDetail(ctx context.Context, ref runRef) (runDetail, error) {
 	}
 	for _, c := range job.Status.Conditions {
 		d.Job.Conditions = append(d.Job.Conditions, condition{
-			Type: string(c.Type), Status: string(c.Status), Reason: c.Reason, Message: c.Message,
+			Type: string(c.Type), Status: string(c.Status), Reason: c.Reason, Message: redactText(c.Message),
 			LastTransitionTime: c.LastTransitionTime.UTC(),
 		})
 	}
@@ -213,7 +213,7 @@ func conditions(in []metav1.Condition) []condition {
 	out := make([]condition, 0, len(in))
 	for _, c := range in {
 		out = append(out, condition{
-			Type: c.Type, Status: string(c.Status), Reason: c.Reason, Message: c.Message,
+			Type: c.Type, Status: string(c.Status), Reason: c.Reason, Message: redactText(c.Message),
 			LastTransitionTime: c.LastTransitionTime.UTC(),
 		})
 	}

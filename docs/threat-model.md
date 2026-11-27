@@ -104,6 +104,7 @@ The spend API and the operations page show the runs and the spend.
   - `internal/spendapi/api_test.go`, `TestServeRunsAndSpend`. Each call of this test checks that no body has a key value, a key hash or the token.
   - `internal/spendapi/viewer_test.go`, `TestViewerSeesOnlyPermittedNamespaces` and `TestViewerRefusals`.
   - `internal/spendapi/run_test.go`, `TestViewerReadsOneRun` and `TestRunDetail`. The run path checks the namespace of the path only, and a container state has no termination message.
+  - `internal/spendapi/redact_test.go`, `TestEachRedactionPattern`, has a test for each redaction pattern. `internal/spendapi/run_test.go`, `TestConditionMessagesAreRedacted`.
   - `internal/opspage/page_test.go`, `TestPolicyAndPageHaveNoInlineCode` and `TestPageKeepsTheTokenInMemory`.
   - `examples/operations-page/main_test.go`, `TestExample`.
   - `internal/spendapi/budgets_test.go`, `TestServeBudgets`. `/v1/budgets` uses the same namespace scope as the other paths.
