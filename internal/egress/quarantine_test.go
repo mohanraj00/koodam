@@ -191,9 +191,51 @@ func TestQuarantinesProfile(t *testing.T) {
 	if stopped.Load() != 1 || !done() {
 		t.Fatal("a new bound namespace did not end the open call")
 	}
+	// A new bound namespace gets its start span. A resync of the Profile writes no span.
+	if sp := sink.next(t); sp.Namespace != "later" || sp.Result != ResultQuarantined || sp.By != qAdmin {
+		t.Fatalf("control span %+v", sp)
+	}
+	q.setProfile(profile(qProfile, ns, "later"))
+	if len(sink) != 0 {
+		t.Fatal("a resync of the Profile wrote a span")
+	}
 	q.removeProfile(qProfile)
 	if _, ok := q.Admit(&Span{Namespace: ns}, func() {}); !ok {
 		t.Fatal("a pod of a deleted Profile is refused")
+	}
+}
+
+// If the index reads the Hold before its Profile, the Profile gives the start span of each bound
+// namespace. The user and the reason come from the Hold.
+func TestQuarantinesHoldBeforeProfile(t *testing.T) {
+	sink := make(chanSink, 4)
+	q := NewQuarantines()
+	q.Sink = sink
+	q.setHold(hold(qHold, holdQuarantine, targetProfile, "", qProfile, ""))
+	if len(sink) != 0 {
+		t.Fatal("a Profile quarantine with no known namespace wrote a span")
+	}
+	q.setProfile(profile(otherNS))
+	q.setProfile(profile(qProfile, ns, otherNS))
+	got := map[string]bool{}
+	for range 2 {
+		sp := sink.next(t)
+		if sp.Kind != KindControl || sp.Result != ResultQuarantined || sp.By != qAdmin || sp.Reason != "incident 7" {
+			t.Fatalf("control span %+v", sp)
+		}
+		got[sp.Namespace] = true
+	}
+	if !got[ns] || !got[otherNS] || len(sink) != 0 {
+		t.Fatalf("the start spans are in %v, want %s and %s", got, ns, otherNS)
+	}
+	if _, ok := q.Admit(&Span{Namespace: ns}, func() {}); ok {
+		t.Fatal("a pod in a bound namespace is admitted")
+	}
+	q.setHold(hold(qHold, holdQuarantine, targetProfile, "", qProfile, qRelease))
+	for range 2 {
+		if sp := sink.next(t); sp.Result != ResultReleased || sp.By != qRelease {
+			t.Fatalf("release span %+v", sp)
+		}
 	}
 }
 

@@ -62,9 +62,11 @@ const (
 	targetProfile  = "Profile"
 )
 
-// quarantine is an active Hold with the action Quarantine.
+// quarantine is an active Hold with the action Quarantine. user and reason are the user and the
+// reason of the Hold, for the start spans.
 type quarantine struct {
 	hold, kind, namespace, name string
+	user, reason                string
 }
 
 // match is true if the quarantine applies to the pod of the span. bound gives the bound namespaces
@@ -158,7 +160,7 @@ func (q *Quarantines) setHold(u *unstructured.Unstructured) {
 	name, _, _ := unstructured.NestedString(u.Object, "spec", "target", "name")
 	user, _, _ := unstructured.NestedString(u.Object, "spec", "user")
 	reason, _, _ := unstructured.NestedString(u.Object, "spec", "reason")
-	h := quarantine{hold: u.GetName(), kind: kind, namespace: namespace, name: name}
+	h := quarantine{hold: u.GetName(), kind: kind, namespace: namespace, name: name, user: user, reason: reason}
 	q.mu.Lock()
 	_, known := q.active[h.hold]
 	q.active[h.hold] = h
@@ -184,15 +186,35 @@ func (q *Quarantines) end(hold, user, reason string) {
 	}
 }
 
-// setProfile reads the bound namespaces of a Profile from its status.
+// setProfile reads the bound namespaces of a Profile from its status. For each active quarantine
+// of the Profile, it writes the start span of each namespace that the index did not know. Thus a
+// Hold that the index reads before its Profile gets its start spans.
 func (q *Quarantines) setProfile(u *unstructured.Unstructured) {
+	name := u.GetName()
 	bound, _, _ := unstructured.NestedStringSlice(u.Object, "status", "boundNamespaces")
 	q.mu.Lock()
-	q.bound[u.GetName()] = bound
+	var added []string
+	for _, ns := range bound {
+		if !slices.Contains(q.bound[name], ns) {
+			added = append(added, ns)
+		}
+	}
+	q.bound[name] = bound
+	var holds []quarantine
+	for _, h := range q.active {
+		if h.kind == targetProfile && h.name == name {
+			holds = append(holds, h)
+		}
+	}
 	stops := q.cutLocked()
 	q.mu.Unlock()
 	for _, stop := range stops {
 		stop()
+	}
+	for _, h := range holds {
+		for _, ns := range added {
+			q.writeSpan(h, ResultQuarantined, h.user, h.reason, ns)
+		}
 	}
 }
 
@@ -224,6 +246,20 @@ func (q *Quarantines) cutLocked() []func() {
 // write writes the control span of a quarantine. by is the user that started or released it. A
 // Profile quarantine writes one span for each bound namespace that the index knows.
 func (q *Quarantines) write(h quarantine, result, by, reason string) {
+	if h.kind != targetProfile {
+		q.writeSpan(h, result, by, reason, h.namespace)
+		return
+	}
+	q.mu.Lock()
+	bound := slices.Clone(q.bound[h.name])
+	q.mu.Unlock()
+	for _, ns := range bound {
+		q.writeSpan(h, result, by, reason, ns)
+	}
+}
+
+// writeSpan writes one control span of the quarantine in the namespace.
+func (q *Quarantines) writeSpan(h quarantine, result, by, reason, namespace string) {
 	if q.Sink == nil {
 		return
 	}
@@ -232,7 +268,7 @@ func (q *Quarantines) write(h quarantine, result, by, reason string) {
 		now = q.Now
 	}
 	sp := Span{V: SpanVersion, Time: now().UTC(), Kind: KindControl, Result: result, Reason: reason, By: by,
-		Namespace: h.namespace}
+		Namespace: namespace}
 	switch h.kind {
 	case targetAgent:
 		sp.Agent = h.name
@@ -242,22 +278,13 @@ func (q *Quarantines) write(h quarantine, result, by, reason string) {
 		sp.App = h.name
 	case targetVersion:
 		sp.AppVersion = h.name
-	case targetProfile:
-		q.mu.Lock()
-		bound := slices.Clone(q.bound[h.name])
-		q.mu.Unlock()
-		for _, ns := range bound {
-			sp.Namespace = ns
-			q.Sink.Write(sp)
-		}
-		return
 	}
 	q.Sink.Write(sp)
 }
 
 // Watch fills the index from one informer on the Holds and one informer on the Profiles. Both are
-// cluster-scoped. It needs get, list and watch on holds and profiles. It returns when the caches
-// are in sync, and the informers stop when ctx ends.
+// cluster-scoped. It needs get, list and watch on holds and profiles. It returns when the handlers
+// got each object of the first list, and the informers stop when ctx ends.
 func (q *Quarantines) Watch(ctx context.Context, client dynamic.Interface, resync time.Duration) error {
 	f := dynamicinformer.NewDynamicSharedInformerFactory(client, resync)
 	handler := func(set func(*unstructured.Unstructured), remove func(name string)) cache.ResourceEventHandlerFuncs {
@@ -279,16 +306,19 @@ func (q *Quarantines) Watch(ctx context.Context, client dynamic.Interface, resyn
 			},
 		}
 	}
-	holds := f.ForResource(Holds).Informer()
 	// A Hold delete needs a release first. Thus a deleted Hold is not active, and it writes no span.
-	if _, err := holds.AddEventHandler(handler(q.setHold, func(name string) { q.end(name, "", "") })); err != nil {
+	holds, err := f.ForResource(Holds).Informer().
+		AddEventHandler(handler(q.setHold, func(name string) { q.end(name, "", "") }))
+	if err != nil {
 		return err
 	}
-	profiles := f.ForResource(Profiles).Informer()
-	if _, err := profiles.AddEventHandler(handler(q.setProfile, q.removeProfile)); err != nil {
+	profiles, err := f.ForResource(Profiles).Informer().AddEventHandler(handler(q.setProfile, q.removeProfile))
+	if err != nil {
 		return err
 	}
 	f.Start(ctx.Done())
+	// The HasSynced of a registration waits until its handler got each object of the first list.
+	// The informer HasSynced does not wait for the handler, and the index is in the handlers.
 	if !cache.WaitForCacheSync(ctx.Done(), holds.HasSynced, profiles.HasSynced) {
 		return errors.New("the Hold and the Profile caches did not sync")
 	}

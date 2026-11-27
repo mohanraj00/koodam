@@ -60,7 +60,7 @@ The [egress proxy](traced-egress.md) watches the Holds and the Profiles. While a
 | App | The pods of each version of the App. |
 | Profile | The pods of each Agent, Workspace and AppVersion in each namespace that the Profile binds. The proxy reads the bound namespaces from `status.boundNamespaces` of the Profile. |
 
-The proxy writes a span of the kind `control` when a quarantine starts and when it ends. The field `by` has `spec.user` at the start and `spec.release.user` at the end. A Profile target writes 1 control span for each bound namespace. See [egress spans](egress-spans.md).
+The proxy writes a span of the kind `control` when a quarantine starts and when it ends. The field `by` has `spec.user` at the start and `spec.release.user` at the end. A Profile target writes 1 control span for each bound namespace. When a Profile binds a new namespace during a quarantine, the proxy writes the start span of that namespace. See [egress spans](egress-spans.md).
 
 The reconciler of each kind blocks the gateway key and keeps the pods. It adds the finalizer `koodam.dev/quarantine`, so a delete of the workload waits for the release. The release changes the quarantine to a stop:
 
