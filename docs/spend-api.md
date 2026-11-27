@@ -225,7 +225,9 @@ At each cut of a limit, the server drops the part of the line at the cut. Thus a
 of a line. If the log has more lines than the response, `truncated` is true. If the container did not
 start, the response has status 409. If the run has no pod, the response has status 404.
 
-The server redacts each line before the bytes leave the server, as [Redaction](#redaction) says.
+The server redacts each line before the bytes leave the server, as [Redaction](#redaction) says. A
+limit can cut a PEM private key. If the response has the END line of a key but not its BEGIN line,
+the server redacts each line up to the END line.
 
 ## Redaction
 

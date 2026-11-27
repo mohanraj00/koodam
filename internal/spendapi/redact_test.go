@@ -23,6 +23,13 @@ import (
 )
 
 // The values in this file are synthetic. None is a real credential.
+
+// keyBody is a synthetic line of the body of a PEM private key.
+const keyBody = "MIIEvQIBADANBgkqhkiG9w0BAQEFAASC"
+
+// afterKey is a log line after a private key.
+const afterKey = "after"
+
 func TestEachRedactionPattern(t *testing.T) {
 	cases := map[string]struct{ line, secret, want string }{
 		"private key": {"-----BEGIN RSA PRIVATE KEY-----MIIBOgIBAAJB", "MIIBOgIBAAJB", redacted},
@@ -92,12 +99,20 @@ func TestRedactionRemovesControlSequences(t *testing.T) {
 	}
 }
 
+func TestRedactionOfAKeyWithNoBeginLine(t *testing.T) {
+	lines := []string{keyBody, "c2Vjb25kIGxpbmU=", "-----END RSA PRIVATE KEY-----", afterKey}
+	want := []string{redacted, redacted, redacted, afterKey}
+	if got := redactLines(lines); !slices.Equal(got, want) {
+		t.Fatalf("redactLines = %q, want %q", got, want)
+	}
+}
+
 func TestRedactionOfAPEMBlock(t *testing.T) {
-	want := []string{"before", redacted, redacted, redacted, "after"}
+	want := []string{"before", redacted, redacted, redacted, afterKey}
 	// A control sequence in a PEM boundary does not hide the boundary.
 	for _, begin := range []string{"-----BEGIN PRIVATE KEY-----", "-----BEGIN \x1b[31mPRIVATE KEY\x1b[0m-----",
 		"-----BEGIN PRIVATE\x00 KEY-----\r"} {
-		lines := []string{"before", begin, "MIIEvQIBADANBgkqhkiG9w0BAQEFAASC", "---\x1b[0m--END PRIVATE KEY-----", "after"}
+		lines := []string{"before", begin, keyBody, "---\x1b[0m--END PRIVATE KEY-----", afterKey}
 		if got := redactLines(lines); !slices.Equal(got, want) {
 			t.Fatalf("redactLines = %q, want %q", got, want)
 		}

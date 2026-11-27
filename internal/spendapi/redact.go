@@ -35,8 +35,11 @@ type redaction struct {
 // removes these before the patterns, so that a sequence cannot split a credential from its name.
 var control = regexp.MustCompile(`\x1b\[[0-9;?]*[ -/]*[@-~]|\x1b[@-_]|[\x00-\x08\x0b-\x1f\x7f]`)
 
-// pemBegin matches the first line of a PEM private key.
-var pemBegin = regexp.MustCompile(`-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----`)
+// pemBegin and pemEnd match the first line and the last line of a PEM private key.
+var (
+	pemBegin = regexp.MustCompile(`-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----`)
+	pemEnd   = regexp.MustCompile(`-----END [A-Z0-9 ]*PRIVATE KEY-----`)
+)
 
 // redactions is the fixed list of the credential patterns, in the order of use. Each pattern has a
 // test in redact_test.go. Add a pattern only with a test. The patterns can redact more text than a
@@ -96,7 +99,9 @@ func redactText(text string) string {
 }
 
 // redactLines replaces each match of the patterns in each line. A PEM private key has more than one
-// line, so each line after a BEGIN line, up to the END line, becomes the redacted mark.
+// line, so each line after a BEGIN line, up to the END line, becomes the redacted mark. A log tail
+// can start in a key. Thus an END line with no BEGIN line before it makes each line before it, and
+// the END line, the redacted mark.
 func redactLines(lines []string) []string {
 	inKey := false
 	for i, line := range lines {
@@ -105,6 +110,10 @@ func redactLines(lines []string) []string {
 		case inKey:
 			inKey = !strings.Contains(line, "-----END")
 			lines[i] = redacted
+		case pemEnd.MatchString(line) && !pemBegin.MatchString(line):
+			for j := range i + 1 {
+				lines[j] = redacted
+			}
 		default:
 			inKey = pemBegin.MatchString(line) && !strings.Contains(line, "-----END")
 			lines[i] = replaceMatches(line)

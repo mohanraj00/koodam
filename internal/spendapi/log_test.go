@@ -23,6 +23,7 @@ import (
 	"io"
 	"net/http"
 	"regexp"
+	"slices"
 	"strings"
 	"testing"
 
@@ -80,18 +81,22 @@ func TestLogHasNoCredential(t *testing.T) {
 		"service account token " + jwt,
 		"clone https://alice:" + login + "@git.example.com/repo.git",
 		"login=" + login,
+		`{"password":"x\"` + login + `"}`,
+		"-----BEGIN \x1b[1mPRIVATE KEY-----",
+		keyBody,
+		"-----END PRIVATE KEY-----",
 		"end of the run",
 	}, "\n") + "\n"
 	w := f.call(t, http.MethodGet, logPath, f.reader, http.StatusOK)
 	body := w.Body.String()
-	for _, secret := range []string{key.value, key.value[:16], key.hash, f.reader, jwt, login} {
+	for _, secret := range []string{key.value, key.value[:16], key.hash, f.reader, jwt, login, keyBody} {
 		if strings.Contains(body, secret) {
 			t.Fatalf("the log response has a credential: %s", body)
 		}
 	}
 	l := decode[runLog](t, w)
-	if l.Pod != podName || l.Container != agentContainer || len(l.Lines) != 9 || l.Lines[0] != "start of the run" ||
-		l.Lines[8] != "end of the run" || l.Lines[2] != "the gateway key is [redacted]" || l.Truncated {
+	if l.Pod != podName || l.Container != agentContainer || len(l.Lines) != 13 || l.Lines[0] != "start of the run" ||
+		l.Lines[12] != "end of the run" || l.Lines[2] != "the gateway key is [redacted]" || l.Truncated {
 		t.Fatalf("the log does not match: %+v", l)
 	}
 }
@@ -183,4 +188,15 @@ func TestLogRefusalsAndErrors(t *testing.T) {
 	s.call(t, http.MethodGet, logPath, s.token, http.StatusNotFound)
 	s.logs = logs.open
 	s.call(t, http.MethodGet, logPath, s.token, http.StatusForbidden)
+}
+
+// TestLogTailInAKey shows that a line limit that cuts a private key leaves no part of the key.
+func TestLogTailInAKey(t *testing.T) {
+	f, logs := newLogFixture(t, "")
+	logs.data = "before\n-----BEGIN PRIVATE KEY-----\n" + keyBody + "\nc2Vjb25kIGxpbmU=\n" +
+		"-----END PRIVATE KEY-----\nafter\n"
+	l := decode[runLog](t, f.call(t, http.MethodGet, logPath+"?lines=4", f.reader, http.StatusOK))
+	if want := []string{redacted, redacted, redacted, afterKey}; !slices.Equal(l.Lines, want) {
+		t.Fatalf("the log lines are %q, want %q", l.Lines, want)
+	}
 }
