@@ -53,7 +53,10 @@ spec:
     reason: Invalid
   # This check applies to a create and to a template change only.
   - expression: "variables.apiServerEgress || variables.sameTemplate || !has(object.spec.template.rules) || size(object.spec.template.rules) == 0"
-    message: "spec.template.rules is not permitted. An App pod has no path to the API server, so a version Role has no effect."
+    message: >-
+      spec.template.rules is not permitted in this namespace.
+      Set apps.apiServerEgress and add this namespace to zone.namespaces.
+      Without API server access, a version Role has no effect.
     reason: Invalid
 ---
 apiVersion: admissionregistration.k8s.io/v1

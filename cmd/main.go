@@ -41,6 +41,7 @@ import (
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/selection"
+	"k8s.io/apimachinery/pkg/util/intstr"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	"k8s.io/apimachinery/pkg/util/validation"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
@@ -292,8 +293,12 @@ func checkAPIServerRule(rule networkingv1.NetworkPolicyEgressRule) error {
 		}
 	}
 	for _, port := range rule.Ports {
-		if port.Port == nil || port.EndPort != nil {
-			return errors.New("each port of a rule must be one port number")
+		if port.Port == nil || port.EndPort != nil || port.Port.Type != intstr.Int ||
+			port.Port.IntVal < 1 || port.Port.IntVal > 65535 {
+			return errors.New("each port of a rule must be one port number from 1 to 65535")
+		}
+		if port.Protocol != nil && *port.Protocol != corev1.ProtocolTCP {
+			return errors.New("each port of a rule must use TCP")
 		}
 	}
 	return nil

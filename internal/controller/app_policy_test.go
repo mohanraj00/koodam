@@ -49,7 +49,9 @@ func appPolicyRules() []rbacv1.PolicyRule {
 // controller. The key hash is a fixture, not the hash of a key.
 var _ = Describe("AppVersion admission policy", Ordered, func() {
 	const ns = "default"
-	const rulesText = "spec.template.rules is not permitted. An App pod has no path to the API server, so a version Role has no effect."
+	const rulesText = "spec.template.rules is not permitted in this namespace. " +
+		"Set apps.apiServerEgress and add this namespace to zone.namespaces. " +
+		"Without API server access, a version Role has no effect."
 	ctx := context.Background()
 	newVersion := func(name string, change func(*corev1alpha1.AppVersion)) *corev1alpha1.AppVersion {
 		av := &corev1alpha1.AppVersion{ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: ns},
