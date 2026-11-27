@@ -18,14 +18,16 @@ workspace:
   # A NetworkPolicy for the Workspace pods in each namespace of this list. The chart does not
   # read the Profiles, so add each Profile namespace here and run "helm upgrade". Each namespace
   # must exist before the install. The policy has an effect only if the CNI enforces it.
-  # Ingress: only TCP 2222 (sshd). Egress: DNS, the bundled gateway, the public internet if
-  # publicInternet is true, and the rules of extraEgress. Other traffic is blocked.
+  # The policy blocks ingress by default. Pods can send traffic to DNS, the bundled gateway
+  # and the targets in extraEgress. If publicInternet is true, pods can also reach public addresses.
   # If egressProxy.enabled is true, the egress is only the proxy pods, the API server rules of
   # egressProxy.networkPolicy.apiServer and extraEgress. The Agent pods get the same egress.
   # Then publicInternet and publicInternetPorts have no effect. dns and blockedCIDRs do not change
   # the policy of the pods, but the policy of the proxy uses them.
   networkPolicy:
     namespaces: []
+    # The peers (NetworkPolicyPeer) that can connect to TCP port 2222. An empty list permits no ingress.
+    sshFrom: []
     # The cluster DNS pods. The pods can send UDP and TCP port 53 to these pods.
     dns:
       namespace: kube-system
