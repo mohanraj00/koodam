@@ -40,6 +40,18 @@
         </div>
       </div>
       <div id="detail"></div>
+      <div id="run-view" hidden>
+        <div id="watch-state"></div>
+        <div id="run-state"></div>
+        <h3 id="job-title">Job and pods</h3>
+        <div id="job"></div>
+        <div id="pods"></div>
+        <h3 id="conditions-title">Status conditions</h3>
+        <div id="conditions"></div>
+        <h3 id="log-title">Log tail</h3>
+        <div id="log-state"></div>
+        <div id="log-box" class="log" role="region" aria-labelledby="log-title" tabindex="0"><pre id="log"></pre></div>
+      </div>
     </section>
 
     <section aria-labelledby="budgets-title">
@@ -69,6 +81,6 @@
       <div id="by-namespace"></div>
     </section>
   </main>
-  <footer>The page reads the spend API again every 30 seconds. Amounts are in USD.</footer>
+  <footer>The page reads the spend API again every 30 seconds. The run detail also uses a live watch of the run, if the server has it. Amounts are in USD.</footer>
 </body>
 </html>

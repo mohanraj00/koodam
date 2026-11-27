@@ -10,6 +10,25 @@ input {
 }
 input#token { min-width: min(100%, 28rem); }
 
+/* The run view. The blocks of the view get the same space as the blocks of a section. */
+#run-view > * + * { margin-block-start: var(--mu-space-4); }
+#run-view > h3 { margin-block-start: var(--mu-space-6); font: var(--mu-type-heading-3); }
+
+/* A wide block stays inside the page width. The log tail wraps each long line, and it scrolls in its own box,
+   so the page does not scroll to the side. The box takes the keyboard focus, so a keyboard can scroll it. */
+main, section, #run-view { min-width: 0; }
+.log {
+  max-inline-size: 100%; max-block-size: 30rem; overflow: auto; padding: var(--mu-space-3);
+  background: var(--mu-color-surface); border: 1px solid var(--mu-color-border); border-radius: var(--mu-radius-2);
+}
+/* The kit page style gives a pre its own box. In the log box, the pre is only the text. */
+.log pre {
+  margin: 0; padding: 0; border: 0; background: none; overflow: visible;
+  font: var(--mu-type-code); white-space: pre-wrap; overflow-wrap: anywhere;
+}
+.log:hover { border-color: var(--mu-color-text-muted); }
+
 @media (forced-colors: active) {
   input { background: Field; color: FieldText; border-color: FieldText; }
+  .log, .log:hover { background: Canvas; color: CanvasText; border-color: CanvasText; }
 }
