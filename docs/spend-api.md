@@ -25,6 +25,18 @@ The `-caller-claim` flag defaults to `sub`. Set `-tenant-claim` to require a ten
 These claims identify the caller. All permitted callers have the same access to this server.
 A missing or invalid token gets status 401.
 
+## Container image
+
+Each release tag publishes the image `ghcr.io/mohanraj00/koodam-spend-api` for `linux/amd64` and
+`linux/arm64`. A tag `vX.Y.Z` gives the image tags `X.Y.Z` and `X.Y`. The image runs `/spend-api` as
+the user `65532` on a distroless base, and the release has the provenance and the SBOM of the image.
+The binary listens on `127.0.0.1:8080` by default, so set `-listen :8080` in a pod.
+Use the image digest, not the tag. To build the image locally, run `make docker-build-spend-api`.
+
+The chart does not deploy spend-api. Run it in your own Deployment, with a service account that has the
+permissions in this file. The image does not include the issuer JWKS file or the master key file.
+Mount them from a Secret.
+
 ## Viewer review
 
 For people, use `-viewer-review` in place of the issuer flags and the local token file. The caller

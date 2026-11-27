@@ -165,6 +165,13 @@ docker-build-nookku: ## Build the Nookku data image from images/nookku.
 	$(CONTAINER_TOOL) build -f images/nookku/Dockerfile -t ${NOOKKU_IMG} \
 		$$(sed -n 's/^\(NOOKKU_[A-Z0-9_]*\)=\([0-9a-f.]*\)$$/--build-arg \1=\2/p' internal/evidence/nookku.pin) .
 
+# SPEND_API_IMG is the tag of the spend-api image (#406), the spend-api target of the root Dockerfile.
+SPEND_API_IMG ?= koodam-spend-api:dev
+
+.PHONY: docker-build-spend-api
+docker-build-spend-api: ## Build the spend-api image from the spend-api target of the Dockerfile.
+	$(CONTAINER_TOOL) build $(if $(BASE_IMAGE),--build-arg BASE_IMAGE=$(BASE_IMAGE)) --target spend-api -t ${SPEND_API_IMG} .
+
 .PHONY: docker-push
 docker-push: ## Push docker image with the manager.
 	$(CONTAINER_TOOL) push ${IMG}

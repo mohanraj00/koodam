@@ -8,3 +8,8 @@ Do these steps before the owner approves a tag. [STANDARD.md](STANDARD.md) has t
 4. Move the `Unreleased` section of [CHANGELOG.md](../CHANGELOG.md) under the new version.
 5. Run `make check`.
 6. Review [threat-model.md](threat-model.md). Check that each named test exists, change each open PR row to the test file on `main` when that PR merges, and set the review date.
+
+## After the tag push
+
+1. Open the summary of the `Image` workflow run of the tag. Copy the digest of the spend-api image.
+2. Run `docker buildx imagetools inspect ghcr.io/mohanraj00/koodam-spend-api:X.Y.Z`. Make sure that the digest is the same as the digest in the summary.
