@@ -173,7 +173,7 @@ An Agent with `spec.approval` uses the approval source. It waits before its Job 
 - **Record.** An `ApprovalRecord` in the namespace of the Agent carries the signed decision. The controller reads 64 records of an Agent at most in one check.
 - **Trust.** The key set, the scope, the function and the maximum age are in `spec.approval` of the Profile of the namespace. The Agent owner cannot select them.
 - **Result.** An accept starts the run, and the controller writes it to `status.evidence`. A signed reject, a decision that is older than `maxAgeSeconds`, a check at or after the `until` date, a Profile with no `spec.approval` or the end of `waitSeconds` stops the run. Each other refusal keeps the run paused. If the records give more than one state, a reject comes before an accept.
-- **Start.** The controller does the check again at each start attempt, until the Job exists. After that, a later reject does not stop the run (#364). To stop it, use a Hold.
+- **Start.** The controller does the check again at each start attempt, until the Job exists. If a start attempt made a key and the next check gives no approval, the run stops and the controller blocks the key. After that, a later reject does not stop the run (#364). To stop it, use a Hold.
 
 In the current build, the decision must name the subject in its `snapshot_ref`. The check of the snapshot record and of the manifest in the `ApprovalRecord` is not built (#246).
 

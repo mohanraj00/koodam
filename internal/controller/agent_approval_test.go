@@ -22,6 +22,7 @@ import (
 	"crypto/ed25519"
 	"crypto/sha256"
 	"encoding/base64"
+	"errors"
 	"fmt"
 	"slices"
 	"time"
@@ -233,6 +234,30 @@ var _ = Describe("Agent approval", Ordered, func() {
 		Expect(meta.FindStatusCondition(a.Status.Conditions, corev1alpha1.AgentApproval).Reason).
 			To(Equal(corev1alpha1.ApprovalSubjectMismatch))
 		Expect(a.Status.Phase).To(Equal(corev1alpha1.AgentPending))
+	})
+
+	It("stops a run that has a key when the approval is not there at the next start attempt", func() {
+		a, _, _ := start(bound, nil, now)
+		carry(a, accept(subjectOf(a)))
+		gw := &fakeGateway{createErr: errors.New("the gateway is down")}
+		r := &AgentReconciler{Client: k8sClient, Scheme: k8sClient.Scheme(), APIReader: k8sClient, Gateway: gw}
+		req := reconcile.Request{NamespacedName: client.ObjectKeyFromObject(a)}
+		_, err := r.Reconcile(ctx, req)
+		Expect(err).To(HaveOccurred())
+		Expect(k8sClient.Get(ctx, req.NamespacedName, a)).To(Succeed())
+		hash := a.Status.KeyHash
+		Expect(hash).NotTo(BeEmpty())
+		a.Spec.Command = []string{"edited"}
+		Expect(k8sClient.Update(ctx, a)).To(Succeed())
+		gw.createErr = nil
+		_, err = r.Reconcile(ctx, req)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(k8sClient.Get(ctx, req.NamespacedName, a)).To(Succeed())
+		Expect(a.Status.Phase).To(Equal(corev1alpha1.AgentFailed))
+		Expect(gw.blocked).To(Equal([]string{hash}))
+		Expect(gw.created).To(BeEmpty())
+		Expect(meta.FindStatusCondition(a.Status.Conditions, corev1alpha1.AgentApproval).Reason).
+			To(Equal(corev1alpha1.ApprovalSubjectMismatch))
 	})
 
 	It("reads a bounded count of records in one check", func() {

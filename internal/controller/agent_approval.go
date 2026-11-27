@@ -215,7 +215,10 @@ func (r *AgentReconciler) awaitApproval(ctx context.Context, a *corev1alpha1.Age
 	meta.SetStatusCondition(&a.Status.Conditions, metav1.Condition{Type: corev1alpha1.AgentApproval,
 		Status: s.status, Reason: s.reason, Message: s.message, ObservedGeneration: a.Generation})
 	setApprovalEvidence(a, s.evidence, now)
-	if s.status == metav1.ConditionFalse {
+	// A run with a key hash had an approval at an earlier start attempt. If the approval is not
+	// there now, for example after a change of the spec, the run stops: a paused run must have no
+	// key. The revoke blocks the key first.
+	if s.status == metav1.ConditionFalse || (s.status == metav1.ConditionUnknown && a.Status.KeyHash != "") {
 		logf.FromContext(ctx).Info("The approval stops the run", "reason", s.reason)
 		return true, r.fail(ctx, a, corev1alpha1.AgentFailed, s.reason)
 	}
