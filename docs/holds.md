@@ -50,7 +50,7 @@ With two installs in one cluster (see [zones](zones.md)), each manager stops the
 
 ## The quarantine
 
-The [egress proxy](traced-egress.md) watches the Holds and the Profiles. While a `Quarantine` Hold has no release, the proxy refuses each call of each pod of the target with the reason `quarantined`. Each refused call has a span with `result: denied` and `reason: quarantined`. When the quarantine starts, the proxy also ends the open calls and the open tunnels of these pods. The proxy reads the Hold and the Profile status from the API server, so the owner of the workload cannot remove the Hold. But the proxy finds the pods of an Agent or a Workspace target by the pod labels `koodam.dev/agent` and `koodam.dev/workspace`. A user who can patch the pods can change these labels. See [Failure modes and limits](#failure-modes-and-limits).
+The [egress proxy](traced-egress.md) watches the Holds and the Profiles. While a `Quarantine` Hold has no release, the proxy refuses each call of each pod of the target with the reason `quarantined`. Each refused call has a span with `result: denied` and `reason: quarantined`. When the quarantine starts, the proxy also ends the open calls and the open tunnels of these pods. The proxy reads the Hold and the Profile status from the API server, so the owner of the workload cannot remove the Hold. The proxy finds the pods of a target by the pod labels `koodam.dev/agent`, `koodam.dev/workspace`, `koodam.dev/app` and `koodam.dev/app-version`. An admission policy of the chart makes these labels immutable on a pod. See [The policies of a quarantine](#the-policies-of-a-quarantine).
 
 | Target | The pods that the proxy refuses |
 |---|---|
@@ -62,7 +62,7 @@ The [egress proxy](traced-egress.md) watches the Holds and the Profiles. While a
 
 The proxy writes a span of the kind `control` when a quarantine starts and when it ends. The field `by` has `spec.user` at the start and `spec.release.user` at the end. A Profile target writes 1 control span for each bound namespace. When a Profile binds a new namespace during a quarantine, the proxy writes the start span of that namespace. The proxy writes control spans in the order of its quarantine state changes. For each quarantine, it writes all `quarantined` spans before its first `released` span. See [egress spans](egress-spans.md).
 
-The reconciler of each kind blocks the gateway key and keeps the pods. It adds the finalizer `koodam.dev/quarantine`, so a delete of the workload waits for the release. The release changes the quarantine to a stop:
+The reconciler of each kind blocks the gateway key and keeps the pods. It adds the finalizer `koodam.dev/quarantine`, so a delete of the workload waits for the release. It also adds the label `koodam.dev/quarantine` to the workload and to its children, and an admission policy of the chart refuses the delete of an object with this label. See [The policies of a quarantine](#the-policies-of-a-quarantine). The release changes the quarantine to a stop. At the release, the controller removes the label first, and then it stops the pods:
 
 | Kind | Quarantine | After the release |
 |---|---|---|
@@ -83,8 +83,10 @@ The proxy sees only the calls that go through it. A call in a path with no proxy
 - After a restart, the proxy writes the `quarantined` control span of each active quarantine again. A reader must accept more than 1 start span for one Hold.
 - A Hold that is deleted with no release writes no `released` span. The admission policy refuses this delete.
 - If the delete of an Agent or an AppVersion started before the quarantine, Kubernetes refuses a new finalizer. Then the controller blocks the key and keeps the pods, and the finalizer of the workload keeps it until the release.
-- The finalizer stops the controller and a normal delete of the workload. It does not stop a user who can delete the pods, the Job or the StatefulSet directly, or a delete with `propagationPolicy: Foreground`. Limit these rights in the namespace during an investigation. Issue [#452](https://github.com/mohanraj00/koodam/issues/452) adds an admission policy for this.
-- The proxy finds the pods of an Agent or a Workspace target by the pod labels `koodam.dev/agent` and `koodam.dev/workspace`. A user who can patch the pods can change these labels, and then the proxy does not refuse the calls of the pod. Limit the right to patch pods in the namespace during an investigation ([#452](https://github.com/mohanraj00/koodam/issues/452)).
+- Only the chart installs [the policies of a quarantine](#the-policies-of-a-quarantine). In an install with kustomize, a user who can delete the pods, the Job or the StatefulSet, or who can patch the labels of a pod, can end a quarantine. Limit these rights in the namespace during an investigation.
+- A pod that starts during a quarantine gets the label at the next reconcile of its workload. Before that, the policy does not refuse its delete. The proxy refuses its calls from the start.
+- The policies refuse a delete. They do not refuse the eviction of a pod, for example at a node drain, or a change of the pod spec that stops a container ([#459](https://github.com/mohanraj00/koodam/issues/459)). Limit the right to evict and to patch pods in the namespace during an investigation, and do not drain the node.
+- The delete of a namespace with a quarantined workload waits for the release, because the API server refuses the delete of the pods.
 - If a user deletes a Workspace before the controller reconciles its quarantine, the Workspace can lose its pod while the Hold is active ([#454](https://github.com/mohanraj00/koodam/issues/454)).
 - If a Profile binds the namespaces of 2 installs and only 1 install has the egress proxy, the Hold can show `Quarantined` while the pods of the other install still send calls out ([#455](https://github.com/mohanraj00/koodam/issues/455)).
 
@@ -134,6 +136,29 @@ A CRD rule cannot read the request. Thus the `ValidatingAdmissionPolicy` `koodam
 The policy applies to each user, also to a member of `system:masters`. It does not match the status subresource.
 
 The chart always installs the policy, with the name `<release>-hold`. Thus 2 installs in one cluster have 2 policies with the same rules. With kustomize, apply `config/hold/admission` after `config/default`.
+
+### The policies of a quarantine
+
+The chart installs 2 more policies from [charts/koodam/templates/quarantine.yaml](../charts/koodam/templates/quarantine.yaml). While a quarantine is active, the controller adds the label `koodam.dev/quarantine: "true"` to these objects:
+
+| Target | Objects with the label |
+|---|---|
+| Agent | The Agent, its Job and the pods of the run. |
+| Workspace | The Workspace, its StatefulSet, its pod and the home PVC. |
+| AppVersion | The AppVersion, its Deployment and its pods. |
+
+The policy `<release>-quarantine` does these checks on an object with the label:
+
+- The API server refuses the delete of a pod, a Job, a StatefulSet, a Deployment or a PVC. This rule also applies to the garbage collector and to the controllers of Kubernetes. Thus a scale to 0, a Job deadline or the delete of an owner does not remove a quarantined pod.
+- The API server refuses the delete of an Agent, a Workspace or an AppVersion with `propagationPolicy: Foreground`. A normal delete is permitted, and the finalizer keeps the workload until the release.
+- Only the manager service account of the install can add, change or remove the label.
+- Only the manager can remove a finalizer of koodam (`koodam.dev/...`) from an Agent, a Workspace or an AppVersion. Thus a user cannot remove the workload and leave its children with the label.
+
+The manager has no exception for a delete, so it cannot delete a child that has the label.
+
+The policy `<release>-pod-labels` refuses an update of a pod that adds, changes or removes one of the labels `koodam.dev/agent`, `koodam.dev/workspace`, `koodam.dev/app` and `koodam.dev/app-version`, if the pod has one of them. It has no exception. Kubernetes sets these labels from the pod template when it makes the pod, and no component changes them after that.
+
+The 2 policies apply to each user, also to a member of `system:masters`. With `zone.namespaces`, they apply only in the namespaces of the install. Thus each of 2 installs in one cluster needs `zone.namespaces` (see [zones](zones.md)). If not, the policy of one install refuses the label of the other manager. To delete a quarantined object, release the Hold.
 
 ## Roles
 
