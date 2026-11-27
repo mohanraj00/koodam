@@ -68,21 +68,26 @@ func (v *Viewers) user(ctx context.Context, token string) (authenticationv1.User
 	return s.User, nil
 }
 
-// allowed does one SubjectAccessReview for list agents in each namespace.
-func (v *Viewers) allowed(ctx context.Context, user authenticationv1.UserInfo, namespaces []string) ([]string, error) {
+// listAgents is the review of each path.
+var listAgents = authorizationv1.ResourceAttributes{Verb: "list", Group: corev1alpha1.GroupVersion.Group, Resource: "agents"}
+
+// allowed does one SubjectAccessReview for each check in each namespace. A namespace is in the
+// result only if each check permits the caller.
+func (v *Viewers) allowed(ctx context.Context, user authenticationv1.UserInfo, namespaces []string,
+	checks []authorizationv1.ResourceAttributes) ([]string, error) {
 	extra := make(map[string]authorizationv1.ExtraValue, len(user.Extra))
 	for k, values := range user.Extra {
 		extra[k] = authorizationv1.ExtraValue(values)
 	}
-	ok := make([]bool, len(namespaces))
-	err := parallel(ctx, len(namespaces), func(ctx context.Context, i int) error {
+	n := len(checks)
+	ok := make([]bool, len(namespaces)*n)
+	err := parallel(ctx, len(ok), func(ctx context.Context, i int) error {
+		attributes := checks[i%n]
+		attributes.Namespace = namespaces[i/n]
 		review, err := v.Access.Create(ctx, &authorizationv1.SubjectAccessReview{
 			Spec: authorizationv1.SubjectAccessReviewSpec{
 				User: user.Username, UID: user.UID, Groups: user.Groups, Extra: extra,
-				ResourceAttributes: &authorizationv1.ResourceAttributes{
-					Namespace: namespaces[i], Verb: "list",
-					Group: corev1alpha1.GroupVersion.Group, Resource: "agents",
-				},
+				ResourceAttributes: &attributes,
 			},
 		}, metav1.CreateOptions{})
 		if err != nil {
@@ -96,7 +101,7 @@ func (v *Viewers) allowed(ctx context.Context, user authenticationv1.UserInfo, n
 	}
 	var result []string
 	for i, namespace := range namespaces {
-		if ok[i] {
+		if !slices.Contains(ok[i*n:(i+1)*n], false) {
 			result = append(result, namespace)
 		}
 	}

@@ -30,6 +30,7 @@ import (
 	"strings"
 	"time"
 
+	authorizationv1 "k8s.io/api/authorization/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/util/validation"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -144,7 +145,8 @@ func bearer(r *http.Request) (string, bool) {
 }
 
 // scope gives the namespaces of targets that the caller can read, or the HTTP status of the refusal.
-func (a *api) scope(ctx context.Context, r *http.Request, targets []string) ([]string, int, problem) {
+func (a *api) scope(ctx context.Context, r *http.Request, targets []string,
+	checks []authorizationv1.ResourceAttributes) ([]string, int, problem) {
 	token, ok := bearer(r)
 	if !ok || (a.viewers == nil && !a.authorized(token)) {
 		return nil, http.StatusUnauthorized, problem{"A valid bearer token is necessary."}
@@ -161,7 +163,7 @@ func (a *api) scope(ctx context.Context, r *http.Request, targets []string) ([]s
 	}
 	var namespaces []string
 	if err == nil {
-		namespaces, err = a.viewers.allowed(ctx, user, targets)
+		namespaces, err = a.viewers.allowed(ctx, user, targets, checks)
 	}
 	switch {
 	case ctx.Err() != nil:
@@ -198,7 +200,7 @@ func (a *api) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	// A run path reads one namespace, so the server checks the access to that namespace only.
-	targets := a.namespaces
+	targets, checks := a.namespaces, []authorizationv1.ResourceAttributes{listAgents}
 	ref, isRun := parseRun(r.URL.Path)
 	if isRun {
 		targets = nil
@@ -206,7 +208,7 @@ func (a *api) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			targets = []string{ref.namespace}
 		}
 	}
-	namespaces, status, refusal := a.scope(ctx, r, targets)
+	namespaces, status, refusal := a.scope(ctx, r, targets, checks)
 	if status != http.StatusOK {
 		if status == http.StatusUnauthorized {
 			w.Header().Set("WWW-Authenticate", "Bearer")

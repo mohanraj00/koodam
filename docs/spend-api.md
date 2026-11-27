@@ -194,13 +194,34 @@ path has no query.
 The response has these fields:
 
 - `id`, `name`, `namespace`, `phase`, `startedAt` and `completedAt`: the same values as in `GET /v1/runs`.
-- `conditions`: the status conditions of the Agent, for example `Provisioned` and `Revoked`.
+- `conditions`: the status conditions of the Agent, for example `Provisioned` and `Revoked`. The
+  server redacts each message, as [Redaction](#redaction) says.
 - `job`: the run Job in `status.job`, with its counts, times and conditions. If the Agent has no Job,
   or if the Agent does not control the Job of that name, the response has no `job`.
 - `pods`: the pods that the Job controls, newest first, with a maximum of 10. The server reads each
   page of the pods with the Job label. If more than 500 pods have the label, the response has status 502.
   Each pod has its phase, its start time and the state of each init container and container. A
   container state has the reason and the exit code, but no message, because the termination message comes from the code of the run.
+
+## Redaction
+
+The server redacts each condition message of the run path before the bytes leave the server. It
+removes the terminal escape sequences and the control characters first. Then it replaces each match of
+a fixed pattern list with `[redacted]`. The list is `redactions` in `internal/spendapi/redact.go`, and
+each pattern has a test:
+
+- PEM private keys, with each line up to the END line;
+- JSON Web Tokens, for example Kubernetes service account tokens;
+- keys that start with `sk-`, for example a gateway key;
+- GitHub, AWS access key and Slack tokens;
+- SHA-256 values in hex, for example a key hash;
+- the credentials of an `Authorization` header (`Bearer`, `Basic` or `token`);
+- the login and password of a URL;
+- the value of a field with a credential name, for example `password=`, `"api_key":`, `GITHUB_TOKEN=`
+  or `login:`.
+
+The patterns can also redact text that is not a credential. A credential in a form that no pattern
+matches stays in the response. Do not use the redaction as the only control for a credential.
 
 ## Read more pages
 
