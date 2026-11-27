@@ -63,8 +63,10 @@ login shell does not export `NOOKKU_TESTS_DIR`.
 
 ## Python
 
-Nookku needs Python 3.10 or later. Koodam adds no Python to an image. The image of the harness
-container must have `python3` 3.10 or later on its `PATH`:
+Nookku needs Python 3.10 or later. The Koodam launcher needs Python 3.11 or later, so that the
+child processes of Nookku do not import a package from the current folder (#478). Koodam adds no
+Python to an image. The image of the harness container must have `python3` 3.11 or later on its
+`PATH`:
 
 - **Agent.** The image is `spec.image`.
 - **Workspace.** The image is `spec.image`, or the image of the `workspace` container in
@@ -76,11 +78,11 @@ uses the image, the `PATH`, the user and the group of the harness container. Thu
 `python3` that the harness finds. It runs in the folder `/`, because the working folder of the
 harness can be on a volume that the check does not mount. It gets no privilege and no capability,
 and its root file system is read-only. It runs
-`python3 -c 'import sys; sys.exit(sys.version_info < (3, 10))'`. If `python3` is not on the `PATH`,
-or its version is earlier than 3.10, the container fails with this message:
+`python3 -c 'import sys; sys.exit(sys.version_info < (3, 11))'`. If `python3` is not on the `PATH`,
+or its version is earlier than 3.11, the container fails with this message:
 
 ```text
-The nookku plugin needs python3 3.10 or later on the PATH of the image. The harness did not start.
+The nookku plugin needs python3 3.11 or later on the PATH of the image. The harness did not start.
 ```
 
 The harness then does not start. An Agent run fails. A Workspace pod stays in its init step. To
@@ -117,8 +119,19 @@ Nookku data image (`images/nookku`) has these files, and no shell and no Python:
   with a SHA-256 that is not in `images/nookku/plugin.sha256`. The Nookku release has no plugin
   asset, so the files come from the tag commit. The test file `hooks/register.test.ts` is not in
   the image, because the plugin does not use it.
-- `/nookku/bin/nookku`: the launcher. It runs `python3 -I -S` with a fixed `sys.path`: the
-  standard library and `/koodam/nookku/lib`. It needs no `pip`.
+- `/nookku/bin/nookku`: the launcher. It runs `python3 -I -S`. Its fixed `sys.path` contains only
+  the standard library and `/koodam/nookku/lib`. It needs no `pip`.
+
+`nookku start` uses `python3 -m nookku` to start the bridge, the MCP stdio proxy and the chat page.
+The launcher exports these variables for the child processes:
+
+- `PYTHONPATH=/koodam/nookku/lib`: a child finds the pinned Nookku.
+- `PYTHONSAFEPATH=1`: for `python3 -m nookku`, Python 3.11 or later does not add the current folder
+  to `sys.path`.
+- `PYTHONNOUSERSITE=1`: a child does not read the user site packages.
+
+Python 3.10 ignores `PYTHONSAFEPATH`. Thus the launcher refuses to start on a Python earlier than
+3.11, and the check `koodam-nookku-python` refuses the pod before the harness starts.
 
 Build the image with `make docker-build-nookku`. The job `nookku` of `.github/workflows/image.yml`
 builds the image with the same pin and pushes `ghcr.io/mohanraj00/koodam-nookku` on each release
@@ -130,7 +143,8 @@ the review.
 If a harness selects `nookku`, the controller adds the init container `koodam-nookku-files`. It
 copies the files into an emptyDir, which the harness container mounts read-only at
 `/koodam/nookku`. It copies the launcher to `/koodam/bin/nookku`. For an Agent run, the controller
-puts `/koodam/bin` first on the `PATH` of the agent container. The default Workspace image links
+puts `/koodam/bin` first on the `PATH` of the agent container, if `spec.env` has no `PATH`. If
+`spec.env` has a `PATH`, that `PATH` must contain `/koodam/bin`. The default Workspace image links
 `/usr/local/bin/nookku` to the launcher. SSH commands and login shells in this image have
 `/usr/local/bin` on their `PATH`. The init container gets no credential and no env. It has the
 restrictions of a helper.
