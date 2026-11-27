@@ -323,6 +323,20 @@ var _ = Describe("Agent approval", Ordered, func() {
 		}
 	})
 
+	// A record after the bound can be a reject. Thus only a reject is final in an incomplete check.
+	DescribeTable("gives no accept from an incomplete check", func(disposition string, reason string,
+		phase corev1alpha1.AgentPhase) {
+		a, gw, _ := start(bound, func(s string) []approvalChain {
+			return slices.Repeat([]approvalChain{decide(signer, s, disposition)}, approvalMaxRecords+approvalPageSize)
+		}, now)
+		Expect(meta.FindStatusCondition(a.Status.Conditions, corev1alpha1.AgentApproval).Reason).To(Equal(reason))
+		Expect(a.Status.Phase).To(Equal(phase))
+		Expect(gw.created).To(BeEmpty())
+	},
+		Entry("many accepts wait", "accept", corev1alpha1.ApprovalWaiting, corev1alpha1.AgentPending),
+		Entry("many rejects stop the run", "reject", corev1alpha1.ApprovalDenied, corev1alpha1.AgentFailed),
+	)
+
 	It("makes the request document with a fixed form", func() {
 		a := &corev1alpha1.Agent{ObjectMeta: metav1.ObjectMeta{Namespace: "ns-1", Name: "job-7", UID: "uid-1"},
 			Spec: corev1alpha1.AgentSpec{Image: testAgentImage, Model: "m"}}

@@ -181,8 +181,12 @@ func (r *AgentReconciler) approvalState(ctx context.Context, a *corev1alpha1.Age
 			break
 		}
 		if read >= approvalMaxRecords {
-			if best.status == metav1.ConditionUnknown {
-				best.message += fmt.Sprintf(" The check read only %d records of the Agent.", read)
+			// A record that the check did not read can have a higher rank. Only Denied has the
+			// highest rank, so each other state waits: an incomplete check never starts a run.
+			if best.reason != corev1alpha1.ApprovalDenied {
+				best = approvalState{metav1.ConditionUnknown, corev1alpha1.ApprovalWaiting,
+					fmt.Sprintf("The check read only %d records of the Agent, so it cannot start the run. "+
+						"Delete the ApprovalRecords that are not necessary. The subject of the run is %s.", read, subject), nil}
 			}
 			break
 		}
