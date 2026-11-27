@@ -149,6 +149,9 @@ func (r *AppVersionReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 	if err := r.APIReader.Get(ctx, req.NamespacedName, av); err != nil {
 		return ctrl.Result{}, client.IgnoreNotFound(err)
 	}
+	if handled, err := r.applyQuarantine(ctx, av); handled {
+		return ctrl.Result{}, err
+	}
 	switch c := meta.FindStatusCondition(av.Status.Conditions, corev1alpha1.AppVersionRevoking); {
 	case c != nil:
 		// The revoke is terminal. A retry continues it and does not provision again.

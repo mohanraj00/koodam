@@ -42,9 +42,17 @@ const (
 	reasonHeld = "Held"
 	// reasonReleased is the reason of a Hold with spec.release.
 	reasonReleased = "Released"
-	// actionStop and actionRelease are the actions of the events of a Hold.
-	actionStop    = "Stop"
-	actionRelease = "Release"
+	// reasonQuarantined is the reason of the quarantine of a workload by a Hold.
+	reasonQuarantined = "Quarantined"
+	// reasonTestKeysBlocking is the reason of a Workspace that waits for the block of its test keys.
+	reasonTestKeysBlocking = "TestKeysBlocking"
+	// actionStop, actionQuarantine and actionRelease are the actions of the events of a Hold.
+	actionStop       = "Stop"
+	actionQuarantine = "Quarantine"
+	actionRelease    = "Release"
+	// quarantineFinalizer keeps a quarantined workload and its pods until the release. Then the
+	// controller stops the workload, and it removes the finalizer.
+	quarantineFinalizer = "koodam.dev/quarantine"
 	// maxEventNote is less than the limit of the note of an events.k8s.io/v1 Event (1 kB).
 	maxEventNote = 1000
 )
@@ -54,6 +62,18 @@ const (
 // App of an AppVersion, else "". It returns nil if no Hold stops the workload.
 func stopHold(ctx context.Context, c client.Reader, kind corev1alpha1.HoldTargetKind,
 	namespace, name, app string) (*corev1alpha1.Hold, error) {
+	return targetHold(ctx, c, corev1alpha1.HoldStop, kind, namespace, name, app)
+}
+
+// quarantineHold is stopHold for the action Quarantine.
+func quarantineHold(ctx context.Context, c client.Reader, kind corev1alpha1.HoldTargetKind,
+	namespace, name, app string) (*corev1alpha1.Hold, error) {
+	return targetHold(ctx, c, corev1alpha1.HoldQuarantine, kind, namespace, name, app)
+}
+
+// targetHold returns the oldest Hold with the action and no release that targets the workload.
+func targetHold(ctx context.Context, c client.Reader, action corev1alpha1.HoldAction,
+	kind corev1alpha1.HoldTargetKind, namespace, name, app string) (*corev1alpha1.Hold, error) {
 	list := &corev1alpha1.HoldList{}
 	if err := c.List(ctx, list); err != nil {
 		return nil, err
@@ -62,7 +82,7 @@ func stopHold(ctx context.Context, c client.Reader, kind corev1alpha1.HoldTarget
 	var found *corev1alpha1.Hold
 	for i := range list.Items {
 		h := &list.Items[i]
-		if !activeStop(h) {
+		if h.Spec.Release != nil || h.Spec.Action != action {
 			continue
 		}
 		t := h.Spec.Target
@@ -95,9 +115,18 @@ func heldWorkspace(ws *corev1alpha1.Workspace) bool {
 	return meta.IsStatusConditionTrue(ws.Status.Conditions, corev1alpha1.HoldHeld)
 }
 
-// activeStop is true for a Hold with the action Stop and no release.
-func activeStop(h *corev1alpha1.Hold) bool {
-	return h.Spec.Release == nil && h.Spec.Action == corev1alpha1.HoldStop
+// activeHold is true for a Hold with no release. The action is Stop or Quarantine.
+func activeHold(h *corev1alpha1.Hold) bool { return h.Spec.Release == nil }
+
+// quarantineEvent writes a Warning event on the workload, with the Hold as the related object.
+// rec can be nil.
+func quarantineEvent(rec events.EventRecorder, obj runtime.Object, h *corev1alpha1.Hold) {
+	if rec == nil {
+		return
+	}
+	rec.Eventf(obj, h, corev1.EventTypeWarning, reasonQuarantined, actionQuarantine, "%s",
+		eventNote(fmt.Sprintf("The Hold %s quarantines this workload. User: %s. Reason: %s", h.Name, h.Spec.User,
+			h.Spec.Reason)))
 }
 
 func olderHold(x, y *corev1alpha1.Hold) bool {
@@ -236,7 +265,7 @@ func holdMapper(c client.Reader, kind corev1alpha1.HoldTargetKind, namespaces []
 }
 
 // profileHoldMapper maps a Namespace or a Profile to the workloads of the kind in it, but only
-// while a Hold with the action Stop targets a Profile. Thus a namespace that a held Profile binds
+// while a Hold with no release targets a Profile. Thus a namespace that a held Profile binds
 // later also stops. namespaces are the namespaces that the manager watches.
 func profileHoldMapper(c client.Reader, kind corev1alpha1.HoldTargetKind, namespaces []string) handler.MapFunc {
 	return func(ctx context.Context, obj client.Object) []reconcile.Request {
@@ -248,7 +277,7 @@ func profileHoldMapper(c client.Reader, kind corev1alpha1.HoldTargetKind, namesp
 		var names []string
 		for i := range list.Items {
 			h := &list.Items[i]
-			if !activeStop(h) || h.Spec.Target.Kind != corev1alpha1.HoldTargetProfile {
+			if !activeHold(h) || h.Spec.Target.Kind != corev1alpha1.HoldTargetProfile {
 				continue
 			}
 			switch o := obj.(type) {

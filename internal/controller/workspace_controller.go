@@ -160,7 +160,11 @@ func (r *WorkspaceReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 	}
 	if !ws.DeletionTimestamp.IsZero() {
 		// Block the key first. Then the garbage collector deletes the owned objects. The home PVC stays.
-		return ctrl.Result{}, r.applyKey(ctx, ws)
+		// A quarantine keeps the Workspace and its pod until the release.
+		if err := r.applyKey(ctx, ws); err != nil {
+			return ctrl.Result{}, err
+		}
+		return ctrl.Result{}, r.releaseDeleted(ctx, ws)
 	}
 	old := ws.Status.DeepCopy()
 	if err := r.applyHold(ctx, ws); err != nil {
@@ -212,6 +216,10 @@ func (r *WorkspaceReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 	} else if bound && wantKey(ws) && ws.Status.KeyHash != "" {
 		res.RequeueAfter = max(time.Second, r.untilRenew(ws.Status.KeyHash))
 	}
+	// The controller does not watch the pods. Thus it reads the pod again until it is gone.
+	if releasingQuarantine(ws) && (res.RequeueAfter == 0 || res.RequeueAfter > podGoneRecheck) {
+		res.RequeueAfter = podGoneRecheck
+	}
 	if old.Phase == ws.Status.Phase && old.Pod == ws.Status.Pod && old.HostKey == ws.Status.HostKey &&
 		conditionsEqual(old.Conditions, ws.Status.Conditions) {
 		return res, keyErr
@@ -232,6 +240,9 @@ func (r *WorkspaceReconciler) apply(ctx context.Context, ws *corev1alpha1.Worksp
 		return failed, reasonInvalid, "The Workspace name is too long for the StatefulSet. Use 52 characters or fewer.", nil
 	}
 	if heldWorkspace(ws) {
+		if quarantined(ws.Status.Conditions) {
+			return r.quarantineHeld(ctx, ws)
+		}
 		return r.stopHeld(ctx, ws)
 	}
 	if user == "" {
@@ -274,7 +285,7 @@ func (r *WorkspaceReconciler) apply(ctx context.Context, ws *corev1alpha1.Worksp
 	}
 	switch {
 	case errors.Is(err, errTestKeysUnblocked):
-		return corev1alpha1.WorkspacePending, "TestKeysBlocking",
+		return corev1alpha1.WorkspacePending, reasonTestKeysBlocking,
 			"The pod changes after the gateway blocks each test key.", nil
 	case errors.Is(err, errTestKeysPending):
 		// A TestKey status change starts the next reconcile.
@@ -397,6 +408,9 @@ func (r *WorkspaceReconciler) unbind(ctx context.Context, ws *corev1alpha1.Works
 // only the controller writes the status. A release removes it, and the Workspace starts again
 // with a new key.
 func (r *WorkspaceReconciler) applyHold(ctx context.Context, ws *corev1alpha1.Workspace) error {
+	if done, err := r.applyQuarantine(ctx, ws); done || err != nil {
+		return err
+	}
 	h, err := stopHold(ctx, r.Client, corev1alpha1.HoldTargetWorkspace, ws.Namespace, ws.Name, "")
 	if err != nil {
 		return err
@@ -439,7 +453,7 @@ func (r *WorkspaceReconciler) stopHeld(ctx context.Context, ws *corev1alpha1.Wor
 	}
 	switch err := r.stopPod(ctx, ws); {
 	case errors.Is(err, errTestKeysUnblocked):
-		return corev1alpha1.WorkspacePending, "TestKeysBlocking",
+		return corev1alpha1.WorkspacePending, reasonTestKeysBlocking,
 			"The pod stops after the gateway blocks each test key.", nil
 	case errors.Is(err, errTestKeysPending):
 		return corev1alpha1.WorkspacePending, "TestKeysRevoking",

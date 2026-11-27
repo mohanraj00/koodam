@@ -34,7 +34,7 @@ import (
 	. "github.com/onsi/gomega"
 	corev1 "k8s.io/api/core/v1"
 	discoveryv1 "k8s.io/api/discovery/v1"
-	"k8s.io/apimachinery/pkg/api/meta"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -456,7 +456,7 @@ var _ = Describe("Traced egress", Ordered, Label("egress"), func() {
 	})
 
 	// The quarantine spec runs after the samples, so that the samples have no control span.
-	It("quarantines a run: the proxy refuses each call until the release, and the pod stays", func() {
+	It("quarantines a run: the proxy refuses each call, and the pod stays until the release", func() {
 		const heldName = "egress-held"
 		a := sampleAgent(heldName, "sleep 900")
 		a.Namespace = egNS
@@ -480,19 +480,21 @@ var _ = Describe("Traced egress", Ordered, Label("egress"), func() {
 		By("quarantining the Agent")
 		h := makeHoldFor("e2e-agent-quarantine", corev1alpha1.HoldQuarantine,
 			corev1alpha1.HoldTarget{Kind: corev1alpha1.HoldTargetAgent, Namespace: egNS, Name: heldName})
+		expectHeldWith(h, "Quarantined")
 		Eventually(call, time.Minute, 2*time.Second).Should(Equal("403"), "The proxy does not refuse the call.")
+		Expect(k8s.Get(ctx, client.ObjectKeyFromObject(a), a)).To(Succeed())
+		Expect(a.Status.KeyHash).NotTo(BeEmpty())
+		Expect(keyInfo(a.Status.KeyHash).Blocked).To(BeTrue(), "The gateway did not block the run key.")
 
-		By("checking that the pod stays and the Hold shows Unsupported")
-		p := &corev1.Pod{}
-		Expect(k8s.Get(ctx, client.ObjectKey{Namespace: egNS, Name: pod}, p)).To(Succeed())
-		Expect(p.DeletionTimestamp).To(BeNil())
-		Expect(p.Status.Phase).To(Equal(corev1.PodRunning))
-		Eventually(func(g Gomega) {
-			g.Expect(k8s.Get(ctx, client.ObjectKeyFromObject(h), h)).To(Succeed())
-			c := meta.FindStatusCondition(h.Status.Conditions, corev1alpha1.HoldHeld)
-			g.Expect(c).NotTo(BeNil())
-			g.Expect(c.Reason).To(Equal("Unsupported"))
-		}, time.Minute, time.Second).Should(Succeed())
+		By("deleting the Agent and checking that the Agent and its pod stay")
+		Expect(k8s.Delete(ctx, a)).To(Succeed())
+		Consistently(func(g Gomega) {
+			g.Expect(k8s.Get(ctx, client.ObjectKeyFromObject(a), a)).To(Succeed())
+			p := &corev1.Pod{}
+			g.Expect(k8s.Get(ctx, client.ObjectKey{Namespace: egNS, Name: pod}, p)).To(Succeed())
+			g.Expect(p.DeletionTimestamp).To(BeNil())
+			g.Expect(p.Status.Phase).To(Equal(corev1.PodRunning))
+		}, 15*time.Second, time.Second).Should(Succeed(), "The quarantine did not keep the Agent and its pod.")
 
 		user := holdUser()
 		// control counts the control spans of the Agent with the result and the user.
@@ -517,9 +519,11 @@ var _ = Describe("Traced egress", Ordered, Label("egress"), func() {
 			g.Expect(control(list, egress.ResultQuarantined)).To(Equal(1), "Control spans: %v", list)
 		}, time.Minute, 2*time.Second).Should(Succeed())
 
-		By("releasing the Hold and checking that the calls work again")
+		By("releasing the Hold and checking that the Agent is deleted")
 		releaseHold(h)
-		Eventually(call, time.Minute, 2*time.Second).Should(Equal("200"), "The call after the release does not work.")
+		Eventually(func() bool {
+			return apierrors.IsNotFound(k8s.Get(ctx, client.ObjectKeyFromObject(a), &corev1alpha1.Agent{}))
+		}, 2*time.Minute, 2*time.Second).Should(BeTrue(), "The Agent stays after the release.")
 		Eventually(func(g Gomega) {
 			g.Expect(control(spans("agent/"+heldName), egress.ResultReleased)).To(Equal(1))
 		}, time.Minute, 2*time.Second).Should(Succeed(), "No control span shows the release.")

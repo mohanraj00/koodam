@@ -19,6 +19,7 @@ package controller
 import (
 	"context"
 	"fmt"
+	"time"
 
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/meta"
@@ -36,9 +37,16 @@ import (
 )
 
 const (
-	reasonStopping     = "Stopping"
-	reasonUnsupported  = "Unsupported"
-	reasonAppsDisabled = "AppsDisabled"
+	reasonStopping      = "Stopping"
+	reasonQuarantining  = "Quarantining"
+	reasonNoEgressProxy = "NoEgressProxy"
+	reasonUnsupported   = "Unsupported"
+	reasonAppsDisabled  = "AppsDisabled"
+	// msgVersionsLeft is the message of a Profile Hold with an AppVersion and no App controllers.
+	msgVersionsLeft = "A namespace of the Profile has an AppVersion, and the App controllers do not run, " +
+		"so no controller stops or quarantines it. Retire each AppVersion, or enable the App controllers."
+	// appsDisabledRecheck is the time until a Profile Hold reads the AppVersions again.
+	appsDisabledRecheck = time.Minute
 )
 
 // HoldReconciler writes the Held condition of each Hold. It does not stop a workload: the
@@ -59,11 +67,15 @@ type HoldReconciler struct {
 	// controller writes the status of a Hold on one workload or one App only if it watches the
 	// namespace of the target. The install of that namespace writes it.
 	Namespaces []string
+	// EgressProxy is true if the pods send their egress through the egress proxy. Only the proxy
+	// refuses the calls of a quarantined pod, so a Quarantine Hold needs it.
+	EgressProxy bool
 }
 
 // +kubebuilder:rbac:groups=core.koodam.dev,resources=holds,verbs=get;list;watch
 // +kubebuilder:rbac:groups=core.koodam.dev,resources=holds/status,verbs=update
 // +kubebuilder:rbac:groups=events.k8s.io,resources=events,verbs=create;patch
+// +kubebuilder:rbac:groups=core.koodam.dev,resources=appversions,verbs=get;list
 
 // Reconcile writes the Held condition from the state of the workloads of the target.
 func (r *HoldReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
@@ -78,10 +90,15 @@ func (r *HoldReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.
 	if err != nil {
 		return ctrl.Result{}, err
 	}
+	var result ctrl.Result
+	if reason == reasonAppsDisabled && h.Spec.Target.Kind == corev1alpha1.HoldTargetProfile {
+		// No controller watches the AppVersions, so the Hold reads them again after a time.
+		result.RequeueAfter = appsDisabledRecheck
+	}
 	old := meta.FindStatusCondition(h.Status.Conditions, corev1alpha1.HoldHeld)
 	if old != nil && old.Status == status && old.Reason == reason && old.Message == msg &&
 		old.ObservedGeneration == h.Generation {
-		return ctrl.Result{}, nil
+		return result, nil
 	}
 	changed := old == nil || old.Reason != reason
 	meta.SetStatusCondition(&h.Status.Conditions, metav1.Condition{Type: corev1alpha1.HoldHeld, Status: status,
@@ -89,15 +106,20 @@ func (r *HoldReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.
 	if err := r.Status().Update(ctx, h); err != nil {
 		return ctrl.Result{}, err
 	}
-	if changed && r.Recorder != nil && (reason == reasonStopped || reason == reasonReleased) {
-		action := actionStop
-		if reason == reasonReleased {
-			action = actionRelease
+	if changed && r.Recorder != nil {
+		switch reason {
+		case reasonStopped:
+			r.Recorder.Eventf(h, nil, corev1.EventTypeNormal, reason, actionStop, "%s", eventNote(msg))
+		case reasonQuarantined:
+			r.Recorder.Eventf(h, nil, corev1.EventTypeNormal, reason, actionQuarantine, "%s", eventNote(msg))
+		case reasonReleased:
+			r.Recorder.Eventf(h, nil, corev1.EventTypeNormal, reason, actionRelease, "%s", eventNote(msg))
+		case reasonNoEgressProxy:
+			r.Recorder.Eventf(h, nil, corev1.EventTypeWarning, reason, actionQuarantine, "%s", eventNote(msg))
 		}
-		r.Recorder.Eventf(h, nil, corev1.EventTypeNormal, reason, action, "%s", eventNote(msg))
 	}
 	logf.FromContext(ctx).Info("Wrote the Held condition", "hold", h.Name, "reason", reason)
-	return ctrl.Result{}, nil
+	return result, nil
 }
 
 // state gives the status, the reason and the message of the Held condition.
@@ -107,16 +129,20 @@ func (r *HoldReconciler) state(ctx context.Context, h *corev1alpha1.Hold) (metav
 	case h.Spec.Release != nil:
 		return metav1.ConditionFalse, reasonReleased, fmt.Sprintf("The user %s released the Hold. Reason: %s",
 			h.Spec.Release.User, h.Spec.Release.Reason), nil
+	case h.Spec.Action == corev1alpha1.HoldQuarantine:
+		return r.quarantineState(ctx, h)
 	case h.Spec.Action != corev1alpha1.HoldStop:
-		return metav1.ConditionFalse, reasonUnsupported,
-			"This controller version does not quarantine a workload. Use the action Stop.", nil
+		return metav1.ConditionFalse, reasonUnsupported, "This controller version does not know the action.", nil
 	}
 	t := h.Spec.Target
 	if !r.AppsEnabled && (t.Kind == corev1alpha1.HoldTargetApp || t.Kind == corev1alpha1.HoldTargetAppVersion) {
 		return metav1.ConditionFalse, reasonAppsDisabled,
 			"The App controllers do not run, so no controller stops an App or an AppVersion.", nil
 	}
-	total, waiting, err := r.count(ctx, t)
+	if left, err := r.versionsLeft(ctx, t); err != nil || left {
+		return metav1.ConditionFalse, reasonAppsDisabled, msgVersionsLeft, err
+	}
+	total, waiting, err := r.count(ctx, t, stopDone)
 	if err != nil {
 		return "", "", "", err
 	}
@@ -131,8 +157,53 @@ func (r *HoldReconciler) state(ctx context.Context, h *corev1alpha1.Hold) (metav
 		fmt.Sprintf("The %d workloads of the target are stopped.", total), nil
 }
 
-// count gives the number of the workloads of the target, and the number that did not stop.
-func (r *HoldReconciler) count(ctx context.Context, t corev1alpha1.HoldTarget) (total, waiting int, err error) {
+// quarantineState gives the Held condition of a Hold with the action Quarantine.
+func (r *HoldReconciler) quarantineState(ctx context.Context, h *corev1alpha1.Hold) (metav1.ConditionStatus,
+	string, string, error) {
+	t := h.Spec.Target
+	switch {
+	case !r.EgressProxy:
+		return metav1.ConditionFalse, reasonNoEgressProxy,
+			"The controller has no egress proxy, so no component refuses the calls of a quarantined pod. " +
+				"Use the action Stop, or enable the egress proxy.", nil
+	case !r.AppsEnabled && (t.Kind == corev1alpha1.HoldTargetApp || t.Kind == corev1alpha1.HoldTargetAppVersion):
+		return metav1.ConditionFalse, reasonAppsDisabled,
+			"The App controllers do not run, so no controller quarantines an App or an AppVersion.", nil
+	}
+	if left, err := r.versionsLeft(ctx, t); err != nil || left {
+		return metav1.ConditionFalse, reasonAppsDisabled, msgVersionsLeft, err
+	}
+	total, waiting, err := r.count(ctx, t, quarantineDone)
+	if err != nil {
+		return "", "", "", err
+	}
+	switch {
+	case waiting > 0:
+		return metav1.ConditionFalse, reasonQuarantining,
+			fmt.Sprintf("%d of the %d workloads of the target wait for the quarantine.", waiting, total), nil
+	case total == 0:
+		return metav1.ConditionTrue, reasonQuarantined, "No workload of the target exists.", nil
+	}
+	return metav1.ConditionTrue, reasonQuarantined,
+		fmt.Sprintf("The %d workloads of the target are quarantined.", total), nil
+}
+
+// doneCheck tells if the action of a Hold is complete for a workload of each kind.
+type doneCheck struct {
+	agent     func(*corev1alpha1.Agent) bool
+	workspace func(*corev1alpha1.Workspace) bool
+	version   func(*corev1alpha1.AppVersion) bool
+}
+
+var (
+	stopDone       = doneCheck{agentStopped, workspaceStopped, appVersionStopped}
+	quarantineDone = doneCheck{agentQuarantined, workspaceQuarantined, appVersionQuarantined}
+)
+
+// count gives the number of the workloads of the target, and the number for which the action is
+// not complete.
+func (r *HoldReconciler) count(ctx context.Context, t corev1alpha1.HoldTarget, d doneCheck) (total, waiting int,
+	err error) {
 	add := func(stopped bool) {
 		total++
 		if !stopped {
@@ -147,19 +218,19 @@ func (r *HoldReconciler) count(ctx context.Context, t corev1alpha1.HoldTarget) (
 		if err := rd.Get(ctx, key, a); err != nil {
 			return 0, 0, client.IgnoreNotFound(err)
 		}
-		add(agentStopped(a))
+		add(d.agent(a))
 	case corev1alpha1.HoldTargetWorkspace:
 		ws := &corev1alpha1.Workspace{}
 		if err := rd.Get(ctx, key, ws); err != nil {
 			return 0, 0, client.IgnoreNotFound(err)
 		}
-		add(workspaceStopped(ws))
+		add(d.workspace(ws))
 	case corev1alpha1.HoldTargetAppVersion:
 		av := &corev1alpha1.AppVersion{}
 		if err := rd.Get(ctx, key, av); err != nil {
 			return 0, 0, client.IgnoreNotFound(err)
 		}
-		add(appVersionStopped(av))
+		add(d.version(av))
 	case corev1alpha1.HoldTargetApp:
 		list := &corev1alpha1.AppVersionList{}
 		if err := rd.List(ctx, list, client.InNamespace(t.Namespace)); err != nil {
@@ -167,18 +238,19 @@ func (r *HoldReconciler) count(ctx context.Context, t corev1alpha1.HoldTarget) (
 		}
 		for i := range list.Items {
 			if list.Items[i].Spec.AppRef.Name == t.Name {
-				add(appVersionStopped(&list.Items[i]))
+				add(d.version(&list.Items[i]))
 			}
 		}
 	case corev1alpha1.HoldTargetProfile:
-		return r.countProfile(ctx, t.Name)
+		return r.countProfile(ctx, t.Name, d)
 	}
 	return total, waiting, nil
 }
 
 // countProfile counts the workloads in each namespace that the Profile binds, also in the
 // namespaces of a different install. It counts the AppVersions only if the App controllers run.
-func (r *HoldReconciler) countProfile(ctx context.Context, name string) (total, waiting int, err error) {
+func (r *HoldReconciler) countProfile(ctx context.Context, name string, d doneCheck) (total, waiting int,
+	err error) {
 	add := func(stopped bool) {
 		total++
 		if !stopped {
@@ -192,14 +264,14 @@ func (r *HoldReconciler) countProfile(ctx context.Context, name string) (total, 
 			return err
 		}
 		for i := range agents.Items {
-			add(agentStopped(&agents.Items[i]))
+			add(d.agent(&agents.Items[i]))
 		}
 		workspaces := &corev1alpha1.WorkspaceList{}
 		if err := rd.List(ctx, workspaces, client.InNamespace(ns)); err != nil {
 			return err
 		}
 		for i := range workspaces.Items {
-			add(workspaceStopped(&workspaces.Items[i]))
+			add(d.workspace(&workspaces.Items[i]))
 		}
 		if !r.AppsEnabled {
 			return nil
@@ -209,11 +281,30 @@ func (r *HoldReconciler) countProfile(ctx context.Context, name string) (total, 
 			return err
 		}
 		for i := range versions.Items {
-			add(appVersionStopped(&versions.Items[i]))
+			add(d.version(&versions.Items[i]))
 		}
 		return nil
 	})
 	return total, waiting, err
+}
+
+// versionsLeft is true if the App controllers do not run and a namespace that the Profile of the
+// target binds has an AppVersion. No controller then stops or quarantines that AppVersion. The
+// read has no cache, because the manager has no AppVersion watch without the App controllers.
+func (r *HoldReconciler) versionsLeft(ctx context.Context, t corev1alpha1.HoldTarget) (bool, error) {
+	if r.AppsEnabled || t.Kind != corev1alpha1.HoldTargetProfile {
+		return false, nil
+	}
+	left := false
+	err := r.eachBound(ctx, t.Name, func(ns string) error {
+		versions := &corev1alpha1.AppVersionList{}
+		if err := r.reader().List(ctx, versions, client.InNamespace(ns), client.Limit(1)); err != nil {
+			return err
+		}
+		left = left || len(versions.Items) > 0
+		return nil
+	})
+	return left, err
 }
 
 // eachBound calls fn for each namespace of the Profile that the Profile binds. It does nothing if
@@ -264,7 +355,7 @@ func appVersionStopped(av *corev1alpha1.AppVersion) bool {
 		!controllerutil.ContainsFinalizer(av, appFinalizer)
 }
 
-// stopHolds maps a change of a workload to each Hold with the action Stop and no release.
+// stopHolds maps a change of a workload to each Hold with no release.
 func (r *HoldReconciler) stopHolds(ctx context.Context, _ client.Object) []reconcile.Request {
 	list := &corev1alpha1.HoldList{}
 	if err := r.List(ctx, list); err != nil {
@@ -273,7 +364,7 @@ func (r *HoldReconciler) stopHolds(ctx context.Context, _ client.Object) []recon
 	}
 	var reqs []reconcile.Request
 	for i := range list.Items {
-		if activeStop(&list.Items[i]) {
+		if activeHold(&list.Items[i]) {
 			reqs = append(reqs, reconcile.Request{NamespacedName: client.ObjectKeyFromObject(&list.Items[i])})
 		}
 	}
