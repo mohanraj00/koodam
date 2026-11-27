@@ -2,7 +2,9 @@
 
 This file records the changes for each Koodam version. The newest version is first.
 
-## Unreleased
+## v0.5.0 (2026-11-27)
+
+The API is `v1alpha1` and can change between tags. The App parts are off by default. [Known limits of v0.5.0](#known-limits-of-v050) lists the open limits.
 
 ### Agents
 
@@ -55,6 +57,17 @@ This file records the changes for each Koodam version. The newest version is fir
 
 - Add an optional guard hook to the bundled gateway for instructions in untrusted content (`gateway.bundled.guard`, off by default). It examines the tool replies and the documents of each model request with fixed rules, and it records, marks or blocks a match. It writes one log line with the policy version and a digest for each new block, and no content. It is a tripwire for known forms, not a defense. The [gateway guard](docs/gateway-guard.md) page lists what it cannot detect. The gateway `callbacks` setting is now a list ([#248](https://github.com/mohanraj00/koodam/issues/248)).
 - With the guard on, the chart sets `allow_dynamic_callback_disabling: false`, so a request or a key cannot turn off a gateway hook. The hook examines a large block in pieces, so its memory does not grow with the block. `make guard-image-check` runs the hook in the pinned gateway image with docker ([#248](https://github.com/mohanraj00/koodam/issues/248)).
+
+### Known limits of v0.5.0
+
+- The AppVersion controller has no watch on NetworkPolicy. If a user deletes or changes the policy of a version or of a gate pod, the controller restores it at the next reconcile ([#359](https://github.com/mohanraj00/koodam/issues/359)).
+- A valid signed approval record does not show that it is the current selection ([#364](https://github.com/mohanraj00/koodam/issues/364)).
+- With the signed claim check on, the gate pod has no claim, so each gate message gets a refusal and the gate gives `Evidence=False/Failed` ([#354](https://github.com/mohanraj00/koodam/issues/354)).
+- The action `Quarantine` of a Hold is not active. A Hold with it shows the reason `Unsupported` ([#185](https://github.com/mohanraj00/koodam/issues/185)).
+- Each pod of an App has its own token bucket, so a tenant can get one request from each pod at one time ([#428](https://github.com/mohanraj00/koodam/issues/428)). The request limit of a tenant comes from a read of the gateway count at an interval, so a tenant can go past it until each pod has the quota mark ([#429](https://github.com/mohanraj00/koodam/issues/429)).
+- The zone placement policy refuses a list of placements. A cluster with nodes of 2 zones also needs a control of the cluster ([#433](https://github.com/mohanraj00/koodam/issues/433)).
+- The chart does not deploy `spend-api`. Run its image in your own Deployment.
+- [docs/tracing.md](docs/tracing.md) is a design for v0.6. No code uses it yet ([#188](https://github.com/mohanraj00/koodam/issues/188)).
 
 ## v0.4.0 (2026-11-20)
 

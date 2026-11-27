@@ -29,11 +29,21 @@ Koodam adds Kubernetes resources for agent work, and an operator that reconciles
 
 ## Status and compatibility
 
-The current release is v0.4.0. The API is `v1alpha1`. The pre-release [v0.4.0-alpha.1](https://github.com/mohanraj00/koodam/releases/tag/v0.4.0-alpha.1) came before it. [CHANGELOG.md](CHANGELOG.md) lists the changes.
+The current release is v0.5.0. The API is `v1alpha1`. [CHANGELOG.md](CHANGELOG.md) lists the changes.
 
-The resources are `Agent`, `Workspace`, `Profile` and `TestKey`. `main` also has `App`, `AppVersion` and `TenantQuota`. They are off by default: set `apps.enabled=true` in the chart. [docs/apps.md](docs/apps.md) has the use.
+The resources are `Agent`, `Workspace`, `Profile`, `TestKey`, `SpendBudget` and `Hold`. `main` also has `App`, `AppVersion` and `TenantQuota`. They are off by default: set `apps.enabled=true` in the chart. [docs/apps.md](docs/apps.md) has the use.
 
-The v0.4 parts in `main`, and what proves each part:
+The v0.5 parts, and what proves each part:
+
+- **Period budgets.** A `SpendBudget` gives the Agent runs of a namespace a spend limit for each UTC day or month. A run that does not fit stays `Pending` until the budget has room. The envtest suite proves the ledger. [docs/spend-budgets.md](docs/spend-budgets.md) has the API.
+- **Spend API and operations page.** The binary `spend-api` serves the runs, the spend and the budgets over HTTP, and a read-only page. Each release publishes its image. The chart does not deploy it. The unit tests and [examples/operations-page](examples/operations-page/README.md) prove it.
+- **Metrics.** The controller exports Prometheus metrics, and the chart has an optional `ServiceMonitor`. A unit test compares [docs/metrics.md](docs/metrics.md) with the code.
+- **Tenants and zones.** With `apps.enabled`, a `TenantQuota` gives each tenant of an App a quota and a rate limit. An install with a zone refuses a call of a different zone with a typed reason. The kind test with 2 installs in one cluster proves this. [docs/tenants.md](docs/tenants.md) and [docs/zones.md](docs/zones.md) have the design.
+- **Key rotation.** A new App version rotates the gateway key with a drain time. A kind test shows no failed model call in a rotation of a 2-replica version.
+- **Incident controls.** A `Hold` with the action `Stop` blocks the gateway key of a workload first, and then it stops the pods. The owner of the workload cannot clear it. The envtest suite and a kind test prove this. [docs/holds.md](docs/holds.md) has the design.
+- **Gateway guard.** An optional hook of the bundled gateway records, marks or blocks known forms of instructions in untrusted content. It is off by default. It is a tripwire for known forms, not a defense.
+
+The v0.4 parts, and what proves each part:
 
 - **Evidence gate.** `spec.gate` of an AppVersion runs a gate Job with a pinned Nookku release. The version has the traffic weight 0 until the gate verdict is `pass`. The seam test and the kind test prove this. [docs/evidence-gate.md](docs/evidence-gate.md) has the design.
 - **Signed approval verifier.** The offline check of an `entelos.record/1` record, with the `human` kind rule, is a Go package with unit tests. No controller calls it yet, so no resource uses an approval record.
@@ -45,9 +55,11 @@ These limits are open:
 - The controller has no watch on NetworkPolicy, so it restores a deleted policy at the next reconcile ([#359](https://github.com/mohanraj00/koodam/issues/359)).
 - A valid signed approval record is not proof of the current selection ([#364](https://github.com/mohanraj00/koodam/issues/364)).
 - The gate and the signed claim check do not work together ([#354](https://github.com/mohanraj00/koodam/issues/354)).
-- The plugin preset for Nookku in the harness pod copies the pinned Nookku 0.6.0 files from a data image that you give with `--nookku-image`. No published data image exists yet, so with no flag an Agent with `nookku` fails and a Workspace reports `NoNookkuImage`. The proofs with a real harness are not done ([#83](https://github.com/mohanraj00/koodam/issues/83)).
+- The action `Quarantine` of a Hold is not active yet. A Hold with it shows the reason `Unsupported` ([#185](https://github.com/mohanraj00/koodam/issues/185)).
+- Each pod of an App has its own token bucket, and the request limit of a tenant comes from a read of the gateway count at an interval. Thus a tenant can get more than its rate or its request limit for a short time ([#428](https://github.com/mohanraj00/koodam/issues/428), [#429](https://github.com/mohanraj00/koodam/issues/429)).
+- The zone placement policy refuses a list of placements. It is not a full control of the node of a pod ([#433](https://github.com/mohanraj00/koodam/issues/433)).
 
-The `nookku` plugin field gives the pod a Nookku test folder: `/koodam/nookku-tests` in an Agent pod and `/home/dev/nookku-tests` in a Workspace pod. Koodam does not install Nookku. [docs/nookku-preset.md](docs/nookku-preset.md) has the rules.
+The `nookku` plugin field gives the pod a Nookku test folder: `/koodam/nookku-tests` in an Agent pod and `/home/dev/nookku-tests` in a Workspace pod. Each release publishes the Nookku data image with the pinned Nookku 0.6.0 files, and the chart value `nookku.image` gives its digest to the controller. Koodam does not load the plugin in a harness. [docs/nookku-preset.md](docs/nookku-preset.md) has the rules.
 
 The API version is `v1alpha1`. It can change between tags, and a change can break your manifests. Read the changelog before you upgrade.
 
@@ -170,12 +182,12 @@ The controller deletes a finished Job and its pod 24 h after the end (the chart 
 
 ## Install
 
-Each release tag `vX.Y.Z` publishes 3 things: the controller image `ghcr.io/mohanraj00/koodam`, the Helm chart `oci://ghcr.io/mohanraj00/charts/koodam` and the `koodam` CLI on the [GitHub release](https://github.com/mohanraj00/koodam/releases). The chart version, the image tag and the CLI version are the same.
+Each release tag `vX.Y.Z` publishes these things: the controller image `ghcr.io/mohanraj00/koodam`, the Workspace image `ghcr.io/mohanraj00/koodam-workspace`, the Nookku data image `ghcr.io/mohanraj00/koodam-nookku`, the spend-api image `ghcr.io/mohanraj00/koodam-spend-api`, the Helm chart `oci://ghcr.io/mohanraj00/charts/koodam` and the `koodam` CLI on the [GitHub release](https://github.com/mohanraj00/koodam/releases). The chart version, the image tags and the CLI version are the same.
 
 The chart installs the controller and the `Agent` CRD. It uses an existing LiteLLM gateway, or it installs its own:
 
 ```sh
-VERSION=0.4.0
+VERSION=0.5.0
 kubectl create namespace koodam-system
 kubectl -n koodam-system create secret generic koodam-gateway --from-file=master-key=./master-key
 helm install koodam oci://ghcr.io/mohanraj00/charts/koodam --version "$VERSION" -n koodam-system \
@@ -187,7 +199,7 @@ With an existing gateway, do not use `values-bundled.yaml`. Pass `--set gateway.
 The CLI is for linux and darwin, on amd64 and arm64. Check the archive against `checksums.txt` before you install it:
 
 ```sh
-VERSION=0.4.0
+VERSION=0.5.0
 OS=linux     # or darwin
 ARCH=amd64   # or arm64
 FILE="koodam_${VERSION}_${OS}_${ARCH}.tar.gz"

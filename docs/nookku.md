@@ -2,7 +2,7 @@
 
 Nookku tests an app agent. It runs as a plugin of the harness (Claude Code or Codex). Koodam gives the harness a Workspace pod on Kubernetes. This page gives the design of the 2 tools together, and the contracts between them.
 
-> Status: the span contract, the egress proxy and `koodam trace` are in v0.3.0. The test keys, the `nookku` plugin field and the test folder are in the pre-release v0.4.0-alpha.1. The Nookku install, the plugin pin and the runtime dependencies are not active yet.
+> Status: the span contract, the egress proxy and `koodam trace` are in v0.3.0. The test keys, the `nookku` plugin field and the test folder are in v0.4.0. The published Nookku data image with the pinned Nookku 0.6.0 files is in v0.5.0. Koodam does not load the plugin in a harness.
 
 ## The parts
 
@@ -46,7 +46,7 @@ flowchart LR
 
 The Nookku side (Nookku 0.5.6): the test folder from `NOOKKU_TESTS_DIR`, a kind proof of the HTTP tap, the gateway spend logs as a source, and `nookku trace --egress`. The proof of Nookku inside a Workspace comes in Nookku 0.6.0, after #142 and #143 merge.
 
-The `nookku` plugin field and the test folder (#83) are in `main`, not in v0.3.0. [nookku-preset.md](nookku-preset.md) has them.
+The `nookku` plugin field and the test folder (#83) are in v0.4.0 and later, not in v0.3.0. [nookku-preset.md](nookku-preset.md) has them.
 
 ## Contract 1: the span
 
@@ -176,7 +176,7 @@ These parts are in `main` and are not in v0.3.0.
 - **Test folder in a Workspace.** If a harness has the plugin `nookku`, the pod gets the empty folder `/etc/koodam/nookku`. The image makes `/home/dev/nookku-tests` on the home PVC, and a login shell exports `NOOKKU_TESTS_DIR`. The older steps in Contract 4 still work.
 - **Test folder in an Agent.** The Agent declares the PVC volume `nookku-tests`. The pod mounts it at `/koodam/nookku-tests` and sets `NOOKKU_TESTS_DIR`.
 
-**Not active yet:** the Nookku install, the plugin pin and the runtime dependencies. Koodam does not install Nookku or a plugin in the pod. You install them. These steps wait for owner approval.
+**Not active yet:** the load of the Nookku plugin in a harness. With the `nookku` plugin field, Koodam copies the pinned Nookku files into the pod ([nookku-preset.md](nookku-preset.md)). It does not install a plugin in a harness. You do that.
 
 ## Limits
 
