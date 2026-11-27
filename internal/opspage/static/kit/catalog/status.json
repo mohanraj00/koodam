@@ -1,6 +1,17 @@
 {
   "name": "status",
-  "description": "One state with short text. The application or service gives the state. Pending has a dashed border, Passed a solid border, Failed a double border and Unknown a dotted border. Each state shows its label as text.",
+  "description": "One state with short text. The application or service gives the state. Pending has warning colors and a dashed border. Passed has success colors and a solid border. Failed has a double border and Unknown has a dotted border. Each state shows its label as text.",
+  "parts": [
+    {"name": "authorship", "description": "Type and ID of the author, with a name when available.", "guardrail": true},
+    {"name": "copy", "description": "Button that copies text.", "guardrail": true},
+    {"name": "copy-status", "description": "Result of the copy operation.", "guardrail": true},
+    {"name": "details", "description": "Control and technical details of a refusal.", "guardrail": true},
+    {"name": "label", "description": "Label of the current state.", "guardrail": true},
+    {"name": "next", "description": "Next step after a refusal.", "guardrail": true},
+    {"name": "reason", "description": "Reason for a refusal or an edit error.", "guardrail": true},
+    {"name": "status", "description": "Group that shows the state and its details.", "guardrail": true},
+    {"name": "text", "description": "Text that describes the state.", "guardrail": true}
+  ],
   "data": {
     "state": {"type": "enum", "required": true, "values": ["pending", "passed", "failed", "unknown"]},
     "text": {"type": "text", "required": true, "min_length": 1, "size": "summary"}
@@ -8,7 +19,7 @@
   "states": ["+refused"],
   "tokens": [
     "color.text", "color.text-muted", "color.border", "space.1", "space.2", "space.3", "radius.2", "type.body",
-    "type.caption", "type.weight-strong"
+    "type.caption", "type.weight-strong", "color.warning", "color.on-warning", "color.success", "color.on-success"
   ],
   "accessibility": {"role": "group", "name": {"field": "text"}}
 }

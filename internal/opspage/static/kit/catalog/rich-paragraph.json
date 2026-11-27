@@ -1,6 +1,7 @@
 {
   "name": "rich-paragraph",
   "description": "A paragraph node of rich text: a list of inline nodes. It is also the content of a list item and of a quote.",
+  "parts": [],
   "data": {
     "content": {
       "type": "list",

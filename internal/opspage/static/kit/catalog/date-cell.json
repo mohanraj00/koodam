@@ -1,6 +1,7 @@
 {
   "name": "date-cell",
   "description": "A cell of a data grid with a date value as YYYY-MM-DD. A cell with no value is empty.",
+  "parts": [],
   "data": {
     "value": {"type": "date"},
     "read_only": {"type": "boolean", "label": "Read-only"}

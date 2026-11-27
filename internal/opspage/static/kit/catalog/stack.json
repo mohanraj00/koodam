@@ -3,6 +3,14 @@
   "kind": "primitive",
   "description": "A labeled group that puts its child elements in one column or one row.",
   "ai_content": false,
+  "parts": [
+    {"name": "copy", "description": "Button that copies text.", "guardrail": true},
+    {"name": "copy-status", "description": "Result of the copy operation.", "guardrail": true},
+    {"name": "details", "description": "Control and technical details of a refusal.", "guardrail": true},
+    {"name": "layout", "description": "Stack that arranges its children.", "guardrail": false},
+    {"name": "next", "description": "Next step after a refusal.", "guardrail": true},
+    {"name": "reason", "description": "Reason for a refusal or an edit error.", "guardrail": true}
+  ],
   "data": {
     "label": {"type": "text", "required": true, "min_length": 1, "size": "line"},
     "direction": {"type": "enum", "values": ["column", "row"]},

@@ -1,6 +1,7 @@
 {
   "name": "rich-heading",
   "description": "A heading node of rich text. The level is relative to the first heading level that page code sets. A heading cannot skip a level.",
+  "parts": [],
   "data": {
     "level": {"type": "integer", "required": true, "minimum": 1, "maximum": 3},
     "content": {

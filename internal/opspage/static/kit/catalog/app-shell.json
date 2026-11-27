@@ -1,0 +1,28 @@
+{
+  "name": "app-shell",
+  "description": "A top bar, a named side navigation area and a main area. Page code supplies content in the top, side and default slots. At 30rem or narrower, the navigation area moves into a modal drawer.",
+  "ai_content": false,
+  "parts": [
+    {"name": "copy", "description": "Button that copies text.", "guardrail": true},
+    {"name": "copy-status", "description": "Result of the copy operation.", "guardrail": true},
+    {"name": "details", "description": "Control and technical details of a refusal.", "guardrail": true},
+    {"name": "main", "description": "Main landmark and target of the skip link.", "guardrail": true},
+    {"name": "menu", "description": "Button that opens the navigation drawer on a narrow screen.", "guardrail": true},
+    {"name": "next", "description": "Next step after a refusal.", "guardrail": true},
+    {"name": "reason", "description": "Reason for a refusal.", "guardrail": true},
+    {"name": "side", "description": "Navigation landmark in the side bar or drawer.", "guardrail": true},
+    {"name": "skip", "description": "Link that moves focus to the main area.", "guardrail": true},
+    {"name": "top", "description": "Header landmark that contains the top slot and the menu button.", "guardrail": true}
+  ],
+  "data": {
+    "nav_label": {"type": "text", "required": true, "min_length": 1, "size": "line"},
+    "menu_label": {"type": "text", "required": true, "min_length": 1, "size": "short"},
+    "close_label": {"type": "text", "required": true, "min_length": 1, "size": "short"},
+    "skip_label": {"type": "text", "required": true, "min_length": 1, "size": "short"}
+  },
+  "states": ["+refused"],
+  "tokens": ["+color.surface", "+color.accent", "+color.focus", "+space.2", "+space.3", "+space.4", "+radius.2", "+motion.fast"],
+  "accessibility": {
+    "role": "navigation", "name": {"field": "nav_label"}, "keyboard": ["Tab", "Shift+Tab", "Enter", "Space", "Escape"]
+  }
+}

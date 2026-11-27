@@ -1,13 +1,32 @@
 // The catalog components: card, action button, editable form, form card, card grid, citation and excerpt.
 import { MuElement } from '../primitives/base.js';
+import { APPROVAL_MARK_CSS, approvalMark, badgeLabel } from '../primitives/badge.js';
 import { ReadMoreElement, READ_MORE_CSS } from '../primitives/read-more.js';
 import { define as definePrimitives, FIELDS } from '../primitives/index.js';
-import { ActionState } from '../actions/action.js';
-import { EDGE, LIFT, copyControl, el, icon, sheet } from '../render/dom.js';
+import { ActionState, bindingErrors, copyActionValue, isActionValue, isEditType } from '../actions/action.js';
+import { PATIENCE, patienceOf, ReceiptTimer } from './pending.js';
+import { COMPACT_CONTROL_CSS, CONTROL_DISPLAY, EDGE, FLOATING_TOOLTIP_CSS, LIFT, compactControls, controlIcon,
+  el, floatingTooltip, icon, setDisclosure, sheet } from '../render/dom.js';
+import { ACTION_RESULT_CSS, REFERENCE_CSS, showReference } from './receipt.js';
+import { sameRichTextValue } from '../render/rich-text.js';
 import { fillErrors } from '../render/validate.js';
-import { CONTRACTS } from '../render/registry.js';
+import { CONTRACTS, registeredTag } from '../render/registry.js';
 import { MuTable } from './table.js';
 export { MuTable } from './table.js';
+import { MuDialog, MuDrawer } from './dialog.js';
+export { MuDialog, MuDrawer } from './dialog.js';
+import { MuMenu, MuTooltip, MuToast } from './popovers.js';
+export { MuMenu, MuTooltip, MuToast } from './popovers.js';
+import { MuAppShell, MuBreadcrumbs, MuPagination, MuSteps } from './navigation.js';
+export { MuAppShell, MuBreadcrumbs, MuPagination, MuSteps } from './navigation.js';
+import { MuRunSteps, MuPlan } from './run-steps.js';
+export { MuRunSteps, MuPlan } from './run-steps.js';
+import { MuProgress } from './progress.js';
+export { MuProgress } from './progress.js';
+import { MuEmptyState, MuSkeleton, MuBadge, MuAvatar } from './page-states.js';
+export { MuEmptyState, MuSkeleton, MuBadge, MuAvatar } from './page-states.js';
+import { MuAccordion, MuTabs } from './panels.js';
+export { MuAccordion, MuTabs } from './panels.js';
 import { MuStatus } from './status.js';
 export { MuStatus } from './status.js';
 import { MuImage } from './image.js';
@@ -25,6 +44,9 @@ const FIELD_NAME = /^[a-z][a-z0-9]*(_[a-z0-9]+)*$/;
 const boundError = (name) => `data.sections: the read-only field ${name} does not show the bound value`;
 const DIFF_EMPTY_PART = 'No changes. You do not need to review this part.';
 const DIFF_EMPTY = 'No changes. You do not need to review these versions.';
+// The thread gives this context before it sets the fill. The bound actor still checks the author claim.
+export const CARD_MESSAGE_ACTOR = Symbol('card message actor');
+const UPDATE_CARD_DISPLAY = Symbol('update card display');
 const COLLAPSE_CSS = sheet(`
   .collapse-controls { display: flex; flex-wrap: wrap; gap: var(--mu-space-2); margin-block: var(--mu-space-2) var(--mu-space-3); }
   .collapse-toggle, .collapse-controls button {
@@ -35,7 +57,7 @@ const COLLAPSE_CSS = sheet(`
   .collapse-toggle { display: inline-flex; align-items: center; gap: var(--mu-space-2); flex: none; }
   /* The chevron points down on a collapsed card and up on an expanded card. */
   .collapse-toggle[aria-expanded="true"] .icon { transform: rotate(180deg); }
-  .card-header { display: flex; align-items: center; justify-content: space-between; gap: var(--mu-space-2); }
+  .card-header { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: var(--mu-space-2); }
   .card-header .title { min-width: 0; overflow-wrap: anywhere; }
   .card-body { display: flex; flex-direction: column; gap: var(--mu-space-2); }
   [hidden] { display: none !important; }
@@ -67,35 +89,42 @@ const CARD_CSS = sheet(`
   }
 `);
 const ACTION_CSS = sheet(`
-  :host { display: inline-flex; flex-direction: column; gap: var(--mu-space-1); }
+  :host { display: inline-flex; flex-direction: column; gap: var(--mu-space-1); max-inline-size: 100%; }
   button {
-    font: var(--mu-type-body); min-height: 2.75rem; min-width: 2.75rem; padding: var(--mu-space-2) var(--mu-space-3);
+    font: var(--mu-type-body); min-height: max(44px, 2.75rem); min-width: max(44px, 2.75rem); padding: var(--mu-space-2) var(--mu-space-3);
     border-radius: var(--mu-radius-2); border: 1px solid var(--mu-color-accent);
     background: var(--mu-color-accent); color: var(--mu-color-on-accent); cursor: pointer;
   }
-  .status { font: var(--mu-type-caption); color: var(--mu-color-text-muted); min-height: 1lh; }
+  .with-icon { display: inline-flex; align-items: center; justify-content: center; gap: var(--mu-space-2); }
+  .icon-control { display: flex; align-items: flex-start; }
+  .icon-control button {
+    min-inline-size: max(44px, 2.75rem); min-block-size: max(44px, 2.75rem); padding: var(--mu-space-2);
+  }
+  .status { display: block; font: var(--mu-type-caption); color: var(--mu-color-text-muted); min-height: 1lh; overflow-wrap: anywhere; }
+  .status.done { color: var(--mu-color-success); }
   .status.error { color: var(--mu-color-danger); }
-  .reference { display: block; }
-  .copy-area[hidden] { display: none; }
+  .result { display: flex; flex-direction: column; gap: var(--mu-space-1); }
   .copy { border-radius: var(--mu-radius-2); }
   .step { display: flex; flex-wrap: wrap; align-items: center; gap: var(--mu-space-2); }
-  .step p { flex-basis: 100%; margin: 0; }
+  .step p { flex-basis: 100%; min-inline-size: 0; margin: 0; overflow-wrap: anywhere; }
   .step button[part="cancel"] { background: transparent; color: var(--mu-color-accent); }
   @media (forced-colors: active) {
     button { background: ButtonFace; color: ButtonText; border-color: ButtonText; forced-color-adjust: none; }
-    .status, .status.error { color: CanvasText; }
+    .step button[part="cancel"] { background: ButtonFace; color: ButtonText; }
+    .status, .status.done, .status.error { color: CanvasText; }
   }
 `);
 
 // The filled slots of a fill, as text (catalog/schema/README.md). The locator opens only after a person clicks
 // the button. The element first sends a cancelable mu-open event, so that the application can open the locator.
-export function provenance(slots) {
+export function provenance(slots, authorLine) {
   const { authorship, citation } = slots ?? {};
   if (!authorship && !citation) return null;
   const parts = [];
   if (authorship) {
     const name = authorship.name ? ` (${authorship.name})` : '';
-    parts.push(el('p', { class: 'muted', part: 'authorship' }, `Author: ${authorship.type} ${authorship.id}${name}`));
+    parts.push(el('p', { class: 'muted', part: 'authorship' },
+      ...(authorLine ?? [`Author: ${authorship.type} ${authorship.id}${name}`])));
   }
   if (citation) {
     const open = el('button', { type: 'button', part: 'open', 'aria-label': `Open source: ${citation.source}` }, 'Open source');
@@ -104,6 +133,17 @@ export function provenance(slots) {
       el('p', { class: 'muted', part: 'locator' }, citation.locator), el('div', {}, open));
   }
   return el('div', { class: 'provenance', part: 'provenance' }, ...parts);
+}
+
+function cardAuthorLine({ type, id, name }, messageActor) {
+  const identity = `${type}, ${id}`;
+  if (type === messageActor?.type && id === messageActor.id) {
+    const fullName = name ?? messageActor.name;
+    const fullLine = fullName ? `Author: ${fullName} (${identity})` : `Author: ${identity}`;
+    return [el('span', { 'aria-hidden': 'true' }, 'Author: same as the message'),
+      el('span', { class: 'full-author' }, fullLine)];
+  }
+  return name ? ['Author: ', el('span', { class: 'author-name' }, name), ` (${identity})`] : [`Author: ${identity}`];
 }
 
 // The validator accepts only an https: locator with no user name. Check it again before the browser opens it.
@@ -120,9 +160,10 @@ function openLocator(source, locator) {
 }
 
 const STALE = 'Saved the values from before your last edit. Save again to send the edit.';
-
 // The text of each state. A pending action never shows as done.
 const STATUS = { default: '', disabled: '', confirm: '', pending: 'Pending', done: 'Done', error: 'Not done' };
+const APPROVAL_CONTROL = Symbol('approval control');
+const BLOCK_ACTION = Symbol('block action');
 
 // Shared code for a component with one action. The application binds the tool with the action property
 // and gives the receipt with receipt(). The element sends a mu-action event with the request.
@@ -133,9 +174,12 @@ class ActionElement extends MuElement {
   // The area of the confirm step, and the step while it shows.
   #area = null;
   #asking = null;
-  // The reference that the copy control copies, and the area of the control.
-  #reference = '';
-  #copy = null;
+  #reference = null;
+  // The exits of a pending action that shows now: queued or stalled. The timer of a try with no receipt.
+  #exit = '';
+  #timer = new ReceiptTimer();
+  #patience = PATIENCE;
+  #blocked = false;
 
   // The state of the action can only be read. Only bind(), start() and receipt() change it.
   get action() {
@@ -143,6 +187,9 @@ class ActionElement extends MuElement {
   }
 
   set action(binding) {
+    if (this.constructor.component !== 'action-button' && binding && (Object.hasOwn(binding, 'icon') || Object.hasOwn(binding, 'display'))) {
+      throw new TypeError('action: only an action button accepts icon and display');
+    }
     const errors = this.#action.bind(binding);
     if (errors.length) throw new TypeError('action: ' + errors.join('; '));
     this.#close();
@@ -158,6 +205,42 @@ class ActionElement extends MuElement {
     if (accepted) this.#update();
     return accepted;
   }
+
+  noReceipt(id) {
+    if (this.#action.noReceipt(id)) this.#update();
+  }
+
+  // The time in milliseconds that a try waits for its receipt. After that time the action is stalled, and the
+  // element offers a retry and a cancel. The action stays pending, and a later receipt is still valid.
+  get patience() {
+    return this.#patience;
+  }
+
+  set patience(value) {
+    this.#patience = patienceOf(value);
+  }
+
+  // Sets the detail of the pending action: { key, wait, tries, message }, where wait is sent, queued or stalled
+  // (docs/contracts/offline-queue.md). The offline queue calls it. The state stays pending.
+  hold(update) {
+    const before = this.#action.wait + this.#action.message;
+    const accepted = this.#action.hold(update);
+    // The same detail again changes nothing, so the status does not say its text a second time.
+    if (accepted && this.#action.wait + this.#action.message !== before) this.#update();
+    return accepted;
+  }
+
+  // Cancels the pending action with this key, if it waits for a connection or got no receipt. The owner of the
+  // request calls it, for example the offline queue. Returns true if the action is not pending now.
+  cancel(key) {
+    if (!key || key !== this.#action.key || !this.#action.cancel()) return false;
+    this.canceled();
+    this.#update();
+    return true;
+  }
+
+  // A subclass can forget the values of the canceled request.
+  canceled() {}
 
   // The name of the data field that shows the label of the action.
   static labelField = 'label';
@@ -194,42 +277,39 @@ class ActionElement extends MuElement {
     return data.disabled ? 'disabled' : this.#action.state;
   }
 
-  // Returns the area of the confirm step. The subclass puts it in the shadow root.
+  // Returns the confirm area and the receipt text. Each subclass puts them in its shadow root.
   attach(control, status) {
     this.#control = control;
     this.#status = status;
     this.#asking = null;
-    this.#reference = '';
-    this.#copy = el('span', { class: 'copy-area' });
-    this.#copy.hidden = true;
+    this.#reference = el('span', { class: 'reference-row' });
     this.#area = el('div', { class: 'confirm-area' });
+    this.#exit = '';
     this.#update();
-    return this.#area;
-  }
-
-  // The status is in the shadow root now, so the copy control of a reference can go after it.
-  rendered() {
-    this.#update();
+    return [this.#area, el('div', { class: 'result' }, status, this.#reference)];
   }
 
   // The started function runs only for an accepted request, before the element sends the event.
   // If the binding has a confirm step, the element shows it first and sends the action only after a person confirms.
   send(extra, started, edits) {
-    if (this.dataset.state === 'refused' || !this.fill || this.#asking) return;
+    if (this.dataset.state === 'refused' || !this.fill || this.#asking || this.#blocked) return;
+    const state = this.#action.state;
+    if (state !== 'default' && state !== 'error') return;
     const confirm = this.#action.confirm;
     if (!confirm) {
       this.#start(extra, started, false, edits);
       return;
     }
-    const state = this.#action.state;
-    if (state !== 'default' && state !== 'error') return;
     const cancel = el('button', { type: 'button', part: 'cancel' }, 'Cancel');
     const accept = el('button', { type: 'button', part: 'accept' }, confirm.label);
+    const nameControl = this[APPROVAL_CONTROL]?.nameControl;
+    nameControl?.(cancel, 'Cancel');
+    nameControl?.(accept, confirm.label);
     const step = el('div', { class: 'step', role: 'group', 'aria-label': confirm.message, part: 'confirm' },
       el('p', {}, confirm.message), cancel, accept);
     cancel.addEventListener('click', () => this.#close());
     accept.addEventListener('click', () => {
-      this.#close();
+      this.#close(false);
       this.#start(extra, started, true, edits);
     });
     step.addEventListener('keydown', (event) => {
@@ -245,82 +325,450 @@ class ActionElement extends MuElement {
   }
 
   // Closes the confirm step. If the focus was in the step, it goes back to the action control.
-  #close() {
+  #close(update = true) {
     if (!this.#asking) return;
     const focused = this.#asking.contains(this.shadowRoot?.activeElement);
     this.#asking = null;
     this.#area.replaceChildren();
-    this.#update();
+    if (update) this.#update();
     if (focused) this.#control.focus();
   }
 
   #start(extra, started, confirmed, edits) {
     const request = this.#action.start(extra, confirmed, edits);
-    if (!request) return;
+    if (!request) {
+      this.#update();
+      return;
+    }
     started?.(request);
     this.#update();
     this.dispatchEvent(new CustomEvent('mu-action', { bubbles: true, composed: true, detail: request }));
+  }
+
+  // A new try of a stalled action: the same key and a new id.
+  #retry() {
+    const request = this.#action.retry();
+    if (!request) return;
+    this.#update();
+    this.dispatchEvent(new CustomEvent('mu-action', { bubbles: true, composed: true, detail: request }));
+  }
+
+  // A listener that owns the request, for example the offline queue, cancels the action itself or prevents the
+  // event. With no such listener, the element cancels the action.
+  #cancel() {
+    const key = this.#action.key;
+    if (!key) return;
+    const event = new CustomEvent('mu-action-cancel', { bubbles: true, composed: true, cancelable: true, detail: Object.freeze({ key }) });
+    if (this.dispatchEvent(event)) this.cancel(key);
+  }
+
+  // The exits of a pending action: a cancel while it waits for a connection, a retry and a cancel after a try
+  // with no receipt. The group stays the same node while the detail stays the same, so the focus stays.
+  #exits(wait) {
+    const kind = wait === 'queued' || wait === 'stalled' ? wait : '';
+    if (kind === this.#exit) return;
+    const focused = Boolean(this.#exit) && this.#area.contains(this.shadowRoot.activeElement);
+    this.#exit = kind;
+    if (this.#asking) return;
+    if (!kind) {
+      this.#area.replaceChildren();
+      if (focused) this.#control.focus();
+      return;
+    }
+    const name = this.fill.data[this.constructor.labelField];
+    const retry = kind === 'stalled' ? el('button', { type: 'button', part: 'retry', 'aria-label': `Retry ${name}` }, 'Retry') : null;
+    const cancel = el('button', { type: 'button', part: 'cancel', 'aria-label': `Cancel ${name}` }, 'Cancel');
+    const nameControl = this[APPROVAL_CONTROL]?.nameControl;
+    if (retry) nameControl?.(retry, 'Retry ' + name);
+    nameControl?.(cancel, 'Cancel ' + name);
+    retry?.addEventListener('click', () => this.#retry());
+    cancel.addEventListener('click', () => this.#cancel());
+    this.#area.replaceChildren(el('div', { class: 'step', role: 'group', 'aria-label': `Pending: ${name}`, part: 'exit' }, retry, cancel));
+    if (focused) (retry ?? cancel).focus();
   }
 
   #update() {
     if (!this.fill || !this.#control) return;
     const state = this.#asking ? 'confirm' : this.#action.state;
     this.dataset.state = state;
-    this.#control.setAttribute('aria-disabled', state === 'default' || state === 'error' ? 'false' : 'true');
+    // The detail of a pending action: sent, queued or stalled. A stalled or queued action has an exit.
+    const wait = this.#action.wait;
+    if (wait) this.dataset.wait = wait;
+    else delete this.dataset.wait;
+    this.#exits(wait);
+    this.#timer.watch(wait, this.#patience, () => this.hold({ key: this.#action.key, wait: 'stalled' }));
+    this.#updateControl(state);
+    const words = [STATUS[state], state === 'confirm' ? '' : this.#action.message].filter(Boolean).join(': ');
+    if (this.#status) {
+      this.#status.className = 'status ' + state;
+      this.#status.textContent = words;
+    }
+    showReference(this.#reference, state === 'confirm' ? '' : this.#action.reference, this[APPROVAL_CONTROL]?.nameControl);
+    this.updated(state, words);
+  }
+
+  [BLOCK_ACTION](blocked) {
+    this.#blocked = blocked;
+    this.#updateControl(this.dataset.state);
+  }
+
+  #updateControl(state) {
+    if (!this.#control) return;
+    const enabled = !this.#blocked && (state === 'default' || state === 'error');
+    this.#control.dataset.state = this.#blocked ? 'disabled' : state;
+    this.#control.setAttribute('aria-disabled', enabled ? 'false' : 'true');
     // A pending action is busy until its receipt comes back. The control accepts no second press.
     if (state === 'pending') this.#control.setAttribute('aria-busy', 'true');
     else this.#control.removeAttribute('aria-busy');
-    const words = [STATUS[state], state === 'confirm' ? '' : this.#action.message].filter(Boolean).join(': ');
-    this.#status.className = 'status' + (state === 'error' ? ' error' : '');
-    // The reference comes from the API of the application. It shows only as text.
-    const reference = state === 'confirm' ? '' : this.#action.reference;
-    this.#status.replaceChildren(words, reference ? el('span', { class: 'reference', part: 'reference' }, 'Reference: ' + reference) : '');
-    // The copy control of the reference comes after the status and not in it, because the status is a live
-    // region for text. The control stays the same node while the reference stays the same.
-    if (reference !== this.#reference) {
-      this.#reference = reference;
-      this.#copy.replaceChildren(...(reference ? [copyControl(reference, 'reference')] : []));
-      this.#copy.hidden = !reference;
-    }
-    if (this.#status.parentNode && this.#copy.previousSibling !== this.#status) this.#status.after(this.#copy);
-    this.updated(state);
   }
 }
 
 export class MuActionButton extends ActionElement {
   static component = 'action-button';
   static focus = true;
-  static styles = [ACTION_CSS];
+  static styles = [ACTION_CSS, REFERENCE_CSS, ACTION_RESULT_CSS, FLOATING_TOOLTIP_CSS];
+  #graphic = null;
+  #doneGraphic = null;
+  #dismissTooltip = null;
 
-  // The description can name the target of the bound arguments. Thus the application gives it, and a fill
-  // with a different description is refused. A binding with no description accepts no fill with a description.
+  disconnectedCallback() {
+    this.#dismissTooltip?.();
+  }
+
+  refuse(errors) {
+    this.#dismissTooltip?.();
+    this.#dismissTooltip = null;
+    super.refuse(errors);
+  }
+
+  // The application gives the description, icon and display of the bound action. The fill must agree with the binding.
   check(data) {
     const errors = super.check(data);
     if (errors.length) return errors;
-    const description = this.action.description;
-    if (description !== null && (data.description ?? '') !== description) {
+    const { description, icon, display } = this.action;
+    if (description === null) return [];
+    if ((data.description ?? '') !== description) {
       return ['data.description: the description is not the description of the application'];
     }
+    if (data.icon !== icon) return ['data.icon: the icon is not the icon of the application'];
+    if (data.display !== display) return ['data.display: the display is not the display of the application'];
     return [];
   }
 
   render(data) {
-    const status = el('span', { class: 'status', role: 'status', 'aria-live': 'polite', part: 'status' });
-    const button = el('button', { type: 'button', part: 'button' }, data.label);
+    this.#dismissTooltip?.();
+    this.#dismissTooltip = null;
+    const approval = this[APPROVAL_CONTROL];
+    const status = approval ? null : el('span', { class: 'status', role: 'status', 'aria-live': 'polite', part: 'status' });
+    const display = data.icon ? data.display ?? 'text' : 'text';
+    const iconOnly = display === 'icon';
+    this.#graphic = display === 'text' ? null : icon(data.icon);
+    this.#doneGraphic = this.#graphic ? icon('check') : null;
+    const button = el('button', { type: 'button', part: 'button', class: this.#graphic ? 'with-icon' : null,
+      'aria-label': iconOnly ? data.label : null }, this.#graphic, iconOnly ? null : data.label);
+    approval?.nameControl(button, data.label);
     button.addEventListener('click', () => this.send());
-    const area = this.attach(button, status);
-    return [button, data.description ? el('span', { class: 'muted' }, data.description) : null, area, status];
+    return [approval?.title, iconOnly ? this.#withTooltip(button, data.label) : button,
+      data.description ? el('span', { class: 'muted' }, data.description) : null, ...this.attach(button, status)];
+  }
+
+  updated(state, words) {
+    this[APPROVAL_CONTROL]?.changed(state, words);
+    if (!this.#graphic) return;
+    if (state === 'done') this.#graphic.replaceWith(this.#doneGraphic);
+    else this.#doneGraphic.replaceWith(this.#graphic);
+  }
+
+  #withTooltip(button, label) {
+    // The button already has this name. The tooltip gives the same text to a person who can see it.
+    const tooltip = el('span', { part: 'tooltip', 'aria-hidden': 'true' }, label);
+    const control = el('div', { class: 'icon-control' }, button);
+    const layer = floatingTooltip(control, tooltip);
+    const shown = { hover: false, focus: false };
+    const show = (source, value) => {
+      shown[source] = value;
+      if (shown.hover || shown.focus) layer.show(button);
+      else layer.hide();
+    };
+    const dismiss = () => {
+      shown.hover = false;
+      show('focus', false);
+    };
+    this.#dismissTooltip = dismiss;
+    control.addEventListener('pointerenter', (event) => {
+      if (event.pointerType !== 'touch') show('hover', true);
+    });
+    control.addEventListener('pointerleave', () => show('hover', false));
+    button.addEventListener('focus', () => show('focus', true));
+    button.addEventListener('blur', () => show('focus', false));
+    button.addEventListener('keydown', (event) => {
+      if (event.key !== 'Escape' || tooltip.hidden) return;
+      event.preventDefault();
+      event.stopPropagation();
+      dismiss();
+    });
+    return control;
+  }
+}
+
+const DECISIONS = Object.freeze({
+  approve: { label: 'Approve', confirm: 'Confirm approval', result: 'Approved', state: 'approved' },
+  reject: { label: 'Reject', confirm: 'Confirm rejection', result: 'Rejected', state: 'rejected' },
+});
+
+function approvalAuthor({ type, id, name }) {
+  return 'Author: ' + (name ? `${name} (${type}, ${id})` : `${type}, ${id}`);
+}
+
+export class MuApprovalQueue extends MuElement {
+  static component = 'approval-queue';
+  static styles = [APPROVAL_MARK_CSS, sheet(`
+    :host { display: block; min-inline-size: 0; color: var(--mu-color-text); font: var(--mu-type-body); overflow-wrap: anywhere; }
+    p, ul { margin: 0; }
+    [part="label"], [part="title"] { font-weight: var(--mu-type-weight-strong); }
+    [part="authorship"], [part="state"], .bound-context { font: var(--mu-type-caption); }
+    [part="authorship"] { margin-block-end: var(--mu-space-1); }
+    ul { list-style: none; padding: 0; }
+    li { border-block-start: 1px solid var(--mu-color-border); padding: var(--mu-space-2); }
+    [part="state"] { margin-block: var(--mu-space-1); }
+    [part="state"] > [data-badge] { display: inline-block; max-inline-size: 100%; box-sizing: border-box; }
+    .decisions { display: flex; flex-wrap: wrap; align-items: start; gap: var(--mu-space-2); }
+    [part="announcement"] {
+      position: absolute; inline-size: 1px; block-size: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap;
+    }
+    @media (forced-colors: active) {
+      li { border-color: CanvasText; }
+    }
+  `)];
+
+  #view = null;
+  #rows = new Map();
+
+  // Bind only proposals that the application accepts. Each control uses a separate action binding.
+  bind(id, decisions) {
+    const entry = this.#rows.get(id);
+    if (!this.fill || !entry || entry.bound) throw new TypeError('bind: give the id of an item with no binding');
+    const bindings = Object.entries(DECISIONS).map(([kind, { label }]) => {
+      const binding = { ...decisions?.[kind], label };
+      if (!binding.confirm) throw new TypeError('bind: give a confirm step for ' + label);
+      if (binding.icon !== undefined || binding.display !== undefined || binding.description !== undefined) {
+        throw new TypeError('bind: the queue gives the text of the control');
+      }
+      const errors = bindingErrors(binding);
+      if (errors.length) throw new TypeError('bind: ' + errors.join('; '));
+      return [kind, binding];
+    });
+    for (const [kind, binding] of bindings) entry.actions[kind].action = binding;
+    entry.bound = this.#snapshot(entry.proposal);
+    entry.row.dataset.state = 'default';
+    entry.state.replaceChildren(badgeLabel('Awaiting decision'));
+  }
+
+  // Each action checks the id and key of its own request.
+  receipt(value) {
+    for (const { actions } of this.#rows.values()) {
+      if (actions.approve.receipt(value) || actions.reject.receipt(value)) return true;
+    }
+    return false;
+  }
+
+  state({ items }) {
+    if (items.length || [...this.#rows.values()].some(({ row }) => row.dataset.state === 'pending')) return 'default';
+    return 'empty';
+  }
+
+  refuse(errors) {
+    // Keep decisions that were pending at the first refusal until the next valid fill.
+    if (this.fill) {
+      for (const [id, entry] of this.#rows) {
+        if (entry.row.dataset.state === 'pending') continue;
+        this.#remove(entry);
+        this.#rows.delete(id);
+      }
+    }
+    if (this.#rows.size === 0) this.#view = null;
+    super.refuse(errors);
+    const announcement = this.#view?.announcement;
+    if (this.dataset.state === 'refused' && announcement && !announcement.parentNode) {
+      this.shadowRoot.append(announcement);
+    }
+  }
+
+  render({ label, items }) {
+    this.#view ??= {
+      label: el('p', { part: 'label' }),
+      byline: el('p', { part: 'authorship' }),
+      list: el('ul', { part: 'list', role: 'list' }),
+      empty: el('p', { part: 'empty' }, 'No items need a decision. Check again later.'),
+      announcement: el('div', { part: 'announcement', role: 'status', 'aria-live': 'polite' }),
+    };
+    const view = this.#view;
+    const author = approvalAuthor(this.actor);
+    if (view.byline.textContent !== author) view.byline.textContent = author;
+    if (view.label.textContent !== label) {
+      view.label.textContent = label;
+      view.list.setAttribute('aria-label', label);
+    }
+    const next = new Map();
+    for (const item of items) {
+      const entry = this.#rows.get(item.id) ?? this.#newItem();
+      entry.proposal = { ...item, label };
+      this.#showProposal(entry);
+      next.set(item.id, entry);
+    }
+    for (const [id, entry] of this.#rows) {
+      if (next.has(id)) continue;
+      if (entry.row.dataset.state === 'pending') {
+        entry.proposal = { ...entry.proposal, label };
+        this.#showProposal(entry);
+        next.set(id, entry);
+      } else {
+        this.#remove(entry);
+      }
+    }
+    view.empty.hidden = next.size > 0;
+    const active = this.shadowRoot.activeElement;
+    let before = null;
+    for (const { row } of [...next.values()].reverse()) {
+      // Move other rows around the focused row to keep focus in its action.
+      if ((!active || !row.contains(active)) && (row.parentNode !== view.list || row.nextElementSibling !== before)) {
+        view.list.insertBefore(row, before);
+      }
+      before = row;
+    }
+    this.#rows = next;
+    return view.list.parentNode === this.shadowRoot ? null : [view.label, view.byline, view.list, view.empty, view.announcement];
+  }
+
+  #snapshot({ label, title, summary }) {
+    // Add each new proposal value that the queue shows to this snapshot.
+    return { label, title, summary, actor: this.actor };
+  }
+
+  #showProposal(entry) {
+    const { bound, context } = entry;
+    const current = this.#snapshot(entry.proposal);
+    if (entry.row.dataset.state === 'pending') {
+      // The list header shows the current label and actor. Keep the bound context on this row.
+      const author = approvalAuthor(bound.actor);
+      const words = [
+        bound.label !== current.label ? bound.label : '',
+        author !== approvalAuthor(current.actor) ? author : '',
+      ].filter(Boolean).join('. ');
+      if (context.textContent !== words) context.textContent = words;
+      context.hidden = !words;
+      return;
+    }
+    if (!context.hidden) {
+      context.hidden = true;
+      context.textContent = '';
+    }
+    const { title, summary } = current;
+    if (bound && JSON.stringify(bound) !== JSON.stringify(current)) {
+      this.#unbind(entry);
+    }
+    if (entry.title.textContent !== title) {
+      entry.title.textContent = title;
+      for (const name of entry.names) name.textContent = title;
+    }
+    if (entry.summary.textContent !== summary) entry.summary.textContent = summary;
+  }
+
+  #newItem() {
+    const context = el('p', { class: 'bound-context' });
+    context.hidden = true;
+    const title = el('p', { part: 'title' });
+    const summary = el('p', { part: 'summary' });
+    const state = el('p', { part: 'state' }, badgeLabel('Unavailable'));
+    const controls = el('div', { class: 'decisions' });
+    const row = el('li', { part: 'item', 'data-state': 'disabled' }, context, title, summary, state, controls);
+    const entry = { row, context, title, summary, state, actions: {}, views: {}, names: [], bound: null, proposal: null };
+    for (const [kind, { label }] of Object.entries(DECISIONS)) {
+      const child = document.createElement('mu-action-button');
+      child.setAttribute('exportparts', 'button: action-button-button, accept: action-button-accept, cancel: action-button-cancel, confirm: action-button-confirm, copy: action-button-copy, copy-status: action-button-copy-status, exit: action-button-exit, reference: action-button-reference, retry: action-button-retry');
+      const name = el('span', { id: 'proposal-title' });
+      name.hidden = true;
+      child[APPROVAL_CONTROL] = {
+        title: name,
+        // Start the name with the visible button label, then add the proposal title.
+        nameControl(control, label) {
+          control.id = 'decision-' + control.getAttribute('part');
+          control.setAttribute('aria-label', label + ':');
+          control.setAttribute('aria-labelledby', control.id + ' ' + name.id);
+        },
+        changed: (state, words) => this.#changed(entry, kind, state, words),
+      };
+      child.fill = { component: 'action-button', version: '0.1.0', data: { label } };
+      entry.actions[kind] = child;
+      entry.names.push(name);
+      controls.append(child);
+    }
+    return entry;
+  }
+
+  #changed(entry, kind, state, words) {
+    entry.views[kind] = { state, words };
+    if (!entry.bound) return;
+    const other = kind === 'approve' ? 'reject' : 'approve';
+    entry.actions[other][BLOCK_ACTION](state === 'confirm' || state === 'pending' || state === 'done');
+    if (state === 'default' && !words && entry.views[other].state === 'error') {
+      ({ state, words } = entry.views[other]);
+    }
+    if (state === 'confirm') words = DECISIONS[kind].confirm;
+    if (state === 'done') words = DECISIONS[kind].result + words.slice(STATUS.done.length);
+    if (!words) words = 'Awaiting decision';
+    if (entry.row.dataset.state === state && entry.state.textContent === words) return;
+    const resolved = entry.row.dataset.state === 'pending' && state !== 'pending';
+    entry.row.dataset.state = state;
+    entry.state.replaceChildren(state === 'done' ? approvalMark({ state: DECISIONS[kind].state }, words)
+      : badgeLabel(words, state === 'error' ? 'danger' : undefined));
+    const { announcement } = this.#view;
+    // A receipt can come back in a refusal event listener, before refuse() puts the status back.
+    if (this.dataset.state === 'refused' && !announcement.parentNode) this.shadowRoot.append(announcement);
+    announcement.textContent = `${entry.bound.title}: ${words}`;
+    if (resolved) this.#showProposal(entry);
+  }
+
+  #unbind(entry) {
+    if (!entry.bound) return;
+    entry.bound = null;
+    for (const action of Object.values(entry.actions)) {
+      action.action = null;
+      action[BLOCK_ACTION](false);
+    }
+    entry.row.dataset.state = 'disabled';
+    entry.state.replaceChildren(badgeLabel('Unavailable'));
+  }
+
+  #remove(entry) {
+    this.#unbind(entry);
+    entry.row.remove();
   }
 }
 
 export class MuCard extends MuElement {
   static component = 'card';
-  static styles = [CARD_CSS, COLLAPSE_CSS];
+  static observedAttributes = [CONTROL_DISPLAY];
+  static styles = [CARD_CSS, COLLAPSE_CSS, COMPACT_CONTROL_CSS, FLOATING_TOOLTIP_CSS, sheet(`
+    .thread-card { background: var(--mu-color-surface-subtle); box-shadow: none; }
+    [part="facts"] { align-items: baseline; }
+    .author-name { color: var(--mu-color-text); }
+    .full-author { position: absolute; width: 1px; height: 1px; overflow: hidden;
+      clip-path: inset(50%); white-space: nowrap; }
+    @media (forced-colors: none) {
+      .thread-card { border-color: transparent; }
+    }
+    @media (forced-colors: active) {
+      .author-name { color: CanvasText; }
+    }
+  `)];
 
   #collapsed = false;
   #hasRendered = false;
   #changed = false;
   #toggle = null;
+  #toggleLabel;
+  #controls;
   #body = null;
   #summary = null;
   #observer = new MutationObserver(() => this.#watchActions());
@@ -332,11 +780,27 @@ export class MuCard extends MuElement {
   }
 
   connectedCallback() {
+    this[UPDATE_CARD_DISPLAY]();
     this.#watchActions();
   }
 
   disconnectedCallback() {
     this.#observer.disconnect();
+    this.#controls?.dismiss();
+  }
+
+  refuse(errors) {
+    this.#controls?.dismiss();
+    this.#controls = null;
+    super.refuse(errors);
+  }
+
+  attributeChangedCallback() {
+    this[UPDATE_CARD_DISPLAY]();
+  }
+
+  [UPDATE_CARD_DISPLAY]() {
+    this.#controls?.render();
   }
 
   get collapsed() {
@@ -387,10 +851,10 @@ export class MuCard extends MuElement {
 
   #sync() {
     if (!this.#toggle) return;
-    this.#toggle.setAttribute('aria-expanded', String(!this.#collapsed));
+    setDisclosure(this.#toggle, this.#body, !this.#collapsed);
     this.#toggle.setAttribute('aria-label', `${this.#collapsed ? 'Expand' : 'Collapse'} ${this.fill.data.title}`);
-    this.#toggle.firstChild.textContent = this.#collapsed ? 'Expand' : 'Collapse';
-    this.#body.hidden = this.#collapsed;
+    this.#toggleLabel.textContent = this.#collapsed ? 'Expand' : 'Collapse';
+    this.#controls.refresh();
     if (this.#summary) this.#summary.hidden = !this.#collapsed;
   }
 
@@ -404,6 +868,8 @@ export class MuCard extends MuElement {
 
   render(data) {
     this.#observer.disconnect();
+    this.#controls?.dismiss();
+    this.#controls = null;
     const before = this.#collapsed;
     this.#collapsed = Boolean(data.collapsible && data.collapsed && !this.#mustStayOpen());
     this.#toggle = null;
@@ -420,19 +886,24 @@ export class MuCard extends MuElement {
     actions.append(slot);
     const title = el('p', { class: 'title', part: 'title' }, data.title);
     const status = data.status ? el('p', { class: 'muted', part: 'status', role: 'status' }, data.status) : null;
-    const attribution = provenance(this.fill.slots);
+    const messageActor = this[CARD_MESSAGE_ACTOR];
+    const attribution = provenance(this.fill.slots, cardAuthorLine(this.fill.slots.authorship, messageActor));
     const content = [data.summary ? el('p', {}, data.summary) : null, date, facts];
     let parts = [title, status, ...content, attribution, actions];
     if (data.collapsible) {
       this.#body = el('div', { class: 'card-body', part: 'body', id: 'card-body' }, ...content, actions);
       this.#summary = data.collapsed_summary ? el('p', { part: 'collapsed-summary' }, data.collapsed_summary) : null;
-      this.#toggle = el('button', { type: 'button', class: 'collapse-toggle', part: 'toggle', 'aria-controls': 'card-body' },
-        el('span', {}), icon('chevron'));
+      this.#toggle = el('button', { type: 'button', class: 'collapse-toggle', part: 'toggle', 'aria-controls': 'card-body' });
+      this.#toggleLabel = el('span');
+      const header = el('header', { class: 'card-header' }, title, this.#toggle);
+      const tooltip = el('span', { part: 'tooltip', 'aria-hidden': 'true' });
+      this.#controls = compactControls(this, header, tooltip, [{ button: this.#toggle, label: this.#toggleLabel,
+        graphic: icon('chevron'), keepIcon: true }]);
       this.#toggle.addEventListener('click', () => { this.collapsed = !this.#collapsed; });
       this.#sync();
-      parts = [el('header', { class: 'card-header' }, title, this.#toggle), status, this.#summary, attribution, this.#body];
+      parts = [header, status, this.#summary, attribution, this.#body];
     }
-    const article = el('article', { 'aria-label': data.title, part: 'card' }, ...parts);
+    const article = el('article', { 'aria-label': data.title, part: 'card', class: messageActor ? 'thread-card' : null }, ...parts);
     this.#changed = this.#hasRendered && before !== this.#collapsed;
     this.#hasRendered = true;
     return [article];
@@ -448,7 +919,8 @@ export class MuCard extends MuElement {
 
 export class MuCardGrid extends MuElement {
   static component = 'card-grid';
-  static styles = [COLLAPSE_CSS, sheet(`
+  static observedAttributes = [CONTROL_DISPLAY];
+  static styles = [COLLAPSE_CSS, COMPACT_CONTROL_CSS, FLOATING_TOOLTIP_CSS, sheet(`
     :host { display: block; }
     ul { list-style: none; margin: 0; padding: 0; display: grid; gap: var(--mu-space-4);
       grid-template-columns: repeat(auto-fill, minmax(min(100%, var(--mu-size-column-medium)), 1fr)); }
@@ -456,52 +928,108 @@ export class MuCardGrid extends MuElement {
     @media (forced-colors: active) { .empty { color: CanvasText; } }
   `)];
 
+  #controls;
+
+  connectedCallback() {
+    this.#controls?.render();
+  }
+
+  disconnectedCallback() {
+    this.#controls?.dismiss();
+  }
+
+  refuse(errors) {
+    this.#controls?.dismiss();
+    this.#controls = null;
+    super.refuse(errors);
+  }
+
+  attributeChangedCallback() {
+    this.#controls?.render();
+    this.rendered();
+  }
+
+  rendered() {
+    for (const card of this.shadowRoot.querySelectorAll('mu-card')) card[UPDATE_CARD_DISPLAY]?.();
+  }
+
   state(data) {
     return data.cards.length ? 'default' : 'empty';
   }
 
   // An empty grid shows only the empty text, and no empty list.
   render(data) {
+    this.#controls?.dismiss();
+    this.#controls = null;
     if (data.cards.length === 0) return [el('p', { class: 'empty', part: 'empty' }, 'No cards. Change the request, or try again later.')];
     const list = el('ul', { 'aria-label': data.label, part: 'list' });
     // A nested card takes the slots and the actor of the grid, so each card shows them.
     for (const item of data.cards) {
       const card = document.createElement('mu-card');
+      card[CARD_MESSAGE_ACTOR] = this[CARD_MESSAGE_ACTOR];
+      card.setAttribute('exportparts', 'title: card-title, status: card-status, toggle: card-toggle, tooltip: card-tooltip');
       card.actor = this.actor;
       card.fill = this.fill.slots ? { ...item, slots: this.fill.slots } : item;
       list.append(el('li', {}, card));
     }
     if (!data.collapse_controls) return [list];
     const controls = el('div', { class: 'collapse-controls', role: 'group', 'aria-label': `${data.label}: card controls` });
-    for (const [label, collapsed] of [['Expand all', false], ['Collapse all', true]]) {
-      const button = el('button', { type: 'button' }, label);
-      button.addEventListener('click', () => {
-        for (const card of list.querySelectorAll('mu-card')) card.collapsed = collapsed;
-      });
-      controls.append(button);
-    }
+    const expand = el('button', { type: 'button', part: 'expand-all', 'aria-label': 'Expand all' });
+    const collapse = el('button', { type: 'button', part: 'collapse-all', 'aria-label': 'Collapse all' });
+    const setCollapsed = (value) => {
+      for (const card of list.querySelectorAll('mu-card')) card.collapsed = value;
+    };
+    expand.addEventListener('click', () => setCollapsed(false));
+    collapse.addEventListener('click', () => setCollapsed(true));
+    controls.append(expand, collapse);
+    const tooltip = el('span', { part: 'tooltip', 'aria-hidden': 'true' });
+    this.#controls = compactControls(this, controls, tooltip, [
+      { button: expand, label: 'Expand all', graphic: controlIcon('expand-all') },
+      { button: collapse, label: 'Collapse all', graphic: controlIcon('collapse-all') },
+    ]);
     return [controls, list];
   }
+}
+
+function fieldTag(name) {
+  return registeredTag(name) ?? FIELDS[name]?.[0];
+}
+
+function fieldEnabled({ data, node }) {
+  return !data.disabled && !node.disabled;
+}
+
+function sameFieldValue(first, second) {
+  return first === second || sameRichTextValue(first, second) || (Array.isArray(first) && Array.isArray(second)
+    && first.length === second.length && first.every((value, index) => value === second[index]));
 }
 
 export class MuEditableForm extends ActionElement {
   static component = 'editable-form';
   static labelField = 'submit_label';
-  static styles = [CARD_CSS, ACTION_CSS, sheet(`
+  static styles = [CARD_CSS, ACTION_CSS, REFERENCE_CSS, ACTION_RESULT_CSS, sheet(`
     :host { display: block; }
     form { display: flex; flex-direction: column; gap: var(--mu-space-3); }
+    .field-error { display: block; color: var(--mu-color-danger); overflow-wrap: anywhere; }
+    @media (forced-colors: active) { .field-error { color: CanvasText; } }
   `)];
 
   #fields = [];
   #sent = null;
+  #error = null;
 
   // A change of a value or of an edit type after the request makes the data new.
   stale() {
-    return this.#snapshot() !== this.#sent;
+    const values = this.values();
+    return Object.values(values).some((value) => !isActionValue(value)) || this.#snapshot(values) !== this.#sent;
   }
 
-  #snapshot() {
-    return JSON.stringify([this.values(), this.#fields.map((node) => node.editType)]);
+  #snapshot(values) {
+    const types = this.#fields.filter(fieldEnabled).map(({ node }) => {
+      const type = node.editType;
+      return isEditType(type) ? type : null;
+    });
+    return JSON.stringify([values, types]);
   }
 
   // A form also needs a unique name for each field, so that the values have keys.
@@ -517,8 +1045,12 @@ export class MuEditableForm extends ActionElement {
     if (!data.fields.some((item) => !item.data.disabled)) return ['data.fields: the form needs at least one field that a person can edit'];
     // A field can give a value or a range that do not agree. The form refuses the fill, as the field does.
     for (const [index, item] of data.fields.entries()) {
-      const errors = FIELDS[item.component][1].rules(item.data);
-      if (errors.length) return [`data.fields[${index}].${errors[0]}`];
+      if (CONTRACTS[item.component]?.field !== true) return [`data.fields[${index}].component: must be a field`];
+      const tag = fieldTag(item.component);
+      if (!tag) return [`data.fields[${index}].component: must be a field`];
+      const element = FIELDS[item.component]?.[1] ?? globalThis.customElements?.get(tag);
+      const errors = element?.rules?.(item.data);
+      if (errors?.length) return [`data.fields[${index}].${errors[0]}`];
     }
     const names = data.fields.map((item) => item.data.name);
     if (!names.every((name) => typeof name === 'string' && FIELD_NAME.test(name))) return ['data.fields: each field needs a name'];
@@ -531,6 +1063,18 @@ export class MuEditableForm extends ActionElement {
     if (other) return [`data.fields: the application does not accept the field ${other}`];
     const relabeled = data.fields.find((item) => item.data.label !== editable[item.data.name]);
     if (relabeled) return [`data.fields: the label of the field ${relabeled.data.name} is not the label of the application`];
+    // The application uses the bound zone to read the local date and time. The fill must show the same zone.
+    const timeZones = this.action.timeZones;
+    const dateTimes = new Set();
+    for (const { data: field } of data.fields) {
+      if (!Object.hasOwn(field, 'time_zone')) continue;
+      if (field.time_zone !== timeZones[field.name]) {
+        return [`data.fields: the time zone of the field ${field.name} is not the time zone of the application`];
+      }
+      dateTimes.add(field.name);
+    }
+    const extraZone = Object.keys(timeZones).find((name) => !dateTimes.has(name));
+    if (extraZone) return [`data.fields: the time zone of the application for ${extraZone} needs a date and time field`];
     // The application gives the typed names, so a fill cannot remove the type of an edit or add one.
     const typed = this.action.typed;
     const retyped = data.fields.find((item) => Boolean(item.data.typed) !== typed.includes(item.data.name));
@@ -538,66 +1082,111 @@ export class MuEditableForm extends ActionElement {
     return [];
   }
 
-  // The edits of the typed fields that changed, without the new value and the actor. The action path adds them.
-  #edits() {
-    return this.#fields.filter((node) => node.fill.data.typed && !node.fill.data.disabled && node.changed)
-      .map((node) => ({ field: node.fill.data.name, type: node.editType, old_value: node.initial, time: node.editedAt }));
-  }
-
   // A person cannot edit a disabled field, so its value does not go in the request.
   values() {
-    return Object.fromEntries(this.#fields.filter((node) => !node.fill.data.disabled)
-      .map((node) => [node.fill.data.name, node.value ?? '']));
+    if (!this.fill) return {};
+    return Object.fromEntries(this.#fields.filter(fieldEnabled).map(({ data, node }) => {
+      const value = node.value;
+      return [data.name, isActionValue(value) ? copyActionValue(value) : value];
+    }));
+  }
+
+  #showError(message, node, method) {
+    this.#error.textContent = '';
+    if (method && typeof node[method] === 'function') node[method]();
+    else {
+      this.#error.textContent = message;
+      node?.focus();
+    }
+  }
+
+  #submit() {
+    if (!this.fill || !['default', 'error'].includes(this.action.state)) return;
+    const values = this.values();
+    if (!Object.keys(values).length) {
+      this.#showError('The form needs at least one field that a person can edit.');
+      return;
+    }
+    const edits = this.action.typed.length ? [] : undefined;
+    const sent = this.#fields.filter(({ data }) => Object.hasOwn(values, data.name));
+    // Each value must be valid before a field asks for an edit type, so the first wrong value takes the focus.
+    for (const { node, data } of sent) {
+      const message = node.validationMessage;
+      if (typeof message === 'string' && message) {
+        this.#showError(message, node, 'reportValidity');
+        return;
+      }
+      if (typeof message !== 'string' || !isActionValue(values[data.name])) {
+        this.#showError(`${data.label}: the value is not valid for the action.`, node);
+        return;
+      }
+    }
+    for (const { node, data, initial, editedAt } of sent) {
+      const value = values[data.name];
+      if (!data.typed || sameFieldValue(initial, value)) continue;
+      if (initial === undefined) {
+        this.#showError(`${data.label}: the initial value is not valid for the action.`, node);
+        return;
+      }
+      const type = node.editType;
+      if (!isEditType(type)) {
+        this.#showError('Choose an edit type.', node, 'needType');
+        return;
+      }
+      edits.push({ field: data.name, type, old_value: initial, time: editedAt ?? new Date().toISOString() });
+    }
+    this.#error.textContent = '';
+    const snapshot = this.#snapshot(values);
+    this.send(values, () => { this.#sent = snapshot; }, edits);
   }
 
   render(data) {
     this.#sent = null;
     this.#fields = data.fields.map((item) => {
-      const node = document.createElement(FIELDS[item.component][0]);
-      node.fill = item;
-      return node;
+      const node = document.createElement(fieldTag(item.component));
+      const declared = CONTRACTS[item.component].slots ?? {};
+      const slots = Object.fromEntries(Object.entries(this.fill.slots ?? {}).filter(([key]) => Object.hasOwn(declared, key)));
+      node.actor = this.actor;
+      node.fill = Object.keys(slots).length ? { ...item, slots } : item;
+      const field = { node, data: item.data, initial: undefined, editedAt: null };
+      if (item.data.typed) {
+        const value = node.value;
+        field.initial = isActionValue(value) ? copyActionValue(value) : undefined;
+        node.addEventListener('mu-edit', () => { field.editedAt = new Date().toISOString(); });
+      }
+      return field;
     });
+    this.#error = el('span', { class: 'field-error', role: 'status', part: 'reason' });
     const status = el('span', { class: 'status', role: 'status', 'aria-live': 'polite', part: 'status' });
     const submit = el('button', { type: 'submit', part: 'button' }, data.submit_label);
-    const area = this.attach(submit, status);
     const form = el('form', { 'aria-label': data.title, part: 'form' },
-      el('p', { class: 'title' }, data.title), provenance(this.fill.slots), ...this.#fields, el('div', {}, submit), area, status);
+      el('p', { class: 'title' }, data.title), provenance(this.fill.slots), ...this.#fields.map(({ node }) => node),
+      el('div', {}, submit), ...this.attach(submit, status), this.#error);
     // An edit after done makes the values new, so the form can save again.
-    form.addEventListener('mu-edit', () => this.reopen());
+    form.addEventListener('mu-edit', () => {
+      this.#error.textContent = '';
+      this.reopen();
+    });
     form.addEventListener('submit', (event) => {
       event.preventDefault();
-      // A changed typed field needs an edit type. The first such field tells why and takes the focus.
-      if (this.dataset.state === 'refused' || !this.fill) return;
-      const open = this.action.state === 'default' || this.action.state === 'error';
-      // A value that its contract does not accept sends no action. The first such field tells why and takes the focus.
-      const wrong = this.#fields.find((node) => !node.fill.data.disabled && node.problem);
-      if (wrong) {
-        if (open) wrong.needValue();
-        return;
-      }
-      const untyped = this.#fields.find((node) => node.fill.data.typed && !node.fill.data.disabled && node.changed && !node.editType);
-      if (untyped) {
-        if (open) untyped.needType();
-        return;
-      }
-      const values = this.values();
-      const snapshot = this.#snapshot();
-      const edits = this.action.typed?.length ? this.#edits() : undefined;
-      // Keep the values only for an accepted request. A refused submit does not change them.
-      this.send(values, () => { this.#sent = snapshot; }, edits);
+      this.#submit();
     });
     // Each input is in the shadow root of its field, so the browser does not connect it to this form.
-    // Thus Enter in a field submits the form here, as Enter does in a plain form. Enter in long text adds a
-    // line, and Enter in a choice does not submit.
+    // Thus Enter in a single-line text, number or date field submits the form here, as it does in a plain form.
     form.addEventListener('keydown', (event) => {
       if (event.key !== 'Enter' || event.isComposing || event.altKey || event.ctrlKey || event.metaKey || event.shiftKey) return;
-      if (!this.#fields.includes(event.target) || !event.target.constructor.submitOnEnter) return;
+      if (!this.#fields.some(({ node }) => node === event.target) || !event.target.constructor.submitOnEnter) return;
       event.preventDefault();
       form.requestSubmit(submit);
     });
     // A new fill has new values. A receipt from before the fill does not confirm them, so the form can save again.
     this.reopen();
     return [form];
+  }
+
+  rendered() {
+    const index = this.#fields.findIndex(({ node }) => node.dataset.state === 'refused');
+    if (index !== -1) this.refuse([`data.fields[${index}]: the field refused its fill`]);
   }
 }
 
@@ -610,7 +1199,7 @@ const OPEN_EDITOR = 'Save or cancel this field first.';
 export class MuFormCard extends ActionElement {
   static component = 'form-card';
   static labelField = 'submit_label';
-  static styles = [CARD_CSS, ACTION_CSS, sheet(`
+  static styles = [CARD_CSS, ACTION_CSS, REFERENCE_CSS, ACTION_RESULT_CSS, sheet(`
     :host { display: block; container-type: inline-size; }
     form { gap: var(--mu-space-3); }
     .section { display: flex; flex-direction: column; gap: var(--mu-space-2);
@@ -732,6 +1321,12 @@ export class MuFormCard extends ActionElement {
     }
     for (const [name, line] of this.#lines) if (!line.editor) this.#show(name);
     return true;
+  }
+
+  // A canceled request confirms no value. The changes stay, so a person can send them again.
+  canceled() {
+    this.#pending = null;
+    for (const [name, line] of this.#lines) if (!line.editor) this.#show(name);
   }
 
   // The application gives new computed values of read-only fields, as { name: value }. The card checks each
@@ -880,9 +1475,8 @@ export class MuFormCard extends ActionElement {
     const status = el('span', { class: 'status', role: 'status', 'aria-live': 'polite', part: 'status' });
     this.#note = el('span', { class: 'hint', part: 'note', 'aria-live': 'polite' });
     const submit = el('button', { type: 'submit', part: 'button' }, data.submit_label);
-    const area = this.attach(submit, status);
     const form = el('form', { 'aria-label': data.title, part: 'form' },
-      el('p', { class: 'title' }, data.title), provenance(this.fill.slots), ...sections, el('div', {}, submit), this.#note, area, status);
+      el('p', { class: 'title' }, data.title), provenance(this.fill.slots), ...sections, el('div', {}, submit), this.#note, ...this.attach(submit, status));
     form.addEventListener('submit', (event) => {
       event.preventDefault();
       if (this.dataset.state === 'refused' || !this.fill) return;
@@ -963,9 +1557,9 @@ export class MuCitation extends MuElement {
   }
 
   refusal(errors) {
-    if (errors[0] === 'slots.citation: missing key locator') return 'the locator is missing.';
-    if (errors[0].startsWith('slots.citation.locator:')) return 'the locator is not a safe https: address.';
-    return errors[0];
+    if (errors[0] === 'slots.citation: missing key locator') return 'The source address is missing.';
+    if (errors[0].startsWith('slots.citation.locator:')) return 'The source address is invalid.';
+    return super.refusal();
   }
 
   render(data) {
@@ -1017,12 +1611,12 @@ export class MuExcerpt extends ReadMoreElement {
 
   refusal(errors) {
     const [error] = errors;
-    if (error === 'data.span_end: outside the passage') return 'the span is outside the passage.';
-    if (error === 'data.span_start: must be less than span_end') return 'the span is empty.';
-    if (error === 'slots.citation: a required slot is missing') return 'the source and the locator are missing.';
-    if (error === 'slots.citation: missing key locator') return 'the locator is missing.';
-    if (error.startsWith('slots.citation.locator:')) return 'the locator is not a safe https: address.';
-    return error;
+    if (error === 'data.span_end: outside the passage') return 'The marked text is outside the passage.';
+    if (error === 'data.span_start: must be less than span_end') return 'The marked text is empty.';
+    if (error === 'slots.citation: a required slot is missing') return 'The source and its address are missing.';
+    if (error === 'slots.citation: missing key locator') return 'The source address is missing.';
+    if (error.startsWith('slots.citation.locator:')) return 'The source address is invalid.';
+    return super.refusal();
   }
 
   render(data) {
@@ -1079,6 +1673,108 @@ export class MuSourceStatus extends MuElement {
   }
 }
 
+// The words of each state of an action in the offline queue. No state shows as done.
+const QUEUE_STATES = Object.freeze({ queued: 'Pending', sent: 'Pending', stalled: 'Pending', rejected: 'Not done', unreadable: 'Unreadable' });
+const QUEUE_NOTES = Object.freeze({ queued: 'Waiting for a connection.', sent: '', stalled: 'No receipt came back.', rejected: 'The service rejected the action.' });
+// The actions of the offline queue of the application (docs/contracts/offline-queue.md). The application fills it
+// with queueFill in src/offline/queue.js after each change of its queue. The thread does not show it. A button
+// sends a mu-queue-step event, and the queue does the step.
+export class MuActionQueue extends MuElement {
+  static component = 'action-queue';
+  // The steps that a person can do for each state, with the word of each button.
+  static #steps = Object.freeze({
+    queued: [[{ part: 'cancel' }, 'Cancel']],
+    sent: [],
+    stalled: [[{ part: 'retry' }, 'Retry'], [{ part: 'cancel' }, 'Cancel']],
+    rejected: [[{ part: 'dismiss' }, 'Dismiss']],
+    unreadable: [[{ part: 'dismiss' }, 'Dismiss']],
+  });
+  static styles = [sheet(`
+    :host { display: block; }
+    .queue {
+      color: var(--mu-color-text); font: var(--mu-type-body); padding: var(--mu-space-2) var(--mu-space-3);
+      border: 1px solid var(--mu-color-border); border-radius: var(--mu-radius-2);
+      display: flex; flex-direction: column; gap: var(--mu-space-2);
+    }
+    p, ul { margin: 0; padding: 0; }
+    ul { list-style: none; display: flex; flex-direction: column; gap: var(--mu-space-2); }
+    li { display: flex; flex-wrap: wrap; align-items: center; gap: var(--mu-space-1) var(--mu-space-2); overflow-wrap: anywhere; }
+    .name { font-weight: var(--mu-type-weight-strong); }
+    .muted { font: var(--mu-type-caption); color: var(--mu-color-text-muted); }
+    li:is([data-state="rejected"], [data-state="unreadable"]) .state { color: var(--mu-color-danger); }
+    button {
+      font: var(--mu-type-body); min-height: 2.75rem; min-width: 2.75rem; padding: var(--mu-space-1) var(--mu-space-3);
+      border-radius: var(--mu-radius-2); border: 1px solid var(--mu-color-accent); background: transparent;
+      color: var(--mu-color-accent); cursor: pointer;
+    }
+    @media (forced-colors: active) {
+      .queue { border-color: CanvasText; }
+      .muted, li:is([data-state="rejected"], [data-state="unreadable"]) .state { color: CanvasText; }
+      button { background: ButtonFace; color: ButtonText; border-color: ButtonText; forced-color-adjust: none; }
+    }
+  `)];
+
+  // The step that had the focus before a new fill, as [key, step].
+  #focused = null;
+
+  // Each action has a different key, so a step names one action.
+  check(data) {
+    if (data.recovery?.some((item) => item.data.state !== 'unreadable')) {
+      return ['data.recovery: each entry must be unreadable'];
+    }
+    const keys = [...data.actions, ...(data.recovery ?? [])].map((item) => item.data.key);
+    return new Set(keys).size === keys.length ? [] : ['data.actions: two actions have the same key'];
+  }
+
+  state(data) {
+    const states = [...data.actions, ...(data.recovery ?? [])].map((item) => item.data.state);
+    if (states.includes('rejected') || states.includes('unreadable')) return 'error';
+    return states.length ? 'pending' : 'empty';
+  }
+
+  render(data) {
+    // The nodes of the fill before this one are still in the shadow root.
+    const active = this.shadowRoot.activeElement;
+    this.#focused = active?.dataset.step ? [active.dataset.key, active.dataset.step] : null;
+    const entries = [...data.actions, ...(data.recovery ?? [])];
+    const rejected = entries.filter((item) => item.data.state === 'rejected').length;
+    const unreadable = entries.filter((item) => item.data.state === 'unreadable').length;
+    const waiting = entries.length - rejected - unreadable;
+    const summary = entries.length === 0 ? 'No pending actions.'
+      : [waiting ? `${waiting} pending` : '', rejected ? `${rejected} not done` : '',
+        unreadable ? `${unreadable} unreadable` : ''].filter(Boolean).join(', ') + '.';
+    const items = entries.map(({ data: action }) => {
+      const note = action.message ?? QUEUE_NOTES[action.state];
+      const buttons = MuActionQueue.#steps[action.state].map(([attributes, word]) => {
+        const step = attributes.part;
+        const button = el('button', { type: 'button', ...attributes, 'aria-label': `${word} ${action.label}` }, word);
+        button.dataset.key = action.key;
+        button.dataset.step = step;
+        button.addEventListener('click', () => this.dispatchEvent(new CustomEvent('mu-queue-step',
+          { bubbles: true, composed: true, detail: Object.freeze({ key: action.key, step }) })));
+        return button;
+      });
+      return el('li', { part: 'action', 'data-state': action.state },
+        el('span', { class: 'name', part: 'name' }, action.label),
+        el('span', { class: 'state', part: 'state' }, [QUEUE_STATES[action.state], note].filter(Boolean).join(': ')),
+        action.queued ? el('span', { class: 'muted', part: 'queued' }, `Queued: ${action.queued}`) : null, ...buttons);
+    });
+    return [el('div', { class: 'queue', role: 'group', 'aria-label': data.label, part: 'queue' },
+      el('p', { class: 'muted', part: 'label' }, data.label),
+      el('p', { part: 'summary', role: 'status', tabindex: '-1' }, summary),
+      items.length ? el('ul', { part: 'actions', 'aria-label': 'Actions' }, ...items) : null)];
+  }
+
+  // A new fill makes new nodes. The focus goes back to the same step, or to the summary if the step is not there now.
+  rendered() {
+    const focused = this.#focused;
+    this.#focused = null;
+    if (!focused || !this.fill) return;
+    const same = [...this.shadowRoot.querySelectorAll('button')].find((button) => button.dataset.key === focused[0] && button.dataset.step === focused[1]);
+    (same ?? this.shadowRoot.querySelector('[part="summary"]'))?.focus();
+  }
+}
+
 // The words of each kind of change. The kind shows as text, so it does not depend on color.
 const KINDS = Object.freeze({ added: 'Added', removed: 'Removed', changed: 'Changed', unchanged: 'Unchanged' });
 // A diff with more changes than this starts with each part closed.
@@ -1103,9 +1799,9 @@ export class MuDiff extends MuElement {
     p { margin: 0; overflow-wrap: anywhere; }
     .title { font-weight: var(--mu-type-weight-strong); }
     .muted { font: var(--mu-type-caption); color: var(--mu-color-text-muted); }
-    details { border-block-start: 1px solid ${EDGE}; padding-block-start: var(--mu-space-2); }
-    summary { cursor: pointer; min-height: 2.75rem; display: flex; flex-wrap: wrap; align-items: center; gap: var(--mu-space-1) var(--mu-space-2); }
-    summary .name { font-weight: var(--mu-type-weight-strong); }
+    details[data-state] { border-block-start: 1px solid ${EDGE}; padding-block-start: var(--mu-space-2); }
+    summary[part="summary"] { cursor: pointer; min-height: 2.75rem; display: flex; flex-wrap: wrap; align-items: center; gap: var(--mu-space-1) var(--mu-space-2); }
+    summary[part="summary"] .name { font-weight: var(--mu-type-weight-strong); }
     ul { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: var(--mu-space-2); }
     li { display: flex; flex-direction: column; gap: var(--mu-space-1); padding-inline-start: var(--mu-space-2);
       border-inline-start: 3px solid var(--mu-color-border); }
@@ -1119,7 +1815,7 @@ export class MuDiff extends MuElement {
     ins { text-decoration: underline; }
     .provenance { display: flex; flex-direction: column; gap: var(--mu-space-1); }
     @media (forced-colors: active) {
-      .diff, details, li, li[data-state] { border-color: CanvasText; } .muted { color: CanvasText; }
+      .diff, details[data-state], li, li[data-state] { border-color: CanvasText; } .muted { color: CanvasText; }
     }
   `)];
 
@@ -1200,7 +1896,14 @@ export function define(registry = customElements) {
   definePrimitives(registry);
   for (const [name, element] of [['mu-action-button', MuActionButton], ['mu-card', MuCard],
     ['mu-card-grid', MuCardGrid], ['mu-editable-form', MuEditableForm], ['mu-form-card', MuFormCard], ['mu-citation', MuCitation], ['mu-diff', MuDiff],
-    ['mu-excerpt', MuExcerpt], ['mu-table', MuTable], ['mu-status', MuStatus], ['mu-source-status', MuSourceStatus], ['mu-image', MuImage], ['mu-chart', MuChart],
+    ['mu-dialog', MuDialog], ['mu-drawer', MuDrawer],
+    ['mu-menu', MuMenu], ['mu-tooltip', MuTooltip], ['mu-toast', MuToast],
+    ['mu-tabs', MuTabs], ['mu-accordion', MuAccordion],
+    ['mu-app-shell', MuAppShell], ['mu-breadcrumbs', MuBreadcrumbs], ['mu-pagination', MuPagination],
+    ['mu-steps', MuSteps], ['mu-progress', MuProgress],
+    ['mu-run-steps', MuRunSteps], ['mu-plan', MuPlan], ['mu-approval-queue', MuApprovalQueue],
+    ['mu-empty-state', MuEmptyState], ['mu-skeleton', MuSkeleton], ['mu-badge', MuBadge], ['mu-avatar', MuAvatar],
+    ['mu-excerpt', MuExcerpt], ['mu-table', MuTable], ['mu-status', MuStatus], ['mu-source-status', MuSourceStatus], ['mu-action-queue', MuActionQueue], ['mu-image', MuImage], ['mu-chart', MuChart],
     ['mu-rich-text', MuRichText], ['mu-data-grid', MuDataGrid], ['mu-upload', MuUpload]]) {
     if (!registry.get(name)) registry.define(name, element);
   }
