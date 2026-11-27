@@ -38,6 +38,22 @@ const (
 	codeNotHuman        = "not_human_verdict"
 )
 
+// The codes of a refusal that a caller gives a state of its own.
+const (
+	CodeSubjectMismatch = codeSubjectMismatch
+	CodeNotYetValid     = codeNotYetValid
+	CodeExpired         = codeExpired
+)
+
+// DecidedAt gives the time decided_at of the decision in a signed record. It checks no
+// signature, so use it only for a record that Verify accepted. It is false if the decision has no
+// decided_at in the RFC 3339 form.
+func DecidedAt(signed []byte) (time.Time, bool) {
+	body := strictObject(decodeBase64(strictObject(signed).text("record")))
+	at, err := time.Parse(time.RFC3339, body.text("decided_at"))
+	return at, err == nil
+}
+
 // Verify checks a signed decision against a trusted key set from the caller. The decision must
 // have the expected scope, function and subject, and the UTC date of now must be in its
 // half-open window from "from" to "until". Only a decision with the kind "human" gives evidence:

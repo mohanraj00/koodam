@@ -40,6 +40,7 @@ import (
 	"k8s.io/apimachinery/pkg/util/validation"
 	"k8s.io/client-go/tools/events"
 	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/builder"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 	"sigs.k8s.io/controller-runtime/pkg/handler"
@@ -221,6 +222,9 @@ func (r *AgentReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl
 		if wait, ok := errors.AsType[budgetWait](err); ok {
 			return ctrl.Result{RequeueAfter: wait.after}, nil
 		}
+		if wait, ok := errors.AsType[approvalWait](err); ok {
+			return ctrl.Result{RequeueAfter: wait.after}, nil
+		}
 		return ctrl.Result{}, err
 	}
 }
@@ -390,10 +394,14 @@ func (r *AgentReconciler) costGroupCheck(ctx context.Context, a *corev1alpha1.Ag
 	return msg, reasonCostGroupNotAllowed, nil
 }
 
-// admit adds the finalizer and then reserves the run budget in the period budget of the namespace.
-// The reservation comes after the finalizer, so that a delete releases it, and before the key. If
-// the run must wait, admit gives a budgetWait error. It is true if it ended the run.
+// admit first holds a run that waits for an approval. Then it adds the finalizer and reserves the
+// run budget in the period budget of the namespace. The reservation comes after the finalizer, so
+// that a delete releases it, and before the key. If the run must wait, admit gives an approvalWait
+// or a budgetWait error. It is true if it ended the run.
 func (r *AgentReconciler) admit(ctx context.Context, a *corev1alpha1.Agent) (bool, error) {
+	if stop, err := r.awaitApproval(ctx, a); err != nil || stop {
+		return stop, err
+	}
 	if controllerutil.AddFinalizer(a, finalizer) {
 		if err := r.Update(ctx, a); err != nil {
 			return false, err
@@ -1002,6 +1010,8 @@ func (r *AgentReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		For(&corev1alpha1.Agent{}).
 		Owns(&batchv1.Job{}).
 		Watches(&corev1alpha1.SpendBudget{}, handler.EnqueueRequestsFromMapFunc(r.waitingFor)).
+		// Only the metadata of an ApprovalRecord goes into the cache. A record can have 1,000,000 bytes.
+		Watches(&corev1alpha1.ApprovalRecord{}, handler.EnqueueRequestsFromMapFunc(r.approvalWaiters), builder.OnlyMetadata).
 		Watches(&corev1alpha1.Hold{},
 			handler.EnqueueRequestsFromMapFunc(holdMapper(r.Client, corev1alpha1.HoldTargetAgent, r.Namespaces))).
 		Watches(&corev1.Namespace{},

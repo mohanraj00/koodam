@@ -1,6 +1,6 @@
 # Evidence gate
 
-Status: the gate of an AppVersion is built (#342). The pin is Nookku 0.6.0 (#373). [apps.md](apps.md) has the use. The seam test with the pinned release and the kind test are in `main` (#343). The approval source of a paused run is #190, #246 and #344. Of that source, the offline verifier (#344) and the API (#246) are in `main`: `spec.approval` of the Agent and of the Profile, and the `ApprovalRecord` carrier. No controller calls the verifier.
+Status: the gate of an AppVersion is built (#342). The pin is Nookku 0.6.0 (#373). [apps.md](apps.md) has the use. The seam test with the pinned release and the kind test are in `main` (#343). The approval source of a paused run is #190, #246 and #344. Of that source, the offline verifier (#344), the API and the Agent controller (#246) are in `main`. The check that binds the snapshot record and the manifest of an `ApprovalRecord` to the run is not built.
 
 An evidence gate holds a rollout, or a paused run, until the controller gets a valid evidence record. One gate design serves 2 sources:
 
@@ -167,7 +167,15 @@ The gate does not protect against these actors:
 
 ## Paused runs (#190 and #246)
 
-A paused Agent uses the same gate. Its subject is the run identity and the output digest in the Agent status (#315). The approval source writes its record to the status of the Agent. A changed subject keeps the run paused. A `fail` verdict or an expired record stops the run. #190 owns the approval resource and its fields.
+An Agent with `spec.approval` uses the approval source. It waits before its Job starts, with no key and no pod.
+
+- **Subject.** The controller makes the request document `koodam.dev/approval-request/v1` of the run: a JSON object with the keys `format`, `namespace`, `agent`, `uid`, `specSHA256` and `grant`, in this order and with no white space. `specSHA256` is the SHA-256 of the JSON text of the spec, and `grant` is empty. The subject is `sha256:` and the SHA-256 of this document. The controller writes the document to `status.approval.request` and the subject to `status.approval.subject`. An approver integration reads these fields, and it gives the exact bytes of the request to the issuer as the content item of the approval. The message of the condition `Approval` also shows the subject for a person.
+- **Record.** An `ApprovalRecord` in the namespace of the Agent carries the signed decision. The controller reads 64 records of an Agent at most in one check.
+- **Trust.** The key set, the scope, the function and the maximum age are in `spec.approval` of the Profile of the namespace. The Agent owner cannot select them.
+- **Result.** An accept starts the run, and the controller writes it to `status.evidence`. A signed reject, a decision that is older than `maxAgeSeconds`, a check at or after the `until` date, a Profile with no `spec.approval` or the end of `waitSeconds` stops the run. Each other refusal keeps the run paused. If the records give more than one state, a reject comes before an accept.
+- **Start.** The controller does the check again at each start attempt, until the Job exists. After that, a later reject does not stop the run (#364). To stop it, use a Hold.
+
+In the current build, the decision must name the subject in its `snapshot_ref`. The check of the snapshot record and of the manifest in the `ApprovalRecord` is not built (#246).
 
 ## Out of scope
 
