@@ -1,7 +1,7 @@
 # Build the manager binary
 # Override BASE_IMAGE to build from another registry, e.g. docker.io/library/golang:1.26
 ARG BASE_IMAGE=golang:1.26
-FROM ${BASE_IMAGE} AS builder
+FROM ${BASE_IMAGE} AS source
 ARG TARGETOS
 ARG TARGETARCH
 
@@ -16,6 +16,10 @@ RUN go mod download
 # Copy the Go source (relies on .dockerignore to filter)
 COPY . .
 
+# The controller image builds all the binaries except spend-api.
+FROM source AS builder
+ARG TARGETOS
+ARG TARGETARCH
 # Build
 # the GOARCH has no default value to allow the binary to be built according to the host where the command
 # was called. For example, if we call make docker-build in a local env which has the Apple Silicon M1 SO
@@ -28,6 +32,23 @@ RUN CGO_ENABLED=0 GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH} go build -a -o ag
 RUN CGO_ENABLED=0 GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH} go build -a -o output-digest ./cmd/output-digest
 RUN CGO_ENABLED=0 GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH} go build -a -o app-claim-check ./cmd/app-claim-check
 
+# The spend-api image (#406) has the spend-api binary only. The binary embeds
+# docs/spend-api.openapi.json, internal/opspage/static/ and internal/opspage/mugham.pin.json.
+# .dockerignore keeps these files in the build context, so the build fails if one is missing.
+FROM source AS spend-api-builder
+ARG TARGETOS
+ARG TARGETARCH
+RUN CGO_ENABLED=0 GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH} go build -a -o spend-api ./cmd/spend-api
+
+# Build this image with --target spend-api.
+FROM gcr.io/distroless/static:nonroot AS spend-api
+WORKDIR /
+COPY --from=spend-api-builder /workspace/spend-api .
+USER 65532:65532
+
+ENTRYPOINT ["/spend-api"]
+
+# The controller image is the last stage, so a build with no --target gives this image.
 # Use distroless as minimal base image to package the manager binary
 # Refer to https://github.com/GoogleContainerTools/distroless for more details
 FROM gcr.io/distroless/static:nonroot

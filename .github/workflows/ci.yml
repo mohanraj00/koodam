@@ -195,9 +195,39 @@ jobs:
       - run: make generated-check
       # The check fails if the chart CRD or the chart RBAC is not the same as config/.
       - run: make helm-check
+  # The spend-api binary embeds files from docs/ and internal/opspage/. This job builds the image
+  # target, so a missing file in the build context fails the PR. It builds only when a PR changes
+  # the paths below. The changes job does not gate it, because the docs/ files are not code paths.
+  # A push to main always builds.
+  spend-api-image:
+    name: Build the spend-api image
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Find the changed paths
+        id: paths
+        env:
+          BASE: ${{ github.event.pull_request.base.sha }}
+        run: |
+          if [ -z "$BASE" ] || git diff --name-only "$BASE...HEAD" -- cmd/spend-api internal/spendapi \
+              internal/opspage docs/spend-api.openapi.json docs/spend_api.go Dockerfile .dockerignore | grep -q .; then
+            echo "build=true" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Build the image
+        if: steps.paths.outputs.build == 'true'
+        run: make docker-build-spend-api SPEND_API_IMG=koodam-spend-api:ci
+      - name: Check the image user
+        if: steps.paths.outputs.build == 'true'
+        run: test "$(docker image inspect -f '{{.Config.User}}' koodam-spend-api:ci)" = 65532:65532
   # The required check. Each project job is in needs. A skipped job passes. A failed or cancelled job fails.
   ci-ok:
-    needs: [changes, check, lint, test-e2e, seam, govulncheck, chart]
+    needs: [changes, check, lint, test-e2e, seam, govulncheck, chart, spend-api-image]
     if: always()
     runs-on: ubuntu-24.04
     timeout-minutes: 2
