@@ -882,6 +882,77 @@ var _ = Describe("Hold stop", func() {
 				Namespaces: []string{nsA}}, direct)).To(BeNil())
 		})
 
+		It("reports Quarantined for a Profile only when each install has the egress proxy", func() {
+			name := newHold(corev1alpha1.HoldTarget{Kind: corev1alpha1.HoldTargetProfile, Name: profile},
+				corev1alpha1.HoldQuarantine)
+			with := &HoldReconciler{Client: k8sClient, APIReader: k8sClient, AppsEnabled: true, Recorder: rec,
+				Namespaces: []string{nsA}, EgressProxy: true}
+			without := &HoldReconciler{Client: k8sClient, APIReader: k8sClient, AppsEnabled: true, Recorder: rec,
+				Namespaces: []string{nsB}}
+			cover := func() []corev1alpha1.HoldNamespaceStatus {
+				h := &corev1alpha1.Hold{}
+				Expect(k8sClient.Get(ctx, client.ObjectKey{Name: name}, h)).To(Succeed())
+				return h.Status.Namespaces
+			}
+
+			// The install with the proxy reconciles first. The other install has no record yet. The
+			// target has no workload, so only the proxy cover keeps the Hold from Quarantined.
+			c := condition(with, name)
+			Expect(c.Status).To(Equal(metav1.ConditionFalse))
+			Expect(c.Reason).To(Equal(reasonQuarantining))
+			Expect(c.Message).To(ContainSubstring(nsB))
+			Expect(cover()).To(Equal([]corev1alpha1.HoldNamespaceStatus{{Name: nsA, EgressProxy: true}}))
+
+			// In each order, the two managers write the same status, and it is never Quarantined.
+			for _, r := range []*HoldReconciler{without, with, without, with, with, without} {
+				c := condition(r, name)
+				Expect(c.Status).To(Equal(metav1.ConditionFalse))
+				Expect(c.Reason).To(Equal(reasonNoEgressProxy))
+				Expect(c.Message).To(ContainSubstring(nsB))
+				Expect(c.Message).NotTo(ContainSubstring(nsA))
+				Expect(cover()).To(Equal([]corev1alpha1.HoldNamespaceStatus{
+					{Name: nsA, EgressProxy: true}, {Name: nsB, EgressProxy: false}}))
+			}
+			var e string
+			Eventually(rec.Events).Should(Receive(&e))
+			Expect(e).To(HavePrefix("Warning NoEgressProxy "))
+			Expect(rec.Events).To(BeEmpty(), "one event, because the two managers do not change the reason in a loop")
+
+			// A manager does not change the record of a namespace that it does not watch.
+			with.EgressProxy = false
+			Expect(condition(with, name).Message).To(ContainSubstring(nsA + ", " + nsB))
+			with.EgressProxy = true
+			Expect(condition(with, name).Message).NotTo(ContainSubstring(nsA))
+
+			// With the proxy in the two installs, the Hold is Quarantined.
+			without.EgressProxy = true
+			for _, r := range []*HoldReconciler{without, with} {
+				c := condition(r, name)
+				Expect(c.Status).To(Equal(metav1.ConditionTrue))
+				Expect(c.Reason).To(Equal(reasonQuarantined))
+			}
+
+			// The record of a namespace goes when the Profile does not bind it.
+			p := &corev1alpha1.Profile{}
+			Expect(k8sClient.Get(ctx, client.ObjectKey{Name: profile}, p)).To(Succeed())
+			p.Spec.Namespaces = []string{nsA}
+			Expect(k8sClient.Update(ctx, p)).To(Succeed())
+			Eventually(func() []corev1alpha1.HoldNamespaceStatus {
+				condition(without, name)
+				return cover()
+			}).Should(Equal([]corev1alpha1.HoldNamespaceStatus{{Name: nsA, EgressProxy: true}}))
+
+			// A Hold on one workload has no records, and its install decides alone.
+			a := newAgent(nsB)
+			direct := newHold(corev1alpha1.HoldTarget{Kind: corev1alpha1.HoldTargetAgent, Namespace: nsB,
+				Name: a.Name}, corev1alpha1.HoldQuarantine)
+			without.EgressProxy = false
+			Expect(condition(without, direct).Reason).To(Equal(reasonNoEgressProxy))
+			h := &corev1alpha1.Hold{}
+			Expect(k8sClient.Get(ctx, client.ObjectKey{Name: direct}, h)).To(Succeed())
+			Expect(h.Status.Namespaces).To(BeEmpty())
+		})
+
 		It("shows AppsDisabled for a Profile with an AppVersion when the App controllers do not run", func() {
 			newAgent(nsA)
 			av := &corev1alpha1.AppVersion{ObjectMeta: metav1.ObjectMeta{Name: "installs-v1", Namespace: nsB},

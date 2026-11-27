@@ -223,6 +223,34 @@ spec:
                 x-kubernetes-list-map-keys:
                 - type
                 x-kubernetes-list-type: map
+              namespaces:
+                description: |-
+                  Namespaces has one record for each namespace that the Profile of a Quarantine Hold binds.
+                  The manager of each install writes the records of the namespaces that it watches. The Hold
+                  is Quarantined only if each bound namespace has a record with the egress proxy.
+                items:
+                  description: HoldNamespaceStatus is the egress proxy cover of one
+                    namespace of a Profile target.
+                  properties:
+                    egressProxy:
+                      description: |-
+                        EgressProxy is true if the install of the namespace has the egress proxy. Only the proxy
+                        refuses the calls of a quarantined pod.
+                      type: boolean
+                    name:
+                      description: Name is the name of the namespace.
+                      maxLength: 63
+                      minLength: 1
+                      type: string
+                  required:
+                  - egressProxy
+                  - name
+                  type: object
+                maxItems: 64
+                type: array
+                x-kubernetes-list-map-keys:
+                - name
+                x-kubernetes-list-type: map
             type: object
         required:
         - spec
