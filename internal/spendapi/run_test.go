@@ -200,10 +200,18 @@ func TestRunPathInOpenAPI(t *testing.T) {
 			f.call(t, method, concrete, f.token, http.StatusMethodNotAllowed)
 		}
 	}
-	if !slices.ContainsFunc(strings.Split(docs.SpendOpenAPI, "\n"), func(l string) bool {
-		return strings.Contains(l, `"RunDetail"`) || strings.Contains(l, `"RunLog"`)
-	}) {
-		t.Fatal("the OpenAPI document has no RunDetail schema")
+	var components struct {
+		Components struct {
+			Schemas map[string]json.RawMessage `json:"schemas"`
+		} `json:"components"`
+	}
+	if err := json.Unmarshal([]byte(docs.SpendOpenAPI), &components); err != nil {
+		t.Fatal(err)
+	}
+	for _, schema := range []string{"RunDetail", "RunLog"} {
+		if _, ok := components.Components.Schemas[schema]; !ok {
+			t.Fatalf("the OpenAPI document has no %s schema", schema)
+		}
 	}
 }
 
