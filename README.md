@@ -54,13 +54,13 @@ These limits are open:
 
 - The controller has no watch on NetworkPolicy, so it restores a deleted policy at the next reconcile ([#359](https://github.com/mohanraj00/koodam/issues/359)).
 - A valid signed approval record is not proof of the current selection ([#364](https://github.com/mohanraj00/koodam/issues/364)).
+- In some cases a signed record that is not a human decision, or an accept after the wait, can stop or start a paused run ([#503](https://github.com/mohanraj00/koodam/issues/503), [#502](https://github.com/mohanraj00/koodam/issues/502), [#495](https://github.com/mohanraj00/koodam/issues/495)).
 - The gate and the signed claim check do not work together ([#354](https://github.com/mohanraj00/koodam/issues/354)).
-- A foreground delete of a quarantined workload, or a direct delete of its pods, Job, StatefulSet or PVC, can still stop the quarantined processes. A finalizer cannot prevent it ([#452](https://github.com/mohanraj00/koodam/issues/452)).
-- The egress proxy finds the pods of an Agent or a Workspace target by the pod labels `koodam.dev/agent` and `koodam.dev/workspace`. A user who can patch the pods can change these labels, and then the proxy does not refuse the calls of the pod ([#452](https://github.com/mohanraj00/koodam/issues/452)).
-- If a user deletes a Workspace before the controller reconciles its quarantine, the Workspace can lose its pod while the Hold is active ([#454](https://github.com/mohanraj00/koodam/issues/454)).
-- If a Profile binds the namespaces of 2 installs and only 1 install has the egress proxy, the Hold can show `Quarantined` while the pods of the other install still send calls out ([#455](https://github.com/mohanraj00/koodam/issues/455)).
+- An eviction of a quarantined pod, or a change of its spec, can still stop the quarantined processes ([#459](https://github.com/mohanraj00/koodam/issues/459)). A stop does not delete a Job or a Deployment with no owner reference ([#479](https://github.com/mohanraj00/koodam/issues/479)).
+- A Workspace with no gateway that is deleted before the controller reconciles its quarantine can lose its pod ([#470](https://github.com/mohanraj00/koodam/issues/470)).
 - Each pod of an App has its own token bucket, and the request limit of a tenant comes from a read of the gateway count at an interval. Thus a tenant can get more than its rate or its request limit for a short time ([#428](https://github.com/mohanraj00/koodam/issues/428), [#429](https://github.com/mohanraj00/koodam/issues/429)).
 - The zone placement policy refuses a list of placements. It is not a full control of the node of a pod ([#433](https://github.com/mohanraj00/koodam/issues/433)).
+- One caller of the spend API can open all the watches of a server, and a watch does not check the access again before it ends ([#490](https://github.com/mohanraj00/koodam/issues/490)).
 
 The `nookku` plugin field gives the pod a Nookku test folder: `/koodam/nookku-tests` in an Agent pod and `/home/dev/nookku-tests` in a Workspace pod. Each release publishes the Nookku data image with the pinned Nookku 0.6.0 files, and the chart value `nookku.image` gives its digest to the controller. Koodam does not load the plugin in a harness. [docs/nookku-preset.md](docs/nookku-preset.md) has the rules.
 
