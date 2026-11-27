@@ -28,10 +28,11 @@ COPY profile-globals.sh /etc/profile.d/koodam-globals.sh
 RUN chmod 0755 /usr/local/bin/koodam-globals
 COPY koodam-project.sh /usr/local/bin/koodam-project
 COPY project.sh /etc/profile.d/koodam-project.sh
-# The controller mounts the harnesses of spec.harnesses in /koodam/bin. The links are in the
-# PATH of each SSH command, also with no login shell. A link with no target is not a command.
+# The controller mounts the harness binaries and the Nookku launcher in /koodam/bin.
+# SSH commands and login shells search /usr/local/bin. The shell skips links with no target.
 RUN ln -s /koodam/bin/claude /usr/local/bin/claude \
- && ln -s /koodam/bin/codex /usr/local/bin/codex
+ && ln -s /koodam/bin/codex /usr/local/bin/codex \
+ && ln -s /koodam/bin/nookku /usr/local/bin/nookku
 RUN chmod 0755 /usr/local/bin/koodam-project
 
 USER 1000:1000
