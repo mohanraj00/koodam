@@ -77,9 +77,11 @@ func approvalDocument(a *corev1alpha1.Agent) ([]byte, error) {
 func approvalSubject(doc []byte) string { return fmt.Sprintf("sha256:%x", sha256.Sum256(doc)) }
 
 // decisionSubject gives the snapshot reference that the decision in rec must name for the
-// subject of the run. The decision must name the subject itself. The check of a snapshot record
-// that names the subject (#246) goes into this function.
-func decisionSubject(_ *corev1alpha1.ApprovalRecord, subject string) string { return subject }
+// subject of the run. The snapshot record of rec must have the scope and a content candidate, and
+// the manifest of rec must have the subject as its one item.
+func decisionSubject(rec *corev1alpha1.ApprovalRecord, scope, subject string) (string, error) {
+	return approval.Binding(rec.Spec.SnapshotRecord, rec.Spec.Manifest, scope, subject)
+}
 
 // approvalState is one state of the condition Approval.
 type approvalState struct {
@@ -106,11 +108,17 @@ func checkRecord(rec *corev1alpha1.ApprovalRecord, trust *corev1alpha1.ProfileAp
 	state := func(status metav1.ConditionStatus, reason, format string, args ...any) approvalState {
 		return approvalState{status: status, reason: reason, message: fmt.Sprintf("The record %s "+format, append([]any{rec.Name}, args...)...)}
 	}
-	result, err := approval.Verify(rec.Spec.SignedRecord, []byte(trust.KeySet), approval.Expected{
-		Scope: trust.Scope, Function: trust.Function, Subject: decisionSubject(rec, subject)}, now)
-	code := "unknown"
+	// The binding comes first. Thus a signed decision of a different run, for example an old one,
+	// gives SubjectMismatch or NotVerified, and never a state that stops the run.
+	var result approval.Result
+	ref, err := decisionSubject(rec, trust.Scope, subject)
+	if err == nil {
+		result, err = approval.Verify(rec.Spec.SignedRecord, []byte(trust.KeySet), approval.Expected{
+			Scope: trust.Scope, Function: trust.Function, Subject: ref}, now)
+	}
+	code, text := "unknown", "unknown"
 	if refusal, ok := errors.AsType[approval.Refusal](err); ok {
-		code = refusal.Code
+		code, text = refusal.Code, refusal.Error()
 	}
 	// The from and until dates are the date range of the approved revision. The expiry of the
 	// approval is the age of the decision, and a signature has no trusted time.
@@ -122,9 +130,9 @@ func checkRecord(rec *corev1alpha1.ApprovalRecord, trust *corev1alpha1.ProfileAp
 		return state(metav1.ConditionUnknown, corev1alpha1.ApprovalNotYetValid, "has a from date in the future.")
 	case code == approval.CodeSubjectMismatch:
 		return state(metav1.ConditionUnknown, corev1alpha1.ApprovalSubjectMismatch,
-			"names a different subject. The subject of the run is %s.", subject)
+			"does not bind the subject of the run, which is %s.", subject)
 	case err != nil:
-		return state(metav1.ConditionUnknown, corev1alpha1.ApprovalNotVerified, "did not pass the verifier: %s.", code)
+		return state(metav1.ConditionUnknown, corev1alpha1.ApprovalNotVerified, "did not pass the verifier: %s.", text)
 	case !ok || decided.After(now):
 		return state(metav1.ConditionUnknown, corev1alpha1.ApprovalNotVerified, "did not pass the verifier: invalid_decided_at.")
 	case now.Sub(decided) > time.Duration(trust.MaxAgeSeconds)*time.Second:
@@ -135,6 +143,8 @@ func checkRecord(rec *corev1alpha1.ApprovalRecord, trust *corev1alpha1.ProfileAp
 	if result.Record.Verdict == string(corev1alpha1.EvidencePass) {
 		s = state(metav1.ConditionTrue, corev1alpha1.ApprovalApproved, "has a valid accept for the subject %s.", subject)
 	}
+	// The subject of the evidence is the subject of the run, and not the snapshot reference.
+	result.Record.Subject = subject
 	s.evidence = &result.Record
 	return s
 }

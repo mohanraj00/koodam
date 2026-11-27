@@ -111,6 +111,7 @@ jobs:
           make test-e2e
   # The seam test of the evidence gate. internal/evidence/nookku.pin has the pin of the Nookku release:
   # the version, the SHA-256 of the wheel and the commit of the tag. docs/evidence-gate.md has the design.
+  # The job also has the seam test of the approval source, with the pin in internal/evidence/approval/entelos.pin.
   seam:
     name: Seam test with the pinned Nookku
     needs: changes
@@ -156,6 +157,36 @@ jobs:
           export KOODAM_SEAM_PYTHON="$RUNNER_TEMP/nookku/bin/python"
           export KOODAM_SEAM_CASES="$PWD/nookku-cases/conformance/gate"
           go test ./internal/evidence/ -run 'TestSeam|TestNookkuPin' -v
+      # The seam of the approval source. internal/evidence/approval/entelos.pin has the pin of the Entelos release:
+      # the tag, the commit of the tag and the SHA-256 of the signed record vectors. The patterns permit only
+      # digits, lower-case letters and a dot, so a value cannot hold a command.
+      - name: Read the approval pin
+        id: approval
+        run: |
+          grep -E '^ENTELOS_(TAG=v[0-9.]+|COMMIT=[0-9a-f]{40}|VECTORS_SHA256=[0-9a-f]{64})$' internal/evidence/approval/entelos.pin >> "$GITHUB_OUTPUT"
+          test "$(grep -cE '^ENTELOS_(TAG=v[0-9.]+|COMMIT=[0-9a-f]{40}|VECTORS_SHA256=[0-9a-f]{64})$' internal/evidence/approval/entelos.pin)" = 3
+      - name: Get the signed record vectors of the pinned tag
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: mohanraj00/entelos
+          ref: refs/tags/${{ steps.approval.outputs.ENTELOS_TAG }}
+          path: entelos-vectors
+          sparse-checkout: src/protocol/signed/vectors
+          persist-credentials: false
+      # A tag can move. The job fails if the tag is not on the pinned commit, or if the vectors file changed.
+      - name: Check the commit and the vectors of the pinned tag
+        env:
+          ENTELOS_COMMIT: ${{ steps.approval.outputs.ENTELOS_COMMIT }}
+          ENTELOS_VECTORS_SHA256: ${{ steps.approval.outputs.ENTELOS_VECTORS_SHA256 }}
+        run: |
+          test "$(git -C entelos-vectors rev-parse HEAD)" = "$ENTELOS_COMMIT"
+          printf '%s  %s\n' "$ENTELOS_VECTORS_SHA256" entelos-vectors/src/protocol/signed/vectors/signed-cases.json | sha256sum -c -
+      - name: Run the approval seam test
+        env:
+          KOODAM_SEAM: "1"
+        run: |
+          export KOODAM_APPROVAL_VECTORS="$PWD/entelos-vectors/src/protocol/signed/vectors/signed-cases.json"
+          go test ./internal/evidence/approval/ -v
   govulncheck:
     name: govulncheck
     needs: changes

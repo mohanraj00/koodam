@@ -1,0 +1,7 @@
+# The pin of the Entelos release for the seam test of the approval source (docs/evidence-gate.md,
+# "Seam test"). Change the 3 values together, with the copies in testdata and their README.
+# ENTELOS_TAG is the tag. ENTELOS_COMMIT is the commit of the tag. ENTELOS_VECTORS_SHA256 is the
+# SHA-256 of src/protocol/signed/vectors/signed-cases.json at the tag.
+ENTELOS_TAG=v0.7.0
+ENTELOS_COMMIT=935059139a3e47237f0703c30c8aab8407a29aee
+ENTELOS_VECTORS_SHA256=05498e56d1c1a9a3d11da45a7b7d56d1b4abdf407c824f7eb5169166a8a0b90b

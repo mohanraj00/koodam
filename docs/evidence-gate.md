@@ -1,6 +1,6 @@
 # Evidence gate
 
-Status: the gate of an AppVersion is built (#342). The pin is Nookku 0.6.0 (#373). [apps.md](apps.md) has the use. The seam test with the pinned release and the kind test are in `main` (#343). The approval source of a paused run is #190, #246 and #344. Of that source, the offline verifier (#344), the API and the Agent controller (#246) are in `main`. The check that binds the snapshot record and the manifest of an `ApprovalRecord` to the run is not built.
+Status: the gate of an AppVersion is built (#342). The pin is Nookku 0.6.0 (#373). [apps.md](apps.md) has the use. The seam test with the pinned release and the kind test are in `main` (#343). The approval source of a paused run is #190, #246 and #344. The approval source of a paused run is built: the offline verifier (#344), the API, the Agent controller and the binding of a decision to the run (#246). "Paused runs" has the design.
 
 An evidence gate holds a rollout, or a paused run, until the controller gets a valid evidence record. One gate design serves 2 sources:
 
@@ -170,12 +170,34 @@ The gate does not protect against these actors:
 An Agent with `spec.approval` uses the approval source. It waits before its Job starts, with no key and no pod.
 
 - **Subject.** The controller makes the request document `koodam.dev/approval-request/v1` of the run: a JSON object with the keys `format`, `namespace`, `agent`, `uid`, `specSHA256` and `grant`, in this order and with no white space. `specSHA256` is the SHA-256 of the JSON text of the spec, and `grant` is empty. The subject is `sha256:` and the SHA-256 of this document. The controller writes the document to `status.approval.request` and the subject to `status.approval.subject`. An approver integration reads these fields, and it gives the exact bytes of the request to the issuer as the content item of the approval. The message of the condition `Approval` also shows the subject for a person.
-- **Record.** An `ApprovalRecord` in the namespace of the Agent carries the signed decision. The controller reads 64 records of an Agent at most in one check.
+- **Record.** An `ApprovalRecord` in the namespace of the Agent carries 3 parts: the signed decision, the stored bytes of the snapshot record, and the bytes of a content manifest. The controller reads 64 records of an Agent at most in one check.
+- **Binding.** The controller checks a chain of hashes. Each compare is exact.
+  1. The manifest has exactly one item, with the id `request` and the subject as its digest. A different item set gives `SubjectMismatch`.
+  2. The `candidate.kind` of the snapshot is `content`, and the scope of the snapshot is the scope of the Profile.
+  3. The `candidate.ref` of the snapshot is `sha256:` and the plain SHA-256 of the manifest bytes. It is not the `manifest_ref`, which has an envelope.
+  4. The `snapshot_ref` of the decision is `sha256:` and the SHA-256 of `application/vnd.cel-lifecycle.snapshot+json`, a zero byte and the snapshot bytes. The snapshot bytes are the canonical stored form.
+  5. The signed decision passes the signature check, and its `kind` is `human`.
+
+  The controller does steps 1 to 4 before the checks of the dates and of the disposition. Thus a signed decision of a different run never stops a run. A failure of a step gives `SubjectMismatch` or `NotVerified`, and the run stays paused.
 - **Trust.** The key set, the scope, the function and the maximum age are in `spec.approval` of the Profile of the namespace. The Agent owner cannot select them.
 - **Result.** An accept starts the run, and the controller writes it to `status.evidence`. A signed reject, a decision that is older than `maxAgeSeconds`, a check at or after the `until` date, a Profile with no `spec.approval` or the end of `waitSeconds` stops the run. Each other refusal keeps the run paused. If the records give more than one state, a reject comes before an accept.
 - **Start.** The controller does the check again at each start attempt, until the Job exists. If a start attempt made a key and the next check gives no approval, the run stops and the controller blocks the key. After that, a later reject does not stop the run (#364). To stop it, use a Hold.
 
-In the current build, the decision must name the subject in its `snapshot_ref`. The check of the snapshot record and of the manifest in the `ApprovalRecord` is not built (#246).
+The condition `Approval` of the Agent has these states:
+
+| Status | Reason | Cause | Run |
+|---|---|---|---|
+| `Unknown` | `Waiting` | No record. | stays paused |
+| `True` | `Approved` | A valid human `accept` that binds the subject. | starts |
+| `False` | `Denied` | A valid human `reject` that binds the subject. | stops |
+| `False` | `Expired` | A decision that is older than `maxAgeSeconds`, or a check at or after the `until` date. | stops |
+| `Unknown` | `NotYetValid` | A check before the `from` date. | stays paused |
+| `Unknown` | `SubjectMismatch` | A record that does not bind the subject, for example after a change of the spec. | stays paused |
+| `Unknown` | `NotVerified` | A refusal of the signature, the key, the format, the purpose, the `kind`, the binding or the `decided_at`. The message has the code. | stays paused |
+| `False` | `NoKeySet` | A Profile with no `spec.approval`, or no bound Profile. | stops |
+| `False` | `ApprovalTimeout` | No end state before `waitSeconds`. | stops |
+
+The `from` and `until` dates of a decision are the date range of the approved revision, and not an expiry. A signature has no trusted time. Thus the admin sets the expiry: `maxAgeSeconds` of the Profile, from the `decided_at` of the decision.
 
 ## Out of scope
 
@@ -193,15 +215,23 @@ The seam test proves that Koodam reads the Nookku format of the pinned release.
 - **envtest.** An AppVersion with `spec.gate`: the Job spec (no token, read-only mounts, fixed argv), each state of the table from a fake pod status, and the weight 0 in effect until `Passed`.
 - **kind.** `test/e2e/gate_test.go` builds a gate image from the pinned release, with one gate that passes and one that fails. The test checks the condition, the record, the weights in effect and the weights of the HTTPRoute. The gate image is in `test/e2e/testdata/gate`.
 
-The approval seam uses the signed record protocol and vectors of Entelos tag
-`v0.5.0`. The caller gives the expected `scope`, `function` and subject, and the
-time of the check. The verifier refuses a decision with a different `scope`,
-`function` or `snapshot_ref`. It also refuses a decision when the UTC date of
-the check is before `from`, or at or after `until`. The decision must have the
-`kind` `human`. A `model` or `policy` verdict, or a verdict without `kind`, is
-refused (Entelos `KINDS.md`, rule 3). A disposition of `accept` gives `pass`. A
-disposition of `reject` gives `fail`. The signed decision's `record_ref` gives
-both the evidence ID and digest.
+The approval seam uses the signed record protocol of Entelos tag `v0.7.0` (commit
+`935059139a3e47237f0703c30c8aab8407a29aee`). `internal/evidence/approval/entelos.pin` pins the
+tag, the commit and the SHA-256 of the signed record vectors, which have the same bytes as at the
+tag `v0.5.0`. The CI job `seam` checks out the tag, fails if the tag is not on the pinned commit
+or the vectors file has a different SHA-256, and then runs the tests of the package. `TestSeam`
+checks that the copy of the vectors is the source file with no `keys` object.
+`internal/evidence/approval/testdata/README.md` has the pins of a static fixture set with an
+accept chain and a reject chain. The caller gives the expected
+`scope`, `function` and subject, and the time of the check. The verifier refuses a decision with
+a different `scope`, `function` or `snapshot_ref`. It also refuses a decision when the UTC date
+of the check is before `from`, or at or after `until`. The decision must have the `kind`
+`human`. A `model` or `policy` verdict, or a verdict without `kind`, is refused (Entelos
+`KINDS.md`, rule 3). A disposition of `accept` gives `pass`. A disposition of `reject` gives
+`fail`. The signed decision's `record_ref` gives both the evidence ID and digest. The tests
+`TestFixtureChains` and `TestBindingRefusals` check the binding with the fixture set: each
+chain, one changed byte of the snapshot or of the manifest, an extra or a missing item, a
+different scope and a candidate that is not `content`.
 
 A valid record does not show that it is the current selection. A later reject,
 a suspension or a new snapshot can replace it, and only the Host answers that.

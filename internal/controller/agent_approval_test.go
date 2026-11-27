@@ -24,6 +24,8 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
+	"os"
+	"path/filepath"
 	"slices"
 	"time"
 
@@ -58,8 +60,8 @@ func newApprovalSigner(seed byte) approvalSigner {
 		`{"algorithm":"ed25519","key_id":%q,"public_key":%q,"status":"active"}]}`, id, text)}
 }
 
-// sign gives a signed human decision for the subject, with the decision time and the date range
-// from "from" to "until".
+// sign gives a signed human decision for the snapshot reference, with the decision time and the
+// date range from "from" to "until".
 func (s approvalSigner) sign(subject, disposition string, decided, from, until time.Time) []byte {
 	const layout = "2006-01-02"
 	body := fmt.Appendf(nil, `{"kind":"human","snapshot_ref":%q,"disposition":%q,"scope":"gate","function":"pause",`+
@@ -70,6 +72,18 @@ func (s approvalSigner) sign(subject, disposition string, decided, from, until t
 	return fmt.Appendf(nil, `{"format":"entelos.record/1","record_kind":"decision","scope":"gate","function":"pause",`+
 		`"record_ref":"sha256:%x","record":%q,"algorithm":"ed25519","key_id":%q,"signature":%q}`, sha256.Sum256(envelope),
 		base64.StdEncoding.EncodeToString(body), s.id, base64.StdEncoding.EncodeToString(signature))
+}
+
+// approvalChain is the 3 parts of an ApprovalRecord.
+type approvalChain struct{ signed, snapshot, manifest []byte }
+
+// chain gives a signed human decision with a snapshot record and a manifest that bind the subject.
+func (s approvalSigner) chain(subject, disposition string, decided, from, until time.Time) approvalChain {
+	manifest := fmt.Appendf(nil, `{"format":"entelos.content/1","items":[{"item_id":"request","digest":%q}]}`, subject)
+	snapshot := fmt.Appendf(nil, `{"format":"entelos.record/1","scope":"gate","candidate":{"kind":"content",`+
+		`"ref":"sha256:%x"}}`+"\n", sha256.Sum256(manifest))
+	ref := sha256.Sum256(append([]byte("application/vnd.cel-lifecycle.snapshot+json\x00"), snapshot...))
+	return approvalChain{s.sign(fmt.Sprintf("sha256:%x", ref), disposition, decided, from, until), snapshot, manifest}
 }
 
 var _ = Describe("Agent approval", Ordered, func() {
@@ -98,11 +112,11 @@ var _ = Describe("Agent approval", Ordered, func() {
 		}
 	})
 
-	carry := func(a *corev1alpha1.Agent, signed []byte) {
+	carry := func(a *corev1alpha1.Agent, c approvalChain) {
 		Expect(k8sClient.Create(ctx, &corev1alpha1.ApprovalRecord{
 			ObjectMeta: metav1.ObjectMeta{GenerateName: a.Name + "-", Namespace: a.Namespace},
-			Spec: corev1alpha1.ApprovalRecordSpec{Target: a.Name, SignedRecord: signed,
-				SnapshotRecord: []byte("{}"), Manifest: []byte("{}")}})).To(Succeed())
+			Spec: corev1alpha1.ApprovalRecordSpec{Target: a.Name, SignedRecord: c.signed,
+				SnapshotRecord: c.snapshot, Manifest: c.manifest}})).To(Succeed())
 	}
 	subjectOf := func(a *corev1alpha1.Agent) string {
 		doc, err := approvalDocument(a)
@@ -111,7 +125,7 @@ var _ = Describe("Agent approval", Ordered, func() {
 	}
 	// start makes an Agent that waits 1 hour, with the records that the function gives for its
 	// subject. Then it runs one reconcile at the time "at".
-	start := func(namespace string, records func(subject string) [][]byte, at time.Time) (
+	start := func(namespace string, records func(subject string) []approvalChain, at time.Time) (
 		*corev1alpha1.Agent, *fakeGateway, reconcile.Result) {
 		count++
 		a := &corev1alpha1.Agent{ObjectMeta: metav1.ObjectMeta{Name: fmt.Sprintf("wait-%d", count), Namespace: namespace},
@@ -119,8 +133,8 @@ var _ = Describe("Agent approval", Ordered, func() {
 				Budget: resource.MustParse("1"), Approval: &corev1alpha1.AgentApprovalSpec{WaitSeconds: 3600}}}
 		Expect(k8sClient.Create(ctx, a)).To(Succeed())
 		if records != nil {
-			for _, signed := range records(subjectOf(a)) {
-				carry(a, signed)
+			for _, c := range records(subjectOf(a)) {
+				carry(a, c)
 			}
 		}
 		gw := &fakeGateway{}
@@ -131,14 +145,22 @@ var _ = Describe("Agent approval", Ordered, func() {
 		Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(a), a)).To(Succeed())
 		return a, gw, result
 	}
-	// decide gives a decision that is 1 minute old, with a date range around the time of the test.
-	decide := func(s approvalSigner, subject, disposition string) []byte {
-		return s.sign(subject, disposition, now.Add(-time.Minute), now.Add(-2*day), now.Add(2*day))
+	// decide gives a chain with a decision that is 1 minute old and a date range around the time
+	// of the test. old gives a chain with a decision that is 2 hours old.
+	decide := func(s approvalSigner, subject, disposition string) approvalChain {
+		return s.chain(subject, disposition, now.Add(-time.Minute), now.Add(-2*day), now.Add(2*day))
 	}
-	accept := func(subject string) []byte { return decide(signer, subject, "accept") }
+	old := func(subject, disposition string) approvalChain {
+		return signer.chain(subject, disposition, now.Add(-2*time.Hour), now.Add(-2*day), now.Add(2*day))
+	}
+	accept := func(subject string) approvalChain { return decide(signer, subject, "accept") }
+	one := func(make func(subject string) approvalChain) func(string) []approvalChain {
+		return func(subject string) []approvalChain { return []approvalChain{make(subject)} }
+	}
+	junk := approvalChain{[]byte("not a record"), []byte("{}"), []byte("{}")}
 	other := fmt.Sprintf("sha256:%064x", 7)
 
-	DescribeTable("gives each state of the condition Approval", func(inBare bool, records func(string) [][]byte,
+	DescribeTable("gives each state of the condition Approval", func(inBare bool, records func(string) []approvalChain,
 		late time.Duration, status metav1.ConditionStatus, reason, text string) {
 		namespace := bound
 		if inBare {
@@ -181,49 +203,61 @@ var _ = Describe("Agent approval", Ordered, func() {
 	},
 		Entry("Waiting: no record", false, nil, time.Duration(0), metav1.ConditionUnknown, corev1alpha1.ApprovalWaiting, "sha256:"),
 		Entry("Approved: a signed accept, also with records that the verifier refuses", false,
-			func(s string) [][]byte {
-				return [][]byte{[]byte("not a record"), decide(stranger, s, "reject"), accept(s)}
-			}, time.Duration(0), metav1.ConditionTrue, corev1alpha1.ApprovalApproved, "valid accept"),
+			func(s string) []approvalChain { return []approvalChain{junk, decide(stranger, s, "reject"), accept(s)} },
+			time.Duration(0), metav1.ConditionTrue, corev1alpha1.ApprovalApproved, "valid accept"),
 		Entry("Denied: a signed reject, also with a signed accept", false,
-			func(s string) [][]byte { return [][]byte{accept(s), decide(signer, s, "reject")} },
+			func(s string) []approvalChain { return []approvalChain{accept(s), decide(signer, s, "reject")} },
 			time.Duration(0), metav1.ConditionFalse, corev1alpha1.ApprovalDenied, "valid reject"),
 		Entry("Expired: a decision that is older than the maximum age", false,
-			func(s string) [][]byte {
-				return [][]byte{signer.sign(s, "accept", now.Add(-2*time.Hour), now.Add(-2*day), now.Add(2*day))}
-			}, time.Duration(0), metav1.ConditionFalse, corev1alpha1.ApprovalExpired, "maximum age of 3600 seconds"),
+			one(func(s string) approvalChain { return old(s, "accept") }),
+			time.Duration(0), metav1.ConditionFalse, corev1alpha1.ApprovalExpired, "maximum age of 3600 seconds"),
 		Entry("Expired: an until date in the past", false,
-			func(s string) [][]byte {
-				return [][]byte{signer.sign(s, "accept", now.Add(-time.Minute), now.Add(-3*day), now.Add(-day))}
-			}, time.Duration(0), metav1.ConditionFalse, corev1alpha1.ApprovalExpired, "until date"),
+			one(func(s string) approvalChain {
+				return signer.chain(s, "accept", now.Add(-time.Minute), now.Add(-3*day), now.Add(-day))
+			}), time.Duration(0), metav1.ConditionFalse, corev1alpha1.ApprovalExpired, "until date"),
 		Entry("NotYetValid: a from date in the future", false,
-			func(s string) [][]byte {
-				return [][]byte{signer.sign(s, "accept", now.Add(-time.Minute), now.Add(2*day), now.Add(4*day))}
-			}, time.Duration(0), metav1.ConditionUnknown, corev1alpha1.ApprovalNotYetValid, "from date"),
-		Entry("SubjectMismatch: a signed accept for a different subject", false,
-			func(string) [][]byte { return [][]byte{accept(other)} },
-			time.Duration(0), metav1.ConditionUnknown, corev1alpha1.ApprovalSubjectMismatch, "different subject"),
+			one(func(s string) approvalChain {
+				return signer.chain(s, "accept", now.Add(-time.Minute), now.Add(2*day), now.Add(4*day))
+			}), time.Duration(0), metav1.ConditionUnknown, corev1alpha1.ApprovalNotYetValid, "from date"),
+		Entry("SubjectMismatch: a signed accept of a different run", false,
+			one(func(string) approvalChain { return accept(other) }),
+			time.Duration(0), metav1.ConditionUnknown, corev1alpha1.ApprovalSubjectMismatch, "does not bind the subject"),
+		Entry("SubjectMismatch: an old signed reject of a different run does not stop the run", false,
+			one(func(string) approvalChain { return old(other, "reject") }),
+			time.Duration(0), metav1.ConditionUnknown, corev1alpha1.ApprovalSubjectMismatch, "does not bind the subject"),
+		Entry("SubjectMismatch: a snapshot record with one more byte", false,
+			one(func(s string) approvalChain {
+				c := accept(s)
+				c.snapshot = append(c.snapshot, ' ')
+				return c
+			}), time.Duration(0), metav1.ConditionUnknown, corev1alpha1.ApprovalSubjectMismatch, "does not bind the subject"),
+		Entry("NotVerified: a manifest with one more byte", false,
+			one(func(s string) approvalChain {
+				c := accept(s)
+				c.manifest = append(c.manifest, ' ')
+				return c
+			}), time.Duration(0), metav1.ConditionUnknown, corev1alpha1.ApprovalNotVerified, "manifest_ref: binding_mismatch"),
 		Entry("NotVerified: a reject from a key that the key set does not have", false,
-			func(s string) [][]byte { return [][]byte{decide(stranger, s, "reject")} },
+			one(func(s string) approvalChain { return decide(stranger, s, "reject") }),
 			time.Duration(0), metav1.ConditionUnknown, corev1alpha1.ApprovalNotVerified, "unknown_key"),
 		Entry("NotVerified: a decision time in the future", false,
-			func(s string) [][]byte {
-				return [][]byte{signer.sign(s, "reject", now.Add(time.Hour), now.Add(-2*day), now.Add(2*day))}
-			}, time.Duration(0), metav1.ConditionUnknown, corev1alpha1.ApprovalNotVerified, "invalid_decided_at"),
-		Entry("NoKeySet: a Profile with no spec.approval", true,
-			func(s string) [][]byte { return [][]byte{accept(s)} },
+			one(func(s string) approvalChain {
+				return signer.chain(s, "reject", now.Add(time.Hour), now.Add(-2*day), now.Add(2*day))
+			}), time.Duration(0), metav1.ConditionUnknown, corev1alpha1.ApprovalNotVerified, "invalid_decided_at"),
+		Entry("NoKeySet: a Profile with no spec.approval", true, one(accept),
 			time.Duration(0), metav1.ConditionFalse, corev1alpha1.ApprovalNoKeySet, "spec.approval"),
 		Entry("ApprovalTimeout: no accept before the wait ends", false,
-			func(s string) [][]byte { return [][]byte{[]byte("not a record")} },
+			func(string) []approvalChain { return []approvalChain{junk} },
 			2*time.Hour, metav1.ConditionFalse, corev1alpha1.ApprovalTimeout, "3600 seconds"),
 	)
 
 	It("pauses the run again when the spec changes before the Job starts", func() {
 		a, _, _ := start(bound, nil, now)
-		old := subjectOf(a)
+		before := subjectOf(a)
 		a.Spec.Command = []string{"changed"}
 		Expect(k8sClient.Update(ctx, a)).To(Succeed())
-		Expect(subjectOf(a)).NotTo(Equal(old))
-		carry(a, accept(old))
+		Expect(subjectOf(a)).NotTo(Equal(before))
+		carry(a, accept(before))
 		r := &AgentReconciler{Client: k8sClient, Scheme: k8sClient.Scheme(), APIReader: k8sClient, Gateway: &fakeGateway{}}
 		// The record maps to the Agents of its namespace that wait.
 		Expect(r.approvalWaiters(ctx, &metav1.PartialObjectMetadata{ObjectMeta: metav1.ObjectMeta{Namespace: bound}})).
@@ -261,11 +295,32 @@ var _ = Describe("Agent approval", Ordered, func() {
 	})
 
 	It("reads a bounded count of records in one check", func() {
-		a, _, _ := start(bound, func(s string) [][]byte {
-			return slices.Repeat([][]byte{[]byte("not a record")}, approvalMaxRecords+approvalPageSize)
+		a, _, _ := start(bound, func(string) []approvalChain {
+			return slices.Repeat([]approvalChain{junk}, approvalMaxRecords+approvalPageSize)
 		}, now)
 		Expect(meta.FindStatusCondition(a.Status.Conditions, corev1alpha1.AgentApproval).Message).
 			To(ContainSubstring(fmt.Sprintf("read only %d records", approvalMaxRecords)))
+	})
+
+	It("gives the states of the fixture chains of the pinned release", func() {
+		read := func(name string) []byte {
+			raw, err := os.ReadFile(filepath.Join("..", "evidence", "approval", "testdata", "v0.7.0", name))
+			Expect(err).NotTo(HaveOccurred())
+			return raw
+		}
+		trust := &corev1alpha1.ProfileApproval{KeySet: string(read("keyset.json")), Scope: "fixture",
+			Function: "content:agent-approvals/egress-grant", MaxAgeSeconds: 3600}
+		subject := approvalSubject(read("request.json"))
+		decided := time.Date(2026, 11, 27, 12, 0, 0, 0, time.UTC)
+		for name, reason := range map[string]string{"accept": corev1alpha1.ApprovalApproved, "reject": corev1alpha1.ApprovalDenied} {
+			rec := &corev1alpha1.ApprovalRecord{Spec: corev1alpha1.ApprovalRecordSpec{SignedRecord: read("decision-" + name + ".signed.json"),
+				SnapshotRecord: read("snapshot-" + name + ".record"), Manifest: read("manifest-" + name + ".json")}}
+			s := checkRecord(rec, trust, subject, decided.Add(time.Minute))
+			Expect(s.reason).To(Equal(reason), s.message)
+			Expect(s.evidence).To(HaveField("Subject", subject))
+			Expect(checkRecord(rec, trust, subject, decided.Add(2*time.Hour)).reason).To(Equal(corev1alpha1.ApprovalExpired))
+			Expect(checkRecord(rec, trust, other, decided.Add(time.Minute)).reason).To(Equal(corev1alpha1.ApprovalSubjectMismatch))
+		}
 	})
 
 	It("makes the request document with a fixed form", func() {
