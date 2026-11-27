@@ -134,6 +134,7 @@ type AgentReconciler struct {
 // +kubebuilder:rbac:groups=core.koodam.dev,resources=agents,verbs=get;list;watch;update
 // +kubebuilder:rbac:groups=core.koodam.dev,resources=agents/status,verbs=update
 // +kubebuilder:rbac:groups=core.koodam.dev,resources=agents/finalizers,verbs=update
+// +kubebuilder:rbac:groups=core.koodam.dev,resources=approvalrecords,verbs=list;watch
 // +kubebuilder:rbac:groups=core.koodam.dev,resources=spendbudgets,verbs=get;list;watch
 // +kubebuilder:rbac:groups=core.koodam.dev,resources=spendbudgets/status,verbs=update
 // +kubebuilder:rbac:groups=batch,resources=jobs,verbs=get;list;watch;create;update;delete

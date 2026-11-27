@@ -59,6 +59,24 @@ spec:
           spec:
             description: spec defines the desired state of Agent
             properties:
+              approval:
+                description: |-
+                  Approval makes the run wait for a signed approval record before its Job starts. The run has
+                  no pod and no gateway key while it waits. An ApprovalRecord in the namespace of the Agent
+                  carries the record. The controller verifies it with the key set, the scope and the function
+                  in spec.approval of the Profile of the namespace. You cannot add, remove or change this
+                  field after create.
+                properties:
+                  waitSeconds:
+                    default: 86400
+                    description: |-
+                      WaitSeconds is the maximum time from the creation of the Agent to the condition Approval
+                      with the status True. After this time, the run fails with the reason ApprovalTimeout.
+                    format: int64
+                    maximum: 2592000
+                    minimum: 1
+                    type: integer
+                type: object
               budget:
                 anyOf:
                 - type: integer
@@ -9107,6 +9125,10 @@ spec:
                 > 0))'
             - message: Set model or models, and not the two.
               rule: has(self.model) != has(self.models)
+            - message: spec.approval is immutable. You cannot add, remove or change
+                it after create.
+              rule: has(self.approval) == has(oldSelf.approval) && (!has(self.approval)
+                || self.approval == oldSelf.approval)
             - message: spec.ingressPort is disabled. The traced ingress feature is
                 not installed in this cluster.
               rule: '!has(self.ingressPort)'
@@ -9126,7 +9148,7 @@ spec:
                 format: date-time
                 type: string
               conditions:
-                description: 'Conditions: Provisioned, Revoked, TracedEgress.'
+                description: 'Conditions: Provisioned, Revoked, TracedEgress, Approval.'
                 items:
                   description: Condition contains details for one aspect of the current
                     state of this API Resource.
@@ -9190,6 +9212,73 @@ spec:
                   CostGroup is the cost group of the key, from the label koodam.dev/cost-group when the
                   controller made the key.
                 type: string
+              evidence:
+                description: |-
+                  Evidence is the record of the approval that the controller accepted for the run: an accept
+                  or a reject. Only an Agent with spec.approval has it. The controller writes it one time.
+                properties:
+                  checkedAt:
+                    description: CheckedAt is the time of the check by the controller.
+                    format: date-time
+                    type: string
+                  digest:
+                    description: |-
+                      Digest is the SHA-256 of the bytes of the record: result.json of the gate run, or the
+                      approval record.
+                    pattern: ^sha256:[0-9a-f]{64}$
+                    type: string
+                  expiresAt:
+                    description: ExpiresAt is the end of an approval record with a
+                      TTL.
+                    format: date-time
+                    type: string
+                  id:
+                    description: ID is the Nookku gate id, or the identity of the
+                      approval record.
+                    maxLength: 253
+                    minLength: 1
+                    type: string
+                  integrity:
+                    description: Integrity is seal for a Nookku result, and signature
+                      for an approval record.
+                    enum:
+                    - seal
+                    - signature
+                    type: string
+                  nookkuVersion:
+                    description: NookkuVersion is the Nookku version of the verify
+                      step. Only a nookku-gate record has it.
+                    maxLength: 64
+                    type: string
+                  source:
+                    description: 'Source is the evidence source: nookku-gate or approval.'
+                    enum:
+                    - nookku-gate
+                    - approval
+                    type: string
+                  subject:
+                    description: |-
+                      Subject is the subject digest of the record. For an AppVersion it is
+                      koodam.dev/appversion/v1:<namespace>/<name>:<uid>:<image digest>. For an Agent it is the
+                      sha256: digest of the approval request of the run.
+                    maxLength: 512
+                    minLength: 1
+                    type: string
+                  verdict:
+                    description: Verdict is pass or fail.
+                    enum:
+                    - pass
+                    - fail
+                    type: string
+                required:
+                - checkedAt
+                - digest
+                - id
+                - integrity
+                - source
+                - subject
+                - verdict
+                type: object
               job:
                 description: Job is the name of the run Job.
                 type: string

@@ -1,6 +1,6 @@
 # Evidence gate
 
-Status: the gate of an AppVersion is built (#342). The pin is Nookku 0.6.0 (#373). [apps.md](apps.md) has the use. The seam test with the pinned release and the kind test are in `main` (#343). The approval source of a paused run is #190, #246 and #344. Of that source, only the offline verifier (#344) is in `main`. No controller calls the verifier, and no resource carries an approval record.
+Status: the gate of an AppVersion is built (#342). The pin is Nookku 0.6.0 (#373). [apps.md](apps.md) has the use. The seam test with the pinned release and the kind test are in `main` (#343). The approval source of a paused run is #190, #246 and #344. Of that source, the offline verifier (#344) and the API (#246) are in `main`: `spec.approval` of the Agent and of the Profile, and the `ApprovalRecord` carrier. No controller calls the verifier.
 
 An evidence gate holds a rollout, or a paused run, until the controller gets a valid evidence record. One gate design serves 2 sources:
 

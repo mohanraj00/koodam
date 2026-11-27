@@ -30,6 +30,7 @@ import (
 // +kubebuilder:validation:XValidation:rule="has(self.ingressPort) == has(oldSelf.ingressPort) && (!has(self.ingressPort) || self.ingressPort == oldSelf.ingressPort)",message="spec.ingressPort is immutable. You cannot add, remove or change it after create."
 // +kubebuilder:validation:XValidation:rule="!has(self.harness) || !has(self.harness.plugins) || !('nookku' in self.harness.plugins) || (has(self.podTemplate) && has(self.podTemplate.spec) && has(self.podTemplate.spec.volumes) && self.podTemplate.spec.volumes.exists(v, v.name == 'nookku-tests' && has(v.persistentVolumeClaim) && size(v.persistentVolumeClaim.claimName) > 0))",message="The nookku plugin needs the volume nookku-tests in spec.podTemplate.spec.volumes, with a persistentVolumeClaim and a claimName."
 // +kubebuilder:validation:XValidation:rule="has(self.model) != has(self.models)",message="Set model or models, and not the two."
+// +kubebuilder:validation:XValidation:rule="has(self.approval) == has(oldSelf.approval) && (!has(self.approval) || self.approval == oldSelf.approval)",message="spec.approval is immutable. You cannot add, remove or change it after create."
 type AgentSpec struct {
 	// Image is the agent container image.
 	// +required
@@ -107,7 +108,64 @@ type AgentSpec struct {
 	// +kubebuilder:validation:Minimum=1
 	// +kubebuilder:validation:Maximum=65535
 	IngressPort *int32 `json:"ingressPort,omitempty"`
+
+	// Approval makes the run wait for a signed approval record before its Job starts. The run has
+	// no pod and no gateway key while it waits. An ApprovalRecord in the namespace of the Agent
+	// carries the record. The controller verifies it with the key set, the scope and the function
+	// in spec.approval of the Profile of the namespace. You cannot add, remove or change this
+	// field after create.
+	// +optional
+	Approval *AgentApprovalSpec `json:"approval,omitempty"`
 }
+
+// AgentApprovalSpec is the approval wait of an Agent. It names no key set, no scope and no
+// function: the admin sets them in the Profile, so the Agent owner cannot select them.
+type AgentApprovalSpec struct {
+	// WaitSeconds is the maximum time from the creation of the Agent to the condition Approval
+	// with the status True. After this time, the run fails with the reason ApprovalTimeout.
+	// +optional
+	// +kubebuilder:default=86400
+	// +kubebuilder:validation:Minimum=1
+	// +kubebuilder:validation:Maximum=2592000
+	WaitSeconds int64 `json:"waitSeconds,omitempty"`
+}
+
+// AgentApproval is the condition that tells the state of the approval wait. An Agent with no
+// spec.approval has no condition Approval.
+const AgentApproval = "Approval"
+
+// The reasons of the condition Approval. The run starts only with the status True. Each reason
+// with the status False stops the run. Each reason with the status Unknown keeps the run paused.
+const (
+	// ApprovalWaiting tells that no record for the Agent is there. The status is Unknown.
+	ApprovalWaiting = "Waiting"
+	// ApprovalApproved tells that a valid human accept for the current subject is in its date
+	// window. The status is True.
+	ApprovalApproved = "Approved"
+	// ApprovalDenied tells that a valid human reject for the current subject is there. The status
+	// is False.
+	ApprovalDenied = "Denied"
+	// ApprovalExpired tells that a valid record is older than the maximum age of the Profile, or
+	// that the date of the check is at or after its until date. The status is False.
+	ApprovalExpired = "Expired"
+	// ApprovalNotYetValid tells that a valid record has a from date in the future. The status is
+	// Unknown.
+	ApprovalNotYetValid = "NotYetValid"
+	// ApprovalSubjectMismatch tells that the record names a different subject, for example after
+	// a change of the spec. The status is Unknown.
+	ApprovalSubjectMismatch = "SubjectMismatch"
+	// ApprovalNotVerified tells that the verifier refused the signature, the key, a revoked key,
+	// the format, the purpose, the kind or the decision time of the record. The message has the
+	// code of the verifier. The status is Unknown, so a writer with no signing key cannot stop a
+	// run.
+	ApprovalNotVerified = "NotVerified"
+	// ApprovalNoKeySet tells that the Profile of the namespace has no spec.approval. The status
+	// is False.
+	ApprovalNoKeySet = "NoKeySet"
+	// ApprovalTimeout tells that the condition did not get the status True in
+	// spec.approval.waitSeconds. The status is False.
+	ApprovalTimeout = "ApprovalTimeout"
+)
 
 // HarnessSpec selects the harness binary. An init container downloads it from the vendor and
 // checks its sha256. Koodam does not keep or redistribute a harness binary.
@@ -297,7 +355,12 @@ type AgentStatus struct {
 	// +optional
 	Usage *AgentUsage `json:"usage,omitempty"`
 
-	// Conditions: Provisioned, Revoked, TracedEgress.
+	// Evidence is the record of the approval that the controller accepted for the run: an accept
+	// or a reject. Only an Agent with spec.approval has it. The controller writes it one time.
+	// +optional
+	Evidence *EvidenceRecord `json:"evidence,omitempty"`
+
+	// Conditions: Provisioned, Revoked, TracedEgress, Approval.
 	// +listType=map
 	// +listMapKey=type
 	// +optional

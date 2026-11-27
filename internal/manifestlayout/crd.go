@@ -83,6 +83,7 @@ type route struct{ kind, plural, dir string }
 func kindIndex() []route {
 	return []route{
 		{kind: "Agent", plural: "agents", dir: baseCRDDir},
+		{kind: "ApprovalRecord", plural: "approvalrecords", dir: baseCRDDir},
 		{kind: "Profile", plural: "profiles", dir: baseCRDDir},
 		{kind: "Hold", plural: "holds", dir: baseCRDDir},
 		{kind: "SpendBudget", plural: "spendbudgets", dir: baseCRDDir},

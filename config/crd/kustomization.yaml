@@ -3,6 +3,7 @@
 # It should be run by config/default
 resources:
 - bases/core.koodam.dev_agents.yaml
+- bases/core.koodam.dev_approvalrecords.yaml
 - bases/core.koodam.dev_holds.yaml
 - bases/core.koodam.dev_profiles.yaml
 - bases/core.koodam.dev_workspaces.yaml
