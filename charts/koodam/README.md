@@ -13,6 +13,7 @@ This chart installs the Koodam controller and the Agent CRD. The controller uses
 - The `agent-ceiling` ClusterRole: the most that a run Role can grant.
 - The leader election Role, in the release namespace.
 - If `metrics.enabled` is true: the metrics Service and the metrics-auth ClusterRole.
+- If `metrics.serviceMonitor.enabled` is true: a `ServiceMonitor` for the metrics Service. It needs the Prometheus Operator CRDs.
 - If `gateway.mode` is `bundled`: the LiteLLM Deployment, ConfigMap and Service (port 4000), and the PostgreSQL Deployment and Service. If you do not give a password Secret, the chart also makes the PostgreSQL password Secret.
 
 ## Install with an existing gateway
@@ -219,6 +220,10 @@ The reference must end with `@sha256:` and 64 lower-case hex characters. If not,
 | `jobTTLSeconds` | `86400` | The time in seconds that Kubernetes keeps a run Job and its pods (and the log) after the Job ends. The value must be from `60` to `2147483647`. |
 | `leaderElection` | `true` | Use leader election. |
 | `metrics.enabled` | `false` | Add the HTTPS metrics endpoint and its RBAC. |
+| `metrics.serviceMonitor.enabled` | `false` | Add a `ServiceMonitor` for the metrics Service. It needs `metrics.enabled`. [docs/metrics.md](../../docs/metrics.md#servicemonitor) has the RBAC for Prometheus. |
+| `metrics.serviceMonitor.labels` | empty | More labels for the `ServiceMonitor`, for the selector of your Prometheus. |
+| `metrics.serviceMonitor.interval` | empty | The scrape interval. Empty uses the Prometheus default. |
+| `metrics.serviceMonitor.tlsConfig` | `insecureSkipVerify: true` | The TLS config of the scrape. The chart endpoint uses a self-signed certificate. |
 
 ## Keep the chart in sync
 
