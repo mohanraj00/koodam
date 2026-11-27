@@ -38,6 +38,7 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/intstr"
+	"k8s.io/client-go/tools/events"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/builder"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -133,6 +134,8 @@ type WorkspaceReconciler struct {
 	KeyTTL time.Duration
 	// Now gives the time for the renew. If it is nil, the controller uses time.Now.
 	Now func() time.Time
+	// Recorder writes the event of a stop by a Hold. If it is nil, the controller writes no event.
+	Recorder events.EventRecorder
 
 	renewMu sync.Mutex
 	// renewed has the time of the last renew for each key hash.
@@ -157,6 +160,9 @@ func (r *WorkspaceReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 		return ctrl.Result{}, r.applyKey(ctx, ws)
 	}
 	old := ws.Status.DeepCopy()
+	if err := r.applyHold(ctx, ws); err != nil {
+		return ctrl.Result{}, err
+	}
 	user, err := boundProfile(ctx, r.Client, ws.Namespace)
 	if err != nil {
 		return ctrl.Result{}, err
@@ -221,6 +227,9 @@ func (r *WorkspaceReconciler) apply(ctx context.Context, ws *corev1alpha1.Worksp
 	const failed = corev1alpha1.WorkspaceFailed
 	if len(ws.Name) > maxWorkspaceName {
 		return failed, reasonInvalid, "The Workspace name is too long for the StatefulSet. Use 52 characters or fewer.", nil
+	}
+	if heldWorkspace(ws) {
+		return r.stopHeld(ctx, ws)
 	}
 	if user == "" {
 		// While a TestKey is not blocked, the pod stays, and the status says that no Profile
@@ -377,11 +386,75 @@ func (r *WorkspaceReconciler) unbind(ctx context.Context, ws *corev1alpha1.Works
 			return errUnbindPending
 		}
 	}
+	return r.stopPod(ctx, ws)
+}
+
+// applyHold sets the condition Held from the Holds with the action Stop. While it is True, the
+// Workspace has no key and no pod, as with spec.suspend. The owner cannot clear it, because
+// only the controller writes the status. A release removes it, and the Workspace starts again
+// with a new key.
+func (r *WorkspaceReconciler) applyHold(ctx context.Context, ws *corev1alpha1.Workspace) error {
+	h, err := stopHold(ctx, r.Client, corev1alpha1.HoldTargetWorkspace, ws.Namespace, ws.Name, "")
+	if err != nil {
+		return err
+	}
+	if h == nil {
+		meta.RemoveStatusCondition(&ws.Status.Conditions, corev1alpha1.HoldHeld)
+		return nil
+	}
+	if !heldWorkspace(ws) {
+		holdEvent(r.Recorder, ws, h)
+	}
+	meta.SetStatusCondition(&ws.Status.Conditions, metav1.Condition{Type: corev1alpha1.HoldHeld,
+		Status: metav1.ConditionTrue, Reason: reasonStopped, ObservedGeneration: ws.Generation,
+		Message: fmt.Sprintf("The Hold %s stops the Workspace.", h.Name)})
+	return nil
+}
+
+// stopHeld stops a Workspace that a Hold stops. It blocks the key first, then it scales the
+// StatefulSet to 0. It does not read the pod template, so a template that is not valid does not
+// keep the pod. The home PVC stays.
+func (r *WorkspaceReconciler) stopHeld(ctx context.Context, ws *corev1alpha1.Workspace) (
+	corev1alpha1.WorkspacePhase, string, string, error) {
+	secret, err := r.readKey(ctx, ws)
+	if err != nil && !errors.Is(err, errNotOwned) {
+		return "", "", "", err
+	}
+	if err := r.revokeKey(ctx, ws, secret); err != nil {
+		return "", "", "", err
+	}
+	// The TestKey controller refuses an issue when it reads Held=True. As in unbind, write that
+	// condition before the stop, so a TestKey issue that the stop does not see also sees it.
+	if ws.Spec.TestKeys != nil {
+		fresh := &corev1alpha1.Workspace{}
+		if err := r.APIReader.Get(ctx, client.ObjectKeyFromObject(ws), fresh); err != nil {
+			return "", "", "", err
+		}
+		if !heldWorkspace(fresh) {
+			return corev1alpha1.WorkspacePending, reasonHeld, "The pod stops after the status records the Hold.", nil
+		}
+	}
+	switch err := r.stopPod(ctx, ws); {
+	case errors.Is(err, errTestKeysUnblocked):
+		return corev1alpha1.WorkspacePending, "TestKeysBlocking",
+			"The pod stops after the gateway blocks each test key.", nil
+	case errors.Is(err, errTestKeysPending):
+		return corev1alpha1.WorkspacePending, "TestKeysRevoking",
+			"The gateway removal completes after the revoke of each test key.", nil
+	case err != nil:
+		return "", "", "", err
+	}
+	return corev1alpha1.WorkspaceSuspended, reasonHeld, "A Hold stops the pod. The home PVC stays.", nil
+}
+
+// stopPod waits for the block of each TestKey, then scales the StatefulSet to 0. It makes no
+// object.
+func (r *WorkspaceReconciler) stopPod(ctx context.Context, ws *corev1alpha1.Workspace) error {
 	if err := r.waitTestKeyBlocks(ctx, ws); err != nil {
 		return err
 	}
 	sts := &appsv1.StatefulSet{}
-	err = r.Get(ctx, types.NamespacedName{Namespace: ws.Namespace, Name: ws.Name}, sts)
+	err := r.Get(ctx, types.NamespacedName{Namespace: ws.Namespace, Name: ws.Name}, sts)
 	if apierrors.IsNotFound(err) || (err == nil && !metav1.IsControlledBy(sts, ws)) {
 		return nil
 	}
@@ -669,6 +742,8 @@ func (r *WorkspaceReconciler) SetupWithManager(mgr ctrl.Manager) error {
 				predicate.Funcs{UpdateFunc: deleteStarted}))).
 		// A TestKey revoke lets the Workspace delete continue (#192).
 		Watches(&corev1alpha1.TestKey{}, handler.EnqueueRequestsFromMapFunc(workspaceForTestKey)).
+		Watches(&corev1alpha1.Hold{},
+			handler.EnqueueRequestsFromMapFunc(holdMapper(r.Client, corev1alpha1.HoldTargetWorkspace))).
 		Named("workspace").
 		Complete(r)
 }

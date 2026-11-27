@@ -64,7 +64,7 @@ const (
 
 // wantKey is true if the pod must have a gateway key now.
 func wantKey(ws *corev1alpha1.Workspace) bool {
-	return hasGateway(ws) && !ws.Spec.Suspend && ws.DeletionTimestamp.IsZero()
+	return hasGateway(ws) && !ws.Spec.Suspend && !heldWorkspace(ws) && ws.DeletionTimestamp.IsZero()
 }
 
 // hasGateway is true if the Workspace has a gateway with a model. The CRD refuses a gateway

@@ -38,6 +38,7 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/intstr"
 	"k8s.io/apimachinery/pkg/util/validation"
+	"k8s.io/client-go/tools/events"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
@@ -119,6 +120,8 @@ type AppVersionReconciler struct {
 	KeyTTL time.Duration
 	// Now is the clock. If it is nil, the controller uses time.Now.
 	Now func() time.Time
+	// Recorder writes the event of a stop by a Hold. If it is nil, the controller writes no event.
+	Recorder events.EventRecorder
 
 	renewMu sync.Mutex
 	// renewed has the time of the last renew for each key hash. The hash is not a credential.
@@ -149,7 +152,18 @@ func (r *AppVersionReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 		return ctrl.Result{}, r.revoke(ctx, av, c.Reason)
 	case !av.DeletionTimestamp.IsZero():
 		return ctrl.Result{}, r.revoke(ctx, av, "Deleted")
-	case av.Spec.Lifecycle == corev1alpha1.AppVersionRetiring:
+	}
+	hold, err := stopHold(ctx, r.Client, corev1alpha1.HoldTargetAppVersion, av.Namespace, av.Name, av.Spec.AppRef.Name)
+	if err != nil {
+		return ctrl.Result{}, err
+	}
+	if hold != nil {
+		// A Hold stops the version with no drain. The revoke blocks the key first, and it is
+		// terminal: the App sends the version no session.
+		holdEvent(r.Recorder, av, hold)
+		return ctrl.Result{}, r.revoke(ctx, av, reasonStopped)
+	}
+	if av.Spec.Lifecycle == corev1alpha1.AppVersionRetiring {
 		return r.retire(ctx, av)
 	}
 	return r.apply(ctx, av)
@@ -1087,6 +1101,12 @@ func (r *AppVersionReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		Owns(&corev1.Service{}).
 		Owns(&batchv1.Job{}).
 		Watches(&corev1alpha1.App{}, handler.EnqueueRequestsFromMapFunc(r.versionsOfApp)).
+		Watches(&corev1alpha1.Hold{},
+			handler.EnqueueRequestsFromMapFunc(holdMapper(r.Client, corev1alpha1.HoldTargetAppVersion))).
+		Watches(&corev1.Namespace{},
+			handler.EnqueueRequestsFromMapFunc(profileHoldMapper(r.Client, corev1alpha1.HoldTargetAppVersion))).
+		Watches(&corev1alpha1.Profile{},
+			handler.EnqueueRequestsFromMapFunc(profileHoldMapper(r.Client, corev1alpha1.HoldTargetAppVersion))).
 		Named("appversion").
 		Complete(r)
 }

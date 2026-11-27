@@ -213,7 +213,7 @@ func testKeyRefusal(key *corev1alpha1.TestKey, workspace *corev1alpha1.Workspace
 	switch {
 	case workspace.UID != key.Spec.WorkspaceRef.UID:
 		return "WorkspaceUIDMismatch", "The Workspace UID differs from the reference."
-	case workspace.Spec.Suspend || !workspace.DeletionTimestamp.IsZero():
+	case workspace.Spec.Suspend || heldWorkspace(workspace) || !workspace.DeletionTimestamp.IsZero():
 		return "WorkspaceSuspended", "The Workspace is suspended or is being deleted."
 	case policy == nil:
 		return "TestKeysDisabled", "The Workspace does not permit test keys."

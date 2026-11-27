@@ -1,0 +1,167 @@
+//go:build e2e
+// +build e2e
+
+/*
+Copyright 2026 Mohan Raj.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
+
+package e2e
+
+import (
+	"fmt"
+	"net/http"
+	"time"
+
+	. "github.com/onsi/ginkgo/v2"
+	. "github.com/onsi/gomega"
+	authnv1 "k8s.io/api/authentication/v1"
+	corev1 "k8s.io/api/core/v1"
+	eventsv1 "k8s.io/api/events/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/api/meta"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"sigs.k8s.io/controller-runtime/pkg/client"
+
+	corev1alpha1 "github.com/mohanraj00/koodam/api/v1alpha1"
+)
+
+// The Hold tests stop a workload during a live run. The admission policy permits a Hold only with
+// the name of the requester in spec.user, so the test reads that name from the API server.
+var _ = Describe("Holds", Ordered, Label("hold"), func() {
+	SetDefaultEventuallyTimeout(5 * time.Minute)
+	SetDefaultEventuallyPollingInterval(time.Second)
+
+	AfterEach(dumpOnFailure)
+
+	It("stops an Agent run: it blocks the key and leaves no access", func() {
+		a := sampleAgent("held", callsScript(1, 600))
+		r := start(a)
+
+		By("holding the Agent during the run")
+		end := time.Now()
+		h := makeHold("e2e-agent-stop", corev1alpha1.HoldTarget{Kind: corev1alpha1.HoldTargetAgent,
+			Namespace: runNS, Name: a.Name})
+		expectNoAccess(a, r, end)
+
+		By("checking the phase, the Revoked condition and the key")
+		Eventually(func(g Gomega) {
+			g.Expect(k8s.Get(ctx, client.ObjectKeyFromObject(a), a)).To(Succeed())
+			g.Expect(a.Status.Phase).To(Equal(corev1alpha1.AgentFailed))
+			c := meta.FindStatusCondition(a.Status.Conditions, "Revoked")
+			g.Expect(c).NotTo(BeNil())
+			g.Expect(c.Status).To(Equal(metav1.ConditionTrue))
+			g.Expect(c.Reason).To(Equal("Stopped"))
+		}, time.Minute).Should(Succeed(), "The Agent did not end as Stopped.")
+		Expect(keyInfo(a.Status.KeyHash).Blocked).To(BeTrue(), "The gateway did not block the run key.")
+		expectHeld(h)
+		expectStopEvent(runNS, a.Name, h.Name)
+
+		By("releasing the Hold and checking that the run stays ended")
+		releaseHold(h)
+		Consistently(func() corev1alpha1.AgentPhase {
+			_ = k8s.Get(ctx, client.ObjectKeyFromObject(a), a)
+			return a.Status.Phase
+		}, 10*time.Second, time.Second).Should(Equal(corev1alpha1.AgentFailed))
+	})
+})
+
+// holdUser returns the user name of the test client, as the API server sees it.
+func holdUser() string {
+	GinkgoHelper()
+	r, err := clientset.AuthenticationV1().SelfSubjectReviews().Create(ctx, &authnv1.SelfSubjectReview{},
+		metav1.CreateOptions{})
+	Expect(err).NotTo(HaveOccurred())
+	Expect(r.Status.UserInfo.Username).NotTo(BeEmpty())
+	return r.Status.UserInfo.Username
+}
+
+// makeHold makes a Hold with the action Stop. The cleanup releases the Hold and then deletes it,
+// because the admission policy refuses the delete of a Hold with no release.
+func makeHold(name string, t corev1alpha1.HoldTarget) *corev1alpha1.Hold {
+	GinkgoHelper()
+	h := &corev1alpha1.Hold{ObjectMeta: metav1.ObjectMeta{Name: name},
+		Spec: corev1alpha1.HoldSpec{Target: t, Action: corev1alpha1.HoldStop,
+			Reason: "The e2e test stops the workload.", User: holdUser()}}
+	Expect(k8s.Create(ctx, h)).To(Succeed())
+	DeferCleanup(func() {
+		releaseHold(h)
+		Expect(client.IgnoreNotFound(k8s.Delete(ctx, h))).To(Succeed())
+	})
+	return h
+}
+
+// releaseHold writes spec.release if the Hold has none.
+func releaseHold(h *corev1alpha1.Hold) {
+	GinkgoHelper()
+	err := k8s.Get(ctx, client.ObjectKeyFromObject(h), h)
+	if apierrors.IsNotFound(err) {
+		return
+	}
+	Expect(err).NotTo(HaveOccurred())
+	if h.Spec.Release != nil {
+		return
+	}
+	patch := client.MergeFrom(h.DeepCopy())
+	h.Spec.Release = &corev1alpha1.HoldRelease{User: holdUser(), Reason: "The e2e test is complete."}
+	Expect(k8s.Patch(ctx, h, patch)).To(Succeed())
+}
+
+// expectHeld waits until the Held condition of the Hold is true with the reason Stopped.
+func expectHeld(h *corev1alpha1.Hold) {
+	GinkgoHelper()
+	Eventually(func(g Gomega) {
+		g.Expect(k8s.Get(ctx, client.ObjectKeyFromObject(h), h)).To(Succeed())
+		c := meta.FindStatusCondition(h.Status.Conditions, corev1alpha1.HoldHeld)
+		g.Expect(c).NotTo(BeNil())
+		g.Expect(c.Status).To(Equal(metav1.ConditionTrue), c.Message)
+		g.Expect(c.Reason).To(Equal("Stopped"))
+	}, 2*time.Minute).Should(Succeed(), "The Hold does not show that the target stopped.")
+}
+
+// expectStopEvent waits for the Warning event Stopped on the workload, with the Hold as the related
+// object.
+func expectStopEvent(namespace, name, hold string) {
+	GinkgoHelper()
+	Eventually(func(g Gomega) {
+		l, err := clientset.EventsV1().Events(namespace).List(ctx, metav1.ListOptions{})
+		g.Expect(err).NotTo(HaveOccurred())
+		found := false
+		for _, e := range l.Items {
+			found = found || stopEvent(e, name, hold)
+		}
+		g.Expect(found).To(BeTrue())
+	}, time.Minute).Should(Succeed(), fmt.Sprintf("No Stopped event of the Hold %s is on %s.", hold, name))
+}
+
+func stopEvent(e eventsv1.Event, name, hold string) bool {
+	return e.Reason == "Stopped" && e.Type == "Warning" && e.Regarding.Name == name &&
+		e.Related != nil && e.Related.Name == hold
+}
+
+// holdKey reads the gateway key of the Workspace and checks that it works.
+func holdKey(ws *corev1alpha1.Workspace) (key, hash string) {
+	GinkgoHelper()
+	Eventually(func() bool {
+		_ = k8s.Get(ctx, client.ObjectKeyFromObject(ws), ws)
+		return meta.IsStatusConditionTrue(ws.Status.Conditions, "GatewayKey")
+	}, 2*time.Minute, time.Second).Should(BeTrue(), "The gateway key is not active.")
+	s := &corev1.Secret{}
+	Expect(k8s.Get(ctx, client.ObjectKey{Namespace: ws.Namespace, Name: ws.Name + "-gateway"}, s)).To(Succeed())
+	key = string(s.Data[wsKeyField])
+	Expect(key != "").To(BeTrue(), "The gateway Secret has no key.")
+	code, _ := modelCall(ctx, key)
+	Expect(code).To(Equal(http.StatusOK), "The Workspace key did not work.")
+	return key, ws.Status.KeyHash
+}
