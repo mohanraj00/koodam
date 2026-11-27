@@ -61,10 +61,11 @@ var redactions = []redaction{
 	// The login and the password of a URL.
 	{"URL login", regexp.MustCompile(`(://)[^/\s:@]+:[^/\s@]+@`)},
 	// The value of a field with a credential name, in key=value, key: value or JSON form. A name
-	// such as prompt_tokens does not match, because the name must end after the credential word.
+	// such as prompt_tokens does not match, because the name must end after the credential word. A
+	// quoted value includes each escaped character, and a value with no end quote goes to the end.
 	{"credential field", regexp.MustCompile(`(?i)(\b[A-Za-z0-9_-]*?(?:password|passwd|pwd|secret|token|` +
 		`api[_-]?key|access[_-]?key|private[_-]?key|master[_-]?key|login|credentials?|authorization)\b` +
-		`["']?\s*[:=]\s*)(?:"[^"]*"|'[^']*'|[^\s"',;]+)`)},
+		`["']?\s*[:=]\s*)(?:"(?:[^"\\]|\\.?)*"?|'(?:[^'\\]|\\.?)*'?|[^\s"',;]+)`)},
 }
 
 // redactLine removes the control characters, and then replaces each match of the patterns.
@@ -78,6 +79,11 @@ func redactLine(line string) string {
 		}
 	}
 	return line
+}
+
+// redactText redacts a text that can have more than one line, for example a condition message.
+func redactText(text string) string {
+	return strings.Join(redactLines(strings.Split(text, "\n")), "\n")
 }
 
 // redactLines replaces each match of the patterns in each line. A PEM private key has more than one

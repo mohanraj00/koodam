@@ -59,6 +59,19 @@ func TestEachRedactionPattern(t *testing.T) {
 	}
 }
 
+func TestRedactionOfQuotedValues(t *testing.T) {
+	for line, want := range map[string]string{
+		`{"password":"prefix\"remaining-secret"}`: `{"password":[redacted]}`,
+		`token='it\'s-secret' next`:               `token=[redacted] next`,
+		`password="no end quote here`:             `password=[redacted]`,
+		`password="ends in a backslash\`:          `password=[redacted]`,
+	} {
+		if got := redactLine(line); got != want {
+			t.Errorf("redactLine(%q) = %q, want %q", line, got, want)
+		}
+	}
+}
+
 func TestRedactionKeepsOrdinaryText(t *testing.T) {
 	for _, line := range []string{
 		`{"prompt_tokens": 1200, "completion_tokens": 30}`,

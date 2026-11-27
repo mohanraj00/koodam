@@ -218,7 +218,11 @@ each pattern has a test:
 - the credentials of an `Authorization` header (`Bearer`, `Basic` or `token`);
 - the login and password of a URL;
 - the value of a field with a credential name, for example `password=`, `"api_key":`, `GITHUB_TOKEN=`
-  or `login:`.
+  or `login:`. A quoted value includes each escaped quote. If a quoted value has no end quote, the
+  server redacts the rest of the line.
+
+The server redacts each line of a message with more than one line. If a PEM private key has no END
+line, the server redacts each line after the BEGIN line.
 
 The patterns can also redact text that is not a credential. A credential in a form that no pattern
 matches stays in the response. Do not use the redaction as the only control for a credential.

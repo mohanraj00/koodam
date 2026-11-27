@@ -266,9 +266,19 @@ func TestConditionMessagesAreRedacted(t *testing.T) {
 	objects := runObjects(f.runKeys[0].hash)
 	agent := objects[0].(*corev1alpha1.Agent)
 	agent.Status.Conditions[0].Message = "the gateway refused the key " + f.runKeys[0].value
+	keyBody := "MIIEvQIBADANBgkqhkiG9w0BAQEFAASC"
+	job := objects[1].(*batchv1.Job)
+	job.Status.Conditions[0].Message = "mount failed:\n-----BEGIN PRIVATE KEY-----\n" + keyBody + "\n-----END PRIVATE KEY-----\nend"
 	f.kube = runClient(t, objects...)
-	d := decode[runDetail](t, f.call(t, http.MethodGet, testPath, f.token, http.StatusOK))
+	w := f.call(t, http.MethodGet, testPath, f.token, http.StatusOK)
+	if strings.Contains(w.Body.String(), keyBody) {
+		t.Fatal("the response has the body of a private key")
+	}
+	d := decode[runDetail](t, w)
 	if d.Conditions[0].Message != "the gateway refused the key [redacted]" {
 		t.Fatalf("the condition message is not redacted: %q", d.Conditions[0].Message)
+	}
+	if want := "mount failed:\n[redacted]\n[redacted]\n[redacted]\nend"; d.Job.Conditions[0].Message != want {
+		t.Fatalf("the Job condition message is %q, want %q", d.Job.Conditions[0].Message, want)
 	}
 }
