@@ -56,12 +56,13 @@ A key that stays valid after the run lets a copy of the key spend more.
 
 A Workspace pod runs code that the user and the harnesses start. The pod is the trust boundary of that code.
 
-- **Control.** The pod meets the Pod Security `restricted` profile. It runs as uid 1000 with no privilege escalation, all capabilities dropped, the `RuntimeDefault` seccomp profile and no hostPath volume. It has no ServiceAccount token, so it has no Kubernetes API access. It has no Service and no public port. `koodam tunnel` connects through the Kubernetes API, with the RBAC of the developer for `pods/portforward`. sshd listens on port 2222 and accepts only the public keys of `spec.sshPublicKeys`. With `workspace.networkPolicy`, the chart permits ingress to port 2222 from each source.
-- **Test.** `internal/controller/workspace_controller_test.go`: "meets the Pod Security restricted profile". `test/e2e/networkpolicy_test.go`: "lets a Workspace pod reach only DNS, the gateway and the public internet".
+- **Control.** The pod meets the Pod Security `restricted` profile. It runs as uid 1000 with no privilege escalation, all capabilities dropped, the `RuntimeDefault` seccomp profile and no hostPath volume. It has no ServiceAccount token, so it has no Kubernetes API access. It has no Service and no public port. sshd listens on TCP port 2222 and accepts only the public keys of `spec.sshPublicKeys`. The chart applies the Workspace NetworkPolicy in each namespace in `workspace.networkPolicy.namespaces`. The policy blocks direct connections from other pods by default. If `workspace.networkPolicy.sshFrom` lists peers, the policy permits only those peers on TCP port 2222. `koodam tunnel` uses the developer's `pods/portforward` permission. The kubelet connects in the pod network namespace.
+- **Test.** `internal/controller/workspace_controller_test.go` checks the Pod Security `restricted` profile. The chart tests `TestWorkspaceNetworkPolicy` and `TestWorkspaceNetworkPolicySSHFrom` check ingress with an empty list and with one peer. `test/e2e/networkpolicy_test.go` checks egress. It checks that a pod in another namespace cannot connect to TCP port 2222. It checks that a port-forward reaches the same port.
 - **Residual risk.**
   - The pod holds the gateway key, the login Secret and the home PVC. Code in the pod can read them. Treat each harness in a Workspace as able to use them.
   - A person who has `pods/exec` or `pods/portforward` in the namespace can reach the pod.
-  - A caller that can reach the pod IP can connect to port 2222 directly, with no `pods/portforward` permission. The SSH key is then the only control. A removal of the RBAC permission does not stop this caller. Remove the key from `spec.sshPublicKeys` to stop it.
+  - The policy needs a CNI that enforces NetworkPolicy. Other NetworkPolicies can permit more sources.
+  - A namespace that is not in `workspace.networkPolicy.namespaces` gets no policy. There, a caller that can reach the pod IP can connect to port 2222 directly, and the SSH key is the only control. Remove the key from `spec.sshPublicKeys` to stop this caller.
   - The pod shares the node kernel. Set `runtimeClassName: gvisor` in `spec.podTemplate` for a stronger boundary. See [workspaces.md](workspaces.md).
 
 ## T5. A pod template reads a Secret of Koodam
