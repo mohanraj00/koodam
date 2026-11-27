@@ -304,7 +304,7 @@ var _ = Describe("Workspaces", Ordered, Label("workspace"), func() {
 	// The M1 exit test of v0.4 (#287): one Nookku test uses its own gateway key (#192).
 	It("gives one Nookku test its own gateway key and revokes it after the TTL", func() {
 		By("building the Workspace image with python3 and loading it on kind")
-		// The nookku plugin needs python3 3.10 or later, and the default Workspace image has none.
+		// The nookku plugin needs python3 3.11 or later, and the default Workspace image has none.
 		const pythonWorkspaceImage = "example.com/koodam-workspace-python:e2e"
 		dir, err := utils.GetProjectDir()
 		Expect(err).NotTo(HaveOccurred())

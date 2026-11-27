@@ -486,6 +486,9 @@ var _ = Describe("Traced egress", Ordered, Label("egress"), func() {
 		Expect(a.Status.KeyHash).NotTo(BeEmpty())
 		Expect(keyInfo(a.Status.KeyHash).Blocked).To(BeTrue(), "The gateway did not block the run key.")
 
+		By("checking that the API server refuses a delete or a new label of the quarantined objects")
+		expectQuarantinePolicy(a, pod)
+
 		By("deleting the Agent and checking that the Agent and its pod stay")
 		Expect(k8s.Delete(ctx, a)).To(Succeed())
 		Consistently(func(g Gomega) {
@@ -524,6 +527,10 @@ var _ = Describe("Traced egress", Ordered, Label("egress"), func() {
 		Eventually(func() bool {
 			return apierrors.IsNotFound(k8s.Get(ctx, client.ObjectKeyFromObject(a), &corev1alpha1.Agent{}))
 		}, 2*time.Minute, 2*time.Second).Should(BeTrue(), "The Agent stays after the release.")
+		// The garbage collector deletes the pod only after the controller removes the label.
+		Eventually(func() bool {
+			return apierrors.IsNotFound(k8s.Get(ctx, client.ObjectKey{Namespace: egNS, Name: pod}, &corev1.Pod{}))
+		}, 2*time.Minute, 2*time.Second).Should(BeTrue(), "The pod stays after the release.")
 		Eventually(func(g Gomega) {
 			g.Expect(control(spans("agent/"+heldName), egress.ResultReleased)).To(Equal(1))
 		}, time.Minute, 2*time.Second).Should(Succeed(), "No control span shows the release.")

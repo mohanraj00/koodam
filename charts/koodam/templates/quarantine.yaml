@@ -1,0 +1,152 @@
+{{- /*
+The admission policies of a quarantine (#452). docs/holds.md has the rules.
+
+While a Quarantine Hold is active, the manager adds the label koodam.dev/quarantine to the
+workload and to its children. The first policy keeps these objects for the investigation:
+ - It refuses the delete of a child with the label, also a delete by the garbage collector or by
+   a controller of Kubernetes.
+ - It refuses the delete of a workload with the label and the propagation policy Foreground. A
+   normal delete stays permitted, and the finalizer keeps the workload until the release.
+ - Only the manager of this install adds, changes or removes the label, and only the manager
+   removes a koodam finalizer of a workload with the label. Thus a user cannot remove the workload
+   and leave its children with the label. The manager has no exception for a delete, so it
+   removes the label before it stops the pods.
+
+The egress proxy finds the pods of a quarantined workload by the koodam labels of the pod. The
+second policy makes these labels immutable on a pod that has one of them. It has no exception.
+
+The policies are for the namespaces of the install (zone.namespaces and the release namespace).
+With no zone.namespaces, they are for each namespace. The object selector limits the first policy
+to the objects with the label. The policies also match the status subresources, because an update
+of the status of a built-in kind can change the labels.
+*/ -}}
+{{- $fullname := include "koodam.fullname" . -}}
+{{- $manager := printf "system:serviceaccount:%s:%s" .Release.Namespace (include "koodam.serviceAccountName" .) -}}
+{{- $namespaces := prepend (.Values.zone.namespaces | default list) .Release.Namespace | uniq -}}
+{{- $keys := "['koodam.dev/agent', 'koodam.dev/workspace', 'koodam.dev/app', 'koodam.dev/app-version']" -}}
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicy
+metadata:
+  name: {{ $fullname }}-quarantine
+  labels:
+    {{- include "koodam.labels" . | nindent 4 }}
+spec:
+  failurePolicy: Fail
+  matchConstraints:
+    resourceRules:
+    - apiGroups: ["core.koodam.dev"]
+      apiVersions: ["*"]
+      operations: ["CREATE", "UPDATE", "DELETE"]
+      resources: ["agents", "workspaces", "appversions"]
+    - apiGroups: [""]
+      apiVersions: ["*"]
+      operations: ["CREATE", "UPDATE", "DELETE"]
+      resources: ["pods", "pods/status", "persistentvolumeclaims", "persistentvolumeclaims/status"]
+    - apiGroups: ["batch"]
+      apiVersions: ["*"]
+      operations: ["CREATE", "UPDATE", "DELETE"]
+      resources: ["jobs", "jobs/status"]
+    - apiGroups: ["apps"]
+      apiVersions: ["*"]
+      operations: ["CREATE", "UPDATE", "DELETE"]
+      resources: ["statefulsets", "statefulsets/status", "deployments", "deployments/status"]
+    # The API server compares the selector with the old object and with the new object.
+    objectSelector:
+      matchExpressions:
+      - key: koodam.dev/quarantine
+        operator: Exists
+  variables:
+  # manager is true for the manager service account of this install.
+  - name: manager
+    expression: {{ printf "request.userInfo.username == %s" (toJson $manager) | quote }}
+  # workload is true for an Agent, a Workspace or an AppVersion. Each other kind is a child.
+  - name: workload
+    expression: "request.resource.group == 'core.koodam.dev'"
+  # sameLabel is true if the old object and the new object have the label with the same value.
+  - name: sameLabel
+    expression: >-
+      oldObject != null && object != null &&
+      has(oldObject.metadata.labels) && has(object.metadata.labels) &&
+      'koodam.dev/quarantine' in oldObject.metadata.labels &&
+      'koodam.dev/quarantine' in object.metadata.labels &&
+      oldObject.metadata.labels['koodam.dev/quarantine'] == object.metadata.labels['koodam.dev/quarantine']
+  validations:
+  - expression: "variables.manager || request.operation == 'DELETE' || variables.sameLabel"
+    message: "Only the koodam manager adds, changes or removes the label koodam.dev/quarantine."
+    reason: Forbidden
+  - expression: "request.operation != 'DELETE' || variables.workload"
+    message: "A Hold quarantines this object. Release the Hold before the delete."
+    reason: Forbidden
+  - expression: >-
+      request.operation != 'DELETE' || !variables.workload || !has(request.options) ||
+      !has(request.options.propagationPolicy) || request.options.propagationPolicy != 'Foreground'
+    message: "A Hold quarantines this workload. Release the Hold before a delete with the propagation policy Foreground."
+    reason: Forbidden
+  - expression: >-
+      variables.manager || request.operation != 'UPDATE' || !variables.workload ||
+      !has(oldObject.metadata.finalizers) ||
+      oldObject.metadata.finalizers.filter(f, f.startsWith('koodam.dev/')).all(f,
+      has(object.metadata.finalizers) && f in object.metadata.finalizers)
+    message: "A Hold quarantines this workload. Only the koodam manager removes a koodam finalizer before the release."
+    reason: Forbidden
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicyBinding
+metadata:
+  name: {{ $fullname }}-quarantine
+  labels:
+    {{- include "koodam.labels" . | nindent 4 }}
+spec:
+  policyName: {{ $fullname }}-quarantine
+  validationActions: ["Deny"]
+  {{- if .Values.zone.namespaces }}
+  matchResources:
+    namespaceSelector:
+      matchExpressions:
+      - key: kubernetes.io/metadata.name
+        operator: In
+        values: {{ toJson $namespaces }}
+  {{- end }}
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicy
+metadata:
+  name: {{ $fullname }}-pod-labels
+  labels:
+    {{- include "koodam.labels" . | nindent 4 }}
+spec:
+  failurePolicy: Fail
+  matchConstraints:
+    resourceRules:
+    - apiGroups: [""]
+      apiVersions: ["*"]
+      operations: ["UPDATE"]
+      resources: ["pods", "pods/status"]
+  matchConditions:
+  - name: koodam-pod
+    expression: "has(oldObject.metadata.labels) && {{ $keys }}.exists(k, k in oldObject.metadata.labels)"
+  validations:
+  - expression: >-
+      {{ $keys }}.all(k,
+      (k in oldObject.metadata.labels) == (has(object.metadata.labels) && k in object.metadata.labels) &&
+      (!(k in oldObject.metadata.labels) || oldObject.metadata.labels[k] == object.metadata.labels[k]))
+    message: "The labels koodam.dev/agent, koodam.dev/workspace, koodam.dev/app and koodam.dev/app-version of a pod are immutable."
+    reason: Forbidden
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicyBinding
+metadata:
+  name: {{ $fullname }}-pod-labels
+  labels:
+    {{- include "koodam.labels" . | nindent 4 }}
+spec:
+  policyName: {{ $fullname }}-pod-labels
+  validationActions: ["Deny"]
+  {{- if .Values.zone.namespaces }}
+  matchResources:
+    namespaceSelector:
+      matchExpressions:
+      - key: kubernetes.io/metadata.name
+        operator: In
+        values: {{ toJson $namespaces }}
+  {{- end }}

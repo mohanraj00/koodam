@@ -230,8 +230,9 @@ func TestZonePlacementPolicy(t *testing.T) {
 			t.Errorf("the install with the zone values does not have %q", s)
 		}
 	}
+	// The 2 bindings of the quarantine policies have the same namespace selector.
 	if strings.Count(scoped, placement) != 2 || strings.Count(scoped, storage) != 2 ||
-		strings.Count(scoped, selector) != 2 {
+		strings.Count(scoped, selector) != 4 {
 		t.Error("the install with the zone values does not have 2 policies with 2 bindings for its namespaces")
 	}
 	const persistent = "gateway: {bundled: {postgres: {persistence: {enabled: true, storageClassName: far-disk}}}}\n"
