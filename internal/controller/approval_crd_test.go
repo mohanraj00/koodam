@@ -23,17 +23,15 @@ import (
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
-	batchv1 "k8s.io/api/batch/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
-	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	corev1alpha1 "github.com/mohanraj00/koodam/api/v1alpha1"
 )
 
-// These specs apply the CRDs to the envtest API server. One spec runs the Agent controller.
+// These specs apply the CRDs to the envtest API server. They run no controller.
 var _ = Describe("Approval CRD rules", func() {
 	ctx := context.Background()
 	const prefix = "approval-crd-"
@@ -127,21 +125,6 @@ var _ = Describe("Approval CRD rules", func() {
 		none.Spec.Approval = &corev1alpha1.AgentApprovalSpec{WaitSeconds: 60}
 		invalid(k8sClient.Update(ctx, none), "spec.approval is immutable")
 		invalid(create(agent(&corev1alpha1.AgentApprovalSpec{WaitSeconds: 2592001})), "spec.approval.waitSeconds")
-	})
-
-	It("does not start an Agent with spec.approval, because this build has no approval check", func() {
-		a := agent(&corev1alpha1.AgentApprovalSpec{})
-		Expect(create(a)).To(Succeed())
-		gw := &fakeGateway{}
-		r := &AgentReconciler{Client: k8sClient, Scheme: k8sClient.Scheme(), APIReader: k8sClient, Gateway: gw}
-		_, err := r.Reconcile(ctx, reconcile.Request{NamespacedName: client.ObjectKeyFromObject(a)})
-		Expect(err).NotTo(HaveOccurred())
-		Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(a), a)).To(Succeed())
-		Expect(a.Finalizers).To(BeEmpty())
-		Expect(a.Status.KeyHash).To(BeEmpty())
-		Expect(gw.created).To(BeEmpty())
-		err = k8sClient.Get(ctx, client.ObjectKey{Namespace: a.Namespace, Name: runName(a)}, &batchv1.Job{})
-		Expect(apierrors.IsNotFound(err)).To(BeTrue())
 	})
 
 	DescribeTable("checks spec.approval of a Profile", func(keySet, scope, function string, maxAge int64, text string) {

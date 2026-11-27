@@ -179,3 +179,24 @@ func TestVerifyRejectAndKeepBytesPrivate(t *testing.T) {
 		}
 	}
 }
+
+// TestDecidedAt reads the decision time of the valid approval of the vectors. A decision with no
+// decided_at and bytes that are not a signed record give no time.
+func TestDecidedAt(t *testing.T) {
+	_, cases := loadVectors(t)
+	for _, c := range cases {
+		if c.Name != "valid-approval" {
+			continue
+		}
+		at, ok := DecidedAt(c.Signed)
+		if !ok || !at.Equal(time.Date(2026, 11, 15, 10, 0, 0, 0, time.UTC)) {
+			t.Fatalf("got %v %v for the valid approval", at, ok)
+		}
+	}
+	signed, _, _ := newTestSigner().sign("human", "accept", windowFrom, windowUntil)
+	for _, raw := range [][]byte{signed, []byte("not a record"), nil} {
+		if _, ok := DecidedAt(raw); ok {
+			t.Fatal("got a decision time for a record with no decided_at")
+		}
+	}
+}
