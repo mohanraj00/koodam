@@ -4,18 +4,65 @@ This file records the changes for each Koodam version. The newest version is fir
 
 ## Unreleased
 
+The API is `v1alpha1` and can change between tags. The App parts are off by default. [Upgrade notes for v0.6.0](#upgrade-notes-for-v060) lists the changes that need a step before the upgrade. [Known limits of v0.6.0](#known-limits-of-v060) lists the open limits.
+
+### Upgrade notes for v0.6.0
+
+- **Workspace SSH ingress.** The Workspace NetworkPolicy permits SSH ingress only from the peers in the new chart value `workspace.networkPolicy.sshFrom`. The default is no peer. `koodam ssh`, `koodam tunnel` and port-forwards do not change. If a pod connects to port 2222 of a Workspace directly, add it to `sshFrom` before the upgrade ([#412](https://github.com/mohanraj00/koodam/issues/412)).
+- **Python for Nookku.** The Nookku plugin now needs Python 3.11 or later. Before the upgrade, make sure that each image that runs the Nookku plugin has Python 3.11 or later ([#478](https://github.com/mohanraj00/koodam/issues/478)).
+- **Spend API identity.** The new run paths of the spend API need more access for the server identity: `get` on `agents` and `jobs`, `list` on `pods`, `get` on `pods/log` and `watch` on `agents`. If you run `spend-api` with your own Role, add these rules before the upgrade ([#399](https://github.com/mohanraj00/koodam/issues/399)).
+
 ### Agents
 
 - Add `GET /v1/runs/{namespace}/{name}` to the [spend API](docs/spend-api.md#read-one-run). It gives one run with the Agent status conditions, the run Job and its pods. In the viewer mode, the server checks the access to the namespace of the path only. The server identity needs `get` on `agents`, `get` on `jobs` and `list` on `pods` ([#399](https://github.com/mohanraj00/koodam/issues/399)).
 - Redact the condition messages of the run path with a fixed pattern list: private keys, JSON Web Tokens, `sk-` keys, GitHub, AWS and Slack tokens, SHA-256 values, `Authorization` values, URL logins and the values of credential fields. Each pattern has a test. [docs/spend-api.md](docs/spend-api.md#redaction) lists the patterns ([#399](https://github.com/mohanraj00/koodam/issues/399)).
 - Add `GET /v1/runs/{namespace}/{name}/log` to the [spend API](docs/spend-api.md#read-the-log-of-a-run). It gives the last lines of the agent container, 200 by default and 1000 at most, with a byte limit. The server redacts each line with the same pattern list before the bytes leave the server. Only the viewer mode serves the path, and the caller also needs `get` on `pods/log` in the namespace. The server identity needs `get` on `pods/log` ([#399](https://github.com/mohanraj00/koodam/issues/399)).
 - Add `GET /v1/runs/{namespace}/{name}/watch` to the [spend API](docs/spend-api.md#watch-a-run). It sends the Agent status of a run as server-sent events, with the redacted conditions. A test fails if a phase change takes 5 s or more to reach the client. A watch stops after 5 min, and a server has at most 100 open watches. The server identity needs `watch` on `agents` ([#399](https://github.com/mohanraj00/koodam/issues/399)).
+- The operations page shows the Job, the pods, the status conditions and the last 200 log lines of a run. A live watch shows a new phase with no reload ([#399](https://github.com/mohanraj00/koodam/issues/399)).
+- The operations page uses the mugham UI kit v0.7.0. The embedded kit has 124 files from the release asset, and `mugham.pin.json` pins each one ([#464](https://github.com/mohanraj00/koodam/pull/464)).
 
 ### Approvals
 
 - Add the API of an Agent that waits for a signed approval record before its Job starts. The Agent gets `spec.approval` with `waitSeconds`, which is immutable, the condition `Approval` with its reasons, `status.approval` with the request document and its subject digest for an approver integration, and `status.evidence`. The new namespaced `ApprovalRecord` type carries the signed decision: `spec.target` is the Agent name, `spec.signedRecord` has 1,000,000 bytes or fewer, and `spec.snapshotRecord` and `spec.manifest` have the 2 documents that bind the decision to the run. Its spec is immutable, and it has no authority fields. The Profile gets `spec.approval` with the key set, the expected `scope`, the expected `function` and the required `maxAgeSeconds`, so only the admin selects the trust and the expiry. The chart installs the CRD and the role `<release>-approvalrecord-creator`, which gives only `create`. The manager role gets `list` and `watch` on `approvalrecords`. No controller checks an approval record in this change. Thus the Agent controller does not start an Agent with `spec.approval`: the run waits, with no key and no pod ([#246](https://github.com/mohanraj00/koodam/issues/246)).
 - The Agent controller holds the Job of an Agent with `spec.approval` until the condition `Approval` is `True`. A paused run has no key, no finalizer and no pod. The controller computes the subject of the run: the SHA-256 of the request document `koodam.dev/approval-request/v1`, with the namespace, the Agent name, the UID, the SHA-256 of the spec and an empty grant. It writes the document and the subject to `status.approval`, where an approver integration reads them. It verifies each `ApprovalRecord` of the Agent with the key set, the scope and the function of the Profile, and writes an accept or a reject to `status.evidence`. A signed reject (`Denied`), a decision that is older than `maxAgeSeconds` or a check at or after the `until` date (`Expired`), a Profile with no `spec.approval` (`NoKeySet`) and the end of `waitSeconds` (`ApprovalTimeout`) stop the run. Each other refusal keeps the run paused, so a writer with no signing key cannot stop a run. One check reads 64 records of an Agent at most. In this change, the decision must name the subject in its `snapshot_ref`. The check of the snapshot record and of the manifest is not built ([#246](https://github.com/mohanraj00/koodam/issues/246)).
 - Bind a signed approval decision to the run with a chain of exact hashes. The manifest of the `ApprovalRecord` must have one item `request` with the subject of the run, the snapshot record must name the plain SHA-256 of the manifest in a `content` candidate with the scope of the Profile, and the decision must name the record reference of the snapshot. The controller checks the binding before the dates and the disposition, so a signed decision of a different run cannot stop a run. The tests use a static fixture set of the signed record protocol at the pinned tag `v0.7.0`, with an accept chain and a reject chain. The CI job `seam` checks out the tag, fails if the tag is not on the pinned commit or the signed record vectors have a different SHA-256, and compares the copy of the vectors with the source file. [docs/evidence-gate.md](docs/evidence-gate.md#paused-runs-190-and-246) has the design, and [docs/threat-model.md](docs/threat-model.md) has the threat ([#246](https://github.com/mohanraj00/koodam/issues/246)).
+
+### Incident controls
+
+- A quarantine now protects the workload and its children: the controller adds the label `koodam.dev/quarantine`, and 2 admission policies of the chart refuse the delete of a quarantined object and a change of the koodam labels of a pod. The manager role gets `patch` on `pods` and on `persistentvolumeclaims`, to add and remove the label ([#452](https://github.com/mohanraj00/koodam/issues/452)).
+- The egress proxy writes the quarantine control spans in the order of the state changes ([#453](https://github.com/mohanraj00/koodam/issues/453)).
+- A Workspace that is deleted before the reconcile of its quarantine now stays, with its StatefulSet and its pod, until the release of the Hold ([#454](https://github.com/mohanraj00/koodam/issues/454)).
+- A `Quarantine` Hold on a Profile is now `Quarantined` only if the install of each bound namespace has the egress proxy. The new field `status.namespaces` of the Hold has the record of each namespace ([#455](https://github.com/mohanraj00/koodam/issues/455)).
+
+### Workspaces
+
+- **Changed from v0.5.0.** The Workspace NetworkPolicy permits SSH ingress only from the peers in the new value `workspace.networkPolicy.sshFrom`. The default is no peer. `koodam ssh` and port-forwards do not change. If a pod connects to a Workspace directly, add it to `sshFrom` before the upgrade ([#412](https://github.com/mohanraj00/koodam/issues/412)).
+- The Workspace image puts the `nookku` command on the `PATH` of each SSH command and login shell ([#476](https://github.com/mohanraj00/koodam/issues/476)).
+
+### Apps
+
+- An AppVersion can have `template.rules` if the chart value `apps.apiServerEgress` gives the API server egress rules. The controller adds the rules to the NetworkPolicy of a version with `template.rules` only. The empty default keeps the refusal. The manager refuses a named, out-of-range or non-TCP port in an API server rule ([#340](https://github.com/mohanraj00/koodam/issues/340)).
+
+### Nookku preset
+
+- **Changed from v0.5.0.** The Nookku launcher gives the pinned lib to the child processes of Nookku, and stops a package in the current folder from replacing it. The Nookku plugin now needs Python 3.11 or later ([#478](https://github.com/mohanraj00/koodam/issues/478)).
+
+### Known limits of v0.6.0
+
+- A signed record for the run with a kind that is not human, or with a disposition that is not valid, can stop the run with `Expired` after its `until` date. The record must have a signature from a trusted key ([#503](https://github.com/mohanraj00/koodam/issues/503)).
+- If the manager is down at the end of `waitSeconds`, an accept that comes after the end can start the run, and the run does not get `ApprovalTimeout` ([#502](https://github.com/mohanraj00/koodam/issues/502)).
+- If the manager stops after it creates the Job and before it writes the status, the next approval check can stop the run that the Job started ([#495](https://github.com/mohanraj00/koodam/issues/495)).
+- The controller checks an approval record offline, so it cannot see a later reject or a suspension at the issuer ([#364](https://github.com/mohanraj00/koodam/issues/364)).
+- One caller of the spend API can open all 100 watches of a server. A watch does not check the token and the access again before its time limit of 5 min ([#490](https://github.com/mohanraj00/koodam/issues/490)).
+- If the log lines of a run are long, the log path can give an older part of the log and not the newest lines ([#487](https://github.com/mohanraj00/koodam/issues/487)).
+- An eviction of a quarantined pod, or a change of its spec, can stop the quarantined processes ([#459](https://github.com/mohanraj00/koodam/issues/459)). If a user removes the owner reference of a Job or a Deployment, a `Stop` Hold or the release of a quarantine blocks the key but does not delete that object ([#479](https://github.com/mohanraj00/koodam/issues/479)).
+- A Workspace with no `spec.gateway` that is deleted before the reconcile of its quarantine can lose its pod ([#470](https://github.com/mohanraj00/koodam/issues/470)).
+- An object that got the label `koodam.dev/quarantine` before the install of the quarantine policy keeps the label, and no user can remove it or delete the object ([#483](https://github.com/mohanraj00/koodam/issues/483)). Only the chart installs the quarantine policies. An install with kustomize does not have them.
+- The API server egress rule of an App accepts a loopback, a link-local or a metadata address. Check the value of `apps.apiServerEgress` ([#501](https://github.com/mohanraj00/koodam/issues/501)).
+- With the signed claim check on, the gate pod has no claim, so each gate message gets a refusal and the gate gives `Evidence=False/Failed` ([#354](https://github.com/mohanraj00/koodam/issues/354)).
+- Each pod of an App has its own token bucket, so a tenant can get one request from each pod at one time ([#428](https://github.com/mohanraj00/koodam/issues/428)). The request limit of a tenant comes from a read of the gateway count at an interval, so a tenant can go past it until each pod has the quota mark ([#429](https://github.com/mohanraj00/koodam/issues/429)).
+- The zone placement policy refuses a list of placements. A cluster with nodes of 2 zones also needs a control of the cluster ([#433](https://github.com/mohanraj00/koodam/issues/433)).
+- The chart does not deploy `spend-api`. Run its image in your own Deployment.
 
 ## v0.5.0 (2026-11-27)
 
