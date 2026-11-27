@@ -219,15 +219,19 @@ The limits of the log path are the constants in `internal/spendapi/log.go`:
 - `maxLogRead`: the most bytes that the server reads from the API server for one request.
 - `maxLogBytes`: the most log bytes in a response, before the redaction. The server keeps the newest
   lines.
+- `keyContext`: the count of the lines that the server reads before the tail, for the redaction.
 - The request time limit of `-request-timeout` applies to the read of the log.
 
 At each cut of a limit, the server drops the part of the line at the cut. Thus a response has no part
-of a line. If the log has more lines than the response, `truncated` is true. If the container did not
+of a line. The server reads one more line than the tail and the `keyContext` lines, so `truncated`
+is true only if the log has more lines than the response. If the log has more lines than the response, `truncated` is true. If the container did not
 start, the response has status 409. If the run has no pod, the response has status 404.
 
 The server redacts each line before the bytes leave the server, as [Redaction](#redaction) says. A
-limit can cut a PEM private key. If the response has the END line of a key but not its BEGIN line,
-the server redacts each line up to the END line.
+limit can cut a PEM private key, so the server redacts the `keyContext` lines before the tail too.
+If the lines that the server reads have the END line of a key but not its BEGIN line, the server
+redacts each line up to the END line. If the log can have lines before the lines that the server
+reads, the server redacts the lines at the start that can be the body of a key.
 
 ## Redaction
 

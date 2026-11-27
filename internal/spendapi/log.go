@@ -42,6 +42,10 @@ const (
 	maxLogBytes = 256 << 10
 	// maxLogRead limits the bytes that the server reads from the API server for one request.
 	maxLogRead = 4 * maxLogBytes
+	// keyContext is the count of the lines that the server reads before the tail. The redaction
+	// reads them too, so that it can find the BEGIN line of a private key before the tail. A PEM
+	// private key of 16384 bits has fewer lines.
+	keyContext = 256
 )
 
 var errNoPod = errors.New("the run has no pod")
@@ -116,7 +120,9 @@ func (a *api) runLog(ctx context.Context, ref runRef, lines int) (runLog, error)
 	}
 	pod := &pods[0]
 	result := runLog{Pod: pod.Name, Container: pod.Spec.Containers[0].Name}
-	tail, limit := int64(lines), int64(maxLogRead+1)
+	// The extra line shows if the log has more lines than the response.
+	window := lines + keyContext + 1
+	tail, limit := int64(window), int64(maxLogRead+1)
 	stream, err := a.logs(ctx, pod.Namespace, pod.Name,
 		&corev1.PodLogOptions{Container: result.Container, TailLines: &tail, LimitBytes: &limit})
 	if err != nil {
@@ -127,34 +133,40 @@ func (a *api) runLog(ctx context.Context, ref runRef, lines int) (runLog, error)
 	if err != nil {
 		return runLog{}, err
 	}
-	result.Lines, result.Truncated = tailLines(data, lines)
-	result.Lines = redactLines(result.Lines)
+	result.Lines, result.Truncated = tailLines(data, lines, window)
 	return result, nil
 }
 
-// tailLines gives the last whole lines of data, with no more than maxLogBytes and count lines. Each
-// cut drops the part of the line at the cut, so no line in the result is a part of a line. Thus a
-// cut cannot leave a part of a credential that a pattern does not match.
-func tailLines(data []byte, count int) ([]string, bool) {
-	truncated := false
+// tailLines redacts the lines of data, and then gives the last of them, with no more than count
+// lines and maxLogBytes log bytes before the redaction. The cuts occur only between lines, so no
+// line in the result is a part of a line. Thus a cut cannot leave a part of a credential that a
+// pattern does not match. If the log can have lines before data, which is true when data has the
+// window count of lines or the read limit cuts it, the window can start in a private key. Then the
+// server also redacts the lines at the start that can be the body of a key.
+func tailLines(data []byte, count, window int) ([]string, bool) {
+	cut := false
 	if len(data) > maxLogRead {
-		data, truncated = data[:bytes.LastIndexByte(data[:maxLogRead], '\n')+1], true
-	}
-	if len(data) > maxLogBytes {
-		data, truncated = data[len(data)-maxLogBytes:], true
-		if i := bytes.IndexByte(data, '\n'); i >= 0 {
-			data = data[i+1:]
-		} else {
-			data = nil
-		}
+		data, cut = data[:bytes.LastIndexByte(data[:maxLogRead], '\n')+1], true
 	}
 	text := strings.TrimSuffix(string(data), "\n")
 	if text == "" {
-		return []string{}, truncated
+		return []string{}, cut
 	}
-	result := strings.Split(text, "\n")
-	if len(result) > count {
-		result, truncated = result[len(result)-count:], true
+	lines := strings.Split(text, "\n")
+	sizes := make([]int, len(lines))
+	for i, line := range lines {
+		sizes[i] = len(line) + 1
 	}
-	return result, truncated
+	if cut || len(lines) >= window {
+		for i := 0; i < len(lines) && keyBodyLine.MatchString(cleanLine(lines[i])); i++ {
+			lines[i] = redacted
+		}
+	}
+	lines = redactLines(lines)
+	start, size := len(lines), 0
+	for start > 0 && len(lines)-start < count && size+sizes[start-1] <= maxLogBytes {
+		start--
+		size += sizes[start]
+	}
+	return lines[start:], cut || start > 0
 }

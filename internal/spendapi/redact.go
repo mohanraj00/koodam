@@ -39,6 +39,8 @@ var control = regexp.MustCompile(`\x1b\[[0-9;?]*[ -/]*[@-~]|\x1b[@-_]|[\x00-\x08
 var (
 	pemBegin = regexp.MustCompile(`-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----`)
 	pemEnd   = regexp.MustCompile(`-----END [A-Z0-9 ]*PRIVATE KEY-----`)
+	// keyBodyLine matches a line that can be in the body of a PEM key: base64 with no space.
+	keyBodyLine = regexp.MustCompile(`^[A-Za-z0-9+/=]{16,80}$`)
 )
 
 // redactions is the fixed list of the credential patterns, in the order of use. Each pattern has a

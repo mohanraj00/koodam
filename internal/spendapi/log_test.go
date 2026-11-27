@@ -34,7 +34,8 @@ import (
 
 const logPath = testPath + "/" + logPart
 
-// fakeLogs records the options of the last call and gives a fixed log.
+// fakeLogs records the options of the last call and gives a fixed log. As the API server does, it
+// gives only the last TailLines lines.
 type fakeLogs struct {
 	data    string
 	err     error
@@ -47,7 +48,11 @@ func (l *fakeLogs) open(_ context.Context, namespace, pod string, o *corev1.PodL
 		return nil, errors.New("the log of a different namespace")
 	}
 	l.options, l.pod = o, pod
-	return io.NopCloser(strings.NewReader(l.data)), l.err
+	data := l.data
+	if lines := strings.SplitAfter(data, "\n"); o.TailLines != nil && int64(len(lines)-1) > *o.TailLines {
+		data = strings.Join(lines[len(lines)-1-int(*o.TailLines):], "")
+	}
+	return io.NopCloser(strings.NewReader(data)), l.err
 }
 
 func runObjectsWithSpec(hash string) []client.Object {
@@ -109,15 +114,19 @@ func TestLogLimitsAndReviews(t *testing.T) {
 	f, logs := newLogFixture(t, strings.Join(lines, "\n")+"\n")
 	l := decode[runLog](t, f.call(t, http.MethodGet, logPath, f.reader, http.StatusOK))
 	o := logs.options
-	if o.Container != agentContainer || *o.TailLines != defaultLogLines || *o.LimitBytes != maxLogRead+1 || logs.pod != podName {
+	if o.Container != agentContainer || *o.TailLines != defaultLogLines+keyContext+1 || *o.LimitBytes != maxLogRead+1 || logs.pod != podName {
 		t.Fatalf("the log options do not match: %+v", o)
 	}
 	if len(l.Lines) != defaultLogLines || l.Lines[0] != "line 100" || !l.Truncated {
 		t.Fatal("want the last 200 lines")
 	}
 	f.call(t, http.MethodGet, logPath+"?lines=1000", f.reader, http.StatusOK)
-	if *logs.options.TailLines != maxLogLines {
+	if *logs.options.TailLines != maxLogLines+keyContext+1 {
 		t.Fatal("the lines query is not in the options")
+	}
+	logs.data = strings.Join(lines[:defaultLogLines], "\n") + "\n"
+	if l := decode[runLog](t, f.call(t, http.MethodGet, logPath, f.reader, http.StatusOK)); len(l.Lines) != defaultLogLines || l.Truncated {
+		t.Fatal("a log of exactly 200 lines is not truncated")
 	}
 	for _, q := range []string{"?lines=0", "?lines=1001", "?lines=x", "?lines=1&lines=2", "?follow=true"} {
 		f.call(t, http.MethodGet, logPath+q, f.reader, http.StatusBadRequest)
@@ -149,7 +158,7 @@ func TestLogByteLimitKeepsWholeLines(t *testing.T) {
 	front := b.String()[3 : maxLogBytes+50]
 	front = front[:strings.LastIndexByte(front, '\n')+1]
 	for _, data := range []string{b.String(), b.String()[:maxLogRead+1], front} {
-		got, truncated := tailLines([]byte(data), maxLogLines)
+		got, truncated := tailLines([]byte(data), maxLogLines, maxLogLines+keyContext+1)
 		size := 0
 		for _, line := range got {
 			size += len(line) + 1
@@ -161,10 +170,10 @@ func TestLogByteLimitKeepsWholeLines(t *testing.T) {
 			t.Fatalf("want a truncated tail of whole lines: %d lines, %d bytes", len(got), size)
 		}
 	}
-	if got, truncated := tailLines([]byte(strings.Repeat("x", maxLogBytes+1)), 10); len(got) != 0 || !truncated {
+	if got, truncated := tailLines([]byte(strings.Repeat("x", maxLogBytes+1)), 10, 20); len(got) != 0 || !truncated {
 		t.Fatal("a long line with no end is not whole")
 	}
-	if got, _ := tailLines(nil, 10); got == nil || len(got) != 0 {
+	if got, _ := tailLines(nil, 10, 20); got == nil || len(got) != 0 {
 		t.Fatal("want an empty list for an empty log")
 	}
 }
@@ -198,5 +207,24 @@ func TestLogTailInAKey(t *testing.T) {
 	l := decode[runLog](t, f.call(t, http.MethodGet, logPath+"?lines=4", f.reader, http.StatusOK))
 	if want := []string{redacted, redacted, redacted, afterKey}; !slices.Equal(l.Lines, want) {
 		t.Fatalf("the log lines are %q, want %q", l.Lines, want)
+	}
+}
+
+// TestLogTailInAnOpenKey shows a tail in a key that has no END line yet. If the BEGIN line is in the
+// lines before the tail, the redaction finds it. If it is not, the lines at the start of the window
+// that can be the body of a key are redacted.
+func TestLogTailInAnOpenKey(t *testing.T) {
+	f, logs := newLogFixture(t, "")
+	body := strings.Repeat(keyBody+"\n", 400)
+	for data, want := range map[string][]string{
+		"before\n-----BEGIN PRIVATE KEY-----\n" + strings.Repeat(keyBody+"\n", 30): {redacted, redacted, redacted},
+		"-----BEGIN PRIVATE KEY-----\n" + body:                                     {redacted, redacted, redacted},
+		"-----BEGIN PRIVATE KEY-----\n" + body + "after\n":                         {redacted, redacted, afterKey},
+	} {
+		logs.data = data
+		l := decode[runLog](t, f.call(t, http.MethodGet, logPath+"?lines=3", f.reader, http.StatusOK))
+		if !slices.Equal(l.Lines, want) || !l.Truncated {
+			t.Fatalf("the log lines are %q, want %q", l.Lines, want)
+		}
 	}
 }
