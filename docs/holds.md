@@ -88,7 +88,6 @@ The proxy sees only the calls that go through it. A call in a path with no proxy
 - A pod that starts during a quarantine gets the label at the next reconcile of its workload. Before that, the policy does not refuse its delete. The proxy refuses its calls from the start.
 - The policies refuse a delete. They do not refuse the eviction of a pod, for example at a node drain, or a change of the pod spec that stops a container ([#459](https://github.com/mohanraj00/koodam/issues/459)). Limit the right to evict and to patch pods in the namespace during an investigation, and do not drain the node.
 - The delete of a namespace with a quarantined workload waits for the release, because the API server refuses the delete of the pods.
-- If a Profile binds the namespaces of 2 installs and only 1 install has the egress proxy, the Hold can show `Quarantined` while the pods of the other install still send calls out ([#455](https://github.com/mohanraj00/koodam/issues/455)).
 
 ### The status of the Hold
 
@@ -98,11 +97,30 @@ The controller writes the condition `Held` on the Hold:
 |---|---|---|
 | `False` | `Stopping` | Some workloads of the target did not stop yet. The message gives the number. |
 | `True` | `Stopped` | Each workload of the target stopped, or the target has no workload. |
-| `False` | `Quarantining` | Some workloads of the target are not quarantined yet. The message gives the number. |
+| `False` | `Quarantining` | Some workloads of the target are not quarantined yet. The message gives the number. Or a namespace of a Profile target has no record of its install yet. See [A Profile across installs](#a-profile-across-installs). |
 | `True` | `Quarantined` | The key of each workload of the target is blocked, and its pods stay. |
-| `False` | `NoEgressProxy` | The action is `Quarantine`, and the controller has no `--egress-proxy-ip`. No component refuses the calls of the pods. The controllers still block the keys and keep the pods. Use `Stop`, or enable the egress proxy. |
+| `False` | `NoEgressProxy` | The action is `Quarantine`, and the controller has no `--egress-proxy-ip`. For a Profile target, the install of a bound namespace has no egress proxy, and the message gives the namespaces. No component refuses the calls of the pods. The controllers still block the keys and keep the pods. Use `Stop`, or enable the egress proxy. |
 | `False` | `Released` | The Hold has `spec.release`. |
 | `False` | `AppsDisabled` | The App controllers do not run, and the target is an App or an AppVersion. Or the target is a Profile, and a namespace that it binds has an AppVersion. No controller stops or quarantines these versions. For a Profile, the controller reads the AppVersions again each minute. Retire each AppVersion, or enable the App controllers. |
+
+### A Profile across installs
+
+A Profile can bind the namespaces of 2 installs (see [zones](zones.md)). The egress proxy of one install does not refuse the calls of the pods of the other install. Thus, for a `Quarantine` Hold on a Profile, the manager of each install writes one record in `status.namespaces` for each bound namespace that it watches:
+
+```yaml
+status:
+  namespaces:
+  - name: team-a
+    egressProxy: true
+  - name: team-b
+    egressProxy: false
+```
+
+- The Hold is `Quarantined` only if each bound namespace has a record with `egressProxy: true`.
+- If a record has `egressProxy: false`, the Hold shows `NoEgressProxy`. The message gives the namespaces.
+- If a bound namespace has no record, the Hold shows `Quarantining`. The manager of that install did not write its record yet, or no manager watches the namespace.
+
+Each manager changes only the records of its own namespaces, and it removes the record of a namespace that the Profile does not bind. The managers read the same records, so they write the same condition. The records stay after the release. A Hold on one workload or on one App has no records, because only the install of its namespace writes its status.
 
 ### Events
 

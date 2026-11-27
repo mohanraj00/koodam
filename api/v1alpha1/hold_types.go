@@ -118,6 +118,17 @@ type HoldSpec struct {
 	Release *HoldRelease `json:"release,omitempty"`
 }
 
+// HoldNamespaceStatus is the egress proxy cover of one namespace of a Profile target.
+type HoldNamespaceStatus struct {
+	// Name is the name of the namespace.
+	// +kubebuilder:validation:MinLength=1
+	// +kubebuilder:validation:MaxLength=63
+	Name string `json:"name"`
+	// EgressProxy is true if the install of the namespace has the egress proxy. Only the proxy
+	// refuses the calls of a quarantined pod.
+	EgressProxy bool `json:"egressProxy"`
+}
+
 // HoldStatus is the observed state of a Hold.
 type HoldStatus struct {
 	// Conditions are the conditions of the Hold: Held.
@@ -125,6 +136,14 @@ type HoldStatus struct {
 	// +listMapKey=type
 	// +optional
 	Conditions []metav1.Condition `json:"conditions,omitempty"`
+	// Namespaces has one record for each namespace that the Profile of a Quarantine Hold binds.
+	// The manager of each install writes the records of the namespaces that it watches. The Hold
+	// is Quarantined only if each bound namespace has a record with the egress proxy.
+	// +listType=map
+	// +listMapKey=name
+	// +kubebuilder:validation:MaxItems=64
+	// +optional
+	Namespaces []HoldNamespaceStatus `json:"namespaces,omitempty"`
 }
 
 // +kubebuilder:object:root=true

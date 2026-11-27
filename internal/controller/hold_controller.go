@@ -19,6 +19,8 @@ package controller
 import (
 	"context"
 	"fmt"
+	"slices"
+	"strings"
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
@@ -86,6 +88,7 @@ func (r *HoldReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.
 	if t := h.Spec.Target; t.Kind != corev1alpha1.HoldTargetProfile && !watched(r.Namespaces, t.Namespace) {
 		return ctrl.Result{}, nil
 	}
+	cover := slices.Clone(h.Status.Namespaces)
 	status, reason, msg, err := r.state(ctx, h)
 	if err != nil {
 		return ctrl.Result{}, err
@@ -97,7 +100,7 @@ func (r *HoldReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.
 	}
 	old := meta.FindStatusCondition(h.Status.Conditions, corev1alpha1.HoldHeld)
 	if old != nil && old.Status == status && old.Reason == reason && old.Message == msg &&
-		old.ObservedGeneration == h.Generation {
+		old.ObservedGeneration == h.Generation && slices.Equal(cover, h.Status.Namespaces) {
 		return result, nil
 	}
 	changed := old == nil || old.Reason != reason
@@ -161,14 +164,31 @@ func (r *HoldReconciler) state(ctx context.Context, h *corev1alpha1.Hold) (metav
 func (r *HoldReconciler) quarantineState(ctx context.Context, h *corev1alpha1.Hold) (metav1.ConditionStatus,
 	string, string, error) {
 	t := h.Spec.Target
+	profile := t.Kind == corev1alpha1.HoldTargetProfile
 	switch {
-	case !r.EgressProxy:
+	case !profile && !r.EgressProxy:
 		return metav1.ConditionFalse, reasonNoEgressProxy,
 			"The controller has no egress proxy, so no component refuses the calls of a quarantined pod. " +
 				"Use the action Stop, or enable the egress proxy.", nil
 	case !r.AppsEnabled && (t.Kind == corev1alpha1.HoldTargetApp || t.Kind == corev1alpha1.HoldTargetAppVersion):
 		return metav1.ConditionFalse, reasonAppsDisabled,
 			"The App controllers do not run, so no controller quarantines an App or an AppVersion.", nil
+	}
+	if profile {
+		// A Profile can bind the namespaces of 2 installs. The egress proxy of one install does not
+		// refuse the calls of the pods of the other install.
+		missing, without, err := r.proxyCover(ctx, h)
+		switch {
+		case err != nil:
+			return "", "", "", err
+		case len(without) > 0:
+			return metav1.ConditionFalse, reasonNoEgressProxy, fmt.Sprintf("The install of each of these namespaces has "+
+				"no egress proxy, so no component refuses the calls of their pods: %s. Use the action Stop, or "+
+				"enable the egress proxy in each install.", strings.Join(without, ", ")), nil
+		case len(missing) > 0:
+			return metav1.ConditionFalse, reasonQuarantining, fmt.Sprintf("These namespaces wait for the record of "+
+				"the manager of their install: %s.", strings.Join(missing, ", ")), nil
+		}
 	}
 	if left, err := r.versionsLeft(ctx, t); err != nil || left {
 		return metav1.ConditionFalse, reasonAppsDisabled, msgVersionsLeft, err
@@ -186,6 +206,41 @@ func (r *HoldReconciler) quarantineState(ctx context.Context, h *corev1alpha1.Ho
 	}
 	return metav1.ConditionTrue, reasonQuarantined,
 		fmt.Sprintf("The %d workloads of the target are quarantined.", total), nil
+}
+
+// proxyCover writes the records of the egress proxy cover into the status of the Hold, in memory.
+// The manager writes a record for each bound namespace that it watches. It keeps the record of
+// each other bound namespace, because the manager of that install writes it, and it removes the
+// record of a namespace that the Profile does not bind. The records have the order of the bound
+// namespaces, so each manager writes the same list. proxyCover returns the bound namespaces with
+// no record, and those of an install with no egress proxy.
+func (r *HoldReconciler) proxyCover(ctx context.Context, h *corev1alpha1.Hold) (missing, without []string,
+	err error) {
+	have := map[string]bool{}
+	for _, rec := range h.Status.Namespaces {
+		have[rec.Name] = rec.EgressProxy
+	}
+	var records []corev1alpha1.HoldNamespaceStatus
+	err = r.eachBound(ctx, h.Spec.Target.Name, func(ns string) error {
+		proxy, ok := have[ns]
+		if watched(r.Namespaces, ns) {
+			proxy, ok = r.EgressProxy, true
+		}
+		switch {
+		case !ok:
+			missing = append(missing, ns)
+			return nil
+		case !proxy:
+			without = append(without, ns)
+		}
+		records = append(records, corev1alpha1.HoldNamespaceStatus{Name: ns, EgressProxy: proxy})
+		return nil
+	})
+	if err != nil {
+		return nil, nil, err
+	}
+	h.Status.Namespaces = records
+	return missing, without, nil
 }
 
 // doneCheck tells if the action of a Hold is complete for a workload of each kind.
