@@ -241,6 +241,15 @@ func checkClaimPolicy(c controller.AppClaimCheck, e controller.EgressProxy) erro
 	return nil
 }
 
+func loadAppAPIServerEgressOrExit(raw string, e controller.EgressProxy) []networkingv1.NetworkPolicyEgressRule {
+	rules, err := loadAppAPIServerEgress(raw, e)
+	if err != nil {
+		setupLog.Error(err, "The flag --app-api-server-egress is not valid")
+		os.Exit(1)
+	}
+	return rules
+}
+
 func loadAppAPIServerEgress(raw string, e controller.EgressProxy) ([]networkingv1.NetworkPolicyEgressRule, error) {
 	if raw == "" {
 		return nil, nil
@@ -674,12 +683,8 @@ func main() {
 		os.Exit(1)
 	}
 	if appsEnabled {
-		apiServerEgress, err := loadAppAPIServerEgress(appAPIServerEgress, egress)
-		if err != nil {
-			setupLog.Error(err, "The flag --app-api-server-egress is not valid")
-			os.Exit(1)
-		}
-		err = setupApps(mgr, &controller.AppVersionReconciler{
+		apiServerEgress := loadAppAPIServerEgressOrExit(appAPIServerEgress, egress)
+		err := setupApps(mgr, &controller.AppVersionReconciler{
 			Client:            mgr.GetClient(),
 			Scheme:            mgr.GetScheme(),
 			APIReader:         mgr.GetAPIReader(),

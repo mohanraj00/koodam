@@ -47,13 +47,15 @@ import (
 	"github.com/mohanraj00/koodam/internal/gateway"
 )
 
+const appVersionProxyIP = "10.96.0.50"
+
 func TestAppVersionPolicyAPIServerEgress(t *testing.T) {
 	apiRule := networkingv1.NetworkPolicyEgressRule{
 		To:    []networkingv1.NetworkPolicyPeer{{IPBlock: &networkingv1.IPBlock{CIDR: "192.0.2.1/32"}}},
 		Ports: []networkingv1.NetworkPolicyPort{{Protocol: new(corev1.ProtocolTCP), Port: new(intstr.FromInt(6443))}},
 	}
-	proxy := EgressProxy{IP: "10.96.0.50", Port: 3128, Namespace: "proxy-system", PodLabels: map[string]string{"app": "proxy"}}
-	av := &corev1alpha1.AppVersion{ObjectMeta: metav1.ObjectMeta{Name: "policy-test", Namespace: "shop"}}
+	proxy := EgressProxy{IP: appVersionProxyIP, Port: 3128, Namespace: "proxy-system", PodLabels: map[string]string{"app": "proxy"}}
+	av := &corev1alpha1.AppVersion{ObjectMeta: metav1.ObjectMeta{Name: "policy-test", Namespace: appName}}
 	base := proxy.policy(appVersionMeta(av), appVersionLabels(av), nil, nil)
 	for _, tc := range []struct {
 		name     string
@@ -159,7 +161,7 @@ var _ = Describe("AppVersion controller", func() {
 		now = time.Date(2026, 11, 13, 9, 0, 0, 0, time.UTC)
 		rec = &AppVersionReconciler{Client: k8sClient, Scheme: k8sClient.Scheme(), APIReader: k8sClient,
 			Gateway: gw, GatewayURL: testGatewayURL, KeyTTL: ttl, Now: func() time.Time { return now },
-			Egress: EgressProxy{IP: "10.96.0.50", Port: 8080, ClusterDomain: testEgress.ClusterDomain}}
+			Egress: EgressProxy{IP: appVersionProxyIP, Port: 8080, ClusterDomain: testEgress.ClusterDomain}}
 		DeferCleanup(func() {
 			cleanup(name)
 			cleanup(name + "-b")
@@ -270,7 +272,7 @@ var _ = Describe("AppVersion controller", func() {
 		Expect(d.Spec.Selector.MatchLabels).To(Equal(want))
 		Expect(*pod.Spec.AutomountServiceAccountToken).To(BeTrue())
 		Expect(pod.Spec.DNSPolicy).To(Equal(corev1.DNSNone))
-		Expect(pod.Spec.DNSConfig.Nameservers).To(Equal([]string{"10.96.0.50"}))
+		Expect(pod.Spec.DNSConfig.Nameservers).To(Equal([]string{appVersionProxyIP}))
 		c := pod.Spec.Containers[0]
 		Expect(c.Ports[0].Name).To(Equal(port))
 		Expect(c.ReadinessProbe).NotTo(BeNil())

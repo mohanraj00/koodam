@@ -208,7 +208,8 @@ func TestQuarantinePolicyRules(t *testing.T) {
 		if err != nil && !apierrors.IsForbidden(err) {
 			t.Errorf("%s: got %v, want a refusal of the policy", name, err)
 		}
-		if err := admin.Get(ctx, client.ObjectKeyFromObject(o), o); err != nil || o.GetLabels()[quarantineLabel] != "true" {
+		if err := admin.Get(ctx, client.ObjectKeyFromObject(o), o); err != nil ||
+			o.GetLabels()[quarantineLabel] != trueValue {
 			t.Errorf("%s: the object does not have the label: %v", name, err)
 		}
 	}
@@ -241,7 +242,7 @@ func TestQuarantinePolicyRules(t *testing.T) {
 
 	// Only the manager adds the label.
 	refused("a new pod with the label", admin.Create(ctx,
-		&corev1.Pod{ObjectMeta: meta("born", map[string]string{quarantineLabel: "true"}), Spec: podSpec}))
+		&corev1.Pod{ObjectMeta: meta("born", map[string]string{quarantineLabel: trueValue}), Spec: podSpec}))
 	refused("the label on the Agent by the admin", patch(admin, agent, on))
 	permitted("the label on the Agent by the manager", patch(manager, agent, on))
 	for _, o := range children {

@@ -30,6 +30,7 @@ import (
 const (
 	setApps        = "apps.enabled=true"
 	setTenantClaim = "apps.claimCheck.tenantClaim=tenant"
+	trueValue      = "true"
 )
 
 // The chart installs the App parts only if apps.enabled is true. The default install has no App
@@ -103,7 +104,7 @@ apps:
 		apps, flag                      bool
 	}{
 		{name: "shared proxy rules only", values: proxyValues, apps: true, expression: "false"},
-		{name: "App rules", values: values, apps: true, flag: true, expression: "true"},
+		{name: "App rules", values: values, apps: true, flag: true, expression: trueValue},
 		{name: "App rules with namespace scope", values: values, apps: true, flag: true,
 			scope: "zone.namespaces={shop}", expression: `request.namespace in ["koodam-system","shop"]`},
 		{name: "Apps disabled", values: values},

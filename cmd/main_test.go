@@ -35,7 +35,9 @@ import (
 )
 
 func TestLoadAppAPIServerEgress(t *testing.T) {
-	proxy := controller.EgressProxy{IP: "10.96.0.50", Namespace: "proxy-system", PodLabels: map[string]string{"app": "proxy"}}
+	proxy := controller.EgressProxy{
+		IP: "10.96.0.50", Namespace: "proxy-system", PodLabels: map[string]string{"app": "proxy"},
+	}
 	const raw = `[{"to":[{"ipBlock":{"cidr":"192.0.2.1/32"}}],"ports":[{"port":6443}]}]`
 	for _, value := range []string{
 		raw,
