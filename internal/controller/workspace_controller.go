@@ -216,6 +216,10 @@ func (r *WorkspaceReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 	} else if bound && wantKey(ws) && ws.Status.KeyHash != "" {
 		res.RequeueAfter = max(time.Second, r.untilRenew(ws.Status.KeyHash))
 	}
+	// The controller does not watch the pods. Thus it reads the pod again until it is gone.
+	if releasingQuarantine(ws) && (res.RequeueAfter == 0 || res.RequeueAfter > podGoneRecheck) {
+		res.RequeueAfter = podGoneRecheck
+	}
 	if old.Phase == ws.Status.Phase && old.Pod == ws.Status.Pod && old.HostKey == ws.Status.HostKey &&
 		conditionsEqual(old.Conditions, ws.Status.Conditions) {
 		return res, keyErr

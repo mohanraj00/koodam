@@ -66,8 +66,8 @@ The reconciler of each kind blocks the gateway key and keeps the pods. It adds t
 
 | Kind | Quarantine | After the release |
 |---|---|---|
-| Agent | The key is blocked. The controller removes `activeDeadlineSeconds` from the Job, so the Job controller does not stop the pod at the deadline. The run stays `Running`, and the status condition `Held` has the reason `Quarantined`. A run that did not start does not start. | The run ends as for a stop. A deleted Agent goes after the stop. |
-| Workspace | The key is blocked, and the test keys are blocked. The pod and the home PVC stay. The phase is `Pending`, and the `Ready` condition has the reason `Quarantined`. | The controller stops the pod. Then the Workspace starts again with a new key and a new pod. A deleted Workspace goes after the release. |
+| Agent | The key is blocked. The controller removes `activeDeadlineSeconds` from the Job, so the Job controller does not stop the pod at the deadline. The controller does this in each phase of the run. The run stays `Running`, and the status condition `Held` has the reason `Quarantined`. A run that did not start does not start. | The run ends as for a stop. A deleted Agent goes after the stop. |
+| Workspace | The key is blocked, and the test keys are blocked. The pod and the home PVC stay. The phase is `Pending`, and the `Ready` condition has the reason `Quarantined`. | The controller stops the pod. When the API server has no pod of the Workspace, the Workspace starts again with a new key and a new pod. A deleted Workspace goes after the release. |
 | AppVersion | The key is blocked, and the controller does not renew it. The pods stay. | The controller revokes the version with the reason `Stopped`. The version stays revoked. |
 | App | Each version of the App. | The same as an AppVersion. |
 | Profile | Each Agent, Workspace and AppVersion in each namespace that the Profile binds. | The same as each kind. |
@@ -82,7 +82,7 @@ The proxy sees only the calls that go through it. A call in a path with no proxy
 - After the start, if the watch of the Holds or the Profiles fails, the proxy keeps the last state that it read, and the client tries the watch again. A new Hold or a release can then come late. The tenant keys of the proxy use the same mode. The time of the gap is the time until the watch works again.
 - After a restart, the proxy writes the `quarantined` control span of each active quarantine again. A reader must accept more than 1 start span for one Hold.
 - A Hold that is deleted with no release writes no `released` span. The admission policy refuses this delete.
-- The finalizer stops the controller and a normal delete of the workload. It does not stop a user who can delete the pods, the Job or the StatefulSet directly, or a delete with `propagationPolicy: Foreground`. Limit these rights in the namespace during an investigation.
+- The finalizer stops the controller and a normal delete of the workload. It does not stop a user who can delete the pods, the Job or the StatefulSet directly, or a delete with `propagationPolicy: Foreground`. Limit these rights in the namespace during an investigation. Issue [#452](https://github.com/mohanraj00/koodam/issues/452) adds an admission policy for this.
 
 ### The status of the Hold
 

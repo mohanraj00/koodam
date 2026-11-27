@@ -20,12 +20,15 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"time"
 
 	batchv1 "k8s.io/api/batch/v1"
+	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
 
@@ -114,18 +117,17 @@ func (r *AgentReconciler) quarantine(ctx context.Context, a *corev1alpha1.Agent,
 			return err
 		}
 	}
-	if a.Status.Phase == corev1alpha1.AgentRunning {
-		// The Job controller stops the pods at the deadline. The pods must stay.
-		job := &batchv1.Job{}
-		err := r.APIReader.Get(ctx, types.NamespacedName{Namespace: a.Namespace, Name: runName(a)}, job)
-		if err != nil && !apierrors.IsNotFound(err) {
+	// The Job controller stops the pods at the deadline. The pods must stay. A Job can exist
+	// before the status shows Running, so the phase does not matter.
+	job := &batchv1.Job{}
+	err := r.APIReader.Get(ctx, types.NamespacedName{Namespace: a.Namespace, Name: runName(a)}, job)
+	if err != nil && !apierrors.IsNotFound(err) {
+		return err
+	}
+	if err == nil && metav1.IsControlledBy(job, a) && job.Spec.ActiveDeadlineSeconds != nil {
+		job.Spec.ActiveDeadlineSeconds = nil
+		if err := r.Update(ctx, job); err != nil {
 			return err
-		}
-		if err == nil && metav1.IsControlledBy(job, a) && job.Spec.ActiveDeadlineSeconds != nil {
-			job.Spec.ActiveDeadlineSeconds = nil
-			if err := r.Update(ctx, job); err != nil {
-				return err
-			}
 		}
 	}
 	meta.SetStatusCondition(&a.Status.Conditions, metav1.Condition{Type: corev1alpha1.HoldHeld,
@@ -163,7 +165,15 @@ func (r *WorkspaceReconciler) applyQuarantine(ctx context.Context, ws *corev1alp
 		return false, nil
 	}
 	if workspaceStopped(ws) && !quarantined(ws.Status.Conditions) {
-		// The status of the last reconcile shows the stop after the release.
+		// The status of the last reconcile shows the stop after the release. The StatefulSet can
+		// show 0 replicas before its pod stops. The quarantined pod must stop before a new pod starts.
+		left, err := r.workspacePodLeft(ctx, ws)
+		if err != nil {
+			return true, err
+		}
+		if left {
+			return true, nil
+		}
 		controllerutil.RemoveFinalizer(ws, quarantineFinalizer)
 		if err := r.Update(ctx, ws); err != nil {
 			return true, err
@@ -175,6 +185,27 @@ func (r *WorkspaceReconciler) applyQuarantine(ctx context.Context, ws *corev1alp
 		Status: metav1.ConditionTrue, Reason: reasonStopped, ObservedGeneration: ws.Generation,
 		Message: "The release of the quarantine stops the pod. Then the Workspace starts again with a new key."})
 	return true, nil
+}
+
+// podGoneRecheck is the time between the reads of a Workspace pod after the release of a
+// quarantine.
+const podGoneRecheck = 2 * time.Second
+
+// workspacePodLeft is true while a pod of the Workspace exists, also a pod that stops. It reads
+// the API server, because the controller has no cache of the pods.
+func (r *WorkspaceReconciler) workspacePodLeft(ctx context.Context, ws *corev1alpha1.Workspace) (bool, error) {
+	pods := &corev1.PodList{}
+	if err := r.APIReader.List(ctx, pods, client.InNamespace(ws.Namespace),
+		client.MatchingLabels{WorkspaceLabel: ws.Name}); err != nil {
+		return false, err
+	}
+	return len(pods.Items) > 0, nil
+}
+
+// releasingQuarantine is true while the release of a quarantine waits for the stop of the pod.
+func releasingQuarantine(ws *corev1alpha1.Workspace) bool {
+	c := meta.FindStatusCondition(ws.Status.Conditions, corev1alpha1.HoldHeld)
+	return controllerutil.ContainsFinalizer(ws, quarantineFinalizer) && c != nil && c.Reason == reasonStopped
 }
 
 // quarantineHeld blocks the key of a quarantined Workspace and keeps its pod. The TestKey

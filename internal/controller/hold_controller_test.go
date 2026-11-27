@@ -303,6 +303,21 @@ var _ = Describe("Hold stop", func() {
 			Expect(apierrors.IsNotFound(k8sClient.Get(ctx, key(), &corev1alpha1.Agent{}))).To(BeTrue())
 		})
 
+		It("removes the Job deadline of a run that shows Pending", func() {
+			// The Job exists, but the status update of the start did not occur.
+			newAgent()
+			reconcileAgent()
+			a := agent()
+			a.Status.Phase = corev1alpha1.AgentPending
+			Expect(k8sClient.Status().Update(ctx, a)).To(Succeed())
+			Expect(job().Spec.ActiveDeadlineSeconds).NotTo(BeNil())
+			newHold(corev1alpha1.HoldTarget{Kind: corev1alpha1.HoldTargetAgent, Namespace: ns, Name: name},
+				corev1alpha1.HoldQuarantine)
+			reconcileAgent()
+			Expect(agentQuarantined(agent())).To(BeTrue())
+			Expect(job().Spec.ActiveDeadlineSeconds).To(BeNil())
+		})
+
 		It("quarantines a run that did not start, and the run does not start", func() {
 			newHold(corev1alpha1.HoldTarget{Kind: corev1alpha1.HoldTargetAgent, Namespace: ns, Name: name},
 				corev1alpha1.HoldQuarantine)
@@ -470,10 +485,24 @@ var _ = Describe("Hold stop", func() {
 			reconcileWorkspace()
 			reconcileWorkspace()
 			Expect(replicas()).To(Equal(int32(1)))
+			// The quarantined pod stops after the scale to 0.
+			pod := &corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: name + "-0", Namespace: ns,
+				Labels: map[string]string{WorkspaceLabel: name}},
+				Spec: corev1.PodSpec{Containers: []corev1.Container{{Name: "c", Image: "example.com/ws:test"}}}}
+			Expect(k8sClient.Create(ctx, pod)).To(Succeed())
 			release(hold)
 			reconcileWorkspace()
 			Expect(replicas()).To(Equal(int32(0)))
 			Expect(workspace().Finalizers).To(ContainElement(quarantineFinalizer))
+			res, err := ws.Reconcile(ctx, reconcile.Request{NamespacedName: nn(name)})
+			Expect(err).NotTo(HaveOccurred())
+			Expect(res.RequeueAfter).To(Equal(podGoneRecheck))
+			Expect(replicas()).To(Equal(int32(0)), "the Workspace waits for the stop of the pod")
+			Expect(workspace().Finalizers).To(ContainElement(quarantineFinalizer))
+			Expect(k8sClient.Delete(ctx, pod, client.GracePeriodSeconds(0))).To(Succeed())
+			Eventually(func() bool {
+				return apierrors.IsNotFound(k8sClient.Get(ctx, nn(name+"-0"), &corev1.Pod{}))
+			}).Should(BeTrue())
 			reconcileWorkspace()
 			Expect(replicas()).To(Equal(int32(1)))
 			w := workspace()
