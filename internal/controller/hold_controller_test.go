@@ -525,6 +525,40 @@ var _ = Describe("Hold stop", func() {
 			Expect(old).NotTo(BeEmpty())
 		})
 
+		It("keeps a Workspace that is deleted before the reconcile of its quarantine", func() {
+			reconcileWorkspace()
+			Expect(replicas()).To(Equal(int32(1)))
+			pod := newPod(ns, name+"-0", map[string]string{WorkspaceLabel: name})
+			Expect(k8sClient.Delete(ctx, workspace())).To(Succeed())
+			hold := newHold(corev1alpha1.HoldTarget{Kind: corev1alpha1.HoldTargetWorkspace, Namespace: ns, Name: name},
+				corev1alpha1.HoldQuarantine)
+			// Two reconciles show that the Workspace stays also after the key is blocked.
+			for range 2 {
+				reconcileWorkspace()
+				w := workspace()
+				Expect(w.DeletionTimestamp.IsZero()).To(BeFalse())
+				Expect(w.Finalizers).To(Equal([]string{workspaceFinalizer}), "the gateway finalizer keeps the Workspace")
+				Expect(workspaceQuarantined(w)).To(BeTrue())
+				Expect(w.Status.KeyHash).To(BeEmpty())
+				Expect(replicas()).To(Equal(int32(1)))
+				Expect(marked(w) && marked(sts) && marked(pod)).To(BeTrue(), "the Workspace and its children have the label")
+			}
+			Expect(gw.order).To(Equal([]string{opCreate, opBlock, opUsage}), "the key is blocked")
+			var e string
+			Eventually(rec.Events).Should(Receive(&e))
+			Expect(e).To(HavePrefix("Warning Quarantined "))
+			Expect(rec.Events).To(BeEmpty(), "one event for the quarantine")
+			c := held(hold)
+			Expect(c.Status).To(Equal(metav1.ConditionTrue))
+			Expect(c.Reason).To(Equal(reasonQuarantined))
+
+			// After the release, the delete continues. The label goes before the Workspace.
+			release(hold)
+			reconcileWorkspace()
+			Expect(apierrors.IsNotFound(k8sClient.Get(ctx, nn(name), &corev1alpha1.Workspace{}))).To(BeTrue())
+			Expect(marked(sts) || marked(pod)).To(BeFalse(), "the release removes the label")
+		})
+
 		It("stops the pod after the release of a quarantine, and starts again with a new key", func() {
 			reconcileWorkspace()
 			old := workspace().Status.KeyHash

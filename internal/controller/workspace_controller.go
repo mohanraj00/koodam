@@ -160,8 +160,12 @@ func (r *WorkspaceReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 		return ctrl.Result{}, client.IgnoreNotFound(err)
 	}
 	if !ws.DeletionTimestamp.IsZero() {
+		// A quarantine keeps the Workspace and its pod until the release, also if the delete came
+		// before the reconcile of the Hold.
+		if kept, err := r.quarantineDeleted(ctx, ws); kept || err != nil {
+			return ctrl.Result{}, err
+		}
 		// Block the key first. Then the garbage collector deletes the owned objects. The home PVC stays.
-		// A quarantine keeps the Workspace and its pod until the release.
 		if err := r.applyKey(ctx, ws); err != nil {
 			return ctrl.Result{}, err
 		}
