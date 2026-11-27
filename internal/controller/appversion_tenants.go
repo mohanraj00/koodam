@@ -97,8 +97,12 @@ func tenantOwners(all []corev1alpha1.TenantQuota) map[string]*corev1alpha1.Tenan
 	return owners
 }
 
-// versionReplicas gives back the number of pods of a version.
+// versionReplicas gives back the number of pods of a version. For a version with a scale, it is
+// the maximum. Thus the pods of a tenant never get more than its rate together.
 func versionReplicas(av *corev1alpha1.AppVersion) int32 {
+	if av.Spec.Scale != nil {
+		return av.Spec.Scale.MaxReplicas
+	}
 	if av.Spec.Replicas != nil {
 		return *av.Spec.Replicas
 	}

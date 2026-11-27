@@ -88,6 +88,7 @@ const (
 // a model.
 // +kubebuilder:validation:XValidation:rule="(has(self.template.model) || has(self.template.models)) == has(self.budgetPerDay)",message="budgetPerDay is necessary with a model, and it is not permitted with no model."
 // +kubebuilder:validation:XValidation:rule="has(self.gate) == has(oldSelf.gate)",message="spec.gate is immutable. You cannot add it or remove it after create."
+// +kubebuilder:validation:XValidation:rule="!(has(self.replicas) && has(self.scale))",message="Set spec.replicas or spec.scale, not the two."
 type AppVersionSpec struct {
 	// AppRef is the App of this version, in the same namespace. You cannot change it after
 	// create.
@@ -101,11 +102,16 @@ type AppVersionSpec struct {
 	// +required
 	Template AppVersionTemplate `json:"template"`
 
-	// Replicas is the number of pods of this version. You can change it.
+	// Replicas is the number of pods of this version. You can change it. With no replicas and
+	// no scale, the version has 1 pod. You cannot set replicas and scale together.
 	// +optional
-	// +kubebuilder:default=1
 	// +kubebuilder:validation:Minimum=0
 	Replicas *int32 `json:"replicas,omitempty"`
+
+	// Scale makes the number of pods follow the load of the version. The controller makes one
+	// HorizontalPodAutoscaler for the version. You can change it, add it or remove it.
+	// +optional
+	Scale *AppVersionScale `json:"scale,omitempty"`
 
 	// BudgetPerDay is the maximum spend of the version key in one day, in the currency of the
 	// gateway price table. It has no default, and it must be more than zero. You can change it.
@@ -302,6 +308,65 @@ type AppVersionTemplate struct {
 	PodTemplate PodTemplate `json:"podTemplate"`
 }
 
+// AppVersionScale is the range of pods of a version and the load metric of the scale.
+// +kubebuilder:validation:XValidation:rule="self.maxReplicas >= self.minReplicas",message="scale.maxReplicas must be equal to or more than scale.minReplicas."
+type AppVersionScale struct {
+	// MinReplicas is the smallest number of pods. A version with no load has this number. A
+	// version in its drain also has this number.
+	// +optional
+	// +kubebuilder:default=1
+	// +kubebuilder:validation:Minimum=1
+	MinReplicas *int32 `json:"minReplicas,omitempty"`
+
+	// MaxReplicas is the largest number of pods.
+	// +required
+	// +kubebuilder:validation:Minimum=1
+	// +kubebuilder:validation:Maximum=1000
+	MaxReplicas int32 `json:"maxReplicas"`
+
+	// Metric is the load metric. Set cpu or pods, not the two.
+	// +required
+	Metric AppVersionScaleMetric `json:"metric"`
+}
+
+// AppVersionScaleMetric is the load metric of a version. It has one member.
+// +kubebuilder:validation:XValidation:rule="has(self.cpu) != has(self.pods)",message="Set metric.cpu or metric.pods, not the two."
+type AppVersionScaleMetric struct {
+	// CPU scales on the CPU use of the pods, as a percent of the CPU request of the pods. The
+	// cluster needs the resource metrics API, for example metrics-server.
+	// +optional
+	CPU *AppVersionCPUMetric `json:"cpu,omitempty"`
+
+	// Pods scales on a metric that each pod of the version exports, for example the requests in
+	// flight. The cluster needs a custom metrics adapter that serves the metric.
+	// +optional
+	Pods *AppVersionPodsMetric `json:"pods,omitempty"`
+}
+
+// AppVersionCPUMetric is the CPU target of a version.
+type AppVersionCPUMetric struct {
+	// AverageUtilization is the target CPU use of each pod, as a percent of its CPU request.
+	// +required
+	// +kubebuilder:validation:Minimum=1
+	// +kubebuilder:validation:Maximum=1000
+	AverageUtilization int32 `json:"averageUtilization"`
+}
+
+// AppVersionPodsMetric is the target of a pod metric of a version.
+type AppVersionPodsMetric struct {
+	// Name is the name of the metric in the custom metrics API.
+	// +required
+	// +kubebuilder:validation:MinLength=1
+	// +kubebuilder:validation:MaxLength=253
+	// +kubebuilder:validation:Pattern=`^[a-zA-Z_:][a-zA-Z0-9_:]*$`
+	Name string `json:"name"`
+
+	// AverageValue is the target value of the metric for each pod.
+	// +required
+	// +kubebuilder:validation:XValidation:rule="quantity(string(self)).isGreaterThan(quantity('0'))",message="averageValue must be more than zero"
+	AverageValue resource.Quantity `json:"averageValue"`
+}
+
 // ModelList gives back the models that the version key permits. It is empty for a version with
 // no model.
 func (t *AppVersionTemplate) ModelList() []string {
@@ -359,6 +424,7 @@ type AppVersionStatus struct {
 // +kubebuilder:printcolumn:name="App",type=string,JSONPath=`.spec.appRef.name`
 // +kubebuilder:printcolumn:name="Lifecycle",type=string,JSONPath=`.spec.lifecycle`
 // +kubebuilder:printcolumn:name="Replicas",type=integer,JSONPath=`.spec.replicas`
+// +kubebuilder:printcolumn:name="Max",type=integer,JSONPath=`.spec.scale.maxReplicas`,priority=1
 // +kubebuilder:printcolumn:name="Age",type=date,JSONPath=`.metadata.creationTimestamp`
 // +kubebuilder:validation:XValidation:rule="!has(oldSelf.status) || !has(oldSelf.status.evidence) || (has(self.status) && has(self.status.evidence) && self.status.evidence == oldSelf.status.evidence)",message="status.evidence is written one time. You cannot change it or remove it."
 

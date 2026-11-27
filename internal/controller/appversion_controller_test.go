@@ -29,6 +29,7 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	appsv1 "k8s.io/api/apps/v1"
+	autoscalingv2 "k8s.io/api/autoscaling/v2"
 	corev1 "k8s.io/api/core/v1"
 	networkingv1 "k8s.io/api/networking/v1"
 	rbacv1 "k8s.io/api/rbac/v1"
@@ -746,6 +747,90 @@ var _ = Describe("AppVersion controller", func() {
 		Expect(cond(name, corev1alpha1.AppVersionSessionsEnded).Status).To(Equal(metav1.ConditionTrue))
 		Expect(cond(name, corev1alpha1.AppVersionRevoked).Reason).To(Equal("Retired"))
 		Expect(gone(&appsv1.Deployment{}, name)).To(BeTrue())
+	})
+
+	It("scales a version with a HorizontalPodAutoscaler and holds a retiring version at its minimum", func() {
+		newApp(2)
+		app := &corev1alpha1.App{}
+		Expect(k8sClient.Get(ctx, nn(appName), app)).To(Succeed())
+		app.Spec.DrainSeconds = new(int32(600))
+		Expect(k8sClient.Update(ctx, app)).To(Succeed())
+		newVersion(name)
+		av := version(name)
+		av.Spec.Scale = &corev1alpha1.AppVersionScale{MinReplicas: new(int32(2)), MaxReplicas: 5,
+			Metric: corev1alpha1.AppVersionScaleMetric{Pods: &corev1alpha1.AppVersionPodsMetric{
+				Name: "requests_in_flight", AverageValue: resource.MustParse("10")}}}
+		Expect(k8sClient.Update(ctx, av)).To(Succeed())
+		mustReconcile()
+
+		hpa := &autoscalingv2.HorizontalPodAutoscaler{}
+		Expect(k8sClient.Get(ctx, nn("kd-"+name), hpa)).To(Succeed())
+		Expect(metav1.IsControlledBy(hpa, version(name))).To(BeTrue())
+		Expect(hpa.Spec.ScaleTargetRef).To(Equal(autoscalingv2.CrossVersionObjectReference{
+			APIVersion: "apps/v1", Kind: "Deployment", Name: "kd-" + name}))
+		Expect(*hpa.Spec.MinReplicas).To(Equal(int32(2)))
+		Expect(hpa.Spec.MaxReplicas).To(Equal(int32(5)))
+		Expect(hpa.Spec.Metrics).To(HaveLen(1))
+		Expect(hpa.Spec.Metrics[0].Pods.Metric.Name).To(Equal("requests_in_flight"))
+		Expect(hpa.Spec.Metrics[0].Pods.Target.AverageValue.String()).To(Equal("10"))
+		d := &appsv1.Deployment{}
+		Expect(k8sClient.Get(ctx, nn("kd-"+name), d)).To(Succeed())
+		Expect(*d.Spec.Replicas).To(Equal(int32(2)))
+
+		// The controller keeps the replicas that the autoscaler sets.
+		d.Spec.Replicas = new(int32(4))
+		Expect(k8sClient.Update(ctx, d)).To(Succeed())
+		mustReconcile()
+		Expect(k8sClient.Get(ctx, nn("kd-"+name), d)).To(Succeed())
+		Expect(*d.Spec.Replicas).To(Equal(int32(4)))
+
+		// A change of the scale updates the autoscaler.
+		av = version(name)
+		av.Spec.Scale.MaxReplicas = 3
+		av.Spec.Scale.Metric = corev1alpha1.AppVersionScaleMetric{
+			CPU: &corev1alpha1.AppVersionCPUMetric{AverageUtilization: 70}}
+		Expect(k8sClient.Update(ctx, av)).To(Succeed())
+		mustReconcile()
+		Expect(k8sClient.Get(ctx, nn("kd-"+name), hpa)).To(Succeed())
+		Expect(hpa.Spec.MaxReplicas).To(Equal(int32(3)))
+		Expect(hpa.Spec.Metrics[0].Resource.Name).To(Equal(corev1.ResourceCPU))
+		Expect(*hpa.Spec.Metrics[0].Resource.Target.AverageUtilization).To(Equal(int32(70)))
+
+		// In the drain time, the version gets no new session, so it stays at its minimum.
+		av = version(name)
+		av.Spec.Lifecycle = corev1alpha1.AppVersionRetiring
+		Expect(k8sClient.Update(ctx, av)).To(Succeed())
+		mustReconcile()
+		Expect(k8sClient.Get(ctx, nn("kd-"+name), hpa)).To(Succeed())
+		Expect(*hpa.Spec.MinReplicas).To(Equal(int32(2)))
+		Expect(hpa.Spec.MaxReplicas).To(Equal(int32(2)))
+
+		// The revoke blocks the key first. Then the autoscaler goes with the pods.
+		now = now.Add(10 * time.Minute)
+		mustReconcile()
+		Expect(gw.order[len(gw.order)-1]).To(Equal(opBlock))
+		Expect(gone(&autoscalingv2.HorizontalPodAutoscaler{}, name)).To(BeTrue())
+		Expect(gone(&appsv1.Deployment{}, name)).To(BeTrue())
+	})
+
+	It("deletes the autoscaler when the scale goes, and the Deployment gets spec.replicas", func() {
+		newApp(2)
+		newVersion(name)
+		av := version(name)
+		av.Spec.Scale = &corev1alpha1.AppVersionScale{MaxReplicas: 3, Metric: corev1alpha1.AppVersionScaleMetric{
+			CPU: &corev1alpha1.AppVersionCPUMetric{AverageUtilization: 50}}}
+		Expect(k8sClient.Update(ctx, av)).To(Succeed())
+		mustReconcile()
+		Expect(gone(&autoscalingv2.HorizontalPodAutoscaler{}, name)).To(BeFalse())
+
+		av = version(name)
+		av.Spec.Scale, av.Spec.Replicas = nil, new(int32(3))
+		Expect(k8sClient.Update(ctx, av)).To(Succeed())
+		mustReconcile()
+		Expect(gone(&autoscalingv2.HorizontalPodAutoscaler{}, name)).To(BeTrue())
+		d := &appsv1.Deployment{}
+		Expect(k8sClient.Get(ctx, nn("kd-"+name), d)).To(Succeed())
+		Expect(*d.Spec.Replicas).To(Equal(int32(3)))
 	})
 
 	It("does not wait for the drain time when a retiring version is deleted", func() {

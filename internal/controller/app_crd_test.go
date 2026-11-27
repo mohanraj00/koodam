@@ -119,11 +119,50 @@ var _ = Describe("App and AppVersion CRDs", func() {
 		expectInvalid(create(u), "maxLiveVersions")
 	})
 
-	It("accepts a valid AppVersion and defaults replicas and lifecycle", func() {
+	It("accepts a valid AppVersion and defaults the lifecycle", func() {
 		v := newVersion("v-valid")
 		Expect(create(v)).To(Succeed())
-		Expect(v.Spec.Replicas).To(Equal(new(int32(1))))
+		// replicas has no default, because a version with a scale must not have replicas. The
+		// controller gives a version with no replicas and no scale 1 pod.
+		Expect(v.Spec.Replicas).To(BeNil())
 		Expect(v.Spec.Lifecycle).To(Equal(corev1alpha1.AppVersionActive))
+	})
+
+	It("accepts a scale, defaults its minimum to 1, and refuses a scale that is not valid", func() {
+		pods := corev1alpha1.AppVersionScaleMetric{Pods: &corev1alpha1.AppVersionPodsMetric{
+			Name: "requests_in_flight", AverageValue: resource.MustParse("10")}}
+		v := newVersion("v-scale")
+		v.Spec.Scale = &corev1alpha1.AppVersionScale{MaxReplicas: 4, Metric: pods}
+		Expect(create(v)).To(Succeed())
+		Expect(v.Spec.Scale.MinReplicas).To(Equal(new(int32(1))))
+		Expect(update(v, func(c *corev1alpha1.AppVersion) {
+			c.Spec.Scale.Metric = corev1alpha1.AppVersionScaleMetric{
+				CPU: &corev1alpha1.AppVersionCPUMetric{AverageUtilization: 70}}
+		})).To(Succeed())
+		expectInvalid(update(v, func(c *corev1alpha1.AppVersion) { c.Spec.Replicas = new(int32(2)) }),
+			"Set spec.replicas or spec.scale, not the two.")
+
+		for _, tc := range []struct {
+			scale   corev1alpha1.AppVersionScale
+			message string
+		}{
+			{corev1alpha1.AppVersionScale{MinReplicas: new(int32(3)), MaxReplicas: 2, Metric: pods},
+				"scale.maxReplicas must be equal to or more than scale.minReplicas."},
+			{corev1alpha1.AppVersionScale{MinReplicas: new(int32(0)), MaxReplicas: 2, Metric: pods}, "minReplicas"},
+			{corev1alpha1.AppVersionScale{MaxReplicas: 2}, "Set metric.cpu or metric.pods, not the two."},
+			{corev1alpha1.AppVersionScale{MaxReplicas: 2, Metric: corev1alpha1.AppVersionScaleMetric{
+				CPU: &corev1alpha1.AppVersionCPUMetric{AverageUtilization: 70}, Pods: pods.Pods}},
+				"Set metric.cpu or metric.pods, not the two."},
+			{corev1alpha1.AppVersionScale{MaxReplicas: 2, Metric: corev1alpha1.AppVersionScaleMetric{
+				Pods: &corev1alpha1.AppVersionPodsMetric{Name: "a/b", AverageValue: resource.MustParse("1")}}}, "spec.scale.metric.pods.name"},
+			{corev1alpha1.AppVersionScale{MaxReplicas: 2, Metric: corev1alpha1.AppVersionScaleMetric{
+				Pods: &corev1alpha1.AppVersionPodsMetric{Name: "q", AverageValue: resource.MustParse("0")}}},
+				"averageValue must be more than zero"},
+		} {
+			bad := newVersion("v-bad-scale")
+			bad.Spec.Scale = &tc.scale
+			expectInvalid(create(bad), tc.message)
+		}
 	})
 
 	It("accepts an AppVersion with no App, because no controller binds it yet", func() {

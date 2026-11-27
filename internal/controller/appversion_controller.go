@@ -26,6 +26,7 @@ import (
 	"time"
 
 	appsv1 "k8s.io/api/apps/v1"
+	autoscalingv2 "k8s.io/api/autoscaling/v2"
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
 	networkingv1 "k8s.io/api/networking/v1"
@@ -143,6 +144,7 @@ type AppVersionReconciler struct {
 // +kubebuilder:rbac:groups=apps,resources=deployments,verbs=get;list;watch;create;update;delete
 // +kubebuilder:rbac:groups="",resources=services,verbs=get;list;watch;create;delete
 // +kubebuilder:rbac:groups=networking.k8s.io,resources=networkpolicies,verbs=get;create;update
+// +kubebuilder:rbac:groups=autoscaling,resources=horizontalpodautoscalers,verbs=get;create;update;delete
 
 // Reconcile makes the key and the objects of an active AppVersion. It revokes the key when the
 // AppVersion is deleted or retired, or when its App or its Secret is gone.
@@ -819,6 +821,16 @@ func (r *AppVersionReconciler) applyObjects(ctx context.Context, av *corev1alpha
 			return "", err
 		}
 	}
+	if reason, err := r.applyDeployment(ctx, av, deploy); reason != "" || err != nil {
+		return reason, err
+	}
+	return r.applyScale(ctx, av)
+}
+
+// applyDeployment makes or updates the Deployment of the version. It returns a reason if a
+// Deployment with the version name is not from av, or if the API server refuses the Deployment.
+func (r *AppVersionReconciler) applyDeployment(ctx context.Context, av *corev1alpha1.AppVersion,
+	deploy *appsv1.Deployment) (string, error) {
 	have := &appsv1.Deployment{}
 	found, err := r.getOwned(ctx, av, have)
 	switch {
@@ -829,9 +841,13 @@ func (r *AppVersionReconciler) applyObjects(ctx context.Context, av *corev1alpha
 	case !found:
 		err = r.Create(ctx, deploy)
 	case have.Annotations[templateHashAnnotation] != deploy.Annotations[templateHashAnnotation] ||
-		have.Spec.Replicas == nil || *have.Spec.Replicas != *deploy.Spec.Replicas:
-		// The hash annotation records the last template of the controller.
-		have.Spec.Template, have.Spec.Replicas = deploy.Spec.Template, deploy.Spec.Replicas
+		(av.Spec.Scale == nil && (have.Spec.Replicas == nil || *have.Spec.Replicas != *deploy.Spec.Replicas)):
+		// The hash annotation records the last template of the controller. With a scale, the
+		// HorizontalPodAutoscaler sets the replicas, and the controller keeps them.
+		have.Spec.Template = deploy.Spec.Template
+		if av.Spec.Scale == nil {
+			have.Spec.Replicas = deploy.Spec.Replicas
+		}
 		metav1.SetMetaDataAnnotation(&have.ObjectMeta, templateHashAnnotation, deploy.Annotations[templateHashAnnotation])
 		err = r.Update(ctx, have)
 	}
@@ -927,9 +943,10 @@ func (r *AppVersionReconciler) deployment(ctx context.Context, av *corev1alpha1.
 	}
 	m := appVersionMeta(av)
 	m.Annotations = map[string]string{templateHashAnnotation: hash}
-	replicas := int32(1)
-	if av.Spec.Replicas != nil {
-		replicas = *av.Spec.Replicas
+	// A new Deployment of a version with a scale starts at the minimum.
+	replicas := versionReplicas(av)
+	if av.Spec.Scale != nil {
+		replicas = scaleMin(av.Spec.Scale)
 	}
 	return &appsv1.Deployment{ObjectMeta: m, Spec: appsv1.DeploymentSpec{
 		Replicas: &replicas, Selector: &metav1.LabelSelector{MatchLabels: labels}, Template: tmpl}}, nil
@@ -1010,8 +1027,8 @@ func (r *AppVersionReconciler) revoke(ctx context.Context, av *corev1alpha1.AppV
 // deleteObjects deletes the pods of the version, their access and the gate Job. The NetworkPolicy
 // stays until the garbage collector deletes it with the AppVersion.
 func (r *AppVersionReconciler) deleteObjects(ctx context.Context, av *corev1alpha1.AppVersion) error {
-	for _, o := range []client.Object{&appsv1.Deployment{}, &corev1.Service{}, &rbacv1.RoleBinding{},
-		&rbacv1.Role{}, &corev1.ServiceAccount{}} {
+	for _, o := range []client.Object{&autoscalingv2.HorizontalPodAutoscaler{}, &appsv1.Deployment{},
+		&corev1.Service{}, &rbacv1.RoleBinding{}, &rbacv1.Role{}, &corev1.ServiceAccount{}} {
 		if err := r.deleteOwned(ctx, av, o); err != nil {
 			return err
 		}

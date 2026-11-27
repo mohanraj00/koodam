@@ -24,6 +24,10 @@ spec:
     - jsonPath: .spec.replicas
       name: Replicas
       type: integer
+    - jsonPath: .spec.scale.maxReplicas
+      name: Max
+      priority: 1
+      type: integer
     - jsonPath: .metadata.creationTimestamp
       name: Age
       type: date
@@ -157,12 +161,88 @@ spec:
                     it back to Active.
                   rule: oldSelf != 'Retiring' || self == 'Retiring'
               replicas:
-                default: 1
-                description: Replicas is the number of pods of this version. You can
-                  change it.
+                description: |-
+                  Replicas is the number of pods of this version. You can change it. With no replicas and
+                  no scale, the version has 1 pod. You cannot set replicas and scale together.
                 format: int32
                 minimum: 0
                 type: integer
+              scale:
+                description: |-
+                  Scale makes the number of pods follow the load of the version. The controller makes one
+                  HorizontalPodAutoscaler for the version. You can change it, add it or remove it.
+                properties:
+                  maxReplicas:
+                    description: MaxReplicas is the largest number of pods.
+                    format: int32
+                    maximum: 1000
+                    minimum: 1
+                    type: integer
+                  metric:
+                    description: Metric is the load metric. Set cpu or pods, not the
+                      two.
+                    properties:
+                      cpu:
+                        description: |-
+                          CPU scales on the CPU use of the pods, as a percent of the CPU request of the pods. The
+                          cluster needs the resource metrics API, for example metrics-server.
+                        properties:
+                          averageUtilization:
+                            description: AverageUtilization is the target CPU use
+                              of each pod, as a percent of its CPU request.
+                            format: int32
+                            maximum: 1000
+                            minimum: 1
+                            type: integer
+                        required:
+                        - averageUtilization
+                        type: object
+                      pods:
+                        description: |-
+                          Pods scales on a metric that each pod of the version exports, for example the requests in
+                          flight. The cluster needs a custom metrics adapter that serves the metric.
+                        properties:
+                          averageValue:
+                            anyOf:
+                            - type: integer
+                            - type: string
+                            description: AverageValue is the target value of the metric
+                              for each pod.
+                            pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                            x-kubernetes-int-or-string: true
+                            x-kubernetes-validations:
+                            - message: averageValue must be more than zero
+                              rule: quantity(string(self)).isGreaterThan(quantity('0'))
+                          name:
+                            description: Name is the name of the metric in the custom
+                              metrics API.
+                            maxLength: 253
+                            minLength: 1
+                            pattern: ^[a-zA-Z_:][a-zA-Z0-9_:]*$
+                            type: string
+                        required:
+                        - averageValue
+                        - name
+                        type: object
+                    type: object
+                    x-kubernetes-validations:
+                    - message: Set metric.cpu or metric.pods, not the two.
+                      rule: has(self.cpu) != has(self.pods)
+                  minReplicas:
+                    default: 1
+                    description: |-
+                      MinReplicas is the smallest number of pods. A version with no load has this number. A
+                      version in its drain also has this number.
+                    format: int32
+                    minimum: 1
+                    type: integer
+                required:
+                - maxReplicas
+                - metric
+                type: object
+                x-kubernetes-validations:
+                - message: scale.maxReplicas must be equal to or more than scale.minReplicas.
+                  rule: self.maxReplicas >= self.minReplicas
               template:
                 description: |-
                   Template is the pod and the gateway model of this version. Koodam does not change a
@@ -9165,6 +9245,8 @@ spec:
             - message: spec.gate is immutable. You cannot add it or remove it after
                 create.
               rule: has(self.gate) == has(oldSelf.gate)
+            - message: Set spec.replicas or spec.scale, not the two.
+              rule: '!(has(self.replicas) && has(self.scale))'
           status:
             description: status defines the observed state of AppVersion
             properties:
