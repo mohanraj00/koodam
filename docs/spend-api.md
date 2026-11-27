@@ -123,8 +123,16 @@ label and by namespace, and the period budget of each namespace. It reads the AP
 `internal/opspage/static/page.js`. Use the viewer review mode, so that each
 person sees only the namespaces where that person can list Agents.
 
+The detail of one run shows the Job, the pods and the status conditions from [Read one run](#read-one-run),
+and the last 200 lines from [Read the log of a run](#read-the-log-of-a-run). The page shows the lines as
+text, as the server redacted them. The status above the log shows an error of the API, for example the time
+limit. The page reads [Watch a run](#watch-a-run) and shows a new phase with no reload. If the watch is not
+available, the page reads the run again at the `POLL_MS` interval. `internal/opspage/README.md` tells how the
+page connects again and when it stops the watch.
+
 - The page keeps the token in memory only. A reload or a close of the page forgets it. The page does not
-  write the token to storage, to the URL or to the console.
+  write the token to storage, to the URL or to the console. The watch sends the token in the
+  `Authorization` header too, not in the URL.
 - The page and the mugham kit files are in the binary. The server sends a `Content-Security-Policy`
   that permits no inline script and no other origin. `internal/opspage/README.md` tells how to update
   the kit.
