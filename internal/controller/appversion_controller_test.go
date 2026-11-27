@@ -21,6 +21,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"testing"
 	"time"
 
 	"github.com/go-logr/logr"
@@ -45,6 +46,36 @@ import (
 	corev1alpha1 "github.com/mohanraj00/koodam/api/v1alpha1"
 	"github.com/mohanraj00/koodam/internal/gateway"
 )
+
+func TestAppVersionPolicyAPIServerEgress(t *testing.T) {
+	apiRule := networkingv1.NetworkPolicyEgressRule{
+		To:    []networkingv1.NetworkPolicyPeer{{IPBlock: &networkingv1.IPBlock{CIDR: "192.0.2.1/32"}}},
+		Ports: []networkingv1.NetworkPolicyPort{{Protocol: new(corev1.ProtocolTCP), Port: new(intstr.FromInt(6443))}},
+	}
+	proxy := EgressProxy{IP: "10.96.0.50", Port: 3128, Namespace: "proxy-system", PodLabels: map[string]string{"app": "proxy"}}
+	av := &corev1alpha1.AppVersion{ObjectMeta: metav1.ObjectMeta{Name: "policy-test", Namespace: "shop"}}
+	base := proxy.policy(appVersionMeta(av), appVersionLabels(av), nil, nil)
+	for _, tc := range []struct {
+		name     string
+		settings []networkingv1.NetworkPolicyEgressRule
+		rules    []rbacv1.PolicyRule
+		add      bool
+	}{
+		{"configured with rules", []networkingv1.NetworkPolicyEgressRule{apiRule}, appPolicyRules(), true},
+		{"configured without rules", []networkingv1.NetworkPolicyEgressRule{apiRule}, nil, false},
+		{"empty configuration with existing rules", nil, appPolicyRules(), false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			av.Spec.Template.Rules = tc.rules
+			r := &AppVersionReconciler{Egress: proxy, APIServerEgress: tc.settings}
+			want := base.DeepCopy()
+			if tc.add {
+				want.Spec.Egress = append(want.Spec.Egress, apiRule)
+			}
+			NewWithT(t).Expect(r.versionPolicy(av, nil)).To(Equal(want))
+		})
+	}
+}
 
 var _ = Describe("AppVersion controller", func() {
 	const ns = "default"

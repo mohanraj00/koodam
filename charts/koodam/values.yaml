@@ -261,6 +261,11 @@ apps:
   # Gateway data plane. It has an effect only with egressProxy.enabled: then each AppVersion has
   # a NetworkPolicy, and that policy permits no ingress if this list is empty.
   ingressNamespaces: []
+  # The egress rules (NetworkPolicyEgressRule) to the API server for AppVersions with template.rules.
+  # Use the API server endpoint addresses, as in egressProxy.networkPolicy.apiServer.
+  # A list with rules needs egressProxy.enabled and apps.sharedResources. It permits template.rules
+  # in the namespaces the manager watches. An empty list keeps the admission refusal.
+  apiServerEgress: []
   # The signed claim check at the ingress of each App. With an issuer, each AppVersion pod gets a
   # check container, and a request with no valid JWT of the issuer gets the status 401. The check
   # accepts RS256 and ES256. An issuer needs egressProxy.enabled, because only then a

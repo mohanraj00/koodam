@@ -18,6 +18,7 @@ package main
 
 import (
 	"crypto/tls"
+	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
@@ -35,6 +36,7 @@ import (
 
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
+	networkingv1 "k8s.io/api/networking/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -238,6 +240,38 @@ func checkClaimPolicy(c controller.AppClaimCheck, e controller.EgressProxy) erro
 	return nil
 }
 
+func loadAppAPIServerEgress(raw string, e controller.EgressProxy) ([]networkingv1.NetworkPolicyEgressRule, error) {
+	if raw == "" {
+		return nil, nil
+	}
+	if !json.Valid([]byte(raw)) || !strings.HasPrefix(strings.TrimSpace(raw), "[") {
+		return nil, errors.New("the value must be a JSON list of NetworkPolicyEgressRule")
+	}
+	decoder := json.NewDecoder(strings.NewReader(raw))
+	decoder.DisallowUnknownFields()
+	var input []*networkingv1.NetworkPolicyEgressRule
+	if err := decoder.Decode(&input); err != nil {
+		return nil, err
+	}
+	if len(input) > 0 && (e.IP == "" || e.Namespace == "" || len(e.PodLabels) == 0) {
+		return nil, errors.New("the rules need --egress-proxy-ip, --egress-proxy-namespace and --egress-proxy-pod-labels")
+	}
+	rules := make([]networkingv1.NetworkPolicyEgressRule, 0, len(input))
+	for _, rule := range input {
+		if rule == nil {
+			return nil, errors.New("the list must not contain null")
+		}
+		// Use the default of the API server so the controller can compare the policies.
+		for i := range rule.Ports {
+			if rule.Ports[i].Protocol == nil {
+				rule.Ports[i].Protocol = new(corev1.ProtocolTCP)
+			}
+		}
+		rules = append(rules, *rule)
+	}
+	return rules, nil
+}
+
 // checkEgress refuses an egress proxy IP that is not an IPv4 address, and a port or a cluster
 // domain that is not valid. The pods use the IP as their DNS server.
 func checkEgress(e controller.EgressProxy) error {
@@ -293,7 +327,7 @@ func main() {
 	var testKeyRevokeWait time.Duration
 	var keyGrace, tenantUsageInterval time.Duration
 	var egress controller.EgressProxy
-	var egressPodLabels, appIngressNamespaces, claimJWKSFile string
+	var egressPodLabels, appIngressNamespaces, appAPIServerEgress, claimJWKSFile string
 	var claim controller.AppClaimCheck
 	var jobTTLSeconds, tenantDefaultBurst int
 	var tenantDefaultRate, zone, watchNamespaces string
@@ -332,12 +366,14 @@ func main() {
 	flag.IntVar(&egress.Port, "egress-proxy-port", 3128, "The HTTP port of the egress proxy.")
 	flag.StringVar(&egress.Namespace, "egress-proxy-namespace", "",
 		"The namespace of the egress proxy pods. With --egress-proxy-pod-labels, each AppVersion gets a "+
-			"NetworkPolicy that permits egress to these pods only.")
+			"NetworkPolicy that permits egress to these pods.")
 	flag.StringVar(&egressPodLabels, "egress-proxy-pod-labels", "",
 		"The labels of the egress proxy pods, as key=value pairs with a comma between them.")
 	flag.StringVar(&appIngressNamespaces, "app-ingress-namespaces", "",
 		"The namespaces whose pods can send traffic to the App pods, with a comma between them. Use the "+
 			"namespace of the Gateway data plane. If it is empty, the NetworkPolicy of an AppVersion permits no ingress.")
+	flag.StringVar(&appAPIServerEgress, "app-api-server-egress", "",
+		"A JSON list of NetworkPolicyEgressRule for the API server. It applies to AppVersions with template.rules.")
 	flag.StringVar(&claim.Issuer, "app-claim-issuer", "",
 		"The issuer of the signed claim that each request to an App must have. If it is empty, the Apps have no claim check.")
 	flag.StringVar(&claim.Audience, "app-claim-audience", "",
@@ -606,13 +642,19 @@ func main() {
 		os.Exit(1)
 	}
 	if appsEnabled {
-		err := setupApps(mgr, &controller.AppVersionReconciler{
+		apiServerEgress, err := loadAppAPIServerEgress(appAPIServerEgress, egress)
+		if err != nil {
+			setupLog.Error(err, "The flag --app-api-server-egress is not valid")
+			os.Exit(1)
+		}
+		err = setupApps(mgr, &controller.AppVersionReconciler{
 			Client:            mgr.GetClient(),
 			Scheme:            mgr.GetScheme(),
 			APIReader:         mgr.GetAPIReader(),
 			Gateway:           revokeFailures.Gateway(gw, "AppVersion"),
 			GatewayURL:        strings.TrimRight(agentGatewayURL, "/"),
 			Egress:            egress,
+			APIServerEgress:   apiServerEgress,
 			IngressNamespaces: ingressNamespaces,
 			Claim:             claim,
 			Recorder:          recorder,

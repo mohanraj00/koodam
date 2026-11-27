@@ -109,6 +109,8 @@ type AppVersionReconciler struct {
 	GatewayURL string
 	// Egress sends the egress of the app pods through the egress proxy.
 	Egress EgressProxy
+	// APIServerEgress lets app pods of a version with RBAC rules reach the API server.
+	APIServerEgress []networkingv1.NetworkPolicyEgressRule
 	// IngressNamespaces are the namespaces whose pods can send traffic to the app pods, for
 	// example the namespace of the Gateway data plane. If it is empty, the NetworkPolicy of a
 	// version permits no ingress, and the platform team adds its own policy for the Gateway.
@@ -470,6 +472,8 @@ func (r *AppVersionReconciler) egressCondition(ctx context.Context, av *corev1al
 		c.Status, c.Reason = metav1.ConditionFalse, reasonNoEgressPolicy
 		c.Message = "The pod DNS goes to the egress proxy, but no NetworkPolicy enforces the egress path " +
 			"of the pods of this version."
+	case len(r.APIServerEgress) > 0 && len(av.Spec.Template.Rules) > 0:
+		c.Message = "The pod DNS goes to the egress proxy, and the version has a NetworkPolicy. The API server path uses direct egress."
 	default:
 		c.Message = "The pod DNS goes to the egress proxy, and a NetworkPolicy permits egress to the proxy only."
 	}
@@ -764,11 +768,7 @@ func (r *AppVersionReconciler) applyObjects(ctx context.Context, av *corev1alpha
 		return "", err
 	}
 	// The NetworkPolicy is first, so that no pod of the version starts before its policy.
-	want := r.Egress.policy(appVersionMeta(av), appVersionLabels(av), listen, r.IngressNamespaces)
-	if want != nil && gateOpen(av) {
-		// The gate pod sends the test messages to the pods of the version until the gate ends.
-		want.Spec.Ingress = append(want.Spec.Ingress, gateIngress(av, listen))
-	}
+	want := r.versionPolicy(av, listen)
 	if want != nil {
 		objs = append([]client.Object{want.DeepCopy()}, objs...)
 	}

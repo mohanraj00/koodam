@@ -21,6 +21,7 @@ import (
 	"strings"
 	"testing"
 
+	admissionv1 "k8s.io/api/admissionregistration/v1"
 	appsv1 "k8s.io/api/apps/v1"
 	rbacv1 "k8s.io/api/rbac/v1"
 )
@@ -81,6 +82,72 @@ func TestAppsOnlyIfEnabled(t *testing.T) {
 	// With no egress proxy, the manager gets no selector of the proxy pods.
 	if strings.Contains(on, "--egress-proxy-namespace") {
 		t.Error("the manager has --egress-proxy-namespace with no egress proxy")
+	}
+}
+
+func TestAppsAPIServerEgress(t *testing.T) {
+	const values = proxyValues + `
+apps:
+  apiServerEgress:
+  - to:
+    - ipBlock:
+        cidr: 192.0.2.1/32
+    ports:
+    - protocol: TCP
+      port: 6443
+`
+	const flag = "--app-api-server-egress="
+	const arg = flag + `[{"ports":[{"port":6443,"protocol":"TCP"}],"to":[{"ipBlock":{"cidr":"192.0.2.1/32"}}]}]`
+	for _, tc := range []struct {
+		name, values, scope, expression string
+		apps, flag                      bool
+	}{
+		{name: "shared proxy rules only", values: proxyValues, apps: true, expression: "false"},
+		{name: "App rules", values: values, apps: true, flag: true, expression: "true"},
+		{name: "App rules with namespace scope", values: values, apps: true, flag: true,
+			scope: "zone.namespaces={shop}", expression: `request.namespace in ["koodam-system","shop"]`},
+		{name: "Apps disabled", values: values},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			set := []string{"workspace.networkPolicy.namespaces={shop}"}
+			if tc.apps {
+				set = append(set, setApps)
+			}
+			if tc.scope != "" {
+				set = append(set, tc.scope)
+			}
+			out := render(t, tc.values, set...)
+			deps := decode[appsv1.Deployment](t, out, "Deployment", "koodam-controller-manager")
+			if len(deps) != 1 {
+				t.Fatalf("got %d manager Deployments, want 1", len(deps))
+			}
+			args := deps[0].Spec.Template.Spec.Containers[0].Args
+			argIndex := slices.IndexFunc(args, func(a string) bool { return strings.HasPrefix(a, flag) })
+			if found := argIndex >= 0; found != tc.flag {
+				t.Errorf("manager flag present: got %v, want %v", found, tc.flag)
+			} else if found && args[argIndex] != arg {
+				t.Errorf("got manager argument %q, want %q", args[argIndex], arg)
+			}
+			policies := decode[admissionv1.ValidatingAdmissionPolicy](t, out, "ValidatingAdmissionPolicy", "koodam-appversion")
+			if !tc.apps && len(policies) == 0 {
+				return
+			}
+			if !tc.apps || len(policies) != 1 {
+				t.Fatalf("got %d AppVersion admission policies with apps.enabled=%v", len(policies), tc.apps)
+			}
+			for _, variable := range policies[0].Spec.Variables {
+				if variable.Name == "apiServerEgress" && variable.Expression == tc.expression {
+					return
+				}
+			}
+			t.Errorf("want apiServerEgress expression %q, got %v", tc.expression, policies[0].Spec.Variables)
+		})
+	}
+	for _, set := range []string{"egressProxy.enabled=false", "apps.sharedResources=false"} {
+		out, err := helmTemplate(t, values, setApps, "workspace.networkPolicy.namespaces={shop}", set)
+		if err == nil || !strings.Contains(out, "apps.apiServerEgress needs egressProxy.enabled and apps.sharedResources") {
+			t.Errorf("the chart accepts App API server egress with %s: %v", set, err)
+		}
 	}
 }
 

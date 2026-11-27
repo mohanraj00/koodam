@@ -11,7 +11,17 @@
 {{- end }}
 # The ValidatingAdmissionPolicy of the AppVersion and its binding. They come from
 # config/apps/admission/policy.yaml.
-{{ .Files.Get "files/app-admission-policy.yaml" }}
+{{- $policy := .Files.Get "files/app-admission-policy.yaml" }}
+{{- if .Values.apps.apiServerEgress }}
+{{- $expression := "true" }}
+{{- with .Values.zone.namespaces }}
+{{- $expression = printf "request.namespace in %s" (prepend . $.Release.Namespace | uniq | mustToJson) }}
+{{- end }}
+{{- /* Change only the CEL variable that controls template.rules. */ -}}
+{{- $variable := "- name: apiServerEgress\n    expression: " }}
+{{- $policy = replace (printf "%s%q" $variable "false") (printf "%s%q" $variable $expression) $policy }}
+{{- end }}
+{{ $policy }}
 ---
 {{- end }}
 # The rules of the App controllers. They come from config/apps/rbac/role.yaml (controller-gen).

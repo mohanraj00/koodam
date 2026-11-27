@@ -29,8 +29,36 @@ import (
 	"testing"
 	"time"
 
+	corev1 "k8s.io/api/core/v1"
+
 	"github.com/mohanraj00/koodam/internal/controller"
 )
+
+func TestLoadAppAPIServerEgress(t *testing.T) {
+	proxy := controller.EgressProxy{IP: "10.96.0.50", Namespace: "proxy-system", PodLabels: map[string]string{"app": "proxy"}}
+	const raw = `[{"to":[{"ipBlock":{"cidr":"192.0.2.1/32"}}],"ports":[{"port":6443}]}]`
+	rules, err := loadAppAPIServerEgress(raw, proxy)
+	if err != nil || len(rules) != 1 {
+		t.Fatalf("got %v rules and %v, want one rule", rules, err)
+	}
+	port := rules[0].Ports[0]
+	if port.Protocol == nil || *port.Protocol != corev1.ProtocolTCP || port.Port.IntVal != 6443 {
+		t.Errorf("got port %+v, want TCP 6443", port)
+	}
+	if _, err := loadAppAPIServerEgress(raw, controller.EgressProxy{}); err == nil {
+		t.Error("the rules require the proxy settings")
+	}
+	for _, value := range []string{"", "[]"} {
+		if got, err := loadAppAPIServerEgress(value, controller.EgressProxy{}); err != nil || len(got) != 0 {
+			t.Errorf("%q gave %v rules and %v, want no rules", value, got, err)
+		}
+	}
+	for _, value := range []string{"{}", "null", "[null]", `[{"peer":[]}]`, "[] []"} {
+		if _, err := loadAppAPIServerEgress(value, proxy); err == nil {
+			t.Errorf("accepted %q, want an error", value)
+		}
+	}
+}
 
 // TestWorkspaceImageFor checks the tag rule of the default workspace image.
 func TestDigestImage(t *testing.T) {

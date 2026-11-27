@@ -25,6 +25,7 @@ import (
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
+	admissionv1 "k8s.io/api/admissionregistration/v1"
 	corev1 "k8s.io/api/core/v1"
 	rbacv1 "k8s.io/api/rbac/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -40,10 +41,15 @@ import (
 	corev1alpha1 "github.com/mohanraj00/koodam/api/v1alpha1"
 )
 
+func appPolicyRules() []rbacv1.PolicyRule {
+	return []rbacv1.PolicyRule{{APIGroups: []string{""}, Resources: []string{"configmaps"}, Verbs: []string{verbGet}}}
+}
+
 // These specs apply config/apps/admission/policy.yaml to the envtest API server. They run no
 // controller. The key hash is a fixture, not the hash of a key.
 var _ = Describe("AppVersion admission policy", Ordered, func() {
 	const ns = "default"
+	const rulesText = "spec.template.rules is not permitted. An App pod has no path to the API server, so a version Role has no effect."
 	ctx := context.Background()
 	newVersion := func(name string, change func(*corev1alpha1.AppVersion)) *corev1alpha1.AppVersion {
 		av := &corev1alpha1.AppVersion{ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: ns},
@@ -124,8 +130,7 @@ var _ = Describe("AppVersion admission policy", Ordered, func() {
 	})
 
 	It("refuses template rules on a create and on a template change", func() {
-		const rulesText = "spec.template.rules is not permitted"
-		rules := []rbacv1.PolicyRule{{APIGroups: []string{""}, Resources: []string{"configmaps"}, Verbs: []string{verbGet}}}
+		rules := appPolicyRules()
 		refused(create(newVersion("policy-d", func(av *corev1alpha1.AppVersion) { av.Spec.Template.Rules = rules })), rulesText)
 
 		av := newVersion("policy-d", nil)
@@ -175,5 +180,45 @@ var _ = Describe("AppVersion admission policy", Ordered, func() {
 		Expect(k8sClient.Update(ctx, av)).To(Succeed())
 		av.Finalizers = nil
 		Expect(k8sClient.Update(ctx, av)).To(Succeed())
+	})
+
+	It("permits template rules in the configured namespace", func() {
+		setExpression := func(expression string) {
+			GinkgoHelper()
+			policy := &admissionv1.ValidatingAdmissionPolicy{}
+			Expect(k8sClient.Get(ctx, types.NamespacedName{Name: "koodam-appversion"}, policy)).To(Succeed())
+			for i, variable := range policy.Spec.Variables {
+				if variable.Name == "apiServerEgress" {
+					policy.Spec.Variables[i].Expression = expression
+					Expect(k8sClient.Update(ctx, policy)).To(Succeed())
+					return
+				}
+			}
+			Fail("The policy has no apiServerEgress variable")
+		}
+		setExpression(`request.namespace in ["default"]`)
+		withRules := func(av *corev1alpha1.AppVersion) { av.Spec.Template.Rules = appPolicyRules() }
+		Eventually(func() error {
+			return create(newVersion("policy-allow-create", withRules))
+		}, time.Minute, time.Second).Should(Succeed())
+		other := newVersion("policy-deny-namespace", withRules)
+		other.Namespace = "kube-system"
+		refused(create(other), rulesText)
+
+		av := newVersion("policy-allow-update", nil)
+		Expect(create(av)).To(Succeed())
+		withRules(av)
+		Expect(k8sClient.Update(ctx, av)).To(Succeed())
+		port(av).Name = ""
+		refused(k8sClient.Update(ctx, av), "Each port of the app container")
+
+		setExpression("false")
+		Eventually(func() error {
+			return k8sClient.Create(ctx, newVersion("policy-deny-create", withRules), client.DryRunAll)
+		}, time.Minute, time.Second).Should(MatchError(ContainSubstring(rulesText)))
+		Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(av), av)).To(Succeed())
+		av.Spec.Replicas = new(int32(2))
+		Expect(k8sClient.Update(ctx, av)).To(Succeed())
+		Expect(av.Spec.Template.Rules).To(Equal(appPolicyRules()))
 	})
 })

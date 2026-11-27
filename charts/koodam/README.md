@@ -241,6 +241,7 @@ connects in the pod network namespace. These connections work with an empty `ssh
 | `egressProxy.podDisruptionBudget.enabled`, `.maxUnavailable` | `true`, `1` | Add a PodDisruptionBudget for the proxy pods. `maxUnavailable` is a number or a percentage. Set `enabled: false` for no PodDisruptionBudget. |
 | `egressProxy.networkPolicy.enabled` | `true` | Add a NetworkPolicy for the proxy pods. They can send only to the DNS pods, the bundled gateway, the API server and the public internet on the permitted ports. |
 | `egressProxy.networkPolicy.apiServer` | empty | The egress rules (`NetworkPolicyEgressRule`) to the API server endpoint addresses, for the pod watch of the proxy and for the Agent and Workspace pods. They are necessary if `networkPolicy.enabled` is `true`. |
+| `apps.apiServerEgress` | `[]` | Egress rules (`NetworkPolicyEgressRule`) to the API server endpoints for AppVersions with `template.rules`. A list with rules needs `apps.enabled`, `egressProxy.enabled` and `apps.sharedResources`. It also permits `template.rules` in the namespaces the manager watches. |
 | `egressProxy.networkPolicy.extraEgress` | empty | More egress rules for the proxy pods, for example for a gateway at a private address. |
 | `keyGrace` | `1m` | The time that the controller adds to `deadlineSeconds` for the key TTL. |
 | `jobTTLSeconds` | `86400` | The time in seconds that Kubernetes keeps a run Job and its pods (and the log) after the Job ends. The value must be from `60` to `2147483647`. |
