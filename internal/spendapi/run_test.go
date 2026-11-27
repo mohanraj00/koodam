@@ -41,10 +41,12 @@ import (
 )
 
 const (
-	runName  = "report-7"
-	jobName  = "kd-report-7"
-	podName  = "kd-report-7-abcde"
-	testPath = runPrefix + testNamespace + "/" + runName
+	runName = "report-7"
+	jobName = "kd-report-7"
+	podName = "kd-report-7-abcde"
+	// agentContainer is the name of the container of the agent.
+	agentContainer = "agent"
+	testPath       = runPrefix + testNamespace + "/" + runName
 )
 
 var runTime = metav1.NewTime(time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC))
@@ -76,7 +78,7 @@ func runObjects(hash string) []client.Object {
 			Phase: corev1.PodRunning, StartTime: &runTime,
 			InitContainerStatuses: []corev1.ContainerStatus{{Name: "install", State: corev1.ContainerState{
 				Terminated: &corev1.ContainerStateTerminated{ExitCode: 0, Reason: "Completed", Message: hash}}}},
-			ContainerStatuses: []corev1.ContainerStatus{{Name: "agent", Ready: true,
+			ContainerStatuses: []corev1.ContainerStatus{{Name: agentContainer, Ready: true,
 				State: corev1.ContainerState{Running: &corev1.ContainerStateRunning{StartedAt: runTime}}}},
 		},
 	}
@@ -185,20 +187,31 @@ func TestRunPathInOpenAPI(t *testing.T) {
 	if err := json.Unmarshal([]byte(docs.SpendOpenAPI), &spec); err != nil {
 		t.Fatal(err)
 	}
-	item := spec.Paths["/v1/runs/{namespace}/{name}"]
-	for _, method := range []string{"get", "head", "post", "put", "patch", "delete", "options"} {
-		if _, ok := item[method]; !ok {
-			t.Fatalf("the OpenAPI document does not list %s of the run path", method)
+	f := newFixture(t, 0)
+	for path, concrete := range map[string]string{
+		"/v1/runs/{namespace}/{name}": testPath, "/v1/runs/{namespace}/{name}/log": testPath + "/log",
+	} {
+		for _, method := range []string{"get", "head", "post", "put", "patch", "delete", "options"} {
+			if _, ok := spec.Paths[path][method]; !ok {
+				t.Fatalf("the OpenAPI document does not list %s of %s", method, path)
+			}
+		}
+		for _, method := range []string{http.MethodPost, http.MethodDelete} {
+			f.call(t, method, concrete, f.token, http.StatusMethodNotAllowed)
 		}
 	}
-	f := newFixture(t, 0)
-	for _, method := range []string{http.MethodPost, http.MethodDelete} {
-		f.call(t, method, testPath, f.token, http.StatusMethodNotAllowed)
+	var components struct {
+		Components struct {
+			Schemas map[string]json.RawMessage `json:"schemas"`
+		} `json:"components"`
 	}
-	if !slices.ContainsFunc(strings.Split(docs.SpendOpenAPI, "\n"), func(l string) bool {
-		return strings.Contains(l, `"RunDetail"`)
-	}) {
-		t.Fatal("the OpenAPI document has no RunDetail schema")
+	if err := json.Unmarshal([]byte(docs.SpendOpenAPI), &components); err != nil {
+		t.Fatal(err)
+	}
+	for _, schema := range []string{"RunDetail", "RunLog"} {
+		if _, ok := components.Components.Schemas[schema]; !ok {
+			t.Fatalf("the OpenAPI document has no %s schema", schema)
+		}
 	}
 }
 
@@ -256,4 +269,25 @@ func TestRunPodsReadsEachPage(t *testing.T) {
 	}
 	f.kube = pagedPods{runClient(t, objects...)}
 	f.call(t, http.MethodGet, testPath, f.token, http.StatusBadGateway)
+}
+
+func TestConditionMessagesAreRedacted(t *testing.T) {
+	f := newFixture(t, 0)
+	objects := runObjects(f.runKeys[0].hash)
+	agent := objects[0].(*corev1alpha1.Agent)
+	agent.Status.Conditions[0].Message = "the gateway refused the key " + f.runKeys[0].value
+	job := objects[1].(*batchv1.Job)
+	job.Status.Conditions[0].Message = "mount failed:\n-----BEGIN PRIVATE KEY-----\n" + keyBody + "\n-----END PRIVATE KEY-----\nend"
+	f.kube = runClient(t, objects...)
+	w := f.call(t, http.MethodGet, testPath, f.token, http.StatusOK)
+	if strings.Contains(w.Body.String(), keyBody) {
+		t.Fatal("the response has the body of a private key")
+	}
+	d := decode[runDetail](t, w)
+	if d.Conditions[0].Message != "the gateway refused the key [redacted]" {
+		t.Fatalf("the condition message is not redacted: %q", d.Conditions[0].Message)
+	}
+	if want := "mount failed:\n[redacted]\n[redacted]\n[redacted]\nend"; d.Job.Conditions[0].Message != want {
+		t.Fatalf("the Job condition message is %q, want %q", d.Job.Conditions[0].Message, want)
+	}
 }
