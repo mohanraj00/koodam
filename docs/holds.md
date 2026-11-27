@@ -5,7 +5,7 @@ A `Hold` is an incident control on a workload. It has 2 actions:
 - `Stop`: the kill switch. The controller blocks the gateway key of each workload of the target, and then it stops the pods.
 - `Quarantine`: the controller blocks the gateway key, and the egress proxy refuses each call of the pods. The pods and the PVCs stay for an investigation.
 
-The controller does the `Stop` action. The `Quarantine` action comes in a later change of [#185](https://github.com/mohanraj00/koodam/issues/185). Until then, the Hold shows the reason `Unsupported`, and the controller does not change the workload.
+The controller does the `Stop` action. For the `Quarantine` action, only the egress proxy acts in this version: it refuses each call of the pods (see [The quarantine](#the-quarantine)). The controller does not block the key and does not change the workload. The Hold shows the reason `Unsupported`. A later change of [#185](https://github.com/mohanraj00/koodam/issues/185) adds the controller part.
 
 ## The resource
 
@@ -48,9 +48,32 @@ An App and an AppVersion stop only if the App controllers run. If they do not ru
 
 With two installs in one cluster (see [zones](zones.md)), each manager stops the workloads of its own namespaces only. A Profile can bind namespaces of the two installs. Then each manager counts the workloads of all the bound namespaces, so the two managers write the same status. The status of a Hold on one workload or on one App comes from the install of its namespace.
 
+## The quarantine
+
+The [egress proxy](traced-egress.md) watches the Holds and the Profiles. While a `Quarantine` Hold has no release, the proxy refuses each call of each pod of the target with the reason `quarantined`. Each refused call has a span with `result: denied` and `reason: quarantined`. When the quarantine starts, the proxy also ends the open calls and the open tunnels of these pods. The proxy reads the Hold and the Profile status from the API server, not from a pod label, so the owner of the workload cannot remove the control.
+
+| Target | The pods that the proxy refuses |
+|---|---|
+| Agent | The pods of the runs of the Agent. |
+| Workspace | The pod of the Workspace. |
+| AppVersion | The pods of the version. |
+| App | The pods of each version of the App. |
+| Profile | The pods of each Agent, Workspace and AppVersion in each namespace that the Profile binds. The proxy reads the bound namespaces from `status.boundNamespaces` of the Profile. |
+
+The proxy writes a span of the kind `control` when a quarantine starts and when it ends. The field `by` has `spec.user` at the start and `spec.release.user` at the end. A Profile target writes 1 control span for each bound namespace. When a Profile binds a new namespace during a quarantine, the proxy writes the start span of that namespace. See [egress spans](egress-spans.md).
+
+In this version, the quarantine blocks only the egress through the proxy. The gateway key stays active, and the pods stay. The proxy sees only the calls that go through it. A call in a path with no proxy, for example to a host in `workspace.networkPolicy.extraEgress` or in a namespace that the NetworkPolicy does not cover, has no check.
+
+### Failure modes and limits
+
+- At the start, the proxy is not ready until it reads the pods, the Holds and the Profiles. If it cannot read them in the time limit of `--sync-timeout`, the proxy exits, and Kubernetes starts it again. Thus a new proxy pod accepts no call before it knows each active quarantine.
+- After the start, if the watch of the Holds or the Profiles fails, the proxy keeps the last state that it read, and the client tries the watch again. A new Hold or a release can then come late. The tenant keys of the proxy use the same mode. The time of the gap is the time until the watch works again.
+- After a restart, the proxy writes the `quarantined` control span of each active quarantine again. A reader must accept more than 1 start span for one Hold.
+- A Hold that is deleted with no release writes no `released` span. The admission policy refuses this delete.
+
 ### Known limit
 
-If `apps.enabled=false` and the pods of an old AppVersion still run, a Profile Hold does not stop them. Without the App controllers, the controller cannot read the AppVersions, so the Hold can show `Held=True` while these pods run. Before you disable the App controllers, retire each AppVersion. A later change fixes this limit.
+If `apps.enabled=false` and the pods of an old AppVersion still run, a Profile Hold does not stop them. The proxy still refuses the calls of these pods during a quarantine. Without the App controllers, the controller cannot read the AppVersions, so the Hold can show `Held=True` while these pods run. Before you disable the App controllers, retire each AppVersion. A later change fixes this limit.
 
 ### The status of the Hold
 
@@ -61,7 +84,7 @@ The controller writes the condition `Held` on the Hold:
 | `False` | `Stopping` | Some workloads of the target did not stop yet. The message gives the number. |
 | `True` | `Stopped` | Each workload of the target stopped, or the target has no workload. |
 | `False` | `Released` | The Hold has `spec.release`. |
-| `False` | `Unsupported` | The action is `Quarantine`. |
+| `False` | `Unsupported` | The action is `Quarantine`. The egress proxy refuses the calls of the pods, and the controller does not change the workload. |
 | `False` | `AppsDisabled` | The target is an App or an AppVersion, and the App controllers do not run. |
 
 ### Events
