@@ -1,0 +1,18 @@
+# This rule lets the approver integration create an ApprovalRecord. Bind it with a RoleBinding in
+# the namespace of the Agents. It gives no read, update or delete. The signature of the record is
+# the check, so this role cannot approve or stop a run with no signing key. Do not add an
+# aggregate-to-edit or aggregate-to-admin label to this role.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  labels:
+    app.kubernetes.io/name: koodam
+    app.kubernetes.io/managed-by: kustomize
+  name: approvalrecord-creator-role
+rules:
+- apiGroups:
+  - core.koodam.dev
+  resources:
+  - approvalrecords
+  verbs:
+  - create

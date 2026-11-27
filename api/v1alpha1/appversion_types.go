@@ -215,7 +215,8 @@ type EvidenceRecord struct {
 	Source EvidenceSource `json:"source"`
 
 	// Subject is the subject digest of the record. For an AppVersion it is
-	// koodam.dev/appversion/v1:<namespace>/<name>:<uid>:<image digest>.
+	// koodam.dev/appversion/v1:<namespace>/<name>:<uid>:<image digest>. For an Agent it is the
+	// sha256: digest of the approval request of the run.
 	// +required
 	// +kubebuilder:validation:MinLength=1
 	// +kubebuilder:validation:MaxLength=512

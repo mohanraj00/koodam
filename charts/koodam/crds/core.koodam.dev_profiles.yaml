@@ -54,6 +54,45 @@ spec:
           spec:
             description: spec defines the desired state of Profile
             properties:
+              approval:
+                description: |-
+                  Approval is the trust of the approval records for the Agents of the bound namespaces. An
+                  Agent with spec.approval in a namespace of a Profile with no approval fails with the reason
+                  NoKeySet.
+                properties:
+                  function:
+                    description: Function is the function that the signed record must
+                      have.
+                    maxLength: 256
+                    minLength: 1
+                    type: string
+                  keySet:
+                    description: KeySet is the JSON text of the trusted key set of
+                      the issuer. It has public keys only.
+                    maxLength: 65536
+                    minLength: 1
+                    type: string
+                  maxAgeSeconds:
+                    description: |-
+                      MaxAgeSeconds is the maximum age of a decision at the check, from its time decided_at. An
+                      older decision gives the reason Expired. The from and until dates of a decision are the
+                      date range of the approved revision, and not an expiry, so the admin sets the expiry here.
+                      It has no default.
+                    format: int64
+                    maximum: 31536000
+                    minimum: 1
+                    type: integer
+                  scope:
+                    description: Scope is the scope that the signed record must have.
+                    maxLength: 256
+                    minLength: 1
+                    type: string
+                required:
+                - function
+                - keySet
+                - maxAgeSeconds
+                - scope
+                type: object
               costGroups:
                 description: CostGroups are the cost groups that this Profile permits
                   for its bound namespaces.
