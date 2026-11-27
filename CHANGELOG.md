@@ -2,6 +2,12 @@
 
 This file records the changes for each Koodam version. The newest version is first.
 
+## Unreleased
+
+### Agents
+
+- Add `GET /v1/runs/{namespace}/{name}` to the [spend API](docs/spend-api.md#read-one-run). It gives one run with the Agent status conditions, the run Job and its pods. In the viewer mode, the server checks the access to the namespace of the path only. The server identity needs `get` on `agents`, `get` on `jobs` and `list` on `pods` ([#399](https://github.com/mohanraj00/koodam/issues/399)).
+
 ## v0.5.0 (2026-11-27)
 
 The API is `v1alpha1` and can change between tags. The App parts are off by default. [Known limits of v0.5.0](#known-limits-of-v050) lists the open limits.
