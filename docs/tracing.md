@@ -28,7 +28,7 @@ The span never holds `tracestate` or `baggage`, because they can hold data.
 
 ## The gateway call
 
-On an `llm` call with no valid `traceparent`, the proxy adds a `traceparent` with the run trace ID and the span ID of its own span. Thus the gateway span joins the run trace. The proxy sends a valid header from the pod without change. The proxy adds a header only on an `llm` call, never on a call to the internet.
+On an `llm` call from an Agent pod or a Workspace pod with no valid `traceparent`, the proxy adds a `traceparent` with the run trace ID and the span ID of its own span. Thus the gateway span joins the run trace. An `llm` call from an App pod with no valid `traceparent` has no trace ID, and the proxy adds no header. The proxy sends a valid header from the pod without change. The proxy adds a header only on an `llm` call, never on a call to the internet.
 
 The chart gets an optional OTel callback for the LiteLLM gateway. It is off by default.
 
