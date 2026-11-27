@@ -93,10 +93,13 @@ func TestRedactionRemovesControlSequences(t *testing.T) {
 }
 
 func TestRedactionOfAPEMBlock(t *testing.T) {
-	lines := []string{"before", "-----BEGIN PRIVATE KEY-----", "MIIEvQIBADANBgkqhkiG9w0BAQEFAASC", "-----END PRIVATE KEY-----", "after"}
-	got := redactLines(slices.Clone(lines))
 	want := []string{"before", redacted, redacted, redacted, "after"}
-	if !slices.Equal(got, want) {
-		t.Fatalf("redactLines = %q, want %q", got, want)
+	// A control sequence in a PEM boundary does not hide the boundary.
+	for _, begin := range []string{"-----BEGIN PRIVATE KEY-----", "-----BEGIN \x1b[31mPRIVATE KEY\x1b[0m-----",
+		"-----BEGIN PRIVATE\x00 KEY-----\r"} {
+		lines := []string{"before", begin, "MIIEvQIBADANBgkqhkiG9w0BAQEFAASC", "---\x1b[0m--END PRIVATE KEY-----", "after"}
+		if got := redactLines(lines); !slices.Equal(got, want) {
+			t.Fatalf("redactLines = %q, want %q", got, want)
+		}
 	}
 }

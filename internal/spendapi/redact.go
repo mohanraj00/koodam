@@ -68,9 +68,18 @@ var redactions = []redaction{
 		`["']?\s*[:=]\s*)(?:"(?:[^"\\]|\\.?)*"?|'(?:[^'\\]|\\.?)*'?|[^\s"',;]+)`)},
 }
 
+// cleanLine makes a line valid UTF-8 and removes the control characters. Each check of a line uses
+// the clean line, so that a control sequence cannot hide a credential or a PEM boundary.
+func cleanLine(line string) string {
+	return control.ReplaceAllLiteralString(strings.ToValidUTF8(line, "\uFFFD"), "")
+}
+
 // redactLine removes the control characters, and then replaces each match of the patterns.
 func redactLine(line string) string {
-	line = control.ReplaceAllLiteralString(strings.ToValidUTF8(line, "\uFFFD"), "")
+	return replaceMatches(cleanLine(line))
+}
+
+func replaceMatches(line string) string {
 	for _, r := range redactions {
 		if r.pattern.NumSubexp() == 0 {
 			line = r.pattern.ReplaceAllLiteralString(line, redacted)
@@ -91,13 +100,14 @@ func redactText(text string) string {
 func redactLines(lines []string) []string {
 	inKey := false
 	for i, line := range lines {
+		line = cleanLine(line)
 		switch {
 		case inKey:
 			inKey = !strings.Contains(line, "-----END")
 			lines[i] = redacted
 		default:
 			inKey = pemBegin.MatchString(line) && !strings.Contains(line, "-----END")
-			lines[i] = redactLine(line)
+			lines[i] = replaceMatches(line)
 		}
 	}
 	return lines
