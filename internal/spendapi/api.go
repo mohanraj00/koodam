@@ -30,6 +30,7 @@ import (
 	"strings"
 	"time"
 
+	authorizationv1 "k8s.io/api/authorization/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/util/validation"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -61,6 +62,8 @@ type Config struct {
 	GatewayURL string
 	MasterKey  string
 	Timeout    time.Duration
+	// Logs opens the log of a container for the log path. If it is nil, the server has no log path.
+	Logs LogSource
 
 	Claims       appclaim.Config
 	Keys         *appclaim.KeySet
@@ -74,6 +77,7 @@ type api struct {
 	viewers    *Viewers
 	gateway    *liteLLM
 	timeout    time.Duration
+	logs       LogSource
 	claims     appclaim.Config
 	keys       *appclaim.KeySet
 	tokens     [][sha256.Size]byte
@@ -109,7 +113,7 @@ func New(c Config) (http.Handler, error) {
 	}
 	a := &api{
 		kube: c.Kube, namespaces: slices.Clone(c.Namespaces), viewers: c.Viewers,
-		gateway: l, timeout: c.Timeout, claims: c.Claims, keys: c.Keys,
+		gateway: l, timeout: c.Timeout, logs: c.Logs, claims: c.Claims, keys: c.Keys,
 	}
 	a.tokens = make([][sha256.Size]byte, 0, len(c.StaticTokens))
 	for _, token := range c.StaticTokens {
@@ -144,7 +148,8 @@ func bearer(r *http.Request) (string, bool) {
 }
 
 // scope gives the namespaces of targets that the caller can read, or the HTTP status of the refusal.
-func (a *api) scope(ctx context.Context, r *http.Request, targets []string) ([]string, int, problem) {
+func (a *api) scope(ctx context.Context, r *http.Request, targets []string,
+	checks []authorizationv1.ResourceAttributes) ([]string, int, problem) {
 	token, ok := bearer(r)
 	if !ok || (a.viewers == nil && !a.authorized(token)) {
 		return nil, http.StatusUnauthorized, problem{"A valid bearer token is necessary."}
@@ -161,7 +166,7 @@ func (a *api) scope(ctx context.Context, r *http.Request, targets []string) ([]s
 	}
 	var namespaces []string
 	if err == nil {
-		namespaces, err = a.viewers.allowed(ctx, user, targets)
+		namespaces, err = a.viewers.allowed(ctx, user, targets, checks)
 	}
 	switch {
 	case ctx.Err() != nil:
@@ -198,15 +203,18 @@ func (a *api) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	// A run path reads one namespace, so the server checks the access to that namespace only.
-	targets := a.namespaces
+	targets, checks := a.namespaces, []authorizationv1.ResourceAttributes{listAgents}
 	ref, isRun := parseRun(r.URL.Path)
 	if isRun {
 		targets = nil
 		if slices.Contains(a.namespaces, ref.namespace) {
 			targets = []string{ref.namespace}
 		}
+		if ref.part == logPart {
+			checks = append(checks, readLog)
+		}
 	}
-	namespaces, status, refusal := a.scope(ctx, r, targets)
+	namespaces, status, refusal := a.scope(ctx, r, targets, checks)
 	if status != http.StatusOK {
 		if status == http.StatusUnauthorized {
 			w.Header().Set("WWW-Authenticate", "Bearer")
@@ -215,6 +223,8 @@ func (a *api) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	switch path := r.URL.Path; {
+	case isRun && ref.part == logPart:
+		a.serveLog(ctx, w, r, ref)
 	case isRun:
 		a.serveRun(ctx, w, r, ref)
 	case path == specPath:

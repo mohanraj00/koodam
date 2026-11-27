@@ -313,6 +313,12 @@ var _ = Describe("Workspaces", Ordered, Label("workspace"), func() {
 		Expect(err).NotTo(HaveOccurred(), "Failed to build the Workspace image with python3: "+out)
 		Expect(utils.LoadImageToKindClusterWithName(pythonWorkspaceImage)).To(Succeed())
 
+		By("configuring the controller to install the Nookku files")
+		// This digest is for the Nookku data image of Koodam v0.5.0.
+		const nookkuImage = "ghcr.io/mohanraj00/koodam-nookku@sha256:be6c674c2699532e3d2b94a89a96b3ad7ea9b92ac0e694459987e1fe2e9d2a2e"
+		DeferCleanup(func() { installChart() })
+		installChart("--set", "nookku.image="+nookkuImage)
+
 		By("permitting TestKeys and selecting the nookku plugin")
 		Expect(k8s.Get(ctx, client.ObjectKeyFromObject(ws), ws)).To(Succeed())
 		patch := client.MergeFrom(ws.DeepCopy())
@@ -329,6 +335,14 @@ var _ = Describe("Workspaces", Ordered, Label("workspace"), func() {
 		Eventually(func() error { _, err := ssh("test -d /etc/koodam/nookku"); return err },
 			5*time.Minute, 5*time.Second).Should(Succeed(), "The Workspace pod has no Nookku marker.")
 		waitPhase(ws, corev1alpha1.WorkspaceRunning)
+		By("finding Nookku with and without a login shell")
+		out, err = ssh("command -v nookku")
+		Expect(err).NotTo(HaveOccurred(), "An SSH command cannot find Nookku.")
+		Expect(strings.TrimSpace(out)).To(Equal("/usr/local/bin/nookku"))
+		out, err = ssh("sh -lc 'command -v nookku'")
+		Expect(err).NotTo(HaveOccurred(), "A login shell cannot find Nookku.")
+		Expect(strings.TrimSpace(out)).To(Equal("/usr/local/bin/nookku"))
+
 		out, err = ssh(`bash -lc 'test -d "$NOOKKU_TESTS_DIR" && printf %s "$NOOKKU_TESTS_DIR"'`)
 		Expect(err).NotTo(HaveOccurred(), "A login shell has no Nookku test folder.")
 		Expect(out).To(Equal("/home/dev/nookku-tests"))

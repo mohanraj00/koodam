@@ -129,9 +129,11 @@ the review.
 
 If a harness selects `nookku`, the controller adds the init container `koodam-nookku-files`. It
 copies the files into an emptyDir, which the harness container mounts read-only at
-`/koodam/nookku`. It copies the launcher to `/koodam/bin/nookku`, which is on the `PATH` of the
-harness. The init container gets no credential and no env, and it has the restrictions of a
-helper.
+`/koodam/nookku`. It copies the launcher to `/koodam/bin/nookku`. For an Agent run, the controller
+puts `/koodam/bin` first on the `PATH` of the agent container. The default Workspace image links
+`/usr/local/bin/nookku` to the launcher. SSH commands and login shells in this image have
+`/usr/local/bin` on their `PATH`. The init container gets no credential and no env. It has the
+restrictions of a helper.
 
 If the controller has no `--nookku-image`, an Agent with `nookku` fails. A Workspace gets no Nookku
 files, and its condition `Harnesses` is `False` with the reason `NoNookkuImage`.

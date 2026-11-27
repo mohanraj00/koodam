@@ -7,6 +7,8 @@ This file records the changes for each Koodam version. The newest version is fir
 ### Agents
 
 - Add `GET /v1/runs/{namespace}/{name}` to the [spend API](docs/spend-api.md#read-one-run). It gives one run with the Agent status conditions, the run Job and its pods. In the viewer mode, the server checks the access to the namespace of the path only. The server identity needs `get` on `agents`, `get` on `jobs` and `list` on `pods` ([#399](https://github.com/mohanraj00/koodam/issues/399)).
+- Redact the condition messages of the run path with a fixed pattern list: private keys, JSON Web Tokens, `sk-` keys, GitHub, AWS and Slack tokens, SHA-256 values, `Authorization` values, URL logins and the values of credential fields. Each pattern has a test. [docs/spend-api.md](docs/spend-api.md#redaction) lists the patterns ([#399](https://github.com/mohanraj00/koodam/issues/399)).
+- Add `GET /v1/runs/{namespace}/{name}/log` to the [spend API](docs/spend-api.md#read-the-log-of-a-run). It gives the last lines of the agent container, 200 by default and 1000 at most, with a byte limit. The server redacts each line with the same pattern list before the bytes leave the server. Only the viewer mode serves the path, and the caller also needs `get` on `pods/log` in the namespace. The server identity needs `get` on `pods/log` ([#399](https://github.com/mohanraj00/koodam/issues/399)).
 
 ### Approvals
 
