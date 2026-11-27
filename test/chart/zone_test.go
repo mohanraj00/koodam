@@ -254,10 +254,10 @@ func TestZonePlacementPolicy(t *testing.T) {
 }
 
 // The App CRDs and the admission policy of the AppVersion are for the full cluster. The second
-// install of a cluster does not render them, and it has no other object for the full cluster
-// with a name that the first install has.
+// install of a cluster does not render them. The policy of the Hold has the name of the release,
+// so each install has it.
 func TestSharedResourcesOff(t *testing.T) {
-	const crd, policy = "kind: CustomResourceDefinition", "kind: ValidatingAdmissionPolicy"
+	const crd, policy = "kind: CustomResourceDefinition", "name: koodam-appversion\n"
 	first, err := helmTemplate(t, "apps: {enabled: true}\n")
 	if err != nil || !strings.Contains(first, crd) || !strings.Contains(first, policy) {
 		t.Fatalf("the first install does not have the shared resources: %v", err)

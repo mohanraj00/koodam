@@ -70,6 +70,7 @@ A Workspace is a pod with a home on a PVC. I connect to it over SSH and run the 
 - [Evidence gate](docs/evidence-gate.md): the gate of an AppVersion on a sealed Nookku result, and the limits of a signed approval record.
 - [Apps](docs/apps.md): the `App` and `AppVersion` resources, the traffic split and the gate.
 - [Spend budgets](docs/spend-budgets.md): the `SpendBudget` resource, with a spend limit for each period for the Agent runs of a namespace.
+- [Holds](docs/holds.md): the `Hold` resource, the kill switch and the quarantine of a workload in an incident.
 - [Tenants](docs/tenants.md): the `TenantQuota` resource, with a quota and a rate limit for each tenant of an App.
 - [Zones](docs/zones.md): one install for each zone, and 2 installs in one cluster.
 - [Gateway guard](docs/gateway-guard.md): the design of an optional guard for instructions in untrusted content, its log line and what it cannot detect.

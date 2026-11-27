@@ -1,0 +1,25 @@
+# This rule gives read access to the Hold objects. A Hold is cluster-scoped, so bind it with a
+# ClusterRoleBinding. Koodam has no editor role for Hold: only an admin can stop or quarantine a
+# workload. Do not add an aggregate-to-edit or aggregate-to-admin label to this role.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  labels:
+    app.kubernetes.io/name: koodam
+    app.kubernetes.io/managed-by: kustomize
+  name: hold-viewer-role
+rules:
+- apiGroups:
+  - core.koodam.dev
+  resources:
+  - holds
+  verbs:
+  - get
+  - list
+  - watch
+- apiGroups:
+  - core.koodam.dev
+  resources:
+  - holds/status
+  verbs:
+  - get

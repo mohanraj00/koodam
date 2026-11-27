@@ -56,6 +56,17 @@ metadata:
     {{- include "koodam.labels" . | nindent 4 }}
 rules:
 {{ include "koodam.rules" (dict "ctx" . "file" "files/spendbudget-viewer-role.yaml") }}
+---
+# Read access to the Holds. A Hold is cluster-scoped, so bind it with a ClusterRoleBinding. The
+# chart has no write role for Hold, and this role has no aggregate label.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ $fullname }}-hold-viewer
+  labels:
+    {{- include "koodam.labels" . | nindent 4 }}
+rules:
+{{ include "koodam.rules" (dict "ctx" . "file" "files/hold-viewer-role.yaml") }}
 {{- if .Values.leaderElection }}
 ---
 # The leader election rules, in the release namespace only.

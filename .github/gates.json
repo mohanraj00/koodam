@@ -9,14 +9,14 @@
     "internal/gateway/*", "internal/egress/*", "internal/ingress/*", "internal/agentingress/*", "internal/webhook/*",
     "internal/harness/*", "cmd/egress-proxy/*", "cmd/agent-admission/*", "cmd/harness-install/*", "images/workspace/*",
     "internal/spendapi/*", "cmd/spend-api/*", "internal/appclaim/*", "cmd/app-claim-check/*", "internal/tenanttoken/*",
-    "config/gateway/*"
+    "config/gateway/*", "config/hold/*"
   ],
   "not_security": ["*_test.go", "*/testdata/*", "*.md"],
   "boundaries": [
     "tools/claude_review.py", "Agent.md",
     "config/rbac/*", "config/network-policy/*",
     "charts/koodam/templates/rbac.yaml", "charts/koodam/templates/serviceaccount.yaml",
-    "charts/koodam/templates/workspace-networkpolicy.yaml",
+    "charts/koodam/templates/workspace-networkpolicy.yaml", "charts/koodam/templates/hold.yaml",
     "cmd/koodam/commands.go", "cmd/koodam/profile.go", "cmd/koodam/ssh.go", "cmd/koodam/sshconfig.go",
     "cmd/koodam/tunnel.go", "cmd/koodam/usage.go",
     "internal/controller/agent_controller.go", "internal/controller/egress.go", "internal/controller/identity.go",

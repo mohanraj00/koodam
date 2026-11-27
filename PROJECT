@@ -78,4 +78,11 @@ resources:
   kind: SpendBudget
   path: github.com/mohanraj00/koodam/api/v1alpha1
   version: v1alpha1
+- api:
+    crdVersion: v1
+  domain: koodam.dev
+  group: core
+  kind: Hold
+  path: github.com/mohanraj00/koodam/api/v1alpha1
+  version: v1alpha1
 version: "3"
