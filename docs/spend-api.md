@@ -6,8 +6,8 @@ Send an `Authorization: Bearer` header on each GET or HEAD, including the OpenAP
 
 ## Start the server
 
-Build with `go build ./cmd/spend-api`. Run the binary with an identity that has `list` on
-`agents.core.koodam.dev` and `get` on `spendbudgets.core.koodam.dev` in each namespace. The server uses the current kubeconfig or the pod's service
+Build with `go build ./cmd/spend-api`. Run the binary with an identity that has the permissions of
+[Server permissions](#server-permissions) in each namespace. The server uses the current kubeconfig or the pod's service
 account. Set `-namespace` to select the namespaces, separated by commas, for example `team-a,team-b`.
 The server refuses a list that is longer than the `maxNamespaces` constant in
 `internal/spendapi/api.go`. The default is the namespace of the Kubernetes client. Each caller with a
@@ -86,7 +86,22 @@ subjects:
     namespace: koodam-system
 ```
 
-The server also needs `list` on `agents.core.koodam.dev` and `get` on `spendbudgets.core.koodam.dev` in each namespace of `-namespace`.
+The server also needs the permissions of [Server permissions](#server-permissions) in each namespace of `-namespace`.
+
+## Server permissions
+
+The identity of the server needs only these read verbs in each namespace of `-namespace`:
+
+| Verb | Resource | Reason |
+|---|---|---|
+| `list` | `agents.core.koodam.dev` | `GET /v1/runs` and `GET /v1/spend` |
+| `get` | `agents.core.koodam.dev` | `GET /v1/runs/{namespace}/{name}` reads one Agent |
+| `get` | `spendbudgets.core.koodam.dev` | `GET /v1/budgets` |
+| `get` | `jobs.batch` | The run path reads the Job in `status.job` of the Agent |
+| `list` | `pods` | The run path finds the pods of the Job by the label `batch.kubernetes.io/job-name`. A Job does not name its pods, so `get` is not sufficient. |
+
+The server reads the full pod objects, but a response has only the fields in the OpenAPI document. The
+server does not need `watch`, and it never writes to the cluster.
 
 ## Local tokens and limits
 
@@ -167,6 +182,25 @@ with no spend and no reservation. The controller drops the reservations of the o
 check. After a change of `spec.period`, the old period of the status can overlap the current period.
 The controller then keeps the old spend and rebuilds the reservations. Thus the item shows the values of
 the status, not zero.
+
+## Read one run
+
+`GET /v1/runs/{namespace}/{name}` gives one Agent run. The namespace must be a namespace of
+`-namespace`. In the viewer mode, the server does one SubjectAccessReview for `list` on
+`agents.core.koodam.dev` in that namespace only. A namespace that the server does not serve gets
+status 403, the same as a namespace that the caller cannot read. A missing Agent gets status 404. The
+path has no query.
+
+The response has these fields:
+
+- `id`, `name`, `namespace`, `phase`, `startedAt` and `completedAt`: the same values as in `GET /v1/runs`.
+- `conditions`: the status conditions of the Agent, for example `Provisioned` and `Revoked`.
+- `job`: the run Job in `status.job`, with its counts, times and conditions. If the Agent has no Job,
+  or if the Agent does not control the Job of that name, the response has no `job`.
+- `pods`: the pods that the Job controls, newest first, with a maximum of 10. The server reads each
+  page of the pods with the Job label. If more than 500 pods have the label, the response has status 502.
+  Each pod has its phase, its start time and the state of each init container and container. A
+  container state has the reason and the exit code, but no message, because the termination message comes from the code of the run.
 
 ## Read more pages
 

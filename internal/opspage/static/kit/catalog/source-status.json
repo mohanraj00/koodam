@@ -2,6 +2,18 @@
   "name": "source-status",
   "description": "The state of an offline data source of the application as text: ready, stale, empty or error.",
   "ai_content": false,
+  "parts": [
+    {"name": "checked", "description": "Time of the last confirmed read.", "guardrail": true},
+    {"name": "copy", "description": "Button that copies text.", "guardrail": true},
+    {"name": "copy-status", "description": "Result of the copy operation.", "guardrail": true},
+    {"name": "details", "description": "Control and technical details of a refusal.", "guardrail": true},
+    {"name": "empty", "description": "Message that shows when there are no items.", "guardrail": false},
+    {"name": "label", "description": "Label of the source.", "guardrail": false},
+    {"name": "next", "description": "Next step after a refusal.", "guardrail": true},
+    {"name": "reason", "description": "Reason for the source state or a refusal.", "guardrail": true},
+    {"name": "source", "description": "Group that shows the data source and its state.", "guardrail": true},
+    {"name": "state", "description": "State of the data source.", "guardrail": true}
+  ],
   "data": {
     "label": {"type": "text", "required": true, "min_length": 1, "size": "line"},
     "state": {"type": "enum", "required": true, "values": ["ready", "stale", "empty", "error"]},

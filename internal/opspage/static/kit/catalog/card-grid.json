@@ -1,7 +1,24 @@
 {
   "name": "card-grid",
-  "description": "A labeled list of cards with optional Expand all and Collapse all controls.",
+  "description": "A labeled list of cards with optional Expand all and Collapse all controls. The controls show icons by default.",
   "slots": {"citation": {"required": false}},
+  "parts": [
+    {"name": "card-status", "description": "State text in a nested card.", "guardrail": true},
+    {"name": "card-title", "description": "Title in a nested card.", "guardrail": false},
+    {"name": "card-toggle", "description": "Button that expands or collapses a nested card.", "guardrail": true},
+    {"name": "card-tooltip", "description": "Name of the collapse control of a nested card on hover or focus.", "guardrail": true},
+    {"name": "collapse-all", "description": "Button that collapses all collapsible cards that can close.", "guardrail": true},
+    {"name": "copy", "description": "Button that copies text.", "guardrail": true},
+    {"name": "copy-status", "description": "Result of the copy operation.", "guardrail": true},
+    {"name": "details", "description": "Control and technical details of a refusal.", "guardrail": true},
+    {"name": "empty", "description": "Message that shows when there are no items.", "guardrail": false},
+    {"name": "expand-all", "description": "Button that expands all collapsible cards.", "guardrail": true},
+    {"name": "icon", "description": "Double chevron of a grid collapse control.", "guardrail": true},
+    {"name": "list", "description": "List of cards.", "guardrail": false},
+    {"name": "next", "description": "Next step after a refusal.", "guardrail": true},
+    {"name": "reason", "description": "Reason for a refusal or an edit error.", "guardrail": true},
+    {"name": "tooltip", "description": "Name of the grid icon control on hover or focus. Escape closes it.", "guardrail": true}
+  ],
   "data": {
     "label": {"type": "text", "required": true, "min_length": 1, "size": "line"},
     "cards": {
@@ -14,8 +31,8 @@
   },
   "states": ["+empty"],
   "tokens": [
-    "space.2", "space.3", "space.4", "size.column-medium", "color.text-muted", "type.caption", "color.text",
-    "color.border", "radius.2", "type.body", "color.focus"
+    "space.1", "space.2", "space.3", "space.4", "size.column-medium", "color.surface", "color.text-muted", "type.caption",
+    "color.text", "color.border", "radius.2", "type.body", "color.focus", "motion.fast"
   ],
-  "accessibility": {"role": "list", "name": {"field": "label"}, "keyboard": ["Tab", "Enter", "Space"]}
+  "accessibility": {"role": "list", "name": {"field": "label"}, "keyboard": ["Tab", "Enter", "Space", "Escape"]}
 }

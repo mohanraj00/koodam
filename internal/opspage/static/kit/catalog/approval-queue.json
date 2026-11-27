@@ -1,0 +1,48 @@
+{
+  "name": "approval-queue",
+  "description": "A named list of proposals with unique ids. A change to a proposal or its actor requires a new binding. A pending decision keeps its bound values and key until a receipt or cancel ends it. An approval mark shows a decision. A badge shows other states. A polite status gives each receipt result.",
+  "parts": [
+    {"name": "action-button-accept", "description": "Button that confirms a decision.", "guardrail": true},
+    {"name": "action-button-button", "description": "Button that starts an approval or a rejection.", "guardrail": false},
+    {"name": "action-button-cancel", "description": "Button that cancels a confirmation or a pending action.", "guardrail": true},
+    {"name": "action-button-confirm", "description": "Question and controls for confirmation.", "guardrail": true},
+    {"name": "action-button-copy", "description": "Button that copies a receipt reference.", "guardrail": true},
+    {"name": "action-button-copy-status", "description": "Result of the copy operation.", "guardrail": true},
+    {"name": "action-button-exit", "description": "Controls for a pending decision.", "guardrail": true},
+    {"name": "action-button-reference", "description": "Reference from the receipt.", "guardrail": true},
+    {"name": "action-button-retry", "description": "Button that tries a pending decision again.", "guardrail": true},
+    {"name": "approval-mark", "description": "Approved or rejected decision with visible text and a group name.", "guardrail": true},
+    {"name": "announcement", "description": "Polite status for changes to item states.", "guardrail": true},
+    {"name": "authorship", "description": "Author of the proposals.", "guardrail": true},
+    {"name": "copy", "description": "Button that copies technical details.", "guardrail": true},
+    {"name": "copy-status", "description": "Result of the copy operation.", "guardrail": true},
+    {"name": "details", "description": "Control and technical details of a refusal.", "guardrail": true},
+    {"name": "empty", "description": "Message when the list is empty.", "guardrail": false},
+    {"name": "item", "description": "Row for one proposal.", "guardrail": false},
+    {"name": "label", "description": "Visible name of the list.", "guardrail": true},
+    {"name": "list", "description": "Named list of proposals.", "guardrail": true},
+    {"name": "next", "description": "Next step after a refusal.", "guardrail": true},
+    {"name": "reason", "description": "Reason for a refusal.", "guardrail": true},
+    {"name": "state", "description": "State of the item and the reason from a failed receipt.", "guardrail": true},
+    {"name": "summary", "description": "Summary of the proposal as text.", "guardrail": true},
+    {"name": "title", "description": "Title of the proposal as text.", "guardrail": true}
+  ],
+  "data": {
+    "label": {"type": "text", "required": true, "min_length": 1, "size": "line"},
+    "items": {
+      "type": "list", "required": true, "max_items": 20,
+      "items": {
+        "type": "record", "fields": {
+          "id": {"type": "text", "required": true, "min_length": 1, "size": "line"},
+          "title": {"type": "text", "required": true, "min_length": 1, "size": "title"},
+          "summary": {"type": "text", "required": true, "min_length": 1, "size": "summary"}
+        }
+      }
+    }
+  },
+  "states": ["+empty", "+refused"],
+  "tokens": ["+color.accent", "+color.on-accent", "+color.surface", "+color.text-muted", "+color.danger", "+color.success", "+color.on-success", "+color.warning", "+color.on-warning", "+color.focus", "+space.1", "+space.2", "+space.3", "+radius.2", "+type.caption", "+type.weight-strong", "+motion.fast"],
+  "accessibility": {
+    "role": "list", "name": {"field": "label"}, "keyboard": ["Tab", "Shift+Tab", "Enter", "Space", "Escape"]
+  }
+}

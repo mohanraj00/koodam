@@ -1,4 +1,6 @@
 import FILL_SCHEMA from '../catalog/schema/fill.schema.json' with { type: 'json' };
+import CONTRACT_SCHEMA from '../catalog/schema/contract.schema.json' with { type: 'json' };
+import { deliverReceipt } from './actions/action.js';
 import { CONTRACTS, registeredTag } from './render/registry.js';
 import { actorErrors, fillErrors } from './render/validate.js';
 
@@ -54,10 +56,9 @@ export function mount(name, data, { actor = null, parent, slot, action, ...optio
 }
 
 const handled = new WeakSet();
-const FAILED = 'The request failed.';
 
 export function onAction(root, handler) {
-  const listen = async (event) => {
+  const listen = (event) => {
     const element = event.composedPath?.()?.[0] ?? event.target;
     const request = event.detail;
     if (typeof element?.receipt !== 'function' || typeof request?.id !== 'string'
@@ -65,23 +66,22 @@ export function onAction(root, handler) {
     handled.add(event);
 
     const { id, tool, arguments: args } = request;
-    let receipt;
-    try {
-      receipt = await handler(tool, args, id, request, element);
-    } catch (error) {
-      const message = error instanceof Error ? error.message : typeof error === 'string' ? error : '';
-      receipt = { ok: false, message: message.slice(0, 200) || FAILED };
-    }
-    if (receipt && typeof receipt === 'object' && !Array.isArray(receipt) && !Object.hasOwn(receipt, 'id')) {
-      receipt = { ...receipt, id };
-    }
-    if (element.receipt(receipt) !== false) return;
-    if (element.receipt({ ok: false, message: FAILED, id }) === false) {
-      console.error('onAction: The element refused the failure receipt.', id);
-    }
+    return deliverReceipt(element, request, () => handler(tool, args, id, request, element));
   };
   root.addEventListener('mu-action', listen);
   return () => root.removeEventListener('mu-action', listen);
+}
+
+// Connects the action elements below root to an offline queue (docs/contracts/offline-queue.md). Each action goes
+// through the queue, online and offline. The queue gives the pending detail and the receipt to the element.
+// Returns a function that removes the listeners.
+export function queueActions(root, queue) {
+  const stopActions = onAction(root, (tool, args, id, request, element) => queue.perform(request, element));
+  const stopSteps = queue.listen(root);
+  return () => {
+    stopActions();
+    stopSteps();
+  };
 }
 
 export function validateFill(value) {
@@ -95,29 +95,39 @@ function objectSchema(properties, required = Object.keys(properties)) {
 function fieldSchema(field, reference) {
   const { type, label: title, min_length, max_length, minimum, maximum } = field;
   switch (type) {
-    case 'text': return { title, type: 'string', maxLength: max_length,
-      ...(min_length === undefined ? {} : { minLength: min_length }) };
+    case 'text': {
+      const name = CONTRACT_SCHEMA.$defs.field_name;
+      return { title, type: 'string', maxLength: field.format === 'name' ? Math.min(max_length, name.maxLength) : max_length,
+        ...(min_length === undefined ? {} : { minLength: min_length }),
+        ...(field.format === 'name' ? { pattern: name.pattern } : {}) };
+    }
     case 'date': return { title, type: 'string', format: 'date', pattern: '^(?!0000)[0-9]{4}-[0-9]{2}-[0-9]{2}$' };
     case 'enum': return { title, type: 'string', enum: [...field.values] };
     case 'number':
     case 'integer': return { title, type, ...(minimum === undefined ? {} : { minimum }), ...(maximum === undefined ? {} : { maximum }) };
     case 'boolean': return { title, type };
-    case 'list': return { title, type: 'array', maxItems: field.max_items, items: fieldSchema(field.items, reference) };
-    case 'component': return field.names
-      ? { title, oneOf: field.names.map(reference) }
-      : { title, ...reference(field.name) };
+    case 'number-or-pair': return { title, oneOf: [{ type: 'number' },
+      { type: 'array', minItems: 2, maxItems: 2, items: { type: 'number' } }] };
+    case 'list': return { title, type: 'array', maxItems: field.max_items, items: fieldSchema(field.items, reference),
+      ...(field.min_items === undefined ? {} : { minItems: field.min_items }),
+      ...(field.unique_items === undefined ? {} : { uniqueItems: field.unique_items }) };
+    case 'record': return { title, ...dataSchema(field.fields, reference) };
+    case 'component': {
+      const names = field.field ? Object.keys(CONTRACTS).filter((name) => CONTRACTS[name].field === true) : field.names;
+      return names ? { title, oneOf: names.map(reference) } : { title, ...reference(field.name) };
+    }
     default: throw new TypeError(`Unknown field type ${String(type)}`);
   }
 }
 
-function dataSchema(contract, reference) {
-  const fields = Object.entries(contract.data);
+function dataSchema(data, reference) {
+  const fields = Object.entries(data);
   return objectSchema(Object.fromEntries(fields.map(([key, field]) => [key, fieldSchema(field, reference)])),
     fields.filter(([, field]) => field.required).map(([key]) => key));
 }
 
 function fillSchema(contract, reference, outer) {
-  const properties = { component: { const: contract.name }, version: { const: contract.version }, data: dataSchema(contract, reference) };
+  const properties = { component: { const: contract.name }, version: { const: contract.version }, data: dataSchema(contract.data, reference) };
   const required = Object.keys(properties);
   if (outer) {
     const slots = Object.entries(contract.slots ?? {});
@@ -133,10 +143,14 @@ function exportSchema(name, outer) {
   const contract = contractOf(name);
   const definitions = new Map();
   const reference = (target) => {
-    if (!definitions.has(target)) definitions.set(target, fillSchema(contractOf(target), reference, false));
+    if (!definitions.has(target)) {
+      // A component that accepts fields can refer to a registered field that contains it.
+      definitions.set(target, null);
+      definitions.set(target, fillSchema(contractOf(target), reference, false));
+    }
     return { $ref: `#/$defs/${target}` };
   };
-  const schema = outer ? fillSchema(contract, reference, true) : dataSchema(contract, reference);
+  const schema = outer ? fillSchema(contract, reference, true) : dataSchema(contract.data, reference);
   return { $schema: FILL_SCHEMA.$schema, description: contract.description, ...schema,
     ...(definitions.size ? { $defs: Object.fromEntries(definitions) } : {}) };
 }
@@ -148,3 +162,5 @@ export function describe(name) {
 export function toolSchema(name) {
   return exportSchema(name, true);
 }
+
+export { createRunSteps } from './envelope/run-steps-events.js';

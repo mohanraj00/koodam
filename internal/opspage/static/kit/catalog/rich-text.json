@@ -1,6 +1,22 @@
 {
   "name": "rich-text",
-  "description": "Rich text as a tree of typed nodes: paragraphs, headings, lists, code blocks and quotes. A fill gives data only, never markup. The kit makes each element from a fixed list. Page code sets the link schemes and the first heading level.",
+  "description": "Rich text as a tree of typed nodes. Page code sets the link schemes and first heading level. To mark top-level blocks, page code must give the current fill revision. A new or refused fill clears the marks and makes the old revision stale. A policy change keeps both if the fill is still valid.",
+  "parts": [
+    {"name": "approval-mark", "description": "Approval state from page code, with visible text and a group name.", "guardrail": true},
+    {"name": "authorship", "description": "Type and ID of the author, with a name when available.", "guardrail": true},
+    {"name": "code", "description": "Block of code.", "guardrail": false},
+    {"name": "copy", "description": "Button that copies text.", "guardrail": true},
+    {"name": "copy-status", "description": "Result of the copy operation.", "guardrail": true},
+    {"name": "details", "description": "Control and technical details of a refusal.", "guardrail": true},
+    {"name": "empty", "description": "Message that shows when there are no items.", "guardrail": false},
+    {"name": "link", "description": "Link to a page.", "guardrail": true},
+    {"name": "next", "description": "Next step after a refusal.", "guardrail": true},
+    {"name": "read-more-content", "description": "Full text with a limit on its initial height.", "guardrail": true},
+    {"name": "read-more-toggle", "description": "Button that shows more or less text.", "guardrail": true},
+    {"name": "reason", "description": "Reason for a refusal or an edit error.", "guardrail": true},
+    {"name": "rich-text", "description": "Group that contains the rich text.", "guardrail": false},
+    {"name": "target", "description": "Address of a link.", "guardrail": true}
+  ],
   "data": {
     "blocks": {
       "type": "list",
@@ -17,7 +33,8 @@
   "states": ["+empty", "+refused"],
   "tokens": [
     "color.text", "color.text-muted", "color.surface", "color.border", "color.accent", "color.focus", "space.1",
-    "space.2", "space.3", "space.4", "radius.1", "type.body", "type.caption", "type.weight-strong"
+    "space.2", "space.3", "space.4", "radius.1", "type.body", "type.caption", "type.weight-strong",
+    "color.success", "color.on-success", "color.warning", "color.on-warning", "color.danger", "radius.2"
   ],
   "accessibility": {"keyboard": ["Tab", "Shift+Tab", "Enter", "Space", "Escape"]}
 }

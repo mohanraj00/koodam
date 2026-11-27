@@ -1,0 +1,23 @@
+{
+  "name": "tooltip",
+  "kind": "primitive",
+  "description": "Short text that gives a control its accessible description. The text shows on hover or focus. Escape hides the text until the pointer enters the target again or focus returns from another element.",
+  "ai_content": false,
+  "parts": [
+    {"name": "copy", "description": "Button that copies text.", "guardrail": true},
+    {"name": "copy-status", "description": "Result of the copy operation.", "guardrail": true},
+    {"name": "details", "description": "Control and technical details of a refusal.", "guardrail": true},
+    {"name": "next", "description": "Next step after a refusal.", "guardrail": true},
+    {"name": "reason", "description": "Reason for a refusal.", "guardrail": true},
+    {"name": "tooltip", "description": "Text that describes the target control.", "guardrail": true}
+  ],
+  "data": {
+    "text": {"type": "text", "required": true, "min_length": 1, "size": "summary"}
+  },
+  "states": ["+open", "+refused"],
+  "tokens": ["+color.surface", "+space.2", "+radius.2"],
+  "accessibility": {
+    "role": "tooltip", "name": {"field": "text"},
+    "keyboard": ["Tab", "Shift+Tab", "Escape"]
+  }
+}

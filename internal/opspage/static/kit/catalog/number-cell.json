@@ -1,6 +1,7 @@
 {
   "name": "number-cell",
   "description": "A cell of a data grid with a number value. A cell with no value is empty.",
+  "parts": [],
   "data": {
     "value": {"type": "number"},
     "read_only": {"type": "boolean", "label": "Read-only"}

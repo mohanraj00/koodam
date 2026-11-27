@@ -1,6 +1,7 @@
 {
   "name": "table-row",
   "description": "A row in a table. Cells follow the column order. The optional status is text from the application or the service. The table checks the cell count and the allowed status values.",
+  "parts": [],
   "data": {
     "cells": {
       "type": "list",
