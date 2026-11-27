@@ -1,0 +1,5 @@
+# The ValidatingAdmissionPolicy of the Hold and its binding. Apply this folder after
+# config/default. The default install does not include it, because the name prefix of
+# config/default does not change the policy name in the binding.
+resources:
+- policy.yaml

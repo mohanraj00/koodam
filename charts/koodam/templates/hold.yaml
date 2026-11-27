@@ -1,0 +1,16 @@
+{{- /*
+The ValidatingAdmissionPolicy of the Hold and its binding come from
+config/hold/admission/policy.yaml. The chart gives them the name <fullname>-hold. Thus 2 installs
+in one cluster have 2 policies with the same rules, and the names do not conflict.
+*/ -}}
+{{- $name := printf "%s-hold" (include "koodam.fullname" .) }}
+{{- range $doc := splitList "\n---\n" (.Files.Get "files/hold-admission-policy.yaml") }}
+{{- $obj := $doc | fromYaml }}
+{{- $_ := set $obj.metadata "name" $name }}
+{{- $_ := set $obj.metadata "labels" (include "koodam.labels" $ | fromYaml) }}
+{{- if eq $obj.kind "ValidatingAdmissionPolicyBinding" }}
+{{- $_ := set $obj.spec "policyName" $name }}
+{{- end }}
+---
+{{ toYaml $obj }}
+{{- end }}

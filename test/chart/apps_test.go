@@ -40,8 +40,9 @@ func TestAppsOnlyIfEnabled(t *testing.T) {
 	if err != nil {
 		t.Fatalf("helm template failed: %v\n%s", err, off)
 	}
+	// The default install has the admission policy of the Hold, but not the one of the AppVersion.
 	for _, s := range []string{flag, role, "appversions.core.koodam.dev", "httproutes", "--egress-proxy-namespace",
-		"ValidatingAdmissionPolicy"} {
+		"name: koodam-appversion"} {
 		if strings.Contains(off, s) {
 			t.Errorf("the default install has %q", s)
 		}
@@ -61,7 +62,16 @@ func TestAppsOnlyIfEnabled(t *testing.T) {
 		}
 	}
 	const policy = "ValidatingAdmissionPolicy"
-	if len(objects(t, on, policy)) != 1 || len(objects(t, on, policy+"Binding")) != 1 {
+	appVersion := func(docs []string) int {
+		n := 0
+		for _, doc := range docs {
+			if strings.Contains(doc, "name: koodam-appversion\n") {
+				n++
+			}
+		}
+		return n
+	}
+	if appVersion(objects(t, on, policy)) != 1 || appVersion(objects(t, on, policy+"Binding")) != 1 {
 		t.Error("the install with apps.enabled does not have the admission policy and its binding")
 	}
 	const binding = "ClusterRoleBinding"

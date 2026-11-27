@@ -1,0 +1,45 @@
+# The checks of a Hold that the CRD cannot hold, because a CRD rule cannot read the request.
+#  - spec.user and spec.release.user must be the user of the request. Thus the record of the
+#    incident names the real user, and a CLI or a script cannot write a different name.
+#  - A create cannot set spec.release.
+#  - A delete needs spec.release. Thus a Hold ends only with a release record, and the delete of
+#    an active Hold cannot clear the control.
+#
+# The CRD makes the target, the action, the reason and the user immutable, and the release
+# immutable after it is set. The policy does not match the status subresource, so the status
+# writes of the controller do not pass through it.
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicy
+metadata:
+  name: koodam-hold
+spec:
+  failurePolicy: Fail
+  matchConstraints:
+    resourceRules:
+    - apiGroups: ["core.koodam.dev"]
+      apiVersions: ["v1alpha1"]
+      operations: ["CREATE", "UPDATE", "DELETE"]
+      resources: ["holds"]
+  validations:
+  - expression: "request.operation != 'CREATE' || object.spec.user == request.userInfo.username"
+    message: "spec.user must be the user of the request."
+    reason: Forbidden
+  - expression: "request.operation != 'CREATE' || !has(object.spec.release)"
+    message: "A new Hold cannot have spec.release."
+    reason: Invalid
+  - expression: >-
+      request.operation != 'UPDATE' || !has(object.spec.release) || has(oldObject.spec.release) ||
+      object.spec.release.user == request.userInfo.username
+    message: "spec.release.user must be the user of the request."
+    reason: Forbidden
+  - expression: "request.operation != 'DELETE' || has(oldObject.spec.release)"
+    message: "Release the Hold before the delete: set spec.release."
+    reason: Forbidden
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicyBinding
+metadata:
+  name: koodam-hold
+spec:
+  policyName: koodam-hold
+  validationActions: ["Deny"]

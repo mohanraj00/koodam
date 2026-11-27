@@ -84,6 +84,7 @@ func kindIndex() []route {
 	return []route{
 		{kind: "Agent", plural: "agents", dir: baseCRDDir},
 		{kind: "Profile", plural: "profiles", dir: baseCRDDir},
+		{kind: "Hold", plural: "holds", dir: baseCRDDir},
 		{kind: "SpendBudget", plural: "spendbudgets", dir: baseCRDDir},
 		{kind: "TestKey", plural: "testkeys", dir: baseCRDDir},
 		{kind: "Workspace", plural: "workspaces", dir: baseCRDDir},

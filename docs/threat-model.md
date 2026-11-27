@@ -140,6 +140,14 @@ A document, a web page or a tool reply that an agent reads can hold instructions
 - **Test.** `tests/test_guard_hook.py` (a planted injection and a clean reply in each request form, for each action), `test/chart/guard_test.go`, and the kind test in `test/e2e/egress_test.go`: the guard records a planted tool reply, and the egress proxy refuses the host that it names. `make guard-image-check` proves each action in the pinned gateway image, and that a request cannot turn off the hook.
 - **Residual risk.** The guard is a tripwire for known forms, not a defense. [gateway-guard.md](gateway-guard.md) lists what it cannot detect, for example a paraphrase, encoded text or an instruction across blocks. The guard is off by default. It covers only the bundled gateway and the model calls with a gateway key. A model call with a subscription login goes in a TLS tunnel that no part of Koodam can read. With the action `block`, a hostile page or a false match stops the run, because the history sends the block again. An instruction can still misuse the hosts that the egress policy permits, the tools of the harness and the files of the pod.
 
+## T13. A workload owner clears an incident control
+
+The owner of a workload that an admin stopped or quarantined can try to clear the control, or a person can try to write a different user in the record of the control.
+
+- **Control.** The control is a cluster-scoped `Hold`, not a field of the workload. The chart gives no write role for `holds`, and no role of the chart has an aggregate label, so the Kubernetes roles `edit` and `admin` get no rule. The CRD makes the target, the action, the reason and the user immutable, and the release immutable after it is set. The admission policy `koodam-hold` refuses a user that is not the user of the request, and the delete of a Hold with no release.
+- **Test.** `test/chart/hold_test.go`, `TestHoldRolesOnlyRead` and `TestHoldPolicy`. `internal/controller/hold_crd_test.go`: "refuses a user that is not the user of the request", "keeps the target, the action, the reason and the user immutable" and "refuses the delete of a Hold with no release".
+- **Residual risk.** A kustomize install needs the folder `config/hold/admission` for the policy. Without the policy, an admin can write a different user. A cluster admin can delete the policy or bind a write role to a namespace user. No controller acts on a Hold yet ([#185](https://github.com/mohanraj00/koodam/issues/185)).
+
 ## Out of scope
 
 - The security of LiteLLM, PostgreSQL, Kubernetes and the model providers.
