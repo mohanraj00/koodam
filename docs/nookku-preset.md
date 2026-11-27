@@ -117,8 +117,20 @@ Nookku data image (`images/nookku`) has these files, and no shell and no Python:
   with a SHA-256 that is not in `images/nookku/plugin.sha256`. The Nookku release has no plugin
   asset, so the files come from the tag commit. The test file `hooks/register.test.ts` is not in
   the image, because the plugin does not use it.
-- `/nookku/bin/nookku`: the launcher. It runs `python3 -I -S` with a fixed `sys.path`: the
-  standard library and `/koodam/nookku/lib`. It needs no `pip`.
+- `/nookku/bin/nookku`: the launcher. It runs `python3 -I -S`. Its fixed `sys.path` contains only
+  the standard library and `/koodam/nookku/lib`. It needs no `pip`.
+
+`nookku start` uses `python3 -m nookku` to start the bridge, the MCP stdio proxy and the chat page.
+The launcher exports these variables for the child processes:
+
+- `PYTHONPATH=/koodam/nookku/lib`: a child finds the pinned Nookku.
+- `PYTHONSAFEPATH=1`: for `python3 -m nookku`, Python 3.11 or later does not add the current folder
+  to `sys.path`.
+- `PYTHONNOUSERSITE=1`: a child does not read the user site packages.
+
+Python 3.10 ignores `PYTHONSAFEPATH`. On Python 3.10, a child can import a `nookku` package from
+the current folder before the pinned lib. The current folder is often the project folder, which
+the agent can write. Thus use Python 3.11 or later in the image of a harness with `nookku`.
 
 Build the image with `make docker-build-nookku`. The job `nookku` of `.github/workflows/image.yml`
 builds the image with the same pin and pushes `ghcr.io/mohanraj00/koodam-nookku` on each release

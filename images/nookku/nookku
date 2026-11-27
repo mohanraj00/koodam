@@ -2,6 +2,13 @@
 # The nookku command of the Koodam Nookku data image (#83). It runs the pinned Nookku of
 # /koodam/nookku/lib with the python3 of the PATH. -I ignores the PYTHON env and the user site,
 # and -S ignores the site packages, so sys.path has only the standard library and the pinned lib.
+# Nookku starts its child processes with "python3 -m nookku", with no -I (#478). The exports give
+# them the pinned lib, remove the current folder from sys.path (Python 3.11 or later) and remove
+# the user site.
+export PYTHONPATH=/koodam/nookku/lib
+export PYTHONSAFEPATH=1
+export PYTHONNOUSERSITE=1
+
 exec python3 -I -S -c 'import sys
 sys.path.insert(0, "/koodam/nookku/lib")
 sys.argv[0] = "nookku"
