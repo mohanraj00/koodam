@@ -28,6 +28,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	authorizationv1 "k8s.io/api/authorization/v1"
@@ -50,6 +51,9 @@ const (
 	msgTimeLimit = "The request time limit expired."
 	// msgForbidden is the problem detail when the caller cannot list Agents in a target namespace.
 	msgForbidden = "The caller cannot list Agents in a namespace of this server."
+	msgNoPath    = "This path does not exist."
+	msgNoQuery   = "This path has no query."
+	msgNoRun     = "The run does not exist."
 )
 
 var errCursor = errors.New("the page cursor is not valid")
@@ -64,6 +68,8 @@ type Config struct {
 	Timeout    time.Duration
 	// Logs opens the log of a container for the log path. If it is nil, the server has no log path.
 	Logs LogSource
+	// Watch starts a watch of one Agent for the watch path. If it is nil, the server has no watch path.
+	Watch AgentWatcher
 
 	Claims       appclaim.Config
 	Keys         *appclaim.KeySet
@@ -78,6 +84,9 @@ type api struct {
 	gateway    *liteLLM
 	timeout    time.Duration
 	logs       LogSource
+	watcher    AgentWatcher
+	watchTime  time.Duration
+	watches    atomic.Int32
 	claims     appclaim.Config
 	keys       *appclaim.KeySet
 	tokens     [][sha256.Size]byte
@@ -113,7 +122,7 @@ func New(c Config) (http.Handler, error) {
 	}
 	a := &api{
 		kube: c.Kube, namespaces: slices.Clone(c.Namespaces), viewers: c.Viewers,
-		gateway: l, timeout: c.Timeout, logs: c.Logs, claims: c.Claims, keys: c.Keys,
+		gateway: l, timeout: c.Timeout, logs: c.Logs, watcher: c.Watch, watchTime: maxWatchTime, claims: c.Claims, keys: c.Keys,
 	}
 	a.tokens = make([][sha256.Size]byte, 0, len(c.StaticTokens))
 	for _, token := range c.StaticTokens {
@@ -225,6 +234,8 @@ func (a *api) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	switch path := r.URL.Path; {
 	case isRun && ref.part == logPart:
 		a.serveLog(ctx, w, r, ref)
+	case isRun && ref.part == watchPart:
+		a.serveWatch(ctx, w, r, ref)
 	case isRun:
 		a.serveRun(ctx, w, r, ref)
 	case path == specPath:
@@ -238,7 +249,7 @@ func (a *api) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	case path == budgetsPath:
 		a.listBudgets(ctx, w, r, namespaces)
 	default:
-		reply(w, r, http.StatusNotFound, problem{"This path does not exist."})
+		reply(w, r, http.StatusNotFound, problem{msgNoPath})
 	}
 }
 
@@ -288,7 +299,7 @@ func (a *api) list(ctx context.Context, w http.ResponseWriter, r *http.Request, 
 // listBudgets has no query and no pages, because it has one item for each namespace at most.
 func (a *api) listBudgets(ctx context.Context, w http.ResponseWriter, r *http.Request, namespaces []string) {
 	if r.URL.RawQuery != "" {
-		reply(w, r, http.StatusBadRequest, problem{"This path has no query."})
+		reply(w, r, http.StatusBadRequest, problem{msgNoQuery})
 		return
 	}
 	result, err := a.budgets(ctx, namespaces)

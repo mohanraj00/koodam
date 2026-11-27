@@ -346,23 +346,66 @@ func (r *WorkspaceReconciler) quarantineHeld(ctx context.Context, ws *corev1alph
 			"The pod and the home PVC stay.", nil
 }
 
-// releaseDeleted removes the quarantine finalizer of a deleted Workspace after the release.
-func (r *WorkspaceReconciler) releaseDeleted(ctx context.Context, ws *corev1alpha1.Workspace) error {
-	if !quarantineMarked(ws) {
-		return nil
-	}
+// quarantineDeleted applies a Quarantine Hold to a deleted Workspace, or the release of one. It
+// returns kept=true while a Hold is active. Kubernetes refuses a new finalizer after the delete
+// starts, so the controller does not remove the finalizers that the Workspace has. Thus the
+// Workspace, its StatefulSet and its pod stay until the release. The controller blocks the key
+// and adds the label, as for a Workspace that is not deleted.
+func (r *WorkspaceReconciler) quarantineDeleted(ctx context.Context, ws *corev1alpha1.Workspace) (kept bool,
+	err error) {
 	h, err := quarantineHold(ctx, r.Client, corev1alpha1.HoldTargetWorkspace, ws.Namespace, ws.Name, "")
-	if h != nil || err != nil {
-		return err
+	if err != nil {
+		return true, err
 	}
-	// The garbage collector deletes the StatefulSet and the pod after the Workspace. The policy
-	// refuses that delete while they have the label.
-	if err := r.markChildren(ctx, ws, false); err != nil {
-		return err
+	if h == nil {
+		if !quarantineMarked(ws) {
+			return false, nil
+		}
+		// The release. The garbage collector deletes the StatefulSet and the pod after the
+		// Workspace, and the policy refuses that delete while they have the label. Thus the label
+		// goes first. The caller removes the finalizers after the key step.
+		if err := r.markChildren(ctx, ws, false); err != nil {
+			return true, err
+		}
+		if markQuarantine(ws, false) {
+			return false, r.updateMeta(ctx, ws)
+		}
+		return false, nil
 	}
-	controllerutil.RemoveFinalizer(ws, quarantineFinalizer)
-	markQuarantine(ws, false)
-	return r.Update(ctx, ws)
+	old := ws.Status.DeepCopy()
+	if markQuarantine(ws, true) {
+		if err := r.updateMeta(ctx, ws); err != nil {
+			return true, err
+		}
+		quarantineEvent(r.Recorder, ws, h)
+	}
+	if err := r.markChildren(ctx, ws, true); err != nil {
+		return true, err
+	}
+	meta.SetStatusCondition(&ws.Status.Conditions, metav1.Condition{Type: corev1alpha1.HoldHeld,
+		Status: metav1.ConditionTrue, Reason: reasonQuarantined, ObservedGeneration: ws.Generation,
+		Message: fmt.Sprintf("The Hold %s quarantines the Workspace.", h.Name)})
+	phase, reason, msg, err := r.quarantineHeld(ctx, ws)
+	if err != nil {
+		return true, err
+	}
+	ws.Status.Phase = phase
+	meta.SetStatusCondition(&ws.Status.Conditions, metav1.Condition{Type: condReady, Status: metav1.ConditionFalse,
+		Reason: reason, Message: msg, ObservedGeneration: ws.Generation})
+	if old.Phase == ws.Status.Phase && old.KeyHash == ws.Status.KeyHash &&
+		conditionsEqual(old.Conditions, ws.Status.Conditions) {
+		return true, nil
+	}
+	return true, r.Status().Update(ctx, ws)
+}
+
+// releaseDeleted removes the quarantine finalizer of a deleted Workspace after the release and
+// after the key step.
+func (r *WorkspaceReconciler) releaseDeleted(ctx context.Context, ws *corev1alpha1.Workspace) error {
+	if controllerutil.RemoveFinalizer(ws, quarantineFinalizer) {
+		return r.Update(ctx, ws)
+	}
+	return nil
 }
 
 // markChildren adds or removes the quarantine label on the StatefulSet, the pod and the home PVC

@@ -89,6 +89,7 @@ With traced egress, the egress proxy records each call of a pod. A pod that goes
   - The proxy does not decrypt TLS. It does not stop a tunnel or DNS over HTTPS inside an allowed call.
   - A managed cluster can have more paths out, for example the cloud metadata service. The e2e test checks kind only.
   - A call to the API server or to an `extraEgress` peer has no span.
+  - With `apps.apiServerEgress` set, an App pod with `template.rules` can reach the API server directly. The API server uses the pod's ServiceAccount permissions to check its calls.
 
 ## T8. A caller of an App forges an identity
 
@@ -107,10 +108,11 @@ The spend API and the operations page show the runs and the spend.
   - `internal/spendapi/run_test.go`, `TestViewerReadsOneRun` and `TestRunDetail`. The run path checks the namespace of the path only, and a container state has no termination message.
   - `internal/spendapi/redact_test.go`, `TestEachRedactionPattern`, has a test for each redaction pattern. `internal/spendapi/run_test.go`, `TestConditionMessagesAreRedacted`.
   - `internal/spendapi/log_test.go`, `TestLogHasNoCredential` and `TestLogLimitsAndReviews`. A log response has no key value, key hash, token or login value, and the log path needs `get` on `pods/log`.
+  - `internal/spendapi/watch_test.go`, `TestWatchLatency` and `TestWatchRefusals`. The watch path checks the namespace of the path only, and it limits the open watches.
   - `internal/opspage/page_test.go`, `TestPolicyAndPageHaveNoInlineCode` and `TestPageKeepsTheTokenInMemory`.
   - `examples/operations-page/main_test.go`, `TestExample`.
   - `internal/spendapi/budgets_test.go`, `TestServeBudgets`. `/v1/budgets` uses the same namespace scope as the other paths.
-- **Residual risk.** The static token mode and the claim mode show each configured namespace to each valid caller. Use the viewer mode for people. In the viewer mode, the server needs `create` on `tokenreviews` and `subjectaccessreviews`. Give this access to the ServiceAccount of the spend API only. The log path redacts only the credentials that a fixed pattern matches. A credential in another form, for example a password with no field name, stays in a log response. A viewer who can get `pods/log` can read the same log with `kubectl logs` and no redaction.
+- **Residual risk.** The static token mode and the claim mode show each configured namespace to each valid caller. Use the viewer mode for people. In the viewer mode, the server needs `create` on `tokenreviews` and `subjectaccessreviews`. Give this access to the ServiceAccount of the spend API only. The log path redacts only the credentials that a fixed pattern matches. A credential in another form, for example a password with no field name, stays in a log response. A viewer who can get `pods/log` can read the same log with `kubectl logs` and no redaction. A watch keeps its access until its time limit of 5 min, so a viewer can get status events for up to 5 min after a change of RBAC removes its access.
 
 ## T10. A tenant or a zone goes past its limit
 

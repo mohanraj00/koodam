@@ -143,7 +143,7 @@ var _ = Describe("App admission: full PodTemplate immutability and the deletion-
 				Volumes: []corev1.Volume{{Name: "data",
 					VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{}}}},
 				Containers: []corev1.Container{{
-					Name: "app", Image: "registry.example/app@sha256:" + strings.Repeat("a", 64),
+					Name: corev1alpha1.AppContainerName, Image: "registry.example/app@sha256:" + strings.Repeat("a", 64),
 					Command: []string{"serve"}, Env: []corev1.EnvVar{{Name: "MODE", Value: "prod"}},
 					Ports: []corev1.ContainerPort{{Name: "http", ContainerPort: 8080}},
 					ReadinessProbe: &corev1.Probe{ProbeHandler: corev1.ProbeHandler{

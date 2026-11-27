@@ -34,6 +34,8 @@ import (
 	corev1alpha1 "github.com/mohanraj00/koodam/api/v1alpha1"
 )
 
+const appName = "shop"
+
 // The CRD validation of the App and the AppVersion. These tests do not run a controller. They
 // only send objects to the API server. The budgets are small numbers and the objects hold no key
 // value.
@@ -43,7 +45,6 @@ var _ = Describe("App and AppVersion CRDs", func() {
 	// These are the schema field names and the fixture values that the tests use more than one time.
 	const (
 		specField     = "spec"
-		appName       = "shop"
 		otherAppName  = "other"
 		appImage      = "registry.example.com/app:v1"
 		httpPort      = "http"
