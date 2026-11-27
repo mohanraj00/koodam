@@ -103,7 +103,10 @@ func (r *AgentReconciler) applyQuarantine(ctx context.Context, a *corev1alpha1.A
 // quarantine adds the finalizer, blocks the key and removes the deadline of the Job. Then the
 // status records the quarantine. A run that waits does not start.
 func (r *AgentReconciler) quarantine(ctx context.Context, a *corev1alpha1.Agent, h *corev1alpha1.Hold) error {
-	if controllerutil.AddFinalizer(a, quarantineFinalizer) {
+	// Kubernetes refuses a new finalizer after the delete starts. Then the finalizer of the run
+	// keeps the Agent and its Job until the release.
+	deleting := !a.DeletionTimestamp.IsZero()
+	if !deleting && controllerutil.AddFinalizer(a, quarantineFinalizer) {
 		if err := r.Update(ctx, a); err != nil {
 			return err
 		}
@@ -111,6 +114,9 @@ func (r *AgentReconciler) quarantine(ctx context.Context, a *corev1alpha1.Agent,
 	}
 	if quarantined(a.Status.Conditions) {
 		return nil
+	}
+	if deleting {
+		quarantineEvent(r.Recorder, a, h)
 	}
 	if a.Status.KeyHash != "" {
 		if err := r.Gateway.BlockKey(ctx, a.Status.KeyHash); err != nil {
@@ -280,7 +286,10 @@ func (r *AppVersionReconciler) applyQuarantine(ctx context.Context, av *corev1al
 // renew the key. Then the status records the quarantine.
 func (r *AppVersionReconciler) quarantine(ctx context.Context, av *corev1alpha1.AppVersion,
 	h *corev1alpha1.Hold) error {
-	if controllerutil.AddFinalizer(av, quarantineFinalizer) {
+	// Kubernetes refuses a new finalizer after the delete starts. Then the finalizer of the version
+	// keeps it and its pods until the release.
+	deleting := !av.DeletionTimestamp.IsZero()
+	if !deleting && controllerutil.AddFinalizer(av, quarantineFinalizer) {
 		if err := r.Update(ctx, av); err != nil {
 			return err
 		}
@@ -289,6 +298,9 @@ func (r *AppVersionReconciler) quarantine(ctx context.Context, av *corev1alpha1.
 	if quarantined(av.Status.Conditions) {
 		// The key is blocked, and the controller does not renew it during the quarantine.
 		return nil
+	}
+	if deleting {
+		quarantineEvent(r.Recorder, av, h)
 	}
 	secret, err := r.readSecret(ctx, av)
 	if err != nil && !errors.Is(err, errNotOwned) {

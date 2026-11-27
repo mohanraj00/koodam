@@ -303,6 +303,26 @@ var _ = Describe("Hold stop", func() {
 			Expect(apierrors.IsNotFound(k8sClient.Get(ctx, key(), &corev1alpha1.Agent{}))).To(BeTrue())
 		})
 
+		It("quarantines a run that is deleted before the Hold, with no new finalizer", func() {
+			newAgent()
+			reconcileAgent()
+			Expect(k8sClient.Delete(ctx, agent())).To(Succeed())
+			hold := newHold(corev1alpha1.HoldTarget{Kind: corev1alpha1.HoldTargetAgent, Namespace: ns, Name: name},
+				corev1alpha1.HoldQuarantine)
+			reconcileAgent()
+			a := agent()
+			Expect(a.DeletionTimestamp.IsZero()).To(BeFalse())
+			Expect(a.Finalizers).To(Equal([]string{finalizer}), "the finalizer of the run keeps the Agent")
+			Expect(agentQuarantined(a)).To(BeTrue())
+			Expect(gw.blocked).To(Equal([]string{gateway.HashKey(gw.created[0].Value)}))
+			j := job()
+			Expect(j.Spec.ActiveDeadlineSeconds).To(BeNil())
+			Expect(j.DeletionTimestamp.IsZero()).To(BeTrue())
+			release(hold)
+			reconcileAgent()
+			Expect(apierrors.IsNotFound(k8sClient.Get(ctx, key(), &corev1alpha1.Agent{}))).To(BeTrue())
+		})
+
 		It("removes the Job deadline of a run that shows Pending", func() {
 			// The Job exists, but the status update of the start did not occur.
 			newAgent()
@@ -628,6 +648,25 @@ var _ = Describe("Hold stop", func() {
 					Expect(client.IgnoreNotFound(k8sClient.Delete(ctx, o))).To(Succeed())
 				}
 			})
+		})
+
+		It("quarantines a version that is deleted before the Hold, with no new finalizer", func() {
+			reconcileVersion()
+			v := &corev1alpha1.AppVersion{}
+			Expect(k8sClient.Get(ctx, nn(name), v)).To(Succeed())
+			Expect(k8sClient.Delete(ctx, v)).To(Succeed())
+			hold := newHold(corev1alpha1.HoldTarget{Kind: corev1alpha1.HoldTargetAppVersion, Namespace: ns, Name: name},
+				corev1alpha1.HoldQuarantine)
+			reconcileVersion()
+			Expect(k8sClient.Get(ctx, nn(name), v)).To(Succeed())
+			Expect(v.DeletionTimestamp.IsZero()).To(BeFalse())
+			Expect(v.Finalizers).To(Equal([]string{appFinalizer}), "the finalizer of the version keeps it")
+			Expect(appVersionQuarantined(v)).To(BeTrue())
+			Expect(gw.order).To(Equal([]string{opCreate, opBlock}))
+			Expect(k8sClient.Get(ctx, nn("kd-"+name), &appsv1.Deployment{})).To(Succeed())
+			release(hold)
+			reconcileVersion()
+			Expect(apierrors.IsNotFound(k8sClient.Get(ctx, nn(name), &corev1alpha1.AppVersion{}))).To(BeTrue())
 		})
 
 		It("quarantines the versions of an App: blocks the key and keeps the pods, then revokes after the release", func() {

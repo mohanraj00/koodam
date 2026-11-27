@@ -82,6 +82,7 @@ The proxy sees only the calls that go through it. A call in a path with no proxy
 - After the start, if the watch of the Holds or the Profiles fails, the proxy keeps the last state that it read, and the client tries the watch again. A new Hold or a release can then come late. The tenant keys of the proxy use the same mode. The time of the gap is the time until the watch works again.
 - After a restart, the proxy writes the `quarantined` control span of each active quarantine again. A reader must accept more than 1 start span for one Hold.
 - A Hold that is deleted with no release writes no `released` span. The admission policy refuses this delete.
+- If the delete of an Agent or an AppVersion started before the quarantine, Kubernetes refuses a new finalizer. Then the controller blocks the key and keeps the pods, and the finalizer of the workload keeps it until the release.
 - The finalizer stops the controller and a normal delete of the workload. It does not stop a user who can delete the pods, the Job or the StatefulSet directly, or a delete with `propagationPolicy: Foreground`. Limit these rights in the namespace during an investigation. Issue [#452](https://github.com/mohanraj00/koodam/issues/452) adds an admission policy for this.
 
 ### The status of the Hold
