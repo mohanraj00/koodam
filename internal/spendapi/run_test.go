@@ -188,7 +188,9 @@ func TestRunPathInOpenAPI(t *testing.T) {
 		t.Fatal(err)
 	}
 	f := newFixture(t, 0)
-	for path, concrete := range map[string]string{"/v1/runs/{namespace}/{name}": testPath} {
+	for path, concrete := range map[string]string{
+		"/v1/runs/{namespace}/{name}": testPath, "/v1/runs/{namespace}/{name}/log": testPath + "/log",
+	} {
 		for _, method := range []string{"get", "head", "post", "put", "patch", "delete", "options"} {
 			if _, ok := spec.Paths[path][method]; !ok {
 				t.Fatalf("the OpenAPI document does not list %s of %s", method, path)
@@ -198,10 +200,18 @@ func TestRunPathInOpenAPI(t *testing.T) {
 			f.call(t, method, concrete, f.token, http.StatusMethodNotAllowed)
 		}
 	}
-	if !slices.ContainsFunc(strings.Split(docs.SpendOpenAPI, "\n"), func(l string) bool {
-		return strings.Contains(l, `"RunDetail"`)
-	}) {
-		t.Fatal("the OpenAPI document has no RunDetail schema")
+	var components struct {
+		Components struct {
+			Schemas map[string]json.RawMessage `json:"schemas"`
+		} `json:"components"`
+	}
+	if err := json.Unmarshal([]byte(docs.SpendOpenAPI), &components); err != nil {
+		t.Fatal(err)
+	}
+	for _, schema := range []string{"RunDetail", "RunLog"} {
+		if _, ok := components.Components.Schemas[schema]; !ok {
+			t.Fatalf("the OpenAPI document has no %s schema", schema)
+		}
 	}
 }
 
@@ -266,7 +276,6 @@ func TestConditionMessagesAreRedacted(t *testing.T) {
 	objects := runObjects(f.runKeys[0].hash)
 	agent := objects[0].(*corev1alpha1.Agent)
 	agent.Status.Conditions[0].Message = "the gateway refused the key " + f.runKeys[0].value
-	keyBody := "MIIEvQIBADANBgkqhkiG9w0BAQEFAASC"
 	job := objects[1].(*batchv1.Job)
 	job.Status.Conditions[0].Message = "mount failed:\n-----BEGIN PRIVATE KEY-----\n" + keyBody + "\n-----END PRIVATE KEY-----\nend"
 	f.kube = runClient(t, objects...)

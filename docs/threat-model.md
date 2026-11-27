@@ -105,10 +105,11 @@ The spend API and the operations page show the runs and the spend.
   - `internal/spendapi/viewer_test.go`, `TestViewerSeesOnlyPermittedNamespaces` and `TestViewerRefusals`.
   - `internal/spendapi/run_test.go`, `TestViewerReadsOneRun` and `TestRunDetail`. The run path checks the namespace of the path only, and a container state has no termination message.
   - `internal/spendapi/redact_test.go`, `TestEachRedactionPattern`, has a test for each redaction pattern. `internal/spendapi/run_test.go`, `TestConditionMessagesAreRedacted`.
+  - `internal/spendapi/log_test.go`, `TestLogHasNoCredential` and `TestLogLimitsAndReviews`. A log response has no key value, key hash, token or login value, and the log path needs `get` on `pods/log`.
   - `internal/opspage/page_test.go`, `TestPolicyAndPageHaveNoInlineCode` and `TestPageKeepsTheTokenInMemory`.
   - `examples/operations-page/main_test.go`, `TestExample`.
   - `internal/spendapi/budgets_test.go`, `TestServeBudgets`. `/v1/budgets` uses the same namespace scope as the other paths.
-- **Residual risk.** The static token mode and the claim mode show each configured namespace to each valid caller. Use the viewer mode for people. In the viewer mode, the server needs `create` on `tokenreviews` and `subjectaccessreviews`. Give this access to the ServiceAccount of the spend API only.
+- **Residual risk.** The static token mode and the claim mode show each configured namespace to each valid caller. Use the viewer mode for people. In the viewer mode, the server needs `create` on `tokenreviews` and `subjectaccessreviews`. Give this access to the ServiceAccount of the spend API only. The log path redacts only the credentials that a fixed pattern matches. A credential in another form, for example a password with no field name, stays in a log response. A viewer who can get `pods/log` can read the same log with `kubectl logs` and no redaction.
 
 ## T10. A tenant or a zone goes past its limit
 

@@ -22,6 +22,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"net"
 	"net/http"
 	"os"
@@ -153,11 +154,15 @@ func setupKube(c *spendapi.Config, rules *clientcmd.ClientConfigLoadingRules) er
 		}
 		c.Namespaces = []string{namespace}
 	}
+	clients, err := kubernetes.NewForConfig(cfg)
+	if err != nil {
+		return errors.New("the Kubernetes client could not start")
+	}
+	pods := clients.CoreV1()
+	c.Logs = func(ctx context.Context, namespace, pod string, o *corev1.PodLogOptions) (io.ReadCloser, error) {
+		return pods.Pods(namespace).GetLogs(pod, o).Stream(ctx)
+	}
 	if c.Viewers != nil {
-		clients, err := kubernetes.NewForConfig(cfg)
-		if err != nil {
-			return errors.New("the Kubernetes review client could not start")
-		}
 		c.Viewers.Tokens = clients.AuthenticationV1().TokenReviews()
 		c.Viewers.Access = clients.AuthorizationV1().SubjectAccessReviews()
 	}

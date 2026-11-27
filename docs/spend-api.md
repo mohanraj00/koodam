@@ -99,6 +99,7 @@ The identity of the server needs only these read verbs in each namespace of `-na
 | `get` | `spendbudgets.core.koodam.dev` | `GET /v1/budgets` |
 | `get` | `jobs.batch` | The run path reads the Job in `status.job` of the Agent |
 | `list` | `pods` | The run path finds the pods of the Job by the label `batch.kubernetes.io/job-name`. A Job does not name its pods, so `get` is not sufficient. |
+| `get` | `pods/log` | `GET /v1/runs/{namespace}/{name}/log` reads the log of the agent container |
 
 The server reads the full pod objects, but a response has only the fields in the OpenAPI document. The
 server does not need `watch`, and it never writes to the cluster.
@@ -203,9 +204,38 @@ The response has these fields:
   Each pod has its phase, its start time and the state of each init container and container. A
   container state has the reason and the exit code, but no message, because the termination message comes from the code of the run.
 
+## Read the log of a run
+
+`GET /v1/runs/{namespace}/{name}/log?lines=200` gives the last lines of the first container of the
+newest pod of the run. This container runs the agent. Set `lines` from 1 to 1000. The default is 200.
+Only the viewer mode serves this path. In the other modes, the response has status 403, because the
+server cannot check the access of the caller to the log. In the viewer mode, the server does two
+SubjectAccessReviews in the namespace of the path: `list` on `agents.core.koodam.dev` and `get` on
+`pods/log`. The caller needs both.
+
+The limits of the log path are the constants in `internal/spendapi/log.go`:
+
+- `maxLogLines`: the maximum of `lines`.
+- `maxLogRead`: the most bytes that the server reads from the API server for one request.
+- `maxLogBytes`: the most log bytes in a response, before the redaction. The server keeps the newest
+  lines.
+- `keyContext`: the count of the lines that the server reads before the tail, for the redaction.
+- The request time limit of `-request-timeout` applies to the read of the log.
+
+At each cut of a limit, the server drops the part of the line at the cut. Thus a response has no part
+of a line. The server reads one more line than the tail and the `keyContext` lines, so `truncated`
+is true only if the log has more lines than the response. If the log has more lines than the response, `truncated` is true. If the container did not
+start, the response has status 409. If the run has no pod, the response has status 404.
+
+The server redacts each line before the bytes leave the server, as [Redaction](#redaction) says. A
+limit can cut a PEM private key, so the server redacts the `keyContext` lines before the tail too.
+If the lines that the server reads have the END line of a key but not its BEGIN line, the server
+redacts each line up to the END line. If the log can have lines before the lines that the server
+reads, the server redacts the lines at the start that can be the body of a key.
+
 ## Redaction
 
-The server redacts each condition message of the run path before the bytes leave the server. It
+The server redacts each log line and each condition message before the bytes leave the server. It
 removes the terminal escape sequences and the control characters first. Then it replaces each match of
 a fixed pattern list with `[redacted]`. The list is `redactions` in `internal/spendapi/redact.go`, and
 each pattern has a test:
@@ -225,7 +255,7 @@ The server redacts each line of a message with more than one line. If a PEM priv
 line, the server redacts each line after the BEGIN line.
 
 The patterns can also redact text that is not a credential. A credential in a form that no pattern
-matches stays in the response. Do not use the redaction as the only control for a credential.
+matches stays in the response. Do not use the redaction as the only control for a credential in a log.
 
 ## Read more pages
 
