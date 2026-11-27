@@ -68,8 +68,11 @@ func (v *Viewers) user(ctx context.Context, token string) (authenticationv1.User
 	return s.User, nil
 }
 
-// listAgents is the review of each path.
-var listAgents = authorizationv1.ResourceAttributes{Verb: "list", Group: corev1alpha1.GroupVersion.Group, Resource: "agents"}
+// listAgents is the review of each path. The log path also needs readLog.
+var (
+	listAgents = authorizationv1.ResourceAttributes{Verb: "list", Group: corev1alpha1.GroupVersion.Group, Resource: "agents"}
+	readLog    = authorizationv1.ResourceAttributes{Verb: "get", Resource: "pods", Subresource: "log"}
+)
 
 // allowed does one SubjectAccessReview for each check in each namespace. A namespace is in the
 // result only if each check permits the caller.

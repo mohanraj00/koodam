@@ -65,7 +65,7 @@ func parseRun(path string) (runRef, bool) {
 		}
 		ref.part = parts[2]
 	}
-	return ref, ref.part == ""
+	return ref, ref.part == "" || ref.part == logPart
 }
 
 type condition struct {

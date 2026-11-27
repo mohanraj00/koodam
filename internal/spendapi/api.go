@@ -62,6 +62,8 @@ type Config struct {
 	GatewayURL string
 	MasterKey  string
 	Timeout    time.Duration
+	// Logs opens the log of a container for the log path. If it is nil, the server has no log path.
+	Logs LogSource
 
 	Claims       appclaim.Config
 	Keys         *appclaim.KeySet
@@ -75,6 +77,7 @@ type api struct {
 	viewers    *Viewers
 	gateway    *liteLLM
 	timeout    time.Duration
+	logs       LogSource
 	claims     appclaim.Config
 	keys       *appclaim.KeySet
 	tokens     [][sha256.Size]byte
@@ -110,7 +113,7 @@ func New(c Config) (http.Handler, error) {
 	}
 	a := &api{
 		kube: c.Kube, namespaces: slices.Clone(c.Namespaces), viewers: c.Viewers,
-		gateway: l, timeout: c.Timeout, claims: c.Claims, keys: c.Keys,
+		gateway: l, timeout: c.Timeout, logs: c.Logs, claims: c.Claims, keys: c.Keys,
 	}
 	a.tokens = make([][sha256.Size]byte, 0, len(c.StaticTokens))
 	for _, token := range c.StaticTokens {
@@ -207,6 +210,9 @@ func (a *api) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		if slices.Contains(a.namespaces, ref.namespace) {
 			targets = []string{ref.namespace}
 		}
+		if ref.part == logPart {
+			checks = append(checks, readLog)
+		}
 	}
 	namespaces, status, refusal := a.scope(ctx, r, targets, checks)
 	if status != http.StatusOK {
@@ -217,6 +223,8 @@ func (a *api) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	switch path := r.URL.Path; {
+	case isRun && ref.part == logPart:
+		a.serveLog(ctx, w, r, ref)
 	case isRun:
 		a.serveRun(ctx, w, r, ref)
 	case path == specPath:
