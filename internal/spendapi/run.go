@@ -65,7 +65,7 @@ func parseRun(path string) (runRef, bool) {
 		}
 		ref.part = parts[2]
 	}
-	return ref, ref.part == "" || ref.part == logPart
+	return ref, ref.part == "" || ref.part == logPart || ref.part == watchPart
 }
 
 type condition struct {
@@ -119,7 +119,7 @@ type runDetail struct {
 
 func (a *api) serveRun(ctx context.Context, w http.ResponseWriter, r *http.Request, ref runRef) {
 	if r.URL.RawQuery != "" {
-		reply(w, r, http.StatusBadRequest, problem{"This path has no query."})
+		reply(w, r, http.StatusBadRequest, problem{msgNoQuery})
 		return
 	}
 	result, err := a.runDetail(ctx, ref)
@@ -127,7 +127,7 @@ func (a *api) serveRun(ctx context.Context, w http.ResponseWriter, r *http.Reque
 	case ctx.Err() != nil:
 		reply(w, r, http.StatusGatewayTimeout, problem{msgTimeLimit})
 	case apierrors.IsNotFound(err):
-		reply(w, r, http.StatusNotFound, problem{"The run does not exist."})
+		reply(w, r, http.StatusNotFound, problem{msgNoRun})
 	case errors.Is(err, errTooManyPods):
 		reply(w, r, http.StatusBadGateway, problem{"Too many pods have the label of the run Job."})
 	case err != nil:

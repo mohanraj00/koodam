@@ -190,6 +190,7 @@ func TestRunPathInOpenAPI(t *testing.T) {
 	f := newFixture(t, 0)
 	for path, concrete := range map[string]string{
 		"/v1/runs/{namespace}/{name}": testPath, "/v1/runs/{namespace}/{name}/log": testPath + "/log",
+		"/v1/runs/{namespace}/{name}/watch": testPath + "/watch",
 	} {
 		for _, method := range []string{"get", "head", "post", "put", "patch", "delete", "options"} {
 			if _, ok := spec.Paths[path][method]; !ok {
@@ -208,7 +209,7 @@ func TestRunPathInOpenAPI(t *testing.T) {
 	if err := json.Unmarshal([]byte(docs.SpendOpenAPI), &components); err != nil {
 		t.Fatal(err)
 	}
-	for _, schema := range []string{"RunDetail", "RunLog"} {
+	for _, schema := range []string{"RunDetail", "RunLog", "RunStatus", "WatchEnd"} {
 		if _, ok := components.Components.Schemas[schema]; !ok {
 			t.Fatalf("the OpenAPI document has no %s schema", schema)
 		}

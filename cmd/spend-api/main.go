@@ -172,10 +172,11 @@ func setupKube(c *spendapi.Config, rules *clientcmd.ClientConfigLoadingRules) er
 			return errors.New("the Agent, Job and pod schemes could not be registered")
 		}
 	}
-	c.Kube, err = client.New(cfg, client.Options{Scheme: scheme, Mapper: kubeMapper()})
+	kube, err := client.NewWithWatch(cfg, client.Options{Scheme: scheme, Mapper: kubeMapper()})
 	if err != nil {
 		return errors.New("the Kubernetes client could not start")
 	}
+	c.Kube, c.Watch = kube, kube
 	return nil
 }
 
