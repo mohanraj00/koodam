@@ -216,6 +216,11 @@ func (r *AgentReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl
 			return ctrl.Result{}, r.Status().Update(ctx, a)
 		}
 		return ctrl.Result{}, nil
+	case a.Spec.Approval != nil:
+		// This build has no check of a signed approval record. An Agent that asks for an approval must
+		// not start with no approval, so the run waits: the controller makes no finalizer, key or Job.
+		logf.FromContext(ctx).Info("The approval check is not in this build, so the run waits")
+		return ctrl.Result{}, nil
 	default:
 		err := r.provision(ctx, a)
 		if wait, ok := errors.AsType[budgetWait](err); ok {
