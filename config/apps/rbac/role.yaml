@@ -26,6 +26,15 @@ rules:
   - update
   - watch
 - apiGroups:
+  - autoscaling
+  resources:
+  - horizontalpodautoscalers
+  verbs:
+  - create
+  - delete
+  - get
+  - update
+- apiGroups:
   - core.koodam.dev
   resources:
   - apps

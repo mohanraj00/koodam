@@ -72,7 +72,7 @@ The controller saves the value in `status.costGroup` before it makes the key, an
 
 A `ValidatingAdmissionPolicy` holds the checks of an AppVersion that the CRD cannot hold:
 
-- After the version has a gateway key, or after the controller started to make its objects (the condition `Started`), `spec.template` cannot change. A later failure does not remove this lock. To change the template, make a new AppVersion. `replicas`, `budgetPerDay` and `lifecycle` can change.
+- After the version has a gateway key, or after the controller started to make its objects (the condition `Started`), `spec.template` cannot change. A later failure does not remove this lock. To change the template, make a new AppVersion. `replicas`, `scale`, `budgetPerDay` and `lifecycle` can change.
 - The name of the AppVersion is a DNS label with 60 characters or fewer, and `spec.appRef.name` has 63 characters or fewer.
 - Each port of the `app` container has a name and the TCP protocol, with no host port.
 - The admission policy permits `template.rules` in the namespaces of an install with `apps.apiServerEgress` set to a list with rules. An AppVersion with stored rules can keep them when this value is empty. Updates that leave the template the same can still succeed.
@@ -93,6 +93,29 @@ The App controller makes one `HTTPRoute` for each endpoint, with the name `kd-<a
 ## Sessions
 
 A request with the header `Koodam-App-Version: <version>` goes to that version only, if the version has a weight of more than 0 in the spec of the endpoint. A retiring version with such a weight keeps this rule for the drain time. The header is not proof of a session: each caller can send it. A version with the weight 0 gets no traffic, also while it retires. The app container has the name of its version in the env variable `KOODAM_APP_VERSION`. Thus the app can give the name to its client, and the client sends the header to stay on the version. Koodam does not use the session persistence of the Gateway API, because it is not in the standard channel.
+
+## Scale a version on its load
+
+With `spec.replicas`, a version has a fixed number of pods. With no `replicas` and no `scale`, it has 1 pod. Set `spec.scale` to make the number of pods follow the load. You cannot set `replicas` and `scale` together.
+
+```yaml
+spec:
+  scale:
+    minReplicas: 2       # default 1
+    maxReplicas: 10
+    metric:
+      pods:
+        name: requests_in_flight
+        averageValue: "8"
+```
+
+- The controller makes one `HorizontalPodAutoscaler` with the version name. It targets the Deployment of the version. The autoscaler sets the replicas of the Deployment, and the controller keeps them.
+- `metric` has one member. `cpu.averageUtilization` is the target CPU use of each pod, as a percent of its CPU request. The cluster needs the resource metrics API, for example metrics-server, and the `app` container needs a CPU request.
+- `pods` scales on a metric that each pod of the version exports, for example the requests in flight or the queue depth. `name` is the metric name in the custom metrics API, and `averageValue` is the target for each pod. A pod metric needs a custom metrics adapter that the platform team installs, for example the Prometheus Adapter. Koodam does not install an adapter. With no adapter, the autoscaler cannot read the metric and does not change the replicas.
+- A version with the weight 0 and no session gets no load, so the autoscaler brings it to `minReplicas`.
+- While a version retires, the controller sets the maximum of the autoscaler to `minReplicas`. Thus the load of old sessions cannot keep a retired version large.
+- The tenant rate of each pod (see [Tenants](#tenants)) uses `maxReplicas`. Thus the pods of a version never give a tenant more than its rate together. With fewer pods than `maxReplicas`, a tenant gets less than its rate.
+- If you remove `scale`, the controller deletes the autoscaler, and the Deployment gets `replicas` again.
 
 ## The evidence gate
 
@@ -209,7 +232,7 @@ Set `spec.lifecycle: Retiring` on the AppVersion. This change is terminal.
 
 1. The version gets no new session. Its weight in effect is 0.
 2. For `spec.drainSeconds` of the App, the version keeps its pods and its key. A client with the version header stays on the version.
-3. At the end of the drain time, the controller blocks the key. Then it deletes the pods and the other objects of the version.
+3. At the end of the drain time, the controller blocks the key. Then it deletes the pods, the autoscaler and the other objects of the version.
 
 Koodam cannot see a session, so the end of the drain time is the end of the sessions. A delete of the AppVersion does not wait for the drain time.
 

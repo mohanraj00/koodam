@@ -80,7 +80,7 @@ With `apps.claimCheck.tenantClaim`, the controller writes one ConfigMap for each
 
 - The file has each `TenantQuota` of the namespace of the version that applies to its App: a `TenantQuota` with no `appRef`, or with the `appRef` of the App. A tenant label of a different App or a different namespace is an unknown tenant for the version.
 - Each pod gets the rate divided by the number of pods that share it. The burst of a pod is the burst divided by this number, to the next full number, with a minimum of 1. Thus the sum of the bursts can be more than the burst of the tenant.
-  - The number is the sum of `spec.replicas` of the version and of each other version of the App with a weight above 0 in the spec of an endpoint. A caller can select each such version with the header `Koodam-App-Version`. Thus the rate is for the App, and a tenant does not get it one time for each version.
+  - The number is the sum of `spec.replicas` (or `spec.scale.maxReplicas` for a version with a scale) of the version and of each other version of the App with a weight above 0 in the spec of an endpoint. A caller can select each such version with the header `Koodam-App-Version`. Thus the rate is for the App, and a tenant does not get it one time for each version.
   - A version with a complete revoke has no pods, so it is not in the sum.
   - If the replicas of the versions are not in proportion to their weights, a tenant gets less than its rate.
   - Each pod has its own token bucket, so a tenant can get one request from each pod at one time. This can be more than the burst of the `TenantQuota`. The rate over time stays correct. [#428](https://github.com/mohanraj00/koodam/issues/428) has the work for a burst that the pods share.
