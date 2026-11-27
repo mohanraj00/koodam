@@ -279,6 +279,20 @@ helm-check: helm-sync ## Fail if the Helm chart is not in sync with config/, the
 		echo "$$out" | grep -q "gateway.url is necessary" || { echo "$$out"; exit 1; }
 	"$(HELM)" template koodam $(CHART) --namespace koodam-system -f $(CHART)/values-ollama.yaml > /dev/null
 	"$(HELM)" template koodam $(CHART) --namespace koodam-system --set metrics.enabled=true --set gateway.url=$(HELM_GATEWAY_URL) > /dev/null
+	@if "$(HELM)" template koodam $(CHART) --namespace koodam-system --set metrics.enabled=true \
+		--set gateway.url=$(HELM_GATEWAY_URL) | grep -q "^kind: ServiceMonitor$$"; then \
+		echo "The ServiceMonitor must be off by default."; exit 1; fi
+	"$(HELM)" template koodam $(CHART) --namespace koodam-system --set metrics.enabled=true \
+		--set metrics.serviceMonitor.enabled=true --set metrics.serviceMonitor.interval=30s \
+		--set gateway.url=$(HELM_GATEWAY_URL) | grep -q "^kind: ServiceMonitor$$" || \
+		{ echo "The chart has no ServiceMonitor with metrics.serviceMonitor.enabled."; exit 1; }
+	@n="$$( "$(HELM)" template koodam $(CHART) --namespace koodam-system --set metrics.enabled=true \
+		--set metrics.serviceMonitor.enabled=true -f $(CHART)/values-bundled.yaml | \
+		grep -c "app.kubernetes.io/component: metrics$$" )"; \
+		test "$$n" = 2 || { echo "The metrics Service and the ServiceMonitor selector must have the component label, found $$n."; exit 1; }
+	@out="$$( "$(HELM)" template koodam $(CHART) --namespace koodam-system --set metrics.serviceMonitor.enabled=true \
+		--set gateway.url=$(HELM_GATEWAY_URL) 2>&1 )" && { echo "The chart must refuse a ServiceMonitor with no metrics."; exit 1; }; \
+		echo "$$out" | grep -q "metrics.serviceMonitor.enabled needs metrics.enabled" || { echo "$$out"; exit 1; }
 	"$(HELM)" template koodam $(CHART) --namespace koodam-system -f $(CHART)/values-bundled.yaml > /dev/null
 	"$(HELM)" template koodam $(CHART) --namespace koodam-system -f $(CHART)/values-bundled.yaml \
 		--set gateway.bundled.postgres.persistence.enabled=true --set gateway.bundled.postgres.passwordSecret.name=pg > /dev/null

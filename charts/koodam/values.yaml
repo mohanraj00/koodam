@@ -348,6 +348,18 @@ tenants:
 metrics:
   enabled: false
   port: 8443
+  # A ServiceMonitor of the Prometheus Operator for the metrics Service. It needs metrics.enabled.
+  # docs/metrics.md has the ClusterRole that the Prometheus service account needs.
+  serviceMonitor:
+    enabled: false
+    # Labels that your Prometheus uses to select a ServiceMonitor.
+    labels: {}
+    # The scrape interval, for example 30s. Empty uses the Prometheus default.
+    interval: ""
+    # The chart endpoint uses a self-signed certificate. If you give the controller a certificate
+    # with --metrics-cert-path, set the CA and the server name here.
+    tlsConfig:
+      insecureSkipVerify: true
 
 resources:
   limits:
