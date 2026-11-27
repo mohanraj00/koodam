@@ -214,7 +214,22 @@ func TestAppTenantToken(t *testing.T) {
 	// With no Apps, the proxy has no tenant token flag and no AppVersion rule.
 	out := render(t, proxyValues, "workspace.networkPolicy.namespaces={dev-a}", setTenantClaim,
 		"apps.claimCheck.issuer=https://issuer.example.com")
-	if strings.Contains(out, "--tenant-tokens") || strings.Contains(out, "appversions") {
+	if strings.Contains(out, "--tenant-tokens") {
 		t.Error("the install with no Apps has the tenant token of the proxy")
+	}
+	// The manager role reads the AppVersions also with no Apps. The proxy roles must not.
+	var rules []rbacv1.PolicyRule
+	for _, r := range decode[rbacv1.Role](t, out, "Role", proxyName) {
+		rules = append(rules, r.Rules...)
+	}
+	for _, name := range []string{proxyName, proxyName + "-holds"} {
+		for _, r := range decode[rbacv1.ClusterRole](t, out, "ClusterRole", name) {
+			rules = append(rules, r.Rules...)
+		}
+	}
+	for _, r := range rules {
+		if slices.Contains(r.Resources, "appversions") {
+			t.Errorf("a proxy role of the install with no Apps has an AppVersion rule: %+v", r)
+		}
 	}
 }

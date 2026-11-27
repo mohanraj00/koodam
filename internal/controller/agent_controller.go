@@ -136,7 +136,7 @@ type AgentReconciler struct {
 // +kubebuilder:rbac:groups=core.koodam.dev,resources=agents/finalizers,verbs=update
 // +kubebuilder:rbac:groups=core.koodam.dev,resources=spendbudgets,verbs=get;list;watch
 // +kubebuilder:rbac:groups=core.koodam.dev,resources=spendbudgets/status,verbs=update
-// +kubebuilder:rbac:groups=batch,resources=jobs,verbs=get;list;watch;create;delete
+// +kubebuilder:rbac:groups=batch,resources=jobs,verbs=get;list;watch;create;update;delete
 // +kubebuilder:rbac:groups="",resources=secrets,verbs=get;create;delete
 // +kubebuilder:rbac:groups="",resources=pods,verbs=list
 // +kubebuilder:rbac:groups="",resources=serviceaccounts,verbs=get;create;delete
@@ -153,6 +153,9 @@ func (r *AgentReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl
 	a := &corev1alpha1.Agent{}
 	if err := r.APIReader.Get(ctx, req.NamespacedName, a); err != nil {
 		return ctrl.Result{}, client.IgnoreNotFound(err)
+	}
+	if handled, err := r.applyQuarantine(ctx, a); handled {
+		return ctrl.Result{}, err
 	}
 	ended := a.Status.Phase == corev1alpha1.AgentSucceeded || a.Status.Phase == corev1alpha1.AgentFailed
 	if (ended || !a.DeletionTimestamp.IsZero()) && !controllerutil.ContainsFinalizer(a, finalizer) {

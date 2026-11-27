@@ -570,6 +570,7 @@ func main() {
 		AppsEnabled: appsEnabled,
 		APIReader:   mgr.GetAPIReader(),
 		Namespaces:  watched,
+		EgressProxy: egress.IP != "",
 	}); err != nil {
 		setupLog.Error(err, "Failed to create the Hold or the Profile controller")
 		os.Exit(1)

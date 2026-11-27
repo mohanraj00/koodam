@@ -55,7 +55,7 @@ var _ = Describe("Hold stop", func() {
 		n     int
 	)
 	holds := func() *HoldReconciler {
-		return &HoldReconciler{Client: k8sClient, Recorder: rec, AppsEnabled: true}
+		return &HoldReconciler{Client: k8sClient, Recorder: rec, AppsEnabled: true, EgressProxy: true}
 	}
 	// newHold makes a Hold as the admin. The cleanup releases it and then deletes it, because the
 	// admission policy refuses the delete of a Hold with no release.
@@ -140,7 +140,9 @@ var _ = Describe("Hold stop", func() {
 			})).To(Succeed())
 			DeferCleanup(func() {
 				a := &corev1alpha1.Agent{}
-				if k8sClient.Get(ctx, key(), a) == nil && controllerutil.RemoveFinalizer(a, finalizer) {
+				if k8sClient.Get(ctx, key(), a) == nil && (controllerutil.RemoveFinalizer(a, finalizer) ||
+					controllerutil.RemoveFinalizer(a, quarantineFinalizer)) {
+					controllerutil.RemoveFinalizer(a, quarantineFinalizer)
 					Expect(k8sClient.Update(ctx, a)).To(Succeed())
 				}
 				Expect(client.IgnoreNotFound(k8sClient.Delete(ctx,
@@ -221,21 +223,112 @@ var _ = Describe("Hold stop", func() {
 			stopEvent(hold)
 		})
 
-		It("does not stop the run for a released Hold or a Hold with the action Quarantine", func() {
+		It("does not stop the run for a released Hold", func() {
 			released := newHold(corev1alpha1.HoldTarget{Kind: corev1alpha1.HoldTargetAgent, Namespace: ns, Name: name},
 				corev1alpha1.HoldStop)
 			release(released)
-			quarantine := newHold(corev1alpha1.HoldTarget{Kind: corev1alpha1.HoldTargetAgent, Namespace: ns, Name: name},
-				corev1alpha1.HoldQuarantine)
-			c := held(quarantine)
-			Expect(c.Status).To(Equal(metav1.ConditionFalse))
-			Expect(c.Reason).To(Equal(reasonUnsupported))
-
 			newAgent()
 			reconcileAgent()
 			Expect(agent().Status.Phase).To(Equal(corev1alpha1.AgentRunning))
 			Expect(gw.created).To(HaveLen(1))
 			Expect(rec.Events).To(BeEmpty())
+		})
+
+		job := func() *batchv1.Job {
+			j := &batchv1.Job{}
+			Expect(k8sClient.Get(ctx, types.NamespacedName{Namespace: ns, Name: "kd-" + name}, j)).To(Succeed())
+			return j
+		}
+		// quarantineRun quarantines a run that started. The key is blocked, and the Job stays with no
+		// deadline.
+		quarantineRun := func() string {
+			GinkgoHelper()
+			newAgent()
+			reconcileAgent()
+			Expect(job().Spec.ActiveDeadlineSeconds).NotTo(BeNil())
+			hold := newHold(corev1alpha1.HoldTarget{Kind: corev1alpha1.HoldTargetAgent, Namespace: ns, Name: name},
+				corev1alpha1.HoldQuarantine)
+			c := held(hold)
+			Expect(c.Status).To(Equal(metav1.ConditionFalse))
+			Expect(c.Reason).To(Equal(reasonQuarantining))
+
+			reconcileAgent()
+			a := agent()
+			Expect(a.Status.Phase).To(Equal(corev1alpha1.AgentRunning))
+			Expect(a.Finalizers).To(ContainElements(finalizer, quarantineFinalizer))
+			Expect(quarantined(a.Status.Conditions)).To(BeTrue())
+			Expect(gw.blocked).To(Equal([]string{gateway.HashKey(gw.created[0].Value)}))
+			j := job()
+			Expect(j.DeletionTimestamp.IsZero()).To(BeTrue())
+			Expect(j.Spec.ActiveDeadlineSeconds).To(BeNil())
+			var e string
+			Eventually(rec.Events).Should(Receive(&e))
+			Expect(e).To(HavePrefix("Warning Quarantined "))
+			Expect(e).To(ContainSubstring(hold))
+
+			// A second reconcile keeps the quarantine and writes no second event.
+			reconcileAgent()
+			Expect(agent().Status.Phase).To(Equal(corev1alpha1.AgentRunning))
+			Expect(rec.Events).To(BeEmpty())
+			c = held(hold)
+			Expect(c.Status).To(Equal(metav1.ConditionTrue))
+			Expect(c.Reason).To(Equal(reasonQuarantined))
+			Eventually(rec.Events).Should(Receive(&e))
+			Expect(e).To(HavePrefix("Normal Quarantined "))
+			return hold
+		}
+
+		It("quarantines a run, keeps its Job, and stops the run after the release", func() {
+			hold := quarantineRun()
+			release(hold)
+			reconcileAgent()
+			expectStopped()
+			a := agent()
+			Expect(a.Finalizers).NotTo(ContainElement(quarantineFinalizer))
+			Expect(meta.FindStatusCondition(a.Status.Conditions, corev1alpha1.HoldHeld)).To(BeNil())
+			j := &batchv1.Job{}
+			err := k8sClient.Get(ctx, types.NamespacedName{Namespace: ns, Name: "kd-" + name}, j)
+			Expect(apierrors.IsNotFound(err) || !j.DeletionTimestamp.IsZero()).To(BeTrue(), "the Job stays: %v", err)
+			Expect(gw.created).To(HaveLen(1), "the run does not start again")
+		})
+
+		It("keeps a deleted Agent and its Job until the release", func() {
+			hold := quarantineRun()
+			Expect(k8sClient.Delete(ctx, agent())).To(Succeed())
+			reconcileAgent()
+			Expect(agent().DeletionTimestamp.IsZero()).To(BeFalse())
+			Expect(job().DeletionTimestamp.IsZero()).To(BeTrue())
+			release(hold)
+			reconcileAgent()
+			Expect(apierrors.IsNotFound(k8sClient.Get(ctx, key(), &corev1alpha1.Agent{}))).To(BeTrue())
+		})
+
+		It("quarantines a run that did not start, and the run does not start", func() {
+			newHold(corev1alpha1.HoldTarget{Kind: corev1alpha1.HoldTargetAgent, Namespace: ns, Name: name},
+				corev1alpha1.HoldQuarantine)
+			newAgent()
+			reconcileAgent()
+			reconcileAgent()
+			Expect(gw.created).To(BeEmpty())
+			Expect(agent().Finalizers).To(ContainElement(quarantineFinalizer))
+			Expect(agentQuarantined(agent())).To(BeTrue())
+		})
+
+		It("reports a quarantine with no egress proxy", func() {
+			hold := newHold(corev1alpha1.HoldTarget{Kind: corev1alpha1.HoldTargetAgent, Namespace: ns, Name: name},
+				corev1alpha1.HoldQuarantine)
+			r := holds()
+			r.EgressProxy = false
+			_, err := r.Reconcile(ctx, reconcile.Request{NamespacedName: types.NamespacedName{Name: hold}})
+			Expect(err).NotTo(HaveOccurred())
+			h := &corev1alpha1.Hold{}
+			Expect(k8sClient.Get(ctx, client.ObjectKey{Name: hold}, h)).To(Succeed())
+			c := meta.FindStatusCondition(h.Status.Conditions, corev1alpha1.HoldHeld)
+			Expect(c.Status).To(Equal(metav1.ConditionFalse))
+			Expect(c.Reason).To(Equal(reasonNoEgressProxy))
+			var e string
+			Eventually(rec.Events).Should(Receive(&e))
+			Expect(e).To(HavePrefix("Warning NoEgressProxy "))
 		})
 	})
 
@@ -286,7 +379,9 @@ var _ = Describe("Hold stop", func() {
 					Gateway: &corev1alpha1.WorkspaceGateway{Model: "m", BudgetPerDay: resource.MustParse("1")}}})).To(Succeed())
 			DeferCleanup(func() {
 				w := &corev1alpha1.Workspace{}
-				if k8sClient.Get(ctx, nn(name), w) == nil && controllerutil.RemoveFinalizer(w, workspaceFinalizer) {
+				if k8sClient.Get(ctx, nn(name), w) == nil && (controllerutil.RemoveFinalizer(w, workspaceFinalizer) ||
+					controllerutil.RemoveFinalizer(w, quarantineFinalizer)) {
+					controllerutil.RemoveFinalizer(w, quarantineFinalizer)
 					Expect(k8sClient.Update(ctx, w)).To(Succeed())
 				}
 				known := &corev1alpha1.Workspace{ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: ns}}
@@ -330,6 +425,59 @@ var _ = Describe("Hold stop", func() {
 			reconcileWorkspace()
 			Expect(replicas()).To(Equal(int32(1)))
 			w = workspace()
+			Expect(w.Status.KeyHash).NotTo(BeEmpty())
+			Expect(w.Status.KeyHash).NotTo(Equal(old))
+			Expect(meta.FindStatusCondition(w.Status.Conditions, corev1alpha1.HoldHeld)).To(BeNil())
+		})
+
+		It("quarantines the Workspace: blocks the key and keeps the pod, then stops and starts again", func() {
+			reconcileWorkspace()
+			Expect(replicas()).To(Equal(int32(1)))
+			old := workspace().Status.KeyHash
+			hold := newHold(corev1alpha1.HoldTarget{Kind: corev1alpha1.HoldTargetWorkspace, Namespace: ns, Name: name},
+				corev1alpha1.HoldQuarantine)
+			reconcileWorkspace()
+			Expect(replicas()).To(Equal(int32(1)))
+			Expect(secret()).To(BeFalse())
+			Expect(gw.order).To(Equal([]string{opCreate, opBlock, opUsage}))
+			w := workspace()
+			Expect(w.Finalizers).To(ContainElement(quarantineFinalizer))
+			Expect(w.Status.KeyHash).To(BeEmpty())
+			Expect(workspaceQuarantined(w)).To(BeTrue())
+			var e string
+			Eventually(rec.Events).Should(Receive(&e))
+			Expect(e).To(HavePrefix("Warning Quarantined "))
+			c := held(hold)
+			Expect(c.Reason).To(Equal(reasonQuarantined))
+			Expect(c.Status).To(Equal(metav1.ConditionTrue))
+
+			// A delete waits for the release.
+			Expect(k8sClient.Delete(ctx, workspace())).To(Succeed())
+			reconcileWorkspace()
+			Expect(workspace().DeletionTimestamp.IsZero()).To(BeFalse())
+			Expect(replicas()).To(Equal(int32(1)))
+			release(hold)
+			reconcileWorkspace()
+			Expect(apierrors.IsNotFound(k8sClient.Get(ctx, nn(name), &corev1alpha1.Workspace{}))).To(BeTrue())
+			Expect(old).NotTo(BeEmpty())
+		})
+
+		It("stops the pod after the release of a quarantine, and starts again with a new key", func() {
+			reconcileWorkspace()
+			old := workspace().Status.KeyHash
+			hold := newHold(corev1alpha1.HoldTarget{Kind: corev1alpha1.HoldTargetWorkspace, Namespace: ns, Name: name},
+				corev1alpha1.HoldQuarantine)
+			reconcileWorkspace()
+			reconcileWorkspace()
+			Expect(replicas()).To(Equal(int32(1)))
+			release(hold)
+			reconcileWorkspace()
+			Expect(replicas()).To(Equal(int32(0)))
+			Expect(workspace().Finalizers).To(ContainElement(quarantineFinalizer))
+			reconcileWorkspace()
+			Expect(replicas()).To(Equal(int32(1)))
+			w := workspace()
+			Expect(w.Finalizers).NotTo(ContainElement(quarantineFinalizer))
 			Expect(w.Status.KeyHash).NotTo(BeEmpty())
 			Expect(w.Status.KeyHash).NotTo(Equal(old))
 			Expect(meta.FindStatusCondition(w.Status.Conditions, corev1alpha1.HoldHeld)).To(BeNil())
@@ -438,7 +586,9 @@ var _ = Describe("Hold stop", func() {
 				}})).To(Succeed())
 			DeferCleanup(func() {
 				v := &corev1alpha1.AppVersion{}
-				if k8sClient.Get(ctx, nn(name), v) == nil && controllerutil.RemoveFinalizer(v, appFinalizer) {
+				if k8sClient.Get(ctx, nn(name), v) == nil && (controllerutil.RemoveFinalizer(v, appFinalizer) ||
+					controllerutil.RemoveFinalizer(v, quarantineFinalizer)) {
+					controllerutil.RemoveFinalizer(v, quarantineFinalizer)
 					Expect(k8sClient.Update(ctx, v)).To(Succeed())
 				}
 				om := metav1.ObjectMeta{Name: "kd-" + name, Namespace: ns}
@@ -449,6 +599,34 @@ var _ = Describe("Hold stop", func() {
 					Expect(client.IgnoreNotFound(k8sClient.Delete(ctx, o))).To(Succeed())
 				}
 			})
+		})
+
+		It("quarantines the versions of an App: blocks the key and keeps the pods, then revokes after the release", func() {
+			reconcileVersion()
+			hold := newHold(corev1alpha1.HoldTarget{Kind: corev1alpha1.HoldTargetApp, Namespace: ns, Name: appName},
+				corev1alpha1.HoldQuarantine)
+			reconcileVersion()
+			reconcileVersion()
+			Expect(gw.order).To(Equal([]string{opCreate, opBlock}))
+			Expect(k8sClient.Get(ctx, nn("kd-"+name), &appsv1.Deployment{})).To(Succeed())
+			v := &corev1alpha1.AppVersion{}
+			Expect(k8sClient.Get(ctx, nn(name), v)).To(Succeed())
+			Expect(v.Finalizers).To(ContainElement(quarantineFinalizer))
+			Expect(appVersionQuarantined(v)).To(BeTrue())
+			Expect(meta.FindStatusCondition(v.Status.Conditions, corev1alpha1.AppVersionRevoking)).To(BeNil())
+			var e string
+			Eventually(rec.Events).Should(Receive(&e))
+			Expect(e).To(HavePrefix("Warning Quarantined "))
+			Expect(held(hold).Reason).To(Equal(reasonQuarantined))
+
+			release(hold)
+			reconcileVersion()
+			Expect(k8sClient.Get(ctx, nn(name), v)).To(Succeed())
+			Expect(v.Finalizers).To(BeEmpty())
+			Expect(meta.FindStatusCondition(v.Status.Conditions, corev1alpha1.AppVersionRevoking).Reason).
+				To(Equal(reasonStopped))
+			Expect(meta.IsStatusConditionTrue(v.Status.Conditions, corev1alpha1.AppVersionRevoked)).To(BeTrue())
+			Expect(apierrors.IsNotFound(k8sClient.Get(ctx, nn("kd-"+name), &appsv1.Deployment{}))).To(BeTrue())
 		})
 
 		It("blocks the key before it deletes the objects, with no drain", func() {
@@ -559,6 +737,43 @@ var _ = Describe("Hold stop", func() {
 				Name: b.Name}, corev1alpha1.HoldStop)
 			Expect(condition(&HoldReconciler{Client: k8sClient, APIReader: k8sClient, AppsEnabled: true,
 				Namespaces: []string{nsA}}, direct)).To(BeNil())
+		})
+
+		It("shows AppsDisabled for a Profile with an AppVersion when the App controllers do not run", func() {
+			newAgent(nsA)
+			av := &corev1alpha1.AppVersion{ObjectMeta: metav1.ObjectMeta{Name: "installs-v1", Namespace: nsB},
+				Spec: corev1alpha1.AppVersionSpec{
+					AppRef: corev1alpha1.AppReference{Name: "installs"}, BudgetPerDay: new(resource.MustParse("5")),
+					Template: corev1alpha1.AppVersionTemplate{Model: testGatewayModel,
+						PodTemplate: corev1alpha1.PodTemplate{Spec: corev1.PodSpec{Containers: []corev1.Container{{
+							Name: corev1alpha1.AppContainerName, Image: "registry.example.com/installs:v1",
+							Ports: []corev1.ContainerPort{{Name: "installs-http", ContainerPort: 8080}},
+							ReadinessProbe: &corev1.Probe{ProbeHandler: corev1.ProbeHandler{
+								HTTPGet: &corev1.HTTPGetAction{Path: "/installs-ready", Port: intstr.FromString("installs-http")}}},
+						}}}}}}}
+			Expect(k8sClient.Create(ctx, av)).To(Succeed())
+			DeferCleanup(func() { Expect(client.IgnoreNotFound(k8sClient.Delete(ctx, av))).To(Succeed()) })
+			r := &HoldReconciler{Client: k8sClient, APIReader: k8sClient, EgressProxy: true}
+			target := corev1alpha1.HoldTarget{Kind: corev1alpha1.HoldTargetProfile, Name: profile}
+			names := []string{newHold(target, corev1alpha1.HoldStop), newHold(target, corev1alpha1.HoldQuarantine)}
+			for _, name := range names {
+				res, err := r.Reconcile(ctx, reconcile.Request{NamespacedName: types.NamespacedName{Name: name}})
+				Expect(err).NotTo(HaveOccurred())
+				Expect(res.RequeueAfter).To(Equal(appsDisabledRecheck))
+				c := condition(r, name)
+				Expect(c.Status).To(Equal(metav1.ConditionFalse))
+				Expect(c.Reason).To(Equal(reasonAppsDisabled))
+				Expect(c.Message).To(Equal(msgVersionsLeft))
+			}
+
+			// With no AppVersion, the Hold counts the other workloads.
+			Expect(k8sClient.Delete(ctx, av)).To(Succeed())
+			for name, reason := range map[string]string{names[0]: reasonStopping, names[1]: reasonQuarantining} {
+				res, err := r.Reconcile(ctx, reconcile.Request{NamespacedName: types.NamespacedName{Name: name}})
+				Expect(err).NotTo(HaveOccurred())
+				Expect(res.RequeueAfter).To(BeZero())
+				Expect(condition(r, name).Reason).To(Equal(reason))
+			}
 		})
 	})
 
