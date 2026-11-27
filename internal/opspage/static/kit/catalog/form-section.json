@@ -1,6 +1,7 @@
 {
   "name": "form-section",
   "description": "A titled section of a form card with up to 40 lines.",
+  "parts": [],
   "data": {
     "title": {"type": "text", "required": true, "min_length": 1, "size": "line"},
     "lines": {

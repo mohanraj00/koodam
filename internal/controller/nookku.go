@@ -57,12 +57,12 @@ const (
 	// pathEnv is the name of the env that lists the command folders.
 	pathEnv = "PATH"
 	// msgNookkuPython is the termination message of nookkuPythonContainer if the check fails.
-	msgNookkuPython = "The nookku plugin needs python3 3.10 or later on the PATH of the image. The harness did not start."
+	msgNookkuPython = "The nookku plugin needs python3 3.11 or later on the PATH of the image. The harness did not start."
 )
 
-// nookkuPythonScript exits with 0 only if python3 on the PATH is 3.10 or later. It runs no Nookku
+// nookkuPythonScript exits with 0 only if python3 on the PATH is 3.11 or later. It runs no Nookku
 // code and reads no file.
-const nookkuPythonScript = `python3 -c 'import sys; sys.exit(sys.version_info < (3, 10))' >/dev/null 2>&1 && exit 0
+const nookkuPythonScript = `python3 -c 'import sys; sys.exit(sys.version_info < (3, 11))' >/dev/null 2>&1 && exit 0
 echo "` + msgNookkuPython + `" >&2
 exit 1`
 
@@ -130,8 +130,9 @@ func addWorkspaceNookku(pod *corev1.PodSpec, harnesses []corev1alpha1.HarnessSpe
 }
 
 // addNookkuPythonCheck adds an init container that stops the pod before the harness starts if the
-// image of the main container has no python3 3.10 or later (#83). Nookku needs Python 3.10 or later,
-// and a hook that cannot start Nookku must not let the harness run. The container gets no
+// image of the main container has no python3 3.11 or later (#83, #478). Nookku needs Python 3.10 or
+// later. The launcher needs 3.11 or later, so that a child process ignores the current folder. A
+// hook that cannot start Nookku must not let the harness run. The container gets no
 // credential, no mount and no env but PATH.
 func addNookkuPythonCheck(pod *corev1.PodSpec) {
 	pod.InitContainers = append(pod.InitContainers, corev1.Container{

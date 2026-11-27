@@ -1,6 +1,7 @@
 {
   "name": "data-grid-column",
   "description": "One column of a data grid: a key, a header label, the type of its cells and an optional read-only flag. A choice column gives its choices.",
+  "parts": [],
   "data": {
     "key": {"type": "text", "required": true, "min_length": 1, "size": "short"},
     "label": {"type": "text", "required": true, "min_length": 1, "size": "line"},

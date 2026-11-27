@@ -1,0 +1,27 @@
+{
+  "name": "pagination",
+  "description": "A named navigation landmark with page numbers and previous and next buttons. The current page is at least one and at most the page count. A button requests a page with a mu-page-change event. Page code supplies the new content and current page.",
+  "ai_content": false,
+  "parts": [
+    {"name": "copy", "description": "Button that copies text.", "guardrail": true},
+    {"name": "copy-status", "description": "Result of the copy operation.", "guardrail": true},
+    {"name": "details", "description": "Control and technical details of a refusal.", "guardrail": true},
+    {"name": "gap", "description": "Visual mark for page numbers that do not show.", "guardrail": false},
+    {"name": "nav", "description": "Named navigation landmark.", "guardrail": true},
+    {"name": "next", "description": "Next step after a refusal.", "guardrail": true},
+    {"name": "next-page", "description": "Button that requests the next page.", "guardrail": true},
+    {"name": "page", "description": "Page number button. The current page has a visible mark.", "guardrail": true},
+    {"name": "previous-page", "description": "Button that requests the previous page.", "guardrail": true},
+    {"name": "reason", "description": "Reason for a refusal.", "guardrail": true}
+  ],
+  "data": {
+    "label": {"type": "text", "required": true, "min_length": 1, "size": "line"},
+    "page": {"type": "integer", "required": true, "minimum": 1, "maximum": 9007199254740991},
+    "page_count": {"type": "integer", "required": true, "minimum": 1, "maximum": 9007199254740991}
+  },
+  "states": ["+refused"],
+  "tokens": ["+color.surface", "+color.accent", "+color.focus", "+space.2", "+radius.2", "+motion.fast"],
+  "accessibility": {
+    "role": "navigation", "name": {"field": "label"}, "keyboard": ["Tab", "Shift+Tab", "Enter", "Space"]
+  }
+}

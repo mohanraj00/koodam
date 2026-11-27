@@ -1,0 +1,21 @@
+{
+  "name": "skeleton",
+  "description": "A named loading status with one to six lines that hold space for content.",
+  "ai_content": false,
+  "parts": [
+    {"name": "copy", "description": "Button that copies text.", "guardrail": true},
+    {"name": "copy-status", "description": "Result of the copy operation.", "guardrail": true},
+    {"name": "details", "description": "Control and technical details of a refusal.", "guardrail": true},
+    {"name": "line", "description": "Visible placeholder line. It is hidden from the accessibility tree.", "guardrail": true},
+    {"name": "next", "description": "Next step after a refusal.", "guardrail": true},
+    {"name": "reason", "description": "Reason for a refusal.", "guardrail": true},
+    {"name": "status", "description": "Status with the accessible name of the loading content.", "guardrail": true}
+  ],
+  "data": {
+    "label": {"type": "text", "required": true, "min_length": 1, "size": "line"},
+    "lines": {"type": "integer", "required": true, "minimum": 1, "maximum": 6}
+  },
+  "states": ["+loading", "+refused"],
+  "tokens": ["+radius.2", "+space.2"],
+  "accessibility": {"role": "status", "name": {"field": "label"}}
+}

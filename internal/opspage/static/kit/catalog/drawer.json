@@ -1,0 +1,30 @@
+{
+  "name": "drawer",
+  "description": "A modal dialog at the inline end of the page, with a title, a close button and a slot for page content. On a screen 30rem wide or narrower, it opens at the bottom.",
+  "ai_content": false,
+  "parts": [
+    {"name": "body", "description": "Container for the page content.", "guardrail": true},
+    {"name": "close", "description": "Button that closes the modal.", "guardrail": true},
+    {"name": "copy", "description": "Button that copies text.", "guardrail": true},
+    {"name": "copy-status", "description": "Result of the copy operation.", "guardrail": true},
+    {"name": "details", "description": "Control and technical details of a refusal.", "guardrail": true},
+    {"name": "dialog", "description": "Modal surface with its title, content and close control.", "guardrail": true},
+    {"name": "next", "description": "Next step after a refusal.", "guardrail": true},
+    {"name": "reason", "description": "Reason for a refusal.", "guardrail": true},
+    {"name": "title", "description": "Visible title that gives the modal its accessible name.", "guardrail": true}
+  ],
+  "data": {
+    "title": {"type": "text", "required": true, "min_length": 1, "size": "title"},
+    "close_label": {"type": "text", "required": true, "min_length": 1, "size": "short"}
+  },
+  "states": ["+open", "+refused"],
+  "tokens": [
+    "+color.surface", "+color.focus", "+space.2", "+space.3", "+space.4", "+radius.2", "+radius.3",
+    "+type.heading-3", "+motion.fast"
+  ],
+  "accessibility": {
+    "role": "dialog",
+    "name": {"field": "title"},
+    "keyboard": ["Tab", "Shift+Tab", "Enter", "Space", "Escape"]
+  }
+}

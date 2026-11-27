@@ -109,6 +109,10 @@ type Quarantines struct {
 	// Now gives the time of a control span. If it is nil, the index uses time.Now.
 	Now func() time.Time
 
+	// changeMu keeps Hold and Profile changes and their spans in order.
+	// Admit uses only mu. Each handler releases mu before it writes spans.
+	changeMu sync.Mutex
+
 	mu     sync.Mutex
 	active map[string]quarantine
 	bound  map[string][]string
@@ -161,6 +165,9 @@ func (q *Quarantines) setHold(u *unstructured.Unstructured) {
 	user, _, _ := unstructured.NestedString(u.Object, "spec", "user")
 	reason, _, _ := unstructured.NestedString(u.Object, "spec", "reason")
 	h := quarantine{hold: u.GetName(), kind: kind, namespace: namespace, name: name, user: user, reason: reason}
+	q.changeMu.Lock()
+	defer q.changeMu.Unlock()
+
 	q.mu.Lock()
 	_, known := q.active[h.hold]
 	q.active[h.hold] = h
@@ -177,6 +184,9 @@ func (q *Quarantines) setHold(u *unstructured.Unstructured) {
 // end removes an active quarantine and writes its released span. A Hold that is not active
 // writes nothing.
 func (q *Quarantines) end(hold, user, reason string) {
+	q.changeMu.Lock()
+	defer q.changeMu.Unlock()
+
 	q.mu.Lock()
 	h, known := q.active[hold]
 	delete(q.active, hold)
@@ -192,6 +202,9 @@ func (q *Quarantines) end(hold, user, reason string) {
 func (q *Quarantines) setProfile(u *unstructured.Unstructured) {
 	name := u.GetName()
 	bound, _, _ := unstructured.NestedStringSlice(u.Object, "status", "boundNamespaces")
+	q.changeMu.Lock()
+	defer q.changeMu.Unlock()
+
 	q.mu.Lock()
 	var added []string
 	for _, ns := range bound {
@@ -219,6 +232,9 @@ func (q *Quarantines) setProfile(u *unstructured.Unstructured) {
 }
 
 func (q *Quarantines) removeProfile(name string) {
+	q.changeMu.Lock()
+	defer q.changeMu.Unlock()
+
 	q.mu.Lock()
 	defer q.mu.Unlock()
 	delete(q.bound, name)

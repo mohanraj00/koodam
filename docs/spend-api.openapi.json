@@ -129,6 +129,91 @@
       "delete": {"summary": "Not allowed.", "security": [], "responses": {"405": {"$ref": "#/components/responses/MethodNotAllowed"}}},
       "options": {"summary": "Not allowed.", "security": [], "responses": {"405": {"$ref": "#/components/responses/MethodNotAllowed"}}}
     },
+    "/v1/runs/{namespace}/{name}": {
+      "parameters": [
+        {"$ref": "#/components/parameters/Namespace"},
+        {"$ref": "#/components/parameters/Name"}
+      ],
+      "get": {
+        "operationId": "getRun",
+        "summary": "Read one Agent run with its status conditions, its Job and its pods.",
+        "description": "The path has no query. In the viewer mode, the server checks list on Agents in the namespace of the path only.",
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {"application/json": {"schema": {"$ref": "#/components/schemas/RunDetail"}}}
+          },
+          "401": {"$ref": "#/components/responses/Unauthorized"},
+          "403": {"$ref": "#/components/responses/Forbidden"},
+          "400": {"$ref": "#/components/responses/BadRequest"},
+          "404": {"$ref": "#/components/responses/NotFound"},
+          "502": {"$ref": "#/components/responses/UpstreamFailure"},
+          "504": {"$ref": "#/components/responses/Timeout"}
+        }
+      },
+      "head": {
+        "operationId": "headRun",
+        "summary": "Check the status of one run without a body.",
+        "responses": {
+          "200": {"description": "OK"},
+          "401": {"description": "A valid token is necessary."},
+          "403": {"description": "The caller cannot list Agents in the namespace, or the server does not serve the namespace."},
+          "400": {"description": "The query is not valid."},
+          "404": {"description": "The run does not exist."},
+          "502": {"description": "An upstream read failed."},
+          "504": {"description": "The request time limit expired."}
+        }
+      },
+      "post": {"summary": "Not allowed.", "security": [], "responses": {"405": {"$ref": "#/components/responses/MethodNotAllowed"}}},
+      "put": {"summary": "Not allowed.", "security": [], "responses": {"405": {"$ref": "#/components/responses/MethodNotAllowed"}}},
+      "patch": {"summary": "Not allowed.", "security": [], "responses": {"405": {"$ref": "#/components/responses/MethodNotAllowed"}}},
+      "delete": {"summary": "Not allowed.", "security": [], "responses": {"405": {"$ref": "#/components/responses/MethodNotAllowed"}}},
+      "options": {"summary": "Not allowed.", "security": [], "responses": {"405": {"$ref": "#/components/responses/MethodNotAllowed"}}}
+    },
+    "/v1/runs/{namespace}/{name}/log": {
+      "parameters": [
+        {"$ref": "#/components/parameters/Namespace"},
+        {"$ref": "#/components/parameters/Name"},
+        {"$ref": "#/components/parameters/Lines"}
+      ],
+      "get": {
+        "operationId": "getRunLog",
+        "summary": "Read the last lines of the agent container of the newest pod of a run, with each credential redacted.",
+        "description": "Only the viewer mode serves this path. The server checks list on Agents and get on pods/log in the namespace of the path. The response has at most 262144 log bytes before the redaction.",
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {"application/json": {"schema": {"$ref": "#/components/schemas/RunLog"}}}
+          },
+          "401": {"$ref": "#/components/responses/Unauthorized"},
+          "403": {"$ref": "#/components/responses/Forbidden"},
+          "400": {"$ref": "#/components/responses/BadRequest"},
+          "404": {"$ref": "#/components/responses/NotFound"},
+          "409": {"$ref": "#/components/responses/NoLogYet"},
+          "502": {"$ref": "#/components/responses/UpstreamFailure"},
+          "504": {"$ref": "#/components/responses/Timeout"}
+        }
+      },
+      "head": {
+        "operationId": "headRunLog",
+        "summary": "Check the status of the log of a run without a body.",
+        "responses": {
+          "200": {"description": "OK"},
+          "401": {"description": "A valid token is necessary."},
+          "403": {"description": "The server is not in the viewer mode, or the caller cannot list Agents or get pods/log in the namespace."},
+          "400": {"description": "The query is not valid."},
+          "404": {"description": "The run or its pod does not exist."},
+          "409": {"description": "The container has no log yet."},
+          "502": {"description": "An upstream read failed."},
+          "504": {"description": "The request time limit expired."}
+        }
+      },
+      "post": {"summary": "Not allowed.", "security": [], "responses": {"405": {"$ref": "#/components/responses/MethodNotAllowed"}}},
+      "put": {"summary": "Not allowed.", "security": [], "responses": {"405": {"$ref": "#/components/responses/MethodNotAllowed"}}},
+      "patch": {"summary": "Not allowed.", "security": [], "responses": {"405": {"$ref": "#/components/responses/MethodNotAllowed"}}},
+      "delete": {"summary": "Not allowed.", "security": [], "responses": {"405": {"$ref": "#/components/responses/MethodNotAllowed"}}},
+      "options": {"summary": "Not allowed.", "security": [], "responses": {"405": {"$ref": "#/components/responses/MethodNotAllowed"}}}
+    },
     "/v1/openapi.json": {
       "get": {
         "operationId": "getOpenAPI",
@@ -177,6 +262,27 @@
         "required": false,
         "description": "Maximum number of items in the page.",
         "schema": {"type": "integer", "minimum": 1, "maximum": 100, "default": 100}
+      },
+      "Namespace": {
+        "name": "namespace",
+        "in": "path",
+        "required": true,
+        "description": "The namespace of the Agent. It must be a namespace of the server.",
+        "schema": {"type": "string", "maxLength": 63}
+      },
+      "Name": {
+        "name": "name",
+        "in": "path",
+        "required": true,
+        "description": "The name of the Agent.",
+        "schema": {"type": "string", "maxLength": 253}
+      },
+      "Lines": {
+        "name": "lines",
+        "in": "query",
+        "required": false,
+        "description": "The count of the last log lines. The default is 200.",
+        "schema": {"type": "integer", "minimum": 1, "maximum": 1000, "default": 200}
       },
       "Cursor": {
         "name": "cursor",
@@ -227,6 +333,14 @@
       },
       "ExpiredCursor": {
         "description": "The cursor expired. Start again with no cursor.",
+        "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Problem"}}}
+      },
+      "NotFound": {
+        "description": "The run does not exist.",
+        "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Problem"}}}
+      },
+      "NoLogYet": {
+        "description": "The container has no log yet, for example because it did not start.",
         "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Problem"}}}
       },
       "UpstreamFailure": {
@@ -316,6 +430,80 @@
           "remaining": {"type": "number", "format": "double", "description": "The limit minus the spend and the reserved budgets in USD, with a minimum of zero."},
           "exceeded": {"type": "boolean", "description": "True if the last run that the controller checked had to wait."},
           "waitingRuns": {"type": "integer", "format": "int32", "description": "The count of the runs that waited at the last check."}
+        }
+      },
+      "RunDetail": {
+        "type": "object",
+        "required": ["id", "name", "namespace", "conditions", "pods"],
+        "properties": {
+          "id": {"type": "string"},
+          "name": {"type": "string"},
+          "namespace": {"type": "string"},
+          "phase": {"type": "string", "enum": ["Pending", "Running", "Succeeded", "Failed"]},
+          "startedAt": {"type": "string", "format": "date-time"},
+          "completedAt": {"type": "string", "format": "date-time"},
+          "conditions": {"type": "array", "items": {"$ref": "#/components/schemas/Condition"}, "description": "The status conditions of the Agent."},
+          "job": {"$ref": "#/components/schemas/RunJob"},
+          "pods": {"type": "array", "maxItems": 10, "items": {"$ref": "#/components/schemas/RunPod"}, "description": "The pods of the Job, newest first."}
+        }
+      },
+      "Condition": {
+        "type": "object",
+        "required": ["type", "status", "lastTransitionTime"],
+        "properties": {
+          "type": {"type": "string"},
+          "status": {"type": "string", "enum": ["True", "False", "Unknown"]},
+          "reason": {"type": "string"},
+          "message": {"type": "string"},
+          "lastTransitionTime": {"type": "string", "format": "date-time"}
+        }
+      },
+      "RunJob": {
+        "type": "object",
+        "description": "The run Job. The item is not there if the Agent has no Job, or if the Agent does not control the Job of that name.",
+        "required": ["name", "active", "succeeded", "failed", "conditions"],
+        "properties": {
+          "name": {"type": "string"},
+          "active": {"type": "integer", "format": "int32"},
+          "succeeded": {"type": "integer", "format": "int32"},
+          "failed": {"type": "integer", "format": "int32"},
+          "startedAt": {"type": "string", "format": "date-time"},
+          "completedAt": {"type": "string", "format": "date-time"},
+          "conditions": {"type": "array", "items": {"$ref": "#/components/schemas/Condition"}}
+        }
+      },
+      "RunPod": {
+        "type": "object",
+        "required": ["name", "phase", "containers"],
+        "properties": {
+          "name": {"type": "string"},
+          "phase": {"type": "string"},
+          "startedAt": {"type": "string", "format": "date-time"},
+          "containers": {"type": "array", "items": {"$ref": "#/components/schemas/RunContainer"}}
+        }
+      },
+      "RunContainer": {
+        "type": "object",
+        "description": "The state of a container. It has no message, because the termination message comes from the code of the run.",
+        "required": ["name", "ready", "restartCount", "state"],
+        "properties": {
+          "name": {"type": "string"},
+          "init": {"type": "boolean"},
+          "ready": {"type": "boolean"},
+          "restartCount": {"type": "integer", "format": "int32"},
+          "state": {"type": "string", "enum": ["waiting", "running", "terminated"]},
+          "reason": {"type": "string"},
+          "exitCode": {"type": "integer", "format": "int32"}
+        }
+      },
+      "RunLog": {
+        "type": "object",
+        "required": ["pod", "container", "lines", "truncated"],
+        "properties": {
+          "pod": {"type": "string"},
+          "container": {"type": "string", "description": "The first container of the pod, which runs the agent."},
+          "lines": {"type": "array", "maxItems": 1000, "items": {"type": "string"}, "description": "The last lines, oldest first. Each credential that a pattern matches is [redacted]. Control characters are removed."},
+          "truncated": {"type": "boolean", "description": "True if the log has more lines than the response."}
         }
       },
       "Problem": {

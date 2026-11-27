@@ -93,6 +93,13 @@ rules:
 - apiGroups:
   - core.koodam.dev
   resources:
+  - approvalrecords
+  verbs:
+  - list
+  - watch
+- apiGroups:
+  - core.koodam.dev
+  resources:
   - appversions
   verbs:
   - get

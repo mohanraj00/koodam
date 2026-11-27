@@ -1,6 +1,7 @@
 {
   "name": "text-cell",
   "description": "A cell of a data grid with a text value. A cell with no value is empty.",
+  "parts": [],
   "data": {
     "value": {"type": "text", "min_length": 0, "max_length": 500},
     "read_only": {"type": "boolean", "label": "Read-only"}
