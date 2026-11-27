@@ -2,7 +2,7 @@
 
 This file records the changes for each Koodam version. The newest version is first.
 
-## Unreleased
+## v0.6.0 (2026-11-27)
 
 The API is `v1alpha1` and can change between tags. The App parts are off by default. [Upgrade notes for v0.6.0](#upgrade-notes-for-v060) lists the changes that need a step before the upgrade. [Known limits of v0.6.0](#known-limits-of-v060) lists the open limits.
 
@@ -11,6 +11,7 @@ The API is `v1alpha1` and can change between tags. The App parts are off by defa
 - **Workspace SSH ingress.** The Workspace NetworkPolicy permits SSH ingress only from the peers in the new chart value `workspace.networkPolicy.sshFrom`. The default is no peer. `koodam ssh`, `koodam tunnel` and port-forwards do not change. If a pod connects to port 2222 of a Workspace directly, add it to `sshFrom` before the upgrade ([#412](https://github.com/mohanraj00/koodam/issues/412)).
 - **Python for Nookku.** The Nookku plugin now needs Python 3.11 or later. Before the upgrade, make sure that each image that runs the Nookku plugin has Python 3.11 or later ([#478](https://github.com/mohanraj00/koodam/issues/478)).
 - **Spend API identity.** The new run paths of the spend API need more access for the server identity: `get` on `agents` and `jobs`, `list` on `pods`, `get` on `pods/log` and `watch` on `agents`. If you run `spend-api` with your own Role, add these rules before the upgrade ([#399](https://github.com/mohanraj00/koodam/issues/399)).
+- **AppVersion replicas.** `spec.replicas` of an AppVersion has no default now, so the API server does not write `replicas: 1` on a new AppVersion. A version with no `replicas` and no `scale` still has 1 pod. You cannot set `replicas` and `scale` together. An AppVersion from v0.5.0 has `replicas: 1` in its spec: to add `scale` to it, remove `replicas` in the same change ([#196](https://github.com/mohanraj00/koodam/issues/196)).
 
 ### Agents
 
@@ -42,6 +43,7 @@ The API is `v1alpha1` and can change between tags. The App parts are off by defa
 ### Apps
 
 - An AppVersion can have `template.rules` if the chart value `apps.apiServerEgress` gives the API server egress rules. The controller adds the rules to the NetworkPolicy of a version with `template.rules` only. The empty default keeps the refusal. The manager refuses a named, out-of-range or non-TCP port in an API server rule ([#340](https://github.com/mohanraj00/koodam/issues/340)).
+- An AppVersion can scale on its load with `spec.scale`: `minReplicas`, `maxReplicas` and a CPU or pod metric. The controller makes one HorizontalPodAutoscaler for each version. A retiring version stays at its minimum. A pod metric needs a custom metrics adapter in the cluster. `spec.replicas` has no default now ([#196](https://github.com/mohanraj00/koodam/issues/196)).
 
 ### Nookku preset
 
