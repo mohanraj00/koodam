@@ -1,4 +1,4 @@
-// The input primitives of a form: text, long text, number, date and choice. Each one has a contract in catalog/.
+// The input primitives of a form. Each one has a contract in catalog/.
 // A field shows the reason of a value that its contract does not accept as text. A typed field asks for the
 // edit type after a change (catalog/README.md, "Typed edits").
 import { MuElement } from './base.js';
@@ -56,12 +56,50 @@ const FIELD_CSS = sheet(`
   }
 `);
 
+const TOGGLE_CSS = sheet(`
+  .toggle {
+    display: flex; align-items: center; gap: var(--mu-space-2);
+    min-inline-size: 44px; min-block-size: 44px; padding-inline: var(--mu-space-2);
+    border-radius: var(--mu-radius-1); overflow-wrap: anywhere; cursor: pointer;
+    transition: box-shadow var(--mu-motion-fast);
+  }
+  .toggle input {
+    flex: none; margin: 0; padding: 0; min-height: 0; inline-size: 1.25rem; block-size: 1.25rem;
+    accent-color: var(--mu-color-accent); cursor: inherit;
+  }
+  .toggle:hover:not(:has(:disabled)) { box-shadow: inset 0 0 0 100vmax color-mix(in srgb, currentColor 8%, transparent); }
+  .toggle:active:not(:has(:disabled)) { box-shadow: inset 0 0 0 100vmax color-mix(in srgb, currentColor 14%, transparent); }
+  .toggle:has(:disabled) { cursor: not-allowed; }
+  .toggle:has(:disabled) > :is([part="label"], [part="state"]), input:disabled + .thumb { opacity: 0.6; }
+  .switch { display: grid; flex: none; }
+  .switch input, .thumb { grid-area: 1 / 1; }
+  .switch input { appearance: none; inline-size: 2.5rem; border-radius: 1rem; }
+  .switch input:checked { background-color: var(--mu-color-accent); }
+  .thumb {
+    align-self: center; justify-self: start; pointer-events: none; margin-inline: var(--mu-space-1);
+    inline-size: 0.75rem; block-size: 0.75rem; border-radius: 50%; background-color: var(--mu-color-text);
+  }
+  .switch input:checked + .thumb { justify-self: end; background-color: var(--mu-color-on-accent); }
+  [part="state"] { flex: none; min-inline-size: 3ch; font: var(--mu-type-caption); }
+  @media (forced-colors: active) {
+    .toggle:hover:not(:has(:disabled)) { outline: 1px solid Highlight; }
+    .switch input, .thumb { forced-color-adjust: none; }
+    .switch input { border-color: ButtonText; background-color: ButtonFace; }
+    .switch input:checked { border-color: Highlight; background-color: Highlight; }
+    .thumb { background-color: ButtonText; }
+    .switch input:checked + .thumb { background-color: HighlightText; }
+    .switch input:disabled { border-color: GrayText; background-color: ButtonFace; opacity: 1; }
+    .switch input:disabled + .thumb { background-color: GrayText; opacity: 1; }
+    .toggle:has(:disabled) > :is([part="label"], [part="state"]) { color: GrayText; opacity: 1; }
+  }
+`);
+
 // Shared code of each input primitive. A subclass gives the control, reads its value and tells why a value
 // is not valid. The value of a refused field is null, because a refused field keeps no data.
 export class FieldElement extends MuElement {
   static focus = true;
   static styles = [FIELD_CSS];
-  // Enter in the control submits the form that contains the field. Long text and choices do not.
+  // Enter in a single-line text, number or date control submits the form that contains the field.
   static submitOnEnter = true;
 
   #initial = '';
@@ -78,14 +116,14 @@ export class FieldElement extends MuElement {
     return this.fill ? this.#initial : null;
   }
 
-  // The value that the form sends: the value of the contract type, or the text of the person if the text
-  // is not valid. An empty input gives an empty text.
+  // The form sends the value of the contract type, or the input text if the text is not valid.
+  // An empty text input gives an empty text.
   get value() {
     if (!this.fill || !this.#targets.length) return null;
-    const text = this.read();
-    if (text === '') return '';
-    const value = this.parse(text);
-    return value === undefined ? text : value;
+    const input = this.read();
+    if (input === '') return '';
+    const value = this.parse(input);
+    return value === undefined ? input : value;
   }
 
   // True if the value is not the value of the fill.
@@ -96,8 +134,16 @@ export class FieldElement extends MuElement {
   // The reason why the contract does not accept the value, as text. Else null.
   get problem() {
     if (!this.fill || !this.#targets.length || this.fill.data.disabled) return null;
-    const text = this.read();
-    return text === '' ? null : this.reason(text, this.fill.data);
+    const input = this.read();
+    return input === '' && !this.#targets[0].required ? null : this.reason(input, this.fill.data);
+  }
+
+  get validationMessage() {
+    return this.problem ?? '';
+  }
+
+  get disabled() {
+    return Boolean(this.fill?.data.disabled);
   }
 
   // The edit type of a changed typed field: judgment, correction or override. Else null.
@@ -114,10 +160,18 @@ export class FieldElement extends MuElement {
   // Shows the reason of a value that is not valid, and moves the focus to the control. Returns false if the value is valid.
   needValue() {
     if (!this.problem) return false;
+    this.showProblem();
+    (this.problemTarget?.() ?? this.#targets[0]).focus();
+    return true;
+  }
+
+  reportValidity() {
+    return !this.needValue();
+  }
+
+  showProblem() {
     this.#shown = true;
     this.#check();
-    this.#targets[0].focus();
-    return true;
   }
 
   // Shows the reason of a refused submit in the edit type group, and moves the focus to the group.
@@ -144,15 +198,15 @@ export class FieldElement extends MuElement {
     return this.constructor.rules(data);
   }
 
-  // A subclass gives the text of the control, its value of the contract type (undefined if the text is not
-  // valid), the reason of a text that is not valid, and the controls. control() returns { node, targets }:
-  // node goes after the label, and targets get the description. labelled is true if node has its own name.
+  // A subclass reads the control and can parse and check its value. control() returns { node, targets }.
+  // The node goes after the label. The targets get the description. A control can add descriptionIds.
+  // labelled is true if the node has its own label.
   read() {
     return '';
   }
 
-  parse(text) {
-    return text;
+  parse(input) {
+    return input;
   }
 
   reason() {
@@ -173,8 +227,8 @@ export class FieldElement extends MuElement {
     this.#editedAt = null;
     this.#shown = false;
     this.#problem = el('span', { id: id + '-problem', class: 'error', part: 'problem' });
-    this.#described = [data.hint ? id + '-hint' : '', data.error ? id + '-error' : ''].filter(Boolean);
-    const { node, targets, labelled } = this.control(data, id);
+    const { node, targets, labelled, descriptionIds = [] } = this.control(data, id);
+    this.#described = [...descriptionIds, data.hint ? id + '-hint' : '', data.error ? id + '-error' : ''].filter(Boolean);
     this.#targets = targets;
     // The browser can change the value when the control shows it, for example CRLF to LF in a text area.
     // The old value is the value that the control shows, so such a change is not an edit.
@@ -182,9 +236,7 @@ export class FieldElement extends MuElement {
     for (const target of targets) target.disabled = Boolean(data.disabled);
     // A change commits a value. Then a value that is not valid shows its reason.
     node.addEventListener('change', (event) => {
-      if (!targets.includes(event.target)) return;
-      this.#shown = true;
-      this.#check();
+      if (targets.includes(event.target)) this.showProblem();
     });
     this.#check();
     // A typed field asks for the edit type after a change. A disabled field has no edit.
@@ -430,10 +482,30 @@ export class MuChoiceField extends FieldElement {
   }
 }
 
-export const FIELDS = Object.freeze({
-  field: ['mu-field', MuField],
-  'long-text-field': ['mu-long-text-field', MuLongTextField],
-  'number-field': ['mu-number-field', MuNumberField],
-  'date-field': ['mu-date-field', MuDateField],
-  'choice-field': ['mu-choice-field', MuChoiceField],
-});
+export class MuToggleField extends FieldElement {
+  static component = 'toggle-field';
+  static styles = [...FieldElement.styles, TOGGLE_CSS];
+  static submitOnEnter = false;
+
+  #input = null;
+
+  read() {
+    return this.#input.checked;
+  }
+
+  control(data, id) {
+    const isSwitch = data.display === 'switch';
+    const input = el('input', { id, type: 'checkbox', part: 'input', role: isSwitch ? 'switch' : null });
+    input.checked = data.value ?? false;
+    this.#input = input;
+    // The input gives the checked state to a screen reader. The state text is for sighted readers.
+    const state = isSwitch ? el('span', { part: 'state', 'aria-hidden': 'true' }, input.checked ? 'On' : 'Off') : null;
+    const control = isSwitch ? el('span', { class: 'switch' }, input, el('span', { class: 'thumb', 'aria-hidden': 'true' })) : input;
+    const label = el('label', { for: id, class: 'toggle', part: 'target' }, control, el('span', { part: 'label' }, data.label), state);
+    input.addEventListener('change', () => {
+      if (state) state.textContent = input.checked ? 'On' : 'Off';
+      this.changedValue();
+    });
+    return { node: label, targets: [input], labelled: true };
+  }
+}

@@ -1,7 +1,7 @@
 // The base class of each primitive. It validates a fill against the contract before it renders.
 import { actorErrors, authorErrors, fillErrors } from '../render/validate.js';
 import { BRAND, CONTRACTS } from '../render/registry.js';
-import { BASE, REFUSED_NEXT, el } from '../render/dom.js';
+import { BASE, REFUSED_NEXT, REFUSED_REASON, el, refusalDetails } from '../render/dom.js';
 
 export class MuElement extends HTMLElement {
   // register (src/render/registry.js) reads this key to accept only a subclass of MuElement.
@@ -73,7 +73,9 @@ export class MuElement extends HTMLElement {
     this.#fill = structuredClone(value);
     this.dataset.state = this.state(this.#fill.data);
     // A render can give null for an optional part. Such a part shows nothing.
-    this.shadowRoot.replaceChildren(...this.render(this.#fill.data).filter((part) => part !== null && part !== undefined));
+    // A render can give null instead of a list when it updates the existing DOM.
+    const parts = this.render(this.#fill.data);
+    if (parts !== null) this.shadowRoot.replaceChildren(...parts.filter((part) => part !== null && part !== undefined));
     this.rendered();
   }
 
@@ -83,15 +85,16 @@ export class MuElement extends HTMLElement {
     this.#fill = null;
     this.dataset.state = 'refused';
     // The status gives the reason, then what the person does next.
-    this.shadowRoot.replaceChildren(el('span', { class: 'refused', role: 'status' },
-      el('span', { part: 'reason' }, `Refused ${this.constructor.component}: ${this.refusal(errors)}`), ' ',
-      el('span', { part: 'next' }, REFUSED_NEXT)));
+    this.shadowRoot.replaceChildren(el('div', { class: 'refused' },
+      el('div', { role: 'status' }, el('span', { part: 'reason' }, this.refusal(errors)), ' ',
+        el('span', { part: 'next' }, REFUSED_NEXT)),
+      refusalDetails(this.constructor.component, errors)));
     this.dispatchEvent(new CustomEvent('mu-refused', { bubbles: true, composed: true, detail: { errors } }));
   }
 
-  // The reason of a refusal, as text for a person. The mu-refused event always gives all errors of the validator.
-  refusal(errors) {
-    return errors[0];
+  // A subclass can give a specific reason in plain words.
+  refusal() {
+    return REFUSED_REASON;
   }
 
   // A subclass can refuse a fill for a rule that the contract format cannot give.

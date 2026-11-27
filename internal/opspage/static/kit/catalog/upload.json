@@ -1,6 +1,32 @@
 {
   "name": "upload",
-  "description": "A control that takes files from a person, with a file picker or a drop. Page code binds the tool, the accepted types, the size limit and the file count. The control checks each file before a request. The application sends each file with its own transport. Done shows only after the receipt.",
+  "description": "A person picks or drops files. Page code binds the tool and the limits. The control checks each file before the application sends it. A file with no receipt offers Retry and Cancel after the wait limit. Done shows only after a successful receipt. The receipt can show a reference with a copy control.",
+  "parts": [
+    {"name": "authorship", "description": "Type and ID of the author, with a name when available.", "guardrail": true},
+    {"name": "cancel", "description": "Button that cancels a pending upload.", "guardrail": true},
+    {"name": "choose", "description": "Button that opens the file picker.", "guardrail": false},
+    {"name": "copy", "description": "Button that copies text.", "guardrail": true},
+    {"name": "copy-status", "description": "Result of the copy operation.", "guardrail": true},
+    {"name": "details", "description": "Control and technical details of a refusal.", "guardrail": true},
+    {"name": "drop", "description": "Area where a person can drop files.", "guardrail": false},
+    {"name": "file", "description": "Row for one file.", "guardrail": false},
+    {"name": "files", "description": "List of files.", "guardrail": false},
+    {"name": "help", "description": "Instructions for the upload.", "guardrail": false},
+    {"name": "label", "description": "Label of the upload.", "guardrail": false},
+    {"name": "limits", "description": "Accepted file types and limits.", "guardrail": true},
+    {"name": "name", "description": "Name of a file.", "guardrail": false},
+    {"name": "next", "description": "Next step after a refusal.", "guardrail": true},
+    {"name": "problems", "description": "Reasons that files were refused.", "guardrail": true},
+    {"name": "reason", "description": "Reason for a refusal or an edit error.", "guardrail": true},
+    {"name": "reference", "description": "Reference from the receipt.", "guardrail": true},
+    {"name": "remove", "description": "Button that removes a file from the list.", "guardrail": false},
+    {"name": "retry", "description": "Button that tries a pending upload again.", "guardrail": true},
+    {"name": "send", "description": "Button that sends the files.", "guardrail": false},
+    {"name": "size", "description": "Size of a file.", "guardrail": false},
+    {"name": "state", "description": "State of a file.", "guardrail": true},
+    {"name": "status", "description": "Upload summary and file problems.", "guardrail": true},
+    {"name": "upload", "description": "Group that contains the upload.", "guardrail": false}
+  ],
   "data": {
     "label": {"type": "text", "required": true, "min_length": 1, "size": "line"},
     "help": {"type": "text", "label": "Help text", "min_length": 1, "size": "summary"},
@@ -16,7 +42,7 @@
   "states": ["+disabled", "+pending", "+done", "+error", "+refused"],
   "tokens": [
     "color.text", "color.text-muted", "color.surface", "color.border", "color.accent", "color.on-accent",
-    "color.danger", "space.1", "space.2", "space.3", "radius.1", "radius.2", "type.body", "type.caption",
+    "color.danger", "color.success", "space.1", "space.2", "space.3", "radius.1", "radius.2", "type.body", "type.caption",
     "type.weight-strong"
   ],
   "accessibility": {"role": "group", "name": {"field": "label"}, "keyboard": ["Tab", "Shift+Tab", "Enter", "Space"]}

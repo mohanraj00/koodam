@@ -1,0 +1,33 @@
+{
+  "name": "plan",
+  "description": "A named list of tasks in an agent plan. Each task has a unique id and shows its state as text. A polite status gives changes to existing tasks after the first fill.",
+  "parts": [
+    {"name": "announcement", "description": "Polite status for changes to task states.", "guardrail": true},
+    {"name": "authorship", "description": "Author of the plan.", "guardrail": true},
+    {"name": "copy", "description": "Button that copies text.", "guardrail": true},
+    {"name": "copy-status", "description": "Result of the copy operation.", "guardrail": true},
+    {"name": "details", "description": "Control and technical details of a refusal.", "guardrail": true},
+    {"name": "list", "description": "Named list of tasks.", "guardrail": true},
+    {"name": "name", "description": "Visible task name.", "guardrail": true},
+    {"name": "next", "description": "Next step after a refusal.", "guardrail": true},
+    {"name": "reason", "description": "Reason for a refusal.", "guardrail": true},
+    {"name": "state", "description": "Visible task state.", "guardrail": true},
+    {"name": "task", "description": "One task in the list.", "guardrail": false}
+  ],
+  "data": {
+    "label": {"type": "text", "required": true, "min_length": 1, "size": "line"},
+    "tasks": {
+      "type": "list", "required": true, "min_items": 1, "max_items": 20,
+      "items": {
+        "type": "record", "fields": {
+          "id": {"type": "text", "required": true, "min_length": 1, "size": "line"},
+          "name": {"type": "text", "required": true, "min_length": 1, "size": "title"},
+          "state": {"type": "enum", "required": true, "values": ["pending", "in_progress", "done", "failed", "skipped"]}
+        }
+      }
+    }
+  },
+  "states": ["+refused"],
+  "tokens": ["+type.caption", "+space.1", "+space.2"],
+  "accessibility": {"role": "list", "name": {"field": "label"}}
+}

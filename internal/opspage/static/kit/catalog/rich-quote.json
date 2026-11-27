@@ -1,6 +1,7 @@
 {
   "name": "rich-quote",
   "description": "A quote node of rich text: a list of paragraph nodes.",
+  "parts": [],
   "data": {
     "paragraphs": {
       "type": "list",

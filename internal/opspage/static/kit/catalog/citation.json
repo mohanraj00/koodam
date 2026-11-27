@@ -2,6 +2,20 @@
   "name": "citation",
   "description": "The source of a claim: a source name, a locator as text, an optional quote and an open button.",
   "slots": {"citation": {"required": false}},
+  "parts": [
+    {"name": "authorship", "description": "Type and ID of the author, with a name when available.", "guardrail": true},
+    {"name": "citation", "description": "Source of the content.", "guardrail": true},
+    {"name": "copy", "description": "Button that copies text.", "guardrail": true},
+    {"name": "copy-status", "description": "Result of the copy operation.", "guardrail": true},
+    {"name": "details", "description": "Control and technical details of a refusal.", "guardrail": true},
+    {"name": "empty", "description": "Message that shows when there is no source.", "guardrail": false},
+    {"name": "locator", "description": "Location in the source.", "guardrail": true},
+    {"name": "next", "description": "Next step after a refusal.", "guardrail": true},
+    {"name": "open", "description": "Button that opens the source.", "guardrail": true},
+    {"name": "provenance", "description": "Group that shows the author and the source.", "guardrail": true},
+    {"name": "quote", "description": "Text quoted from the source.", "guardrail": false},
+    {"name": "reason", "description": "Reason for a refusal or an edit error.", "guardrail": true}
+  ],
   "data": {
     "quote": {"type": "text", "max_length": 500}
   },

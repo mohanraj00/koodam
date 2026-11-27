@@ -38,7 +38,7 @@ func TestKitMatchesPin(t *testing.T) {
 	if err := json.Unmarshal(Pin, &p); err != nil {
 		t.Fatal(err)
 	}
-	if p.Project != "mohanraj00/mugham" || p.Version != "v0.4.0" || p.Asset != "mugham.tar" || len(p.SHA256) != 64 {
+	if p.Project != "mohanraj00/mugham" || p.Version != "v0.7.0" || p.Asset != "mugham.tar" || len(p.SHA256) != 64 {
 		t.Fatalf("the pin does not name the release asset: %+v", p)
 	}
 	got := map[string]string{}

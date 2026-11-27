@@ -1,0 +1,24 @@
+{
+  "name": "progress",
+  "description": "A named progress bar. The maximum is positive and finite. A known value is finite, at least zero and at most the maximum. Omit the value when progress is unknown.",
+  "ai_content": false,
+  "parts": [
+    {"name": "bar", "description": "Progress bar with a name and range.", "guardrail": true},
+    {"name": "copy", "description": "Button that copies text.", "guardrail": true},
+    {"name": "copy-status", "description": "Result of the copy operation.", "guardrail": true},
+    {"name": "details", "description": "Control and technical details of a refusal.", "guardrail": true},
+    {"name": "indicator", "description": "Visible mark for progress with an unknown value.", "guardrail": true},
+    {"name": "label", "description": "Visible name of the progress bar.", "guardrail": true},
+    {"name": "next", "description": "Next step after a refusal.", "guardrail": true},
+    {"name": "reason", "description": "Reason for a refusal.", "guardrail": true},
+    {"name": "value", "description": "Text that shows the value and maximum or the unknown state.", "guardrail": true}
+  ],
+  "data": {
+    "label": {"type": "text", "required": true, "min_length": 1, "size": "line"},
+    "maximum": {"type": "number", "required": true, "minimum": 5e-324, "maximum": 1.7976931348623157e308},
+    "value": {"type": "number", "minimum": 0, "maximum": 1.7976931348623157e308}
+  },
+  "states": ["+loading", "+refused"],
+  "tokens": ["+color.surface", "+color.accent", "+radius.2", "+space.1", "+space.2"],
+  "accessibility": {"role": "progressbar", "name": {"field": "label"}}
+}

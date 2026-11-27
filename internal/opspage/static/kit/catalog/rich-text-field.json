@@ -1,0 +1,49 @@
+{
+  "name": "rich-text-field",
+  "kind": "primitive",
+  "description": "A labeled editor that gives rich text as a tree of typed nodes.",
+  "ai_content": false,
+  "field": true,
+  "parts": [
+    {"name": "copy", "description": "Button that copies text.", "guardrail": true},
+    {"name": "copy-status", "description": "Result of the copy operation.", "guardrail": true},
+    {"name": "details", "description": "Control and technical details of a refusal.", "guardrail": true},
+    {"name": "edit-type", "description": "Choices for the type of edit.", "guardrail": true},
+    {"name": "format", "description": "Format button and its pressed state. Each button is 44 by 44 CSS pixels. Each heading button name starts with its visible glyph.", "guardrail": true},
+    {"name": "icon", "description": "Symbol on a format button or link control.", "guardrail": true},
+    {"name": "input", "description": "Editable text and its focus ring.", "guardrail": true},
+    {"name": "label", "description": "Label of the field.", "guardrail": true},
+    {"name": "link-apply", "description": "Button that applies the link. It shows a check by default.", "guardrail": true},
+    {"name": "link-cancel", "description": "Button that closes the link editor without applying a link. It shows a cross by default.", "guardrail": true},
+    {"name": "link-editor", "description": "Address input and controls for a link.", "guardrail": true},
+    {"name": "link-tooltip", "description": "Name of a link icon control on hover or focus. Escape closes it.", "guardrail": true},
+    {"name": "next", "description": "Next step after a refusal.", "guardrail": true},
+    {"name": "problem", "description": "Reason that a field value is invalid.", "guardrail": true},
+    {"name": "reason", "description": "Reason for a refusal or an edit error.", "guardrail": true},
+    {"name": "status", "description": "Result of an edit that the editor cannot accept.", "guardrail": true},
+    {"name": "toolbar", "description": "Group of format controls.", "guardrail": true},
+    {"name": "tooltip", "description": "Format name shown on hover or focus. Escape closes the tooltip. The event stops only if the tooltip is open and the focus is in the toolbar.", "guardrail": true}
+  ],
+  "data": {
+    "name": {"type": "text", "size": "short"},
+    "label": {"type": "text", "required": true, "min_length": 1, "size": "line"},
+    "value": {"type": "component", "name": "rich-text"},
+    "hint": {"type": "text", "size": "summary"},
+    "error": {"type": "text", "size": "summary"},
+    "required": {"type": "boolean"},
+    "read_only": {"type": "boolean"},
+    "disabled": {"type": "boolean"},
+    "typed": {"type": "boolean"}
+  },
+  "states": ["+disabled", "+error", "+refused"],
+  "tokens": [
+    "color.surface", "color.text", "color.text-muted", "color.border", "color.focus", "color.danger",
+    "color.accent", "color.on-accent", "space.1", "space.2", "space.3", "space.4", "radius.1", "radius.2", "type.body",
+    "type.caption", "type.weight-strong", "motion.fast"
+  ],
+  "accessibility": {
+    "role": "textbox",
+    "name": {"field": "label"},
+    "keyboard": ["Tab", "Shift+Tab", "ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown", "Home", "End", "Enter", "Space", "Escape"]
+  }
+}

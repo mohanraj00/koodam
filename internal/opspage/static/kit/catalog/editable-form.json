@@ -1,6 +1,27 @@
 {
   "name": "editable-form",
-  "description": "A form with up to 20 fields of text, long text, numbers, dates and choices. A person edits the values and submits them as one action, with the type of each edit of a typed field.",
+  "description": "A form with up to 20 kit or registered fields. The form sends the values and the edit types as one action. A pending action offers retry and cancel.",
+  "parts": [
+    {"name": "accept", "description": "Button that confirms the action.", "guardrail": true},
+    {"name": "authorship", "description": "Type and ID of the author, with a name when available.", "guardrail": true},
+    {"name": "button", "description": "Button that starts the action.", "guardrail": false},
+    {"name": "cancel", "description": "Button that cancels a confirmation or an action.", "guardrail": true},
+    {"name": "citation", "description": "Source of the content.", "guardrail": true},
+    {"name": "confirm", "description": "Question and controls for confirmation.", "guardrail": true},
+    {"name": "copy", "description": "Button that copies text.", "guardrail": true},
+    {"name": "copy-status", "description": "Result of the copy operation.", "guardrail": true},
+    {"name": "details", "description": "Control and technical details of a refusal.", "guardrail": true},
+    {"name": "exit", "description": "Controls for a pending action.", "guardrail": true},
+    {"name": "form", "description": "Form that contains the fields and the submit button.", "guardrail": false},
+    {"name": "locator", "description": "Location in the source.", "guardrail": true},
+    {"name": "next", "description": "Next step after a refusal.", "guardrail": true},
+    {"name": "open", "description": "Button that opens the source.", "guardrail": true},
+    {"name": "provenance", "description": "Group that shows the author and the source.", "guardrail": true},
+    {"name": "reason", "description": "Reason for a refusal or an edit error.", "guardrail": true},
+    {"name": "reference", "description": "Reference from the receipt.", "guardrail": true},
+    {"name": "retry", "description": "Button that tries the pending action again.", "guardrail": true},
+    {"name": "status", "description": "State of the action.", "guardrail": true}
+  ],
   "data": {
     "title": {"type": "text", "required": true, "min_length": 1, "size": "title"},
     "fields": {
@@ -10,7 +31,7 @@
       "items": {
         "type": "component",
         "label": "Field",
-        "names": ["field", "long-text-field", "number-field", "date-field", "choice-field"]
+        "field": true
       }
     },
     "submit_label": {"type": "text", "required": true, "min_length": 1, "size": "short"}
@@ -18,7 +39,7 @@
   "states": ["+disabled", "+confirm", "+pending", "+done", "+error"],
   "tokens": [
     "color.surface", "color.text", "color.text-muted", "color.border", "color.accent", "color.on-accent",
-    "color.danger", "color.focus", "space.1", "space.2", "space.3", "space.4", "radius.2", "type.body", "type.caption",
+    "color.danger", "color.success", "color.focus", "space.1", "space.2", "space.3", "space.4", "radius.2", "type.body", "type.caption",
     "type.weight-strong", "motion.fast"
   ],
   "accessibility": {"role": "form", "name": {"field": "title"}, "keyboard": ["Tab", "Shift+Tab", "Enter", "Space"]}

@@ -1,0 +1,26 @@
+{
+  "name": "toast",
+  "description": "A short status message with an optional close button.",
+  "ai_content": false,
+  "parts": [
+    {"name": "close", "description": "Button that closes the toast.", "guardrail": true},
+    {"name": "copy", "description": "Button that copies text.", "guardrail": true},
+    {"name": "copy-status", "description": "Result of the copy operation.", "guardrail": true},
+    {"name": "details", "description": "Control and technical details of a refusal.", "guardrail": true},
+    {"name": "message", "description": "Visible text of the status message.", "guardrail": true},
+    {"name": "next", "description": "Next step after a refusal.", "guardrail": true},
+    {"name": "reason", "description": "Reason for a refusal.", "guardrail": true},
+    {"name": "toast", "description": "Container for the status text and close button.", "guardrail": true}
+  ],
+  "data": {
+    "message": {"type": "text", "required": true, "min_length": 1, "size": "summary"},
+    "kind": {"type": "enum", "values": ["status", "error"]},
+    "close_label": {"type": "text", "min_length": 1, "size": "short"}
+  },
+  "states": ["+open", "+refused"],
+  "tokens": ["+color.surface", "+color.focus", "+color.danger", "+space.2", "+space.3", "+radius.2", "+motion.fast"],
+  "accessibility": {
+    "role": "status", "name": {"text": "Notification"},
+    "keyboard": ["Tab", "Shift+Tab", "Enter", "Space"]
+  }
+}
