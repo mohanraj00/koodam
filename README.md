@@ -40,7 +40,7 @@ The v0.5 parts, and what proves each part:
 - **Metrics.** The controller exports Prometheus metrics, and the chart has an optional `ServiceMonitor`. A unit test compares [docs/metrics.md](docs/metrics.md) with the code.
 - **Tenants and zones.** With `apps.enabled`, a `TenantQuota` gives each tenant of an App a quota and a rate limit. An install with a zone refuses a call of a different zone with a typed reason. The kind test with 2 installs in one cluster proves this. [docs/tenants.md](docs/tenants.md) and [docs/zones.md](docs/zones.md) have the design.
 - **Key rotation.** A new App version rotates the gateway key with a drain time. A kind test shows no failed model call in a rotation of a 2-replica version.
-- **Incident controls.** A `Hold` with the action `Stop` blocks the gateway key of a workload first, and then it stops the pods. The owner of the workload cannot clear it. The envtest suite and a kind test prove this. [docs/holds.md](docs/holds.md) has the design.
+- **Incident controls.** A `Hold` with the action `Stop` blocks the gateway key of a workload first, and then it stops the pods. With the action `Quarantine`, the controller blocks the key and keeps the pods, and the egress proxy refuses each call of the pods. The owner of the workload cannot clear a Hold. The envtest suite, the proxy unit tests and a kind test of `Stop` prove this. [docs/holds.md](docs/holds.md) has the design.
 - **Gateway guard.** An optional hook of the bundled gateway records, marks or blocks known forms of instructions in untrusted content. It is off by default. It is a tripwire for known forms, not a defense.
 
 The v0.4 parts, and what proves each part:
@@ -55,7 +55,10 @@ These limits are open:
 - The controller has no watch on NetworkPolicy, so it restores a deleted policy at the next reconcile ([#359](https://github.com/mohanraj00/koodam/issues/359)).
 - A valid signed approval record is not proof of the current selection ([#364](https://github.com/mohanraj00/koodam/issues/364)).
 - The gate and the signed claim check do not work together ([#354](https://github.com/mohanraj00/koodam/issues/354)).
-- The action `Quarantine` of a Hold is not active yet. A Hold with it shows the reason `Unsupported` ([#185](https://github.com/mohanraj00/koodam/issues/185)).
+- A foreground delete of a quarantined workload, or a direct delete of its pods, Job, StatefulSet or PVC, can still stop the quarantined processes. A finalizer cannot prevent it ([#452](https://github.com/mohanraj00/koodam/issues/452)).
+- The egress proxy finds the pods of an Agent or a Workspace target by the pod labels `koodam.dev/agent` and `koodam.dev/workspace`. A user who can patch the pods can change these labels, and then the proxy does not refuse the calls of the pod ([#452](https://github.com/mohanraj00/koodam/issues/452)).
+- If a user deletes a Workspace before the controller reconciles its quarantine, the Workspace can lose its pod while the Hold is active ([#454](https://github.com/mohanraj00/koodam/issues/454)).
+- If a Profile binds the namespaces of 2 installs and only 1 install has the egress proxy, the Hold can show `Quarantined` while the pods of the other install still send calls out ([#455](https://github.com/mohanraj00/koodam/issues/455)).
 - Each pod of an App has its own token bucket, and the request limit of a tenant comes from a read of the gateway count at an interval. Thus a tenant can get more than its rate or its request limit for a short time ([#428](https://github.com/mohanraj00/koodam/issues/428), [#429](https://github.com/mohanraj00/koodam/issues/429)).
 - The zone placement policy refuses a list of placements. It is not a full control of the node of a pod ([#433](https://github.com/mohanraj00/koodam/issues/433)).
 
