@@ -51,8 +51,9 @@ func harnessCondition(ws *corev1alpha1.Workspace, image, nookkuImage string) met
 
 // addWorkspaceHarnesses adds one init container for each harness of the Workspace. Each init
 // container downloads its harness binary into the same emptyDir and checks its sha256, as for an
-// Agent run. The workspace container mounts the emptyDir read-only at harnessDir. The login
-// PATH of the image has harnessDir. The init containers have no credential env.
+// Agent run. The Workspace container mounts the emptyDir read-only at harnessDir. The default
+// Workspace image links the binaries from /usr/local/bin. SSH commands and login shells have
+// /usr/local/bin on their PATH. The init containers have no credential env.
 // If there is no harness or no installer image, the pod does not change.
 func addWorkspaceHarnesses(pod *corev1.PodSpec, harnesses []corev1alpha1.HarnessSpec, image string) {
 	if len(harnesses) == 0 || image == "" {
