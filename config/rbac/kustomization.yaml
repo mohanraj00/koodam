@@ -33,6 +33,8 @@ resources:
 - spendbudget_viewer_role.yaml
 - hold_admin_role.yaml
 - hold_viewer_role.yaml
+- approvalrecord_creator_role.yaml
+- approvalrecord_viewer_role.yaml
 - agent_admin_role.yaml
 - agent_editor_role.yaml
 - agent_viewer_role.yaml

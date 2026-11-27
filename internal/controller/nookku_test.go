@@ -361,7 +361,7 @@ func TestNookkuPythonCheckFollowsMerge(t *testing.T) {
 // TestNookkuPythonScript runs the script of the Python check with a fake python3. The fake gives the
 // exit code of the version test.
 func TestNookkuPythonScript(t *testing.T) {
-	const want = "The nookku plugin needs python3 3.10 or later on the PATH of the image. The harness did not start.\n"
+	const want = "The nookku plugin needs python3 3.11 or later on the PATH of the image. The harness did not start.\n"
 	for name, c := range map[string]struct {
 		fake string
 		ok   bool

@@ -1,0 +1,19 @@
+# This rule gives read access to the ApprovalRecord objects of a namespace. Bind it with a
+# RoleBinding. An ApprovalRecord has no status. The result of the check is in the status of the
+# Agent.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  labels:
+    app.kubernetes.io/name: koodam
+    app.kubernetes.io/managed-by: kustomize
+  name: approvalrecord-viewer-role
+rules:
+- apiGroups:
+  - core.koodam.dev
+  resources:
+  - approvalrecords
+  verbs:
+  - get
+  - list
+  - watch

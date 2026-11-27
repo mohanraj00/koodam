@@ -27,11 +27,13 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	authnv1 "k8s.io/api/authentication/v1"
+	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
 	eventsv1 "k8s.io/api/events/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	corev1alpha1 "github.com/mohanraj00/koodam/api/v1alpha1"
@@ -140,6 +142,38 @@ func expectHeldWith(h *corev1alpha1.Hold, reason string) {
 		g.Expect(c.Status).To(Equal(metav1.ConditionTrue), c.Message)
 		g.Expect(c.Reason).To(Equal(reason))
 	}, 2*time.Minute).Should(Succeed(), "The Hold does not show the reason "+reason+".")
+}
+
+// expectQuarantinePolicy checks the admission policies of a quarantine on a quarantined Agent, its
+// Job and its pod. The test client is a cluster admin. The policies have no exception for an
+// admin, so each namespace user gets the same refusals.
+func expectQuarantinePolicy(a *corev1alpha1.Agent, pod string) {
+	GinkgoHelper()
+	const label = "koodam.dev/quarantine"
+	p := &corev1.Pod{ObjectMeta: metav1.ObjectMeta{Namespace: a.Namespace, Name: pod}}
+	job := &batchv1.Job{ObjectMeta: metav1.ObjectMeta{Namespace: a.Namespace, Name: "kd-" + a.Name}}
+	all := []client.Object{a, job, p}
+	Eventually(func(g Gomega) {
+		for _, o := range all {
+			g.Expect(k8s.Get(ctx, client.ObjectKeyFromObject(o), o)).To(Succeed())
+			g.Expect(o.GetLabels()).To(HaveKeyWithValue(label, "true"), "%T has no quarantine label", o)
+		}
+	}, time.Minute).Should(Succeed())
+	refused := func(what string, err error) {
+		GinkgoHelper()
+		Expect(apierrors.IsForbidden(err)).To(BeTrue(), "The API server did not refuse %s: %v", what, err)
+	}
+	labels := func(o client.Object, patch string) error {
+		return k8s.Patch(ctx, o, client.RawPatch(types.MergePatchType, []byte(`{"metadata":{"labels":`+patch+`}}`)))
+	}
+	refused("the Foreground delete of the Agent",
+		k8s.Delete(ctx, a, client.PropagationPolicy(metav1.DeletePropagationForeground)))
+	refused("the delete of the pod", k8s.Delete(ctx, p))
+	refused("the delete of the Job", k8s.Delete(ctx, job))
+	for _, o := range all {
+		refused(fmt.Sprintf("the removal of the label of %T", o), labels(o, `{"`+label+`":null}`))
+	}
+	refused("a new value of the pod label "+agentLabel, labels(p, `{"`+agentLabel+`":"other"}`))
 }
 
 // expectStopEvent waits for the Warning event Stopped on the workload, with the Hold as the related

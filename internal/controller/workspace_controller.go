@@ -151,6 +151,7 @@ type WorkspaceReconciler struct {
 // +kubebuilder:rbac:groups=apps,resources=statefulsets,verbs=get;list;watch;create;update
 // +kubebuilder:rbac:groups="",resources=configmaps,verbs=get;list;watch;create;update
 // +kubebuilder:rbac:groups="",resources=secrets,verbs=get;create;delete
+// +kubebuilder:rbac:groups="",resources=persistentvolumeclaims,verbs=patch
 
 // Reconcile makes the objects of the Workspace and writes its status.
 func (r *WorkspaceReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {

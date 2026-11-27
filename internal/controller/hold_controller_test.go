@@ -48,6 +48,7 @@ import (
 // revoke path of each kind: the key block comes before the pod stop.
 var _ = Describe("Hold stop", func() {
 	const stopReason = "The run sends data to an unknown host."
+	const holdImage = "example.com/hold:test"
 	var (
 		ctx   context.Context
 		admin string
@@ -92,6 +93,23 @@ var _ = Describe("Hold stop", func() {
 		Expect(c).NotTo(BeNil())
 		return c
 	}
+	// marked reads o again. It is true if o has the quarantine label.
+	marked := func(o client.Object) bool {
+		GinkgoHelper()
+		Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(o), o)).To(Succeed())
+		return o.GetLabels()[quarantineLabel] == quarantineOn
+	}
+	// newPod makes a pod with the labels of a workload, because envtest has no controller that
+	// makes the pods.
+	newPod := func(ns, name string, labels map[string]string) *corev1.Pod {
+		pod := &corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: ns, Labels: labels},
+			Spec: corev1.PodSpec{Containers: []corev1.Container{{Name: "c", Image: holdImage}}}}
+		Expect(k8sClient.Create(ctx, pod)).To(Succeed())
+		DeferCleanup(func() {
+			Expect(client.IgnoreNotFound(k8sClient.Delete(ctx, pod, client.GracePeriodSeconds(0)))).To(Succeed())
+		})
+		return pod
+	}
 	// stopEvent reads the next event. A Warning event with the reason Stopped has the Hold name,
 	// its user and its reason.
 	stopEvent := func(hold string) {
@@ -117,6 +135,8 @@ var _ = Describe("Hold stop", func() {
 		var (
 			gw   *fakeGateway
 			name string
+			// runPod and latePod are pods of the run. latePod comes after the start of the quarantine.
+			runPod, latePod *corev1.Pod
 		)
 		key := func() types.NamespacedName { return types.NamespacedName{Namespace: ns, Name: name} }
 		agents := func() *AgentReconciler {
@@ -135,7 +155,7 @@ var _ = Describe("Hold stop", func() {
 		newAgent := func() {
 			Expect(k8sClient.Create(ctx, &corev1alpha1.Agent{
 				ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: ns},
-				Spec: corev1alpha1.AgentSpec{Image: "example.com/hold:test", Command: []string{"/hold"},
+				Spec: corev1alpha1.AgentSpec{Image: holdImage, Command: []string{"/hold"},
 					Model: testGatewayModel, Budget: resource.MustParse("1"), DeadlineSeconds: 600},
 			})).To(Succeed())
 			DeferCleanup(func() {
@@ -246,6 +266,7 @@ var _ = Describe("Hold stop", func() {
 			newAgent()
 			reconcileAgent()
 			Expect(job().Spec.ActiveDeadlineSeconds).NotTo(BeNil())
+			runPod = newPod(ns, "kd-"+name+"-pod", map[string]string{agentLabel: name})
 			hold := newHold(corev1alpha1.HoldTarget{Kind: corev1alpha1.HoldTargetAgent, Namespace: ns, Name: name},
 				corev1alpha1.HoldQuarantine)
 			c := held(hold)
@@ -261,13 +282,17 @@ var _ = Describe("Hold stop", func() {
 			j := job()
 			Expect(j.DeletionTimestamp.IsZero()).To(BeTrue())
 			Expect(j.Spec.ActiveDeadlineSeconds).To(BeNil())
+			Expect(marked(a) && marked(j) && marked(runPod)).To(BeTrue(), "the run, its Job and its pod have the label")
 			var e string
 			Eventually(rec.Events).Should(Receive(&e))
 			Expect(e).To(HavePrefix("Warning Quarantined "))
 			Expect(e).To(ContainSubstring(hold))
 
-			// A second reconcile keeps the quarantine and writes no second event.
+			// A second reconcile keeps the quarantine and writes no second event. It adds the label to
+			// a new pod of the run.
+			latePod = newPod(ns, "kd-"+name+"-late", map[string]string{agentLabel: name})
 			reconcileAgent()
+			Expect(marked(latePod)).To(BeTrue())
 			Expect(agent().Status.Phase).To(Equal(corev1alpha1.AgentRunning))
 			Expect(rec.Events).To(BeEmpty())
 			c = held(hold)
@@ -285,6 +310,7 @@ var _ = Describe("Hold stop", func() {
 			expectStopped()
 			a := agent()
 			Expect(a.Finalizers).NotTo(ContainElement(quarantineFinalizer))
+			Expect(marked(a) || marked(runPod) || marked(latePod)).To(BeFalse(), "the release removes the label")
 			Expect(meta.FindStatusCondition(a.Status.Conditions, corev1alpha1.HoldHeld)).To(BeNil())
 			j := &batchv1.Job{}
 			err := k8sClient.Get(ctx, types.NamespacedName{Namespace: ns, Name: "kd-" + name}, j)
@@ -318,6 +344,7 @@ var _ = Describe("Hold stop", func() {
 			j := job()
 			Expect(j.Spec.ActiveDeadlineSeconds).To(BeNil())
 			Expect(j.DeletionTimestamp.IsZero()).To(BeTrue())
+			Expect(marked(a) && marked(j)).To(BeTrue(), "the deleted run and its Job have the label")
 			release(hold)
 			reconcileAgent()
 			Expect(apierrors.IsNotFound(k8sClient.Get(ctx, key(), &corev1alpha1.Agent{}))).To(BeTrue())
@@ -477,6 +504,7 @@ var _ = Describe("Hold stop", func() {
 			Expect(gw.order).To(Equal([]string{opCreate, opBlock, opUsage}))
 			w := workspace()
 			Expect(w.Finalizers).To(ContainElement(quarantineFinalizer))
+			Expect(marked(w) && marked(sts)).To(BeTrue(), "the Workspace and its StatefulSet have the label")
 			Expect(w.Status.KeyHash).To(BeEmpty())
 			Expect(workspaceQuarantined(w)).To(BeTrue())
 			var e string
@@ -500,18 +528,22 @@ var _ = Describe("Hold stop", func() {
 		It("stops the pod after the release of a quarantine, and starts again with a new key", func() {
 			reconcileWorkspace()
 			old := workspace().Status.KeyHash
+			pvc := &corev1.PersistentVolumeClaim{ObjectMeta: metav1.ObjectMeta{Name: "home-" + name + "-0", Namespace: ns},
+				Spec: corev1.PersistentVolumeClaimSpec{AccessModes: []corev1.PersistentVolumeAccessMode{corev1.ReadWriteOnce},
+					Resources: corev1.VolumeResourceRequirements{
+						Requests: corev1.ResourceList{corev1.ResourceStorage: resource.MustParse("1Gi")}}}}
+			Expect(k8sClient.Create(ctx, pvc)).To(Succeed())
 			hold := newHold(corev1alpha1.HoldTarget{Kind: corev1alpha1.HoldTargetWorkspace, Namespace: ns, Name: name},
 				corev1alpha1.HoldQuarantine)
 			reconcileWorkspace()
+			// The quarantined pod stops after the scale to 0.
+			pod := newPod(ns, name+"-0", map[string]string{WorkspaceLabel: name})
 			reconcileWorkspace()
 			Expect(replicas()).To(Equal(int32(1)))
-			// The quarantined pod stops after the scale to 0.
-			pod := &corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: name + "-0", Namespace: ns,
-				Labels: map[string]string{WorkspaceLabel: name}},
-				Spec: corev1.PodSpec{Containers: []corev1.Container{{Name: "c", Image: "example.com/ws:test"}}}}
-			Expect(k8sClient.Create(ctx, pod)).To(Succeed())
+			Expect(marked(pod) && marked(pvc) && marked(sts)).To(BeTrue(), "the pod, the home PVC and the StatefulSet have the label")
 			release(hold)
 			reconcileWorkspace()
+			Expect(marked(pod) || marked(pvc) || marked(sts)).To(BeFalse(), "the release removes the label before the stop")
 			Expect(replicas()).To(Equal(int32(0)))
 			Expect(workspace().Finalizers).To(ContainElement(quarantineFinalizer))
 			res, err := ws.Reconcile(ctx, reconcile.Request{NamespacedName: nn(name)})
@@ -527,6 +559,7 @@ var _ = Describe("Hold stop", func() {
 			Expect(replicas()).To(Equal(int32(1)))
 			w := workspace()
 			Expect(w.Finalizers).NotTo(ContainElement(quarantineFinalizer))
+			Expect(marked(w)).To(BeFalse())
 			Expect(w.Status.KeyHash).NotTo(BeEmpty())
 			Expect(w.Status.KeyHash).NotTo(Equal(old))
 			Expect(meta.FindStatusCondition(w.Status.Conditions, corev1alpha1.HoldHeld)).To(BeNil())
@@ -585,7 +618,7 @@ var _ = Describe("Hold stop", func() {
 			Expect(h.Name).To(Equal(hold))
 			// The label change of the namespace reconciles the Agents in it.
 			a := &corev1alpha1.Agent{ObjectMeta: metav1.ObjectMeta{Name: "job-1", Namespace: later},
-				Spec: corev1alpha1.AgentSpec{Image: "example.com/hold:test", Command: []string{"/hold"},
+				Spec: corev1alpha1.AgentSpec{Image: holdImage, Command: []string{"/hold"},
 					Model: testGatewayModel, Budget: resource.MustParse("1"), DeadlineSeconds: 600}}
 			Expect(k8sClient.Create(ctx, a)).To(Succeed())
 			DeferCleanup(func() { Expect(client.IgnoreNotFound(k8sClient.Delete(ctx, a))).To(Succeed()) })
@@ -661,6 +694,7 @@ var _ = Describe("Hold stop", func() {
 			Expect(k8sClient.Get(ctx, nn(name), v)).To(Succeed())
 			Expect(v.DeletionTimestamp.IsZero()).To(BeFalse())
 			Expect(v.Finalizers).To(Equal([]string{appFinalizer}), "the finalizer of the version keeps it")
+			Expect(marked(v)).To(BeTrue())
 			Expect(appVersionQuarantined(v)).To(BeTrue())
 			Expect(gw.order).To(Equal([]string{opCreate, opBlock}))
 			Expect(k8sClient.Get(ctx, nn("kd-"+name), &appsv1.Deployment{})).To(Succeed())
@@ -671,14 +705,20 @@ var _ = Describe("Hold stop", func() {
 
 		It("quarantines the versions of an App: blocks the key and keeps the pods, then revokes after the release", func() {
 			reconcileVersion()
+			labels := map[string]string{appLabel: appName, appVersionLabel: name}
+			pod := newPod(ns, "kd-"+name+"-pod", labels)
 			hold := newHold(corev1alpha1.HoldTarget{Kind: corev1alpha1.HoldTargetApp, Namespace: ns, Name: appName},
 				corev1alpha1.HoldQuarantine)
 			reconcileVersion()
+			// A second reconcile adds the label to a new pod of the version.
+			late := newPod(ns, "kd-"+name+"-late", labels)
 			reconcileVersion()
 			Expect(gw.order).To(Equal([]string{opCreate, opBlock}))
-			Expect(k8sClient.Get(ctx, nn("kd-"+name), &appsv1.Deployment{})).To(Succeed())
+			d := &appsv1.Deployment{ObjectMeta: metav1.ObjectMeta{Name: "kd-" + name, Namespace: ns}}
 			v := &corev1alpha1.AppVersion{}
 			Expect(k8sClient.Get(ctx, nn(name), v)).To(Succeed())
+			Expect(marked(v) && marked(d) && marked(pod) && marked(late)).To(BeTrue(),
+				"the version, its Deployment and its pods have the label")
 			Expect(v.Finalizers).To(ContainElement(quarantineFinalizer))
 			Expect(appVersionQuarantined(v)).To(BeTrue())
 			Expect(meta.FindStatusCondition(v.Status.Conditions, corev1alpha1.AppVersionRevoking)).To(BeNil())
@@ -691,6 +731,7 @@ var _ = Describe("Hold stop", func() {
 			reconcileVersion()
 			Expect(k8sClient.Get(ctx, nn(name), v)).To(Succeed())
 			Expect(v.Finalizers).To(BeEmpty())
+			Expect(marked(v) || marked(pod) || marked(late)).To(BeFalse(), "the release removes the label")
 			Expect(meta.FindStatusCondition(v.Status.Conditions, corev1alpha1.AppVersionRevoking).Reason).
 				To(Equal(reasonStopped))
 			Expect(meta.IsStatusConditionTrue(v.Status.Conditions, corev1alpha1.AppVersionRevoked)).To(BeTrue())

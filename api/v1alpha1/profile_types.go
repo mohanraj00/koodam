@@ -29,7 +29,8 @@ const ProfileLabel = "koodam.dev/profile"
 const CostGroupLabel = "koodam.dev/cost-group"
 
 // ProfileSpec lists the namespaces and the cost groups that the Profile permits. An admin writes
-// it. The Profile holds no key, no login and no file.
+// it. The Profile holds no credential, no login and no file. The key set of spec.approval has
+// public keys only.
 type ProfileSpec struct {
 	// Namespaces are the namespaces that this Profile permits. A namespace is bound only if this
 	// list has it and the namespace has the label koodam.dev/profile=<Profile name>.
@@ -49,6 +50,44 @@ type ProfileSpec struct {
 	// +kubebuilder:validation:items:MaxLength=63
 	// +kubebuilder:validation:items:Pattern=`^[a-z0-9]([-a-z0-9]*[a-z0-9])?$`
 	CostGroups []string `json:"costGroups,omitempty"`
+
+	// Approval is the trust of the approval records for the Agents of the bound namespaces. An
+	// Agent with spec.approval in a namespace of a Profile with no approval fails with the reason
+	// NoKeySet.
+	// +optional
+	Approval *ProfileApproval `json:"approval,omitempty"`
+}
+
+// ProfileApproval is the key set, the purpose and the maximum age of a signed approval record. Only
+// the admin sets them. A key set from the namespace of the record gives no protection, so the
+// Agent and the ApprovalRecord cannot name one.
+type ProfileApproval struct {
+	// KeySet is the JSON text of the trusted key set of the issuer. It has public keys only.
+	// +required
+	// +kubebuilder:validation:MinLength=1
+	// +kubebuilder:validation:MaxLength=65536
+	KeySet string `json:"keySet"`
+
+	// Scope is the scope that the signed record must have.
+	// +required
+	// +kubebuilder:validation:MinLength=1
+	// +kubebuilder:validation:MaxLength=256
+	Scope string `json:"scope"`
+
+	// Function is the function that the signed record must have.
+	// +required
+	// +kubebuilder:validation:MinLength=1
+	// +kubebuilder:validation:MaxLength=256
+	Function string `json:"function"`
+
+	// MaxAgeSeconds is the maximum age of a decision at the check, from its time decided_at. An
+	// older decision gives the reason Expired. The from and until dates of a decision are the
+	// date range of the approved revision, and not an expiry, so the admin sets the expiry here.
+	// It has no default.
+	// +required
+	// +kubebuilder:validation:Minimum=1
+	// +kubebuilder:validation:Maximum=31536000
+	MaxAgeSeconds int64 `json:"maxAgeSeconds"`
 }
 
 // ProfileStatus is the binding that the controller found.

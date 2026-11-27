@@ -134,11 +134,12 @@ type AgentReconciler struct {
 // +kubebuilder:rbac:groups=core.koodam.dev,resources=agents,verbs=get;list;watch;update
 // +kubebuilder:rbac:groups=core.koodam.dev,resources=agents/status,verbs=update
 // +kubebuilder:rbac:groups=core.koodam.dev,resources=agents/finalizers,verbs=update
+// +kubebuilder:rbac:groups=core.koodam.dev,resources=approvalrecords,verbs=list;watch
 // +kubebuilder:rbac:groups=core.koodam.dev,resources=spendbudgets,verbs=get;list;watch
 // +kubebuilder:rbac:groups=core.koodam.dev,resources=spendbudgets/status,verbs=update
 // +kubebuilder:rbac:groups=batch,resources=jobs,verbs=get;list;watch;create;update;delete
 // +kubebuilder:rbac:groups="",resources=secrets,verbs=get;create;delete
-// +kubebuilder:rbac:groups="",resources=pods,verbs=list
+// +kubebuilder:rbac:groups="",resources=pods,verbs=list;patch
 // +kubebuilder:rbac:groups="",resources=serviceaccounts,verbs=get;create;delete
 // +kubebuilder:rbac:groups=rbac.authorization.k8s.io,resources=roles;rolebindings,verbs=get;create;delete
 
@@ -214,6 +215,11 @@ func (r *AgentReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl
 		if changed {
 			return ctrl.Result{}, r.Status().Update(ctx, a)
 		}
+		return ctrl.Result{}, nil
+	case a.Spec.Approval != nil:
+		// This build has no check of a signed approval record. An Agent that asks for an approval must
+		// not start with no approval, so the run waits: the controller makes no finalizer, key or Job.
+		logf.FromContext(ctx).Info("The approval check is not in this build, so the run waits")
 		return ctrl.Result{}, nil
 	default:
 		err := r.provision(ctx, a)

@@ -25,9 +25,16 @@ rules:
 - apiGroups:
   - ""
   resources:
+  - persistentvolumeclaims
+  verbs:
+  - patch
+- apiGroups:
+  - ""
+  resources:
   - pods
   verbs:
   - list
+  - patch
 - apiGroups:
   - ""
   resources:
@@ -83,6 +90,13 @@ rules:
   - workspaces/status
   verbs:
   - update
+- apiGroups:
+  - core.koodam.dev
+  resources:
+  - approvalrecords
+  verbs:
+  - list
+  - watch
 - apiGroups:
   - core.koodam.dev
   resources:
