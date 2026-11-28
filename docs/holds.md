@@ -46,6 +46,8 @@ The reconciler of each kind reads the Holds and uses the revoke path that it alr
 
 The owner of a workload cannot clear a stop. Only the controller writes the `Held` condition of a Workspace, and a Workspace with this condition gets no gateway key and no test key.
 
+The owner of a workload can remove the owner reference from the Job of an Agent or from the Deployment of an AppVersion. The controller also deletes such an object, but only if it has no controller and it has the labels of the run or of the version. A Job must also have the run ID of the Agent in its pod template. The controller deletes it after it blocks the key, and the garbage collector then deletes its pods. If the owner reference of a pod is also removed, the pod stays, but its gateway key is blocked.
+
 An App and an AppVersion stop only if the App controllers run. If they do not run, the Hold shows the reason `AppsDisabled`. A Profile Hold also shows `AppsDisabled` if a namespace that the Profile binds has an AppVersion.
 
 With two installs in one cluster (see [zones](zones.md)), each manager stops the workloads of its own namespaces only. A Profile can bind namespaces of the two installs. Then each manager counts the workloads of all the bound namespaces, so the two managers write the same status. The status of a Hold on one workload or on one App comes from the install of its namespace.
