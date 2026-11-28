@@ -35,14 +35,18 @@ func main() {
 	}
 }
 
+// versions is the count of API versions in a CRD: v1alpha1 and v1beta1. Each version has one pod
+// template spec.
+const versions = 2
+
 func run(path string) error {
 	b, err := os.ReadFile(path)
 	if err != nil {
 		return err
 	}
 	out, n := patch(string(b))
-	if n != 1 {
-		return fmt.Errorf("%s: found %d pod template specs that require containers, want 1", path, n)
+	if n != versions {
+		return fmt.Errorf("%s: found %d pod template specs that require containers, want %d", path, n, versions)
 	}
 	return os.WriteFile(path, []byte(out), 0o644) //nolint:gosec // The CRD is a public file.
 }

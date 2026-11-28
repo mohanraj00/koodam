@@ -1,0 +1,282 @@
+{{- /*
+The 7 core CRDs and their conversion webhook (#511). The API server calls the webhook to convert
+an Agent, a Workspace or a TestKey between v1alpha1 and v1beta1. The 4 other core kinds have the
+same schema in the two versions, so the API server converts them with no webhook.
+
+All the objects are in this file, because the CRDs and the Secret must use the same CA.
+*/ -}}
+{{- $conv := .Values.conversion | default dict -}}
+{{- if $conv.enabled }}
+{{- $fullname := include "koodam.fullname" . -}}
+{{- $name := printf "%s-conversion" $fullname -}}
+{{- $tls := $conv.tls | default dict -}}
+{{- $certManager := $tls.certManager | default dict -}}
+{{- $issuer := $certManager.issuerRef | default dict -}}
+{{- if and $tls.existingSecret $certManager.enabled }}
+{{- fail "Set only one of conversion.tls.existingSecret and conversion.tls.certManager.enabled." }}
+{{- end }}
+{{- if ne (empty $tls.existingSecret) (empty $tls.caBundle) }}
+{{- fail "conversion.tls.existingSecret and conversion.tls.caBundle are necessary together." }}
+{{- end }}
+{{- if lt (int $conv.replicas) 1 }}
+{{- fail "conversion.replicas must be 1 or more. To have no conversion webhook, set conversion.enabled to false." }}
+{{- end }}
+{{- /* A core CRD of an install before v0.7.0 has no Helm owner, and a CRD of a different release
+has a different owner. Helm refuses the two cases with a message that gives no fix. */ -}}
+{{- range $path, $_ := .Files.Glob "files/core.koodam.dev_*.yaml" }}
+{{- $crdName := (get ($.Files.Get $path | fromYaml) "metadata").name }}
+{{- with lookup "apiextensions.k8s.io/v1" "CustomResourceDefinition" "" $crdName }}
+{{- $annotations := .metadata.annotations | default dict }}
+{{- if or (ne (get $annotations "meta.helm.sh/release-name") $.Release.Name) (ne (get $annotations "meta.helm.sh/release-namespace") $.Release.Namespace) }}
+{{- fail (printf "The CRD %s is in the cluster, and the release %s in the namespace %s does not own it. If a different koodam release owns the CRDs, set conversion.enabled to false. If this is the upgrade of a release from before v0.7.0, do the CRD adoption step of docs/upgrade.md first." $crdName $.Release.Name $.Release.Namespace) }}
+{{- end }}
+{{- end }}
+{{- end }}
+{{- $secret := $tls.existingSecret | default (printf "%s-tls" $name) -}}
+{{- $ca := $tls.caBundle | default "" -}}
+{{- $checksum := "" -}}
+{{- if not (or $tls.existingSecret $certManager.enabled) }}
+{{- /* Keep the certificate of an existing Secret. Else make a CA and a certificate. Do not print the key. */ -}}
+{{- $crt := "" -}}
+{{- $key := "" -}}
+{{- $old := lookup "v1" "Secret" .Release.Namespace $secret -}}
+{{- if and $old $old.data (hasKey $old.data "ca.crt") (hasKey $old.data "tls.crt") (hasKey $old.data "tls.key") }}
+{{- $ca = index $old.data "ca.crt" -}}
+{{- $crt = index $old.data "tls.crt" -}}
+{{- $key = index $old.data "tls.key" -}}
+{{- else }}
+{{- $hosts := list (printf "%s.%s.svc" $name .Release.Namespace) (printf "%s.%s.svc.cluster.local" $name .Release.Namespace) -}}
+{{- $authority := genCA (printf "%s-ca" $name) 3650 -}}
+{{- $cert := genSignedCert (first $hosts) nil $hosts 3650 $authority -}}
+{{- $ca = b64enc $authority.Cert -}}
+{{- $crt = b64enc $cert.Cert -}}
+{{- $key = b64enc $cert.Key -}}
+{{- end }}
+{{- $checksum = sha256sum $crt -}}
+apiVersion: v1
+kind: Secret
+metadata:
+  name: {{ $secret }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "koodam.labels" . | nindent 4 }}
+type: kubernetes.io/tls
+data:
+  ca.crt: {{ $ca }}
+  tls.crt: {{ $crt }}
+  tls.key: {{ $key }}
+---
+{{- end }}
+{{- if $certManager.enabled }}
+{{- if not $issuer.name }}
+apiVersion: cert-manager.io/v1
+kind: Issuer
+metadata:
+  name: {{ $name }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "koodam.labels" . | nindent 4 }}
+spec:
+  selfSigned: {}
+---
+{{- end }}
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: {{ $name }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "koodam.labels" . | nindent 4 }}
+spec:
+  secretName: {{ $secret }}
+  dnsNames:
+  - {{ $name }}.{{ .Release.Namespace }}.svc
+  - {{ $name }}.{{ .Release.Namespace }}.svc.cluster.local
+  issuerRef:
+    name: {{ $issuer.name | default $name }}
+    kind: {{ $issuer.kind | default "Issuer" }}
+    group: {{ $issuer.group | default "cert-manager.io" }}
+---
+{{- end }}
+{{- /* The CRDs come from config/crd/bases (controller-gen). Helm keeps them on an uninstall. */ -}}
+{{- range $path, $_ := .Files.Glob "files/core.koodam.dev_*.yaml" }}
+{{- $crd := $.Files.Get $path | fromYaml }}
+{{- $annotations := merge (dict "helm.sh/resource-policy" "keep") ($crd.metadata.annotations | default dict) }}
+{{- if has $crd.spec.names.kind (list "Agent" "TestKey" "Workspace") }}
+{{- $client := dict "service" (dict "name" $name "namespace" $.Release.Namespace "path" "/convert" "port" 443) }}
+{{- if $certManager.enabled }}
+{{- $_ := set $annotations "cert-manager.io/inject-ca-from" (printf "%s/%s" $.Release.Namespace $name) }}
+{{- else }}
+{{- $_ := set $client "caBundle" $ca }}
+{{- end }}
+{{- $_ := set $crd.spec "conversion" (dict "strategy" "Webhook" "webhook" (dict "conversionReviewVersions" (list "v1") "clientConfig" $client)) }}
+{{- end }}
+{{- $_ := set $crd.metadata "annotations" $annotations }}
+{{- $_ := set $crd.metadata "labels" (include "koodam.labels" $ | fromYaml) }}
+{{ toYaml $crd }}
+---
+{{- end }}
+# The conversion webhook has no API token and no RBAC rule.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ $name }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "koodam.labels" . | nindent 4 }}
+automountServiceAccountToken: false
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ $name }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "koodam.labels" . | nindent 4 }}
+    app.kubernetes.io/component: conversion
+spec:
+  replicas: {{ $conv.replicas }}
+  selector:
+    matchLabels:
+      {{- include "koodam.gatewaySelector" (list . "conversion") | nindent 6 }}
+  template:
+    metadata:
+      {{- if $checksum }}
+      annotations:
+        # A new certificate starts new pods.
+        checksum/tls: {{ $checksum }}
+      {{- end }}
+      labels:
+        {{- include "koodam.gatewaySelector" (list . "conversion") | nindent 8 }}
+    spec:
+      serviceAccountName: {{ $name }}
+      automountServiceAccountToken: false
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      securityContext:
+        runAsNonRoot: true
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+      - name: conversion
+        image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
+        imagePullPolicy: {{ .Values.image.pullPolicy }}
+        command:
+        - /conversion
+        ports:
+        - name: convert
+          containerPort: 9443
+          protocol: TCP
+        securityContext:
+          readOnlyRootFilesystem: true
+          allowPrivilegeEscalation: false
+          capabilities:
+            drop:
+            - ALL
+        livenessProbe:
+          httpGet:
+            path: /readyz
+            port: convert
+            scheme: HTTPS
+          initialDelaySeconds: 15
+          periodSeconds: 20
+        readinessProbe:
+          httpGet:
+            path: /readyz
+            port: convert
+            scheme: HTTPS
+          initialDelaySeconds: 2
+          periodSeconds: 5
+        resources:
+          {{- toYaml $conv.resources | nindent 10 }}
+        volumeMounts:
+        - name: tls
+          mountPath: /etc/koodam/conversion
+          readOnly: true
+      volumes:
+      - name: tls
+        secret:
+          secretName: {{ $secret }}
+      terminationGracePeriodSeconds: 10
+      topologySpreadConstraints:
+      - maxSkew: 1
+        topologyKey: kubernetes.io/hostname
+        whenUnsatisfiable: ScheduleAnyway
+        labelSelector:
+          matchLabels:
+            {{- include "koodam.gatewaySelector" (list . "conversion") | nindent 12 }}
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ $name }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "koodam.labels" . | nindent 4 }}
+    app.kubernetes.io/component: conversion
+spec:
+  ports:
+  - name: convert
+    port: 443
+    protocol: TCP
+    targetPort: convert
+  selector:
+    {{- include "koodam.gatewaySelector" (list . "conversion") | nindent 4 }}
+{{- if gt (int $conv.replicas) 1 }}
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: {{ $name }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "koodam.labels" . | nindent 4 }}
+    app.kubernetes.io/component: conversion
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      {{- include "koodam.gatewaySelector" (list . "conversion") | nindent 6 }}
+{{- end }}
+{{- $policy := $conv.networkPolicy | default dict }}
+{{- if $policy.enabled }}
+---
+# On many clusters the API server is not a pod, and its source address is different on each
+# cluster. Thus the default rule permits each source on the webhook port only, and
+# conversion.networkPolicy.from limits the sources. The process starts no connection, so the
+# policy permits no egress.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ $name }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "koodam.labels" . | nindent 4 }}
+    app.kubernetes.io/component: conversion
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "koodam.gatewaySelector" (list . "conversion") | nindent 6 }}
+  policyTypes:
+  - Ingress
+  - Egress
+  ingress:
+  - ports:
+    - port: 9443
+      protocol: TCP
+    {{- with $policy.from }}
+    from:
+      {{- toYaml . | nindent 4 }}
+    {{- end }}
+{{- end }}
+{{- end }}

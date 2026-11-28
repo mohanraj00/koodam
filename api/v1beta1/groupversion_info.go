@@ -15,10 +15,6 @@ limitations under the License.
 */
 
 // Package v1beta1 contains API Schema definitions for the core v1beta1 API group.
-//
-// The marker kubebuilder:skip keeps this version out of the CRDs. The API server does not have
-// v1beta1 until the conversion webhook of #511 is in the install.
-// +kubebuilder:skip
 // +kubebuilder:object:generate=true
 // +groupName=core.koodam.dev
 package v1beta1

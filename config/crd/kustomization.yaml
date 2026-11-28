@@ -1,6 +1,5 @@
-# This kustomization.yaml is not intended to be run by itself,
-# since it depends on service name and namespace that are out of this kustomize package.
-# It should be run by config/default
+# `make install` builds this package by itself, and config/default builds it with the manager and
+# the conversion webhook.
 resources:
 - bases/core.koodam.dev_agents.yaml
 - bases/core.koodam.dev_approvalrecords.yaml
@@ -11,12 +10,12 @@ resources:
 - bases/core.koodam.dev_spendbudgets.yaml
 # +kubebuilder:scaffold:crdkustomizeresource
 
-patches:
-# [WEBHOOK] To enable webhook, uncomment all the sections with [WEBHOOK] prefix.
-# patches here are for enabling the conversion webhook for each CRD
+# This package has no conversion patch. `make install` builds this package only, and it must not
+# give a CRD that names a webhook Service that is not there. config/default adds the conversion
+# webhook of the Agent, the TestKey and the Workspace (crd_conversion_patch.yaml).
 # +kubebuilder:scaffold:crdkustomizewebhookpatch
 
-# [WEBHOOK] To enable webhook, uncomment the following section
-# the following config is for teaching kustomize how to do kustomization for CRDs.
-#configurations:
-#- kustomizeconfig.yaml
+# This configuration tells kustomize where a CRD names the conversion Service. config/default
+# uses it to set the name and the namespace of that Service.
+configurations:
+- kustomizeconfig.yaml

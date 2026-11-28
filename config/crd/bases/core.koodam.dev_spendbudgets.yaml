@@ -33,7 +33,219 @@ spec:
     - jsonPath: .metadata.creationTimestamp
       name: Age
       type: date
+    deprecated: true
+    deprecationWarning: core.koodam.dev/v1alpha1 is deprecated. Use core.koodam.dev/v1beta1.
     name: v1alpha1
+    schema:
+      openAPIV3Schema:
+        description: |-
+          SpendBudget is the period budget of the Agent runs of a namespace. A run starts only if the
+          spend and the reservations of the period, with the budget of the run, are not more than the
+          limit. Otherwise the run waits for the next period.
+        properties:
+          apiVersion:
+            description: |-
+              APIVersion defines the versioned schema of this representation of an object.
+              Servers should convert recognized schemas to the latest internal value, and
+              may reject unrecognized values.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#resources
+            type: string
+          kind:
+            description: |-
+              Kind is a string value representing the REST resource this object represents.
+              Servers may infer this from the endpoint the client submits requests to.
+              Cannot be updated.
+              In CamelCase.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds
+            type: string
+          metadata:
+            type: object
+          spec:
+            description: spec defines the desired state of SpendBudget
+            properties:
+              period:
+                default: Day
+                description: |-
+                  Period is the length of one budget period: Day or Month. Koodam starts each period at a
+                  UTC calendar boundary.
+                enum:
+                - Day
+                - Month
+                type: string
+              spend:
+                anyOf:
+                - type: integer
+                - type: string
+                description: |-
+                  Spend is the maximum spend in one period, in the currency of the gateway price table. It
+                  must be more than zero.
+                pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                x-kubernetes-int-or-string: true
+                x-kubernetes-validations:
+                - message: spend must be more than zero
+                  rule: quantity(string(self)).isGreaterThan(quantity('0'))
+            required:
+            - spend
+            type: object
+          status:
+            description: status defines the observed state of SpendBudget
+            properties:
+              conditions:
+                description: 'Conditions are the conditions of the SpendBudget: Ready
+                  and BudgetExceeded.'
+                items:
+                  description: Condition contains details for one aspect of the current
+                    state of this API Resource.
+                  properties:
+                    lastTransitionTime:
+                      description: |-
+                        lastTransitionTime is the last time the condition transitioned from one status to another.
+                        This should be when the underlying condition changed.  If that is not known, then using the time when the API field changed is acceptable.
+                      format: date-time
+                      type: string
+                    message:
+                      description: |-
+                        message is a human readable message indicating details about the transition.
+                        This may be an empty string.
+                      maxLength: 32768
+                      type: string
+                    observedGeneration:
+                      description: |-
+                        observedGeneration represents the .metadata.generation that the condition was set based upon.
+                        For instance, if .metadata.generation is currently 12, but the .status.conditions[x].observedGeneration is 9, the condition is out of date
+                        with respect to the current state of the instance.
+                      format: int64
+                      minimum: 0
+                      type: integer
+                    reason:
+                      description: |-
+                        reason contains a programmatic identifier indicating the reason for the condition's last transition.
+                        Producers of specific condition types may define expected values and meanings for this field,
+                        and whether the values are considered a guaranteed API.
+                        The value should be a CamelCase string.
+                        This field may not be empty.
+                      maxLength: 1024
+                      minLength: 1
+                      pattern: ^[A-Za-z]([A-Za-z0-9_,:]*[A-Za-z0-9_])?$
+                      type: string
+                    status:
+                      description: status of the condition, one of True, False, Unknown.
+                      enum:
+                      - "True"
+                      - "False"
+                      - Unknown
+                      type: string
+                    type:
+                      description: type of condition in CamelCase or in foo.example.com/CamelCase.
+                      maxLength: 316
+                      pattern: ^([a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*/)?(([A-Za-z0-9][-A-Za-z0-9_.]*)?[A-Za-z0-9])$
+                      type: string
+                  required:
+                  - lastTransitionTime
+                  - message
+                  - reason
+                  - status
+                  - type
+                  type: object
+                type: array
+                x-kubernetes-list-map-keys:
+                - type
+                x-kubernetes-list-type: map
+              observedTime:
+                description: ObservedTime is the time when the controller last wrote
+                  a change of the status.
+                format: date-time
+                type: string
+              periodEnd:
+                description: PeriodEnd is the start of the next period.
+                format: date-time
+                type: string
+              periodStart:
+                description: PeriodStart is the start of the current period.
+                format: date-time
+                type: string
+              reservations:
+                description: |-
+                  Reservations are the active runs that the ledger holds. A run that cannot get a place in
+                  this list waits.
+                items:
+                  description: SpendReservation is the budget of one active run that
+                    the ledger holds for the current period.
+                  properties:
+                    agent:
+                      description: Agent is the name of the Agent.
+                      maxLength: 253
+                      minLength: 1
+                      type: string
+                    budget:
+                      description: Budget is the run budget that the ledger holds,
+                        as a decimal number.
+                      maxLength: 64
+                      minLength: 1
+                      type: string
+                    runID:
+                      description: RunID is the run ID of the Agent, which is its
+                        UID.
+                      maxLength: 63
+                      minLength: 1
+                      type: string
+                  required:
+                  - agent
+                  - budget
+                  - runID
+                  type: object
+                maxItems: 500
+                type: array
+                x-kubernetes-list-map-keys:
+                - runID
+                x-kubernetes-list-type: map
+              reserved:
+                description: |-
+                  Reserved is the sum of the budgets of the active runs that started in the current
+                  period, as a decimal number.
+                type: string
+              spend:
+                description: |-
+                  Spend is the settled spend of the runs that started in the current period and ended, as
+                  a decimal number.
+                type: string
+              waitingRuns:
+                description: WaitingRuns is the count of the runs of the namespace
+                  that wait for the next period.
+                format: int32
+                type: integer
+            type: object
+        required:
+        - spec
+        type: object
+        x-kubernetes-validations:
+        - message: the name of a SpendBudget must be default, so that a namespace
+            has only one.
+          rule: self.metadata.name == 'default'
+    served: true
+    storage: false
+    subresources:
+      status: {}
+  - additionalPrinterColumns:
+    - jsonPath: .spec.period
+      name: Period
+      type: string
+    - jsonPath: .spec.spend
+      name: Limit
+      type: string
+    - jsonPath: .status.spend
+      name: Spend
+      type: string
+    - jsonPath: .status.reserved
+      name: Reserved
+      type: string
+    - jsonPath: .status.waitingRuns
+      name: Waiting
+      type: integer
+    - jsonPath: .metadata.creationTimestamp
+      name: Age
+      type: date
+    name: v1beta1
     schema:
       openAPIV3Schema:
         description: |-

@@ -189,6 +189,7 @@ type AppStatus struct {
 }
 
 // +kubebuilder:object:root=true
+// +kubebuilder:deprecatedversion:warning="core.koodam.dev/v1alpha1 is deprecated. Use core.koodam.dev/v1beta1."
 // +kubebuilder:subresource:status
 // +kubebuilder:printcolumn:name="Max live",type=integer,JSONPath=`.spec.maxLiveVersions`
 // +kubebuilder:printcolumn:name="Age",type=date,JSONPath=`.metadata.creationTimestamp`

@@ -128,6 +128,7 @@ type SpendBudgetStatus struct {
 }
 
 // +kubebuilder:object:root=true
+// +kubebuilder:storageversion
 // +kubebuilder:subresource:status
 // +kubebuilder:validation:XValidation:rule="self.metadata.name == 'default'",message="the name of a SpendBudget must be default, so that a namespace has only one."
 // +kubebuilder:printcolumn:name="Period",type=string,JSONPath=`.spec.period`

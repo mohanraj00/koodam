@@ -157,6 +157,13 @@ func TestOnlyTheKnownChangesFromV1alpha1(t *testing.T) {
 	want = change(t, want, "type HarnessPlugin string ", "+kubebuilder:validation:Enum=nookku",
 		"+kubebuilder:validation:MaxLength=63 | +kubebuilder:validation:Pattern=`^[a-z0-9]([-a-z0-9]*[a-z0-9])?$`")
 	want = change(t, want, "const HarnessPluginNookku ", "", "")
+	// v1alpha1 is deprecated, and v1beta1 is the storage version, for each of the 10 kinds.
+	for _, kind := range []string{"Agent", "App", "AppVersion", "ApprovalRecord", "Hold", "Profile", "SpendBudget",
+		"TenantQuota", "TestKey", "Workspace"} {
+		want = change(t, want, "type "+kind+" struct ",
+			`+kubebuilder:deprecatedversion:warning="core.koodam.dev/v1alpha1 is deprecated. Use core.koodam.dev/v1beta1."`,
+			"+kubebuilder:storageversion")
+	}
 
 	got := signature(t, ".")
 	for i := range max(len(got), len(want)) {

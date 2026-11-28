@@ -1,0 +1,17 @@
+# The conversion webhook of a CRD. kustomization.yaml applies this patch to 3 CRDs and sets the
+# name and the namespace of the Service.
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: conversion
+spec:
+  conversion:
+    strategy: Webhook
+    webhook:
+      clientConfig:
+        service:
+          namespace: system
+          name: conversion-service
+          path: /convert
+      conversionReviewVersions:
+      - v1

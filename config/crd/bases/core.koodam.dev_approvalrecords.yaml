@@ -21,7 +21,101 @@ spec:
     - jsonPath: .metadata.creationTimestamp
       name: Age
       type: date
+    deprecated: true
+    deprecationWarning: core.koodam.dev/v1alpha1 is deprecated. Use core.koodam.dev/v1beta1.
     name: v1alpha1
+    schema:
+      openAPIV3Schema:
+        description: |-
+          ApprovalRecord is the carrier of a signed approval decision for one Agent. It has no status:
+          the Agent controller verifies the decision and writes the result to the status of the Agent.
+        properties:
+          apiVersion:
+            description: |-
+              APIVersion defines the versioned schema of this representation of an object.
+              Servers should convert recognized schemas to the latest internal value, and
+              may reject unrecognized values.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#resources
+            type: string
+          kind:
+            description: |-
+              Kind is a string value representing the REST resource this object represents.
+              Servers may infer this from the endpoint the client submits requests to.
+              Cannot be updated.
+              In CamelCase.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds
+            type: string
+          metadata:
+            type: object
+          spec:
+            description: spec defines the desired state of ApprovalRecord
+            properties:
+              manifest:
+                description: |-
+                  Manifest is the bytes of the content manifest that the snapshot record names: 65,536 bytes
+                  maximum. The manifest names the digest of the approval request of the run.
+                format: byte
+                maxLength: 87384
+                minLength: 1
+                type: string
+                x-kubernetes-validations:
+                - message: spec.manifest must have 65,536 bytes or fewer
+                  rule: size(self) <= 65536
+              signedRecord:
+                description: |-
+                  SignedRecord is the bytes of the signed decision: 1,000,000 bytes maximum. The maximum
+                  length of the base64 text is 1,333,336 characters.
+                format: byte
+                maxLength: 1333336
+                minLength: 1
+                type: string
+                x-kubernetes-validations:
+                - message: spec.signedRecord must have 1,000,000 bytes or fewer
+                  rule: size(self) <= 1000000
+              snapshotRecord:
+                description: |-
+                  SnapshotRecord is the stored bytes of the snapshot record that the decision names: 65,536
+                  bytes maximum.
+                format: byte
+                maxLength: 87384
+                minLength: 1
+                type: string
+                x-kubernetes-validations:
+                - message: spec.snapshotRecord must have 65,536 bytes or fewer
+                  rule: size(self) <= 65536
+              target:
+                description: |-
+                  Target is the name of the Agent, in the namespace of this resource. It is a selectable
+                  field, so the controller lists only the records of one Agent.
+                maxLength: 253
+                minLength: 1
+                pattern: ^[a-z0-9]([-.a-z0-9]*[a-z0-9])?$
+                type: string
+            required:
+            - manifest
+            - signedRecord
+            - snapshotRecord
+            - target
+            type: object
+            x-kubernetes-validations:
+            - message: spec is immutable
+              rule: self == oldSelf
+        required:
+        - spec
+        type: object
+    selectableFields:
+    - jsonPath: .spec.target
+    served: true
+    storage: false
+    subresources: {}
+  - additionalPrinterColumns:
+    - jsonPath: .spec.target
+      name: Target
+      type: string
+    - jsonPath: .metadata.creationTimestamp
+      name: Age
+      type: date
+    name: v1beta1
     schema:
       openAPIV3Schema:
         description: |-

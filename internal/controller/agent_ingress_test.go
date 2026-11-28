@@ -122,11 +122,14 @@ var _ = Describe("Agent ingress port", func() {
 			Expect(crd.GetAnnotations()).To(HaveKeyWithValue(modeKey, "disabled"))
 			versions, _, err := unstructured.NestedSlice(crd.Object, specKey, "versions")
 			Expect(err).NotTo(HaveOccurred())
-			Expect(versions).To(HaveLen(1))
-			rules, _, err := unstructured.NestedSlice(versions[0].(map[string]any),
-				"schema", "openAPIV3Schema", "properties", specKey, "x-kubernetes-validations")
-			Expect(err).NotTo(HaveOccurred())
-			Expect(rules).To(ContainElement(HaveKeyWithValue("rule", "!has(self.ingressPort)")))
+			// The CRD has v1alpha1 and v1beta1. Each version has the gate.
+			Expect(versions).To(HaveLen(2))
+			for _, version := range versions {
+				rules, _, err := unstructured.NestedSlice(version.(map[string]any),
+					"schema", "openAPIV3Schema", "properties", specKey, "x-kubernetes-validations")
+				Expect(err).NotTo(HaveOccurred())
+				Expect(rules).To(ContainElement(HaveKeyWithValue("rule", "!has(self.ingressPort)")))
+			}
 		})
 
 		It("accepts an Agent with no port and its metadata updates, and adds no default", func() {

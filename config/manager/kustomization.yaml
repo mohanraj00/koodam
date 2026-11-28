@@ -1,2 +1,4 @@
 resources:
 - manager.yaml
+# The conversion webhook is here, so that the image of the manager is also its image.
+- conversion.yaml

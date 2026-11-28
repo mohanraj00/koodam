@@ -55,16 +55,19 @@ var _ = Describe("Agent printer columns", func() {
 			types.NamespacedName{Name: "agents." + corev1alpha1.GroupVersion.Group}, crd)).To(Succeed())
 		versions, _, err := unstructured.NestedSlice(crd.Object, "spec", "versions")
 		Expect(err).NotTo(HaveOccurred())
-		Expect(versions).To(HaveLen(1))
-		cols, _, err := unstructured.NestedSlice(versions[0].(map[string]any), "additionalPrinterColumns")
-		Expect(err).NotTo(HaveOccurred())
-		paths := map[string]string{}
-		for _, c := range cols {
-			m := c.(map[string]any)
-			paths[m["name"].(string)] = m["jsonPath"].(string)
+		// The CRD has v1alpha1 and v1beta1. Each version has the columns.
+		Expect(versions).To(HaveLen(2))
+		for _, version := range versions {
+			cols, _, err := unstructured.NestedSlice(version.(map[string]any), "additionalPrinterColumns")
+			Expect(err).NotTo(HaveOccurred())
+			paths := map[string]string{}
+			for _, c := range cols {
+				m := c.(map[string]any)
+				paths[m["name"].(string)] = m["jsonPath"].(string)
+			}
+			Expect(paths).To(HaveKeyWithValue("Phase", ".status.phase"))
+			Expect(paths).To(HaveKeyWithValue("Spend", ".status.usage.spend"))
 		}
-		Expect(paths).To(HaveKeyWithValue("Phase", ".status.phase"))
-		Expect(paths).To(HaveKeyWithValue("Spend", ".status.usage.spend"))
 	})
 })
 

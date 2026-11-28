@@ -17,12 +17,16 @@ namePrefix: koodam-
 resources:
 - ../crd
 - ../rbac
+# The manager, and the conversion webhook of the CRDs (#511). The webhook is a separate Deployment
+# with no API token. The CRDs of the Agent, the Workspace and the TestKey need it, and it needs
+# the certificate below.
 - ../manager
 # [WEBHOOK] To enable webhook, uncomment all the sections with [WEBHOOK] prefix including the one in
 # crd/kustomization.yaml
 #- ../webhook
 # [CERTMANAGER] To enable cert-manager, uncomment all sections with 'CERTMANAGER'. 'WEBHOOK' components are required.
-#- ../certmanager
+# The conversion webhook uses it, so cert-manager must be in the cluster.
+- ../certmanager
 # [PROMETHEUS] To enable prometheus monitor, uncomment all sections with 'PROMETHEUS'.
 #- ../prometheus
 # [METRICS] Expose the controller manager metrics service.
@@ -39,6 +43,14 @@ patches:
 - path: manager_metrics_patch.yaml
   target:
     kind: Deployment
+    name: controller-manager
+# The conversion webhook of the 3 kinds that differ between v1alpha1 and v1beta1 (#511). The 4
+# other kinds have the same schema in the two versions, so the API server converts them with no
+# webhook. The patch is here and not in ../crd, because the Service and the certificate are here.
+- path: crd_conversion_patch.yaml
+  target:
+    kind: CustomResourceDefinition
+    name: (agents|testkeys|workspaces)\.core\.koodam\.dev
 
 # Uncomment the patches line if you enable Metrics and CertManager
 # [METRICS-WITH-CERTS] To enable metrics protected with certManager, uncomment the following line.
@@ -55,7 +67,108 @@ patches:
 
 # [CERTMANAGER] To enable cert-manager, uncomment all sections with 'CERTMANAGER' prefix.
 # Uncomment the following replacements to add the cert-manager CA injection annotations
-#replacements:
+replacements:
+# The DNS names of the conversion certificate come from the conversion Service.
+- source:
+    kind: Service
+    version: v1
+    name: conversion-service
+    fieldPath: .metadata.name
+  targets:
+    - select:
+        kind: Certificate
+        group: cert-manager.io
+        version: v1
+        name: conversion-cert
+      fieldPaths:
+        - .spec.dnsNames.0
+        - .spec.dnsNames.1
+      options:
+        delimiter: '.'
+        index: 0
+        create: true
+- source:
+    kind: Service
+    version: v1
+    name: conversion-service
+    fieldPath: .metadata.namespace
+  targets:
+    - select:
+        kind: Certificate
+        group: cert-manager.io
+        version: v1
+        name: conversion-cert
+      fieldPaths:
+        - .spec.dnsNames.0
+        - .spec.dnsNames.1
+      options:
+        delimiter: '.'
+        index: 1
+        create: true
+# cert-manager puts the CA of the conversion certificate in each CRD that has this annotation.
+- source:
+    kind: Certificate
+    group: cert-manager.io
+    version: v1
+    name: conversion-cert
+    fieldPath: .metadata.namespace
+  targets:
+    - select:
+        kind: CustomResourceDefinition
+        name: agents.core.koodam.dev
+      fieldPaths: &inject
+        - .metadata.annotations.[cert-manager.io/inject-ca-from]
+      options:
+        delimiter: '/'
+        index: 0
+        create: true
+    - select:
+        kind: CustomResourceDefinition
+        name: testkeys.core.koodam.dev
+      fieldPaths: *inject
+      options:
+        delimiter: '/'
+        index: 0
+        create: true
+    - select:
+        kind: CustomResourceDefinition
+        name: workspaces.core.koodam.dev
+      fieldPaths: *inject
+      options:
+        delimiter: '/'
+        index: 0
+        create: true
+- source:
+    kind: Certificate
+    group: cert-manager.io
+    version: v1
+    name: conversion-cert
+    fieldPath: .metadata.name
+  targets:
+    - select:
+        kind: CustomResourceDefinition
+        name: agents.core.koodam.dev
+      fieldPaths: *inject
+      options:
+        delimiter: '/'
+        index: 1
+        create: true
+    - select:
+        kind: CustomResourceDefinition
+        name: testkeys.core.koodam.dev
+      fieldPaths: *inject
+      options:
+        delimiter: '/'
+        index: 1
+        create: true
+    - select:
+        kind: CustomResourceDefinition
+        name: workspaces.core.koodam.dev
+      fieldPaths: *inject
+      options:
+        delimiter: '/'
+        index: 1
+        create: true
 # - source: # Uncomment the following block to enable certificates for metrics
 #     kind: Service
 #     version: v1

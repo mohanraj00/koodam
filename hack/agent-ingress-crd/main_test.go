@@ -88,12 +88,21 @@ func mustVariants(t *testing.T, in []byte) (def, en []byte) {
 	return def, en
 }
 
-// editSpec returns an edit of the AgentSpec schema.
+// editSpec returns an edit of the AgentSpec schema of each version.
 func editSpec(f func(*schema)) func(*agentCRD) {
 	return func(crd *agentCRD) {
-		s := props(crd)[specField]
+		for i := range crd.Spec.Versions {
+			editVersion(i, f)(crd)
+		}
+	}
+}
+
+// editVersion returns an edit of the AgentSpec schema of version i.
+func editVersion(i int, f func(*schema)) func(*agentCRD) {
+	return func(crd *agentCRD) {
+		s := props(crd, i)[specField]
 		f(&s)
-		props(crd)[specField] = s
+		props(crd, i)[specField] = s
 	}
 }
 
@@ -132,29 +141,34 @@ func TestOnlyTheGateAndTheModeAreDifferent(t *testing.T) {
 	if def.Metadata.Annotations[modeKey] != disabled || en.Metadata.Annotations[modeKey] != enabled {
 		t.Fatal("the mode annotations are not disabled and enabled")
 	}
-	if rs := props(def)[specField].XValidations; rs[len(rs)-1] != gate {
-		t.Fatal("the last rule of the default CRD is not the disabled gate")
+	if len(def.Spec.Versions) != len(versions) || len(en.Spec.Versions) != len(versions) {
+		t.Fatal("a variant does not have each version")
 	}
-	// The immutability rule also has the text !has(self.ingressPort). Thus compare whole rules, not bytes.
-	for _, r := range props(en)[specField].XValidations {
-		if r.Rule == gateRule || r.Message == gateMessage || strings.Contains(r.Message, "spec.ingressPort is disabled") {
-			t.Fatal("the enabled CRD has the disabled gate")
+	for i := range versions {
+		if rs := props(def, i)[specField].XValidations; rs[len(rs)-1] != gate {
+			t.Fatal("the last rule of the default CRD is not the disabled gate")
 		}
-	}
-
-	// Both variants have the API field and its immutability rule.
-	for _, crd := range []*agentCRD{def, en} {
-		s := props(crd)[specField]
-		if checkPort(s) != nil || !slices.Contains(s.XValidations, rule{Rule: immutableRule, Message: immutableMessage}) {
-			t.Fatal("a variant does not have spec.ingressPort and its immutability rule")
+		// The immutability rule also has the text !has(self.ingressPort). Thus compare whole rules, not bytes.
+		for _, r := range props(en, i)[specField].XValidations {
+			if r.Rule == gateRule || r.Message == gateMessage || strings.Contains(r.Message, "spec.ingressPort is disabled") {
+				t.Fatal("the enabled CRD has the disabled gate")
+			}
 		}
-	}
 
-	// The enabled variant keeps the full pod template and its shared rules.
-	tmpl := props(en)[specField].Properties["podTemplate"]
-	if _, ok := tmpl.Properties[specField].Properties["initContainers"]; !ok ||
-		!strings.Contains(fmt.Sprint(tmpl.XValidations), "has(self.spec.ephemeralContainers)") {
-		t.Fatal("the enabled CRD does not have the full pod template")
+		// Both variants have the API field and its immutability rule.
+		for _, crd := range []*agentCRD{def, en} {
+			s := props(crd, i)[specField]
+			if checkPort(s) != nil || !slices.Contains(s.XValidations, rule{Rule: immutableRule, Message: immutableMessage}) {
+				t.Fatal("a variant does not have spec.ingressPort and its immutability rule")
+			}
+		}
+
+		// The enabled variant keeps the full pod template and its shared rules.
+		tmpl := props(en, i)[specField].Properties["podTemplate"]
+		if _, ok := tmpl.Properties[specField].Properties["initContainers"]; !ok ||
+			!strings.Contains(fmt.Sprint(tmpl.XValidations), "has(self.spec.ephemeralContainers)") {
+			t.Fatal("the enabled CRD does not have the full pod template")
+		}
 	}
 
 	// With no mode, the enabled variant is the input byte for byte. This keeps each default and
@@ -191,6 +205,13 @@ func TestRefusesUnexpectedInput(t *testing.T) {
 		"no immutability rule": editRules(func(rs []rule) []rule {
 			return slices.DeleteFunc(rs, func(r rule) bool { return r.Rule == immutableRule })
 		}),
+		"no gate in one version": editVersion(1, func(s *schema) {
+			s.XValidations = s.XValidations[:len(s.XValidations)-1]
+		}),
+		"one version":             func(c *agentCRD) { c.Spec.Versions = c.Spec.Versions[:1] },
+		"v1beta1 not served":      func(c *agentCRD) { c.Spec.Versions[1].Served = false },
+		"v1alpha1 not deprecated": func(c *agentCRD) { c.Spec.Versions[0].Deprecated = false },
+		"two stored versions":     func(c *agentCRD) { c.Spec.Versions[0].Storage = true },
 	}
 	for name, edit := range edits {
 		crd := mustParse(t, in)
