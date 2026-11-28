@@ -27,6 +27,7 @@ import (
 	"strings"
 	"time"
 
+	appsv1 "k8s.io/api/apps/v1"
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
 	rbacv1 "k8s.io/api/rbac/v1"
@@ -141,6 +142,7 @@ type AgentReconciler struct {
 // +kubebuilder:rbac:groups=batch,resources=jobs,verbs=get;list;watch;create;update;delete
 // +kubebuilder:rbac:groups="",resources=secrets,verbs=get;create;delete
 // +kubebuilder:rbac:groups="",resources=pods,verbs=list;patch
+// +kubebuilder:rbac:groups=policy,resources=poddisruptionbudgets,verbs=get;create;patch;delete
 // +kubebuilder:rbac:groups="",resources=serviceaccounts,verbs=get;create;delete
 // +kubebuilder:rbac:groups=rbac.authorization.k8s.io,resources=roles;rolebindings,verbs=get;create;delete
 
@@ -499,7 +501,7 @@ func (r *AgentReconciler) provision(ctx context.Context, a *corev1alpha1.Agent) 
 		TTL: time.Duration(a.Spec.DeadlineSeconds)*time.Second + r.Grace, Metadata: keyMetadata(a),
 	})
 	if err != nil {
-		return err
+		return agentGatewayError("CreateKey", err)
 	}
 	user, err := boundProfile(ctx, r.Client, a.Namespace)
 	if err != nil {
@@ -544,6 +546,21 @@ func (r *AgentReconciler) provision(ctx context.Context, a *corev1alpha1.Agent) 
 	meta.SetStatusCondition(&a.Status.Conditions, r.Egress.condition(a.Generation))
 	log.Info("Provisioned the run", "keyAlias", alias)
 	return r.Status().Update(ctx, a)
+}
+
+// errAgentGateway is the error of a gateway call of the Agent controller that failed, with no
+// text of the gateway.
+var errAgentGateway = errors.New("a call to the gateway failed")
+
+// agentGatewayError gives the error that Reconcile returns for the error err of the gateway call
+// op. The text of a gateway error can have data of the gateway, and controller-runtime writes a
+// returned error to the manager log. Thus the result has fixed text, the call and, for an HTTP
+// answer, the status.
+func agentGatewayError(op string, err error) error {
+	if he, ok := errors.AsType[*gateway.HTTPError](err); ok {
+		return fmt.Errorf("%w: %s: HTTP %d", errAgentGateway, op, he.Status)
+	}
+	return fmt.Errorf("%w: %s", errAgentGateway, op)
 }
 
 // keyMetadata is the metadata of the gateway key of a run. The gateway can then group the spend
@@ -886,7 +903,7 @@ func (r *AgentReconciler) fail(ctx context.Context, a *corev1alpha1.Agent, phase
 func (r *AgentReconciler) revoke(ctx context.Context, a *corev1alpha1.Agent) error {
 	if a.Status.KeyHash != "" {
 		if err := r.Gateway.BlockKey(ctx, a.Status.KeyHash); err != nil {
-			return err
+			return agentGatewayError("BlockKey", err)
 		}
 	}
 	reason := "Revoked"
@@ -927,10 +944,59 @@ func (r *AgentReconciler) revoke(ctx context.Context, a *corev1alpha1.Agent) err
 	return nil
 }
 
-// deleteOwned deletes the run object of this kind. It keeps an object that is not from this Agent.
-// The UID precondition stops the delete if the object changed after the read.
+// orphanWorkload is true if o is a workload with no controller and with each label of want. A
+// user can remove the owner reference of a workload, or delete its owner with the propagation
+// Orphan. A stop then deletes the workload of the run, so that no pod of the run stays. A workload
+// that a different object controls stays.
+func orphanWorkload(o client.Object, want map[string]string) bool {
+	switch o.(type) {
+	case *batchv1.Job, *appsv1.Deployment:
+	default:
+		return false
+	}
+	if metav1.GetControllerOf(o) != nil {
+		return false
+	}
+	for k, v := range want {
+		if o.GetLabels()[k] != v {
+			return false
+		}
+	}
+	return true
+}
+
+// jobOfRun is true if o is a Job whose agent container has the run ID of a. The pod template of a
+// Job is immutable, so only a Job that was made for this run has it. The last value of the
+// variable applies, as in the kubelet.
+func jobOfRun(o client.Object, a *corev1alpha1.Agent) bool {
+	job, ok := o.(*batchv1.Job)
+	if !ok {
+		return false
+	}
+	runID := ""
+	for _, c := range job.Spec.Template.Spec.Containers {
+		if c.Name != agentContainer {
+			continue
+		}
+		for _, e := range c.Env {
+			if e.Name == runIDEnv {
+				runID = e.Value
+			}
+		}
+	}
+	return runID != "" && runID == string(a.UID)
+}
+
+// deleteOwned deletes the run object of this kind. It keeps an object that is not from this Agent,
+// but it deletes a Job of the run that lost its owner reference. The Job must have the label and
+// the run ID of this run. The UID precondition stops the
+// delete if the object changed after the read.
 func (r *AgentReconciler) deleteOwned(ctx context.Context, a *corev1alpha1.Agent, o client.Object) error {
 	found, err := r.getOwned(ctx, a, o)
+	if errors.Is(err, errNotOwned) && orphanWorkload(o, map[string]string{agentLabel: a.Name}) && jobOfRun(o, a) {
+		logf.FromContext(ctx).Info("Deletes a Job of the run that has no controller")
+		err = nil
+	}
 	if errors.Is(err, errNotOwned) {
 		logf.FromContext(ctx).Info("Kept an object with the run name that is not from this Agent",
 			"kind", fmt.Sprintf("%T", o))
@@ -960,7 +1026,7 @@ func (r *AgentReconciler) writeUsage(ctx context.Context, a *corev1alpha1.Agent,
 			}
 			a.Status.Usage = usageStatus(u)
 		default:
-			return err
+			return agentGatewayError("Usage", err)
 		}
 	}
 	a.Status.RevokedAt = &metav1.Time{Time: time.Now()}

@@ -1,5 +1,7 @@
 # Spend budgets
 
+Release: v0.6.0.
+
 A `SpendBudget` gives one namespace a spend limit for each period. It is for the Agent runs of the namespace. Each run keeps its own `spec.budget`, which the gateway applies to the key of the run.
 
 ## What is active
@@ -73,3 +75,14 @@ Only a cluster admin writes a SpendBudget. A user who can change the limit of a 
 - `config/rbac/spendbudget_admin_role.yaml` is the write role for a kustomize install. Bind it only to cluster admins.
 
 [threat-model.md](threat-model.md) has the threat row T11.
+
+## Errors
+
+| Object | Condition and reason | Meaning |
+|---|---|---|
+| SpendBudget | `BudgetExceeded=True`, `PeriodBudgetExceeded` | One or more runs wait for the budget. The message gives the end of the period. |
+| SpendBudget | `BudgetExceeded=False`, `WithinLimit` | The runs fit in the budget. |
+| Agent | `Provisioned=False`, `PeriodBudgetExceeded` | The run stays `Pending` until the budget has room. |
+| Agent | `Provisioned=False`, `KeyBeforeLedger` | The key is older than the ledger. Create the Agent again. |
+
+The API server refuses a name other than `default`, and a `spend` that is not more than zero.

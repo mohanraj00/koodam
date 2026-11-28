@@ -27,6 +27,7 @@ import (
 	"os"
 	"regexp"
 	"runtime/debug"
+	"slices"
 	"strings"
 	"time"
 
@@ -300,6 +301,9 @@ func checkAPIServerRule(rule networkingv1.NetworkPolicyEgressRule) error {
 		if err != nil || prefix.Bits() != prefix.Addr().BitLen() || len(peer.IPBlock.Except) > 0 {
 			return fmt.Errorf("the ipBlock %q must be one address (/32 or /128) with no except list", peer.IPBlock.CIDR)
 		}
+		if err := checkAPIServerAddr(peer.IPBlock.CIDR, prefix.Addr()); err != nil {
+			return err
+		}
 	}
 	for _, port := range rule.Ports {
 		if port.Port == nil || port.EndPort != nil || port.Port.Type != intstr.Int ||
@@ -311,6 +315,34 @@ func checkAPIServerRule(rule networkingv1.NetworkPolicyEgressRule) error {
 		}
 	}
 	return nil
+}
+
+// metadataAddrs are cloud metadata addresses that are not link-local: the IPv6 address of the AWS
+// metadata service, and the metadata address of Alibaba Cloud.
+var metadataAddrs = []netip.Addr{netip.MustParseAddr("fd00:ec2::254"), netip.MustParseAddr("100.100.100.200")}
+
+// checkAPIServerAddr refuses an address that is not the address of an API server endpoint: a
+// loopback, link-local, unspecified or multicast address, or a cloud metadata address. An IPv4
+// address in the IPv6 form gets the same check. A rule to such an address gives the App pods a
+// direct path to the node or to the metadata service, with no span (#501).
+func checkAPIServerAddr(cidr string, addr netip.Addr) error {
+	addr = addr.Unmap()
+	var class string
+	switch {
+	case addr.IsLoopback():
+		class = "loopback"
+	case addr.IsLinkLocalUnicast():
+		class = "link-local"
+	case addr.IsUnspecified():
+		class = "unspecified"
+	case addr.IsMulticast():
+		class = "multicast"
+	case slices.Contains(metadataAddrs, addr):
+		class = "cloud metadata"
+	default:
+		return nil
+	}
+	return fmt.Errorf("the ipBlock %q is a %s address, not the address of an API server endpoint", cidr, class)
 }
 
 // checkEgress refuses an egress proxy IP that is not an IPv4 address, and a port or a cluster

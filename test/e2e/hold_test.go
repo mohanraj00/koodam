@@ -30,6 +30,7 @@ import (
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
 	eventsv1 "k8s.io/api/events/v1"
+	policyv1 "k8s.io/api/policy/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -146,7 +147,8 @@ func expectHeldWith(h *corev1alpha1.Hold, reason string) {
 
 // expectQuarantinePolicy checks the admission policies of a quarantine on a quarantined Agent, its
 // Job and its pod. The test client is a cluster admin. The policies have no exception for an
-// admin, so each namespace user gets the same refusals.
+// admin, so each namespace user gets the same refusals. The budget of the quarantine refuses the
+// eviction of the pod, as at a node drain.
 func expectQuarantinePolicy(a *corev1alpha1.Agent, pod string) {
 	GinkgoHelper()
 	const label = "koodam.dev/quarantine"
@@ -174,6 +176,22 @@ func expectQuarantinePolicy(a *corev1alpha1.Agent, pod string) {
 		refused(fmt.Sprintf("the removal of the label of %T", o), labels(o, `{"`+label+`":null}`))
 	}
 	refused("a new value of the pod label "+agentLabel, labels(p, `{"`+agentLabel+`":"other"}`))
+	refused("a deadline on the pod", k8s.Patch(ctx, p,
+		client.RawPatch(types.StrategicMergePatchType, []byte(`{"spec":{"activeDeadlineSeconds":1}}`))))
+	// The disruption controller writes the status of the budget after a short time. Before that,
+	// the API server also refuses the eviction.
+	Eventually(func(g Gomega) {
+		err := clientset.CoreV1().Pods(a.Namespace).EvictV1(ctx, &policyv1.Eviction{
+			ObjectMeta: metav1.ObjectMeta{Namespace: a.Namespace, Name: pod}})
+		g.Expect(apierrors.IsTooManyRequests(err)).To(BeTrue(), "The API server did not refuse the eviction: %v", err)
+		pdb, err := clientset.PolicyV1().PodDisruptionBudgets(a.Namespace).Get(ctx,
+			"kd-quarantine-agent-"+a.Name, metav1.GetOptions{})
+		g.Expect(err).NotTo(HaveOccurred())
+		g.Expect(pdb.Status.ObservedGeneration).To(Equal(pdb.Generation))
+		g.Expect(pdb.Status.DisruptionsAllowed).To(BeZero())
+	}, time.Minute).Should(Succeed())
+	Expect(k8s.Get(ctx, client.ObjectKeyFromObject(p), p)).To(Succeed())
+	Expect(p.DeletionTimestamp.IsZero()).To(BeTrue(), "The eviction deleted the pod.")
 }
 
 // expectStopEvent waits for the Warning event Stopped on the workload, with the Hold as the related

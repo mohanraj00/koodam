@@ -1,5 +1,7 @@
 # Test keys
 
+Release: v0.6.0.
+
 A TestKey is one short-lived gateway key for one Nookku test in a Workspace. The controller makes the key, puts it in the Workspace pod and revokes it.
 
 ## What is active
@@ -75,3 +77,19 @@ The controller revokes in this order. Each step can run again.
 5. Delete the slot Secret, write `revokedAt` and the `usage`, then remove the finalizer.
 
 The revoke starts at `expiresAt`, at a TestKey delete, at a Workspace suspend or delete, and when no Profile binds the namespace. The finalizer `core.koodam.dev/testkey-revoke` keeps the TestKey until the revoke is done. A Workspace delete waits for the revokes of its TestKeys.
+
+## Errors
+
+The condition `Active` gives the state. It is `True`, `Issued` when the key is in the slot. Then it goes to `Revoking`, `Blocked` and `Revoked`.
+
+| Reason of `Active=False` | Meaning |
+|---|---|
+| `WorkspaceNotFound` | The Workspace does not exist. |
+| `WorkspaceNotReady` | The Workspace has no finalizer yet. |
+| `GatewayDisabled` | The Workspace has no gateway. |
+| `GatewayShapeUnsupported` | Test keys need a gateway with one replica and one worker. |
+| `ProfileNotBound` | No Profile binds the namespace. |
+| `SlotBusy` | A different TestKey uses the key slot. |
+| `GatewayError` | The gateway call failed. |
+
+The spec is immutable. The API server refuses a `budget` or a `ttl` that is not more than zero.

@@ -1,0 +1,64 @@
+package lifecycle
+
+// This file makes activation.signed.json of the koodam fixture set v0.7.0. The koodam build does
+// not use it. Copy it as make_activation_test.go to src/lifecycle-core of a clean clone of the
+// Entelos tag v0.7.0, and run it there:
+//
+//	FIXTURE=<koodam testdata/v0.7.0> OUT=<file> go test -run TestMakeActivation .
+import (
+	"encoding/base64"
+	"encoding/json"
+	"os"
+	"path/filepath"
+	"testing"
+)
+
+func TestMakeActivation(t *testing.T) {
+	fixture, out := os.Getenv("FIXTURE"), os.Getenv("OUT")
+	read := func(path string) []byte {
+		raw, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return raw
+	}
+	// The seed of the public test key "a" of the vectors of the tag.
+	var vectors struct {
+		Keys map[string]struct {
+			KeyID string `json:"key_id"`
+			Seed  string `json:"seed"`
+		} `json:"keys"`
+	}
+	if err := json.Unmarshal(read("../protocol/signed/vectors/signed-cases.json"), &vectors); err != nil {
+		t.Fatal(err)
+	}
+	keyA := vectors.Keys["a"]
+	signer, err := NewSigner(Encode(Object{"format": SigningKeyFormat, "algorithm": signatureAlgorithm,
+		"key_id": keyA.KeyID, "seed": keyA.Seed}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	snapshot := must(Decode(read(filepath.Join(fixture, "snapshot-accept.record")))).(Object)
+	signedDecision := must(Decode(read(filepath.Join(fixture, "decision-accept.signed.json")))).(Object)
+	body, _ := base64.StdEncoding.DecodeString(signedDecision["record"].(string))
+	decision := must(Decode(body)).(Object)
+	event := Object{"format": RecordFormat, "kind": "enable", "scope": decision["scope"], "function": decision["function"],
+		"snapshot_ref": decision["snapshot_ref"], "report_ref": decision["report_ref"],
+		"decision_ref": signedDecision["record_ref"], "from": decision["from"], "until": decision["until"],
+		"actor": "activator-a", "targets": Array{ContentRef(Envelope(Media("target"), Encode(Object{"name": "fixture-target"})))}}
+	eventRef := ContentRef(Envelope(Media("event"), Encode(event)))
+	record := Encode(activationRecord(event, eventRef, snapshot, nil, Object{"runner": "fixture-runner"}, decision, ""))
+	signed := signer.sign(snapshot["scope"].(string), snapshot["function"].(string), activationKind, record)
+	signed["format"] = RecordFormat
+	encoded := Encode(signed)
+	keys, err := ParseKeySet(read(filepath.Join(fixture, "keyset.json")))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := VerifyActivation(encoded, keys); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(out, encoded, 0o600); err != nil {
+		t.Fatal(err)
+	}
+}

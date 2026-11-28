@@ -1,5 +1,7 @@
 # The App ingress span contract (v1)
 
+Release: v0.6.0.
+
 The claim check container `koodam-claim` of an App pod writes 1 JSON line to its stdout for each request to the App. This line is an App ingress span. This page is the contract for the programs that read the spans, for example Nookku.
 
 [apps.md](apps.md) tells how to turn on the claim check. [egress-spans.md](egress-spans.md) is the contract of the egress spans, which record the calls from the App pods. [ingress-spans.md](ingress-spans.md) is a different contract: the spans of the Agent ingress proxy.

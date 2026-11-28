@@ -45,11 +45,12 @@ import (
 )
 
 // approvalSigner signs decisions for the scope "gate" and the function "pause" with a test key
-// that the seed gives.
+// that the seed gives. The decisions have the kind of the signer.
 type approvalSigner struct {
 	private ed25519.PrivateKey
 	id      string
 	keySet  string
+	kind    string
 }
 
 func newApprovalSigner(seed byte) approvalSigner {
@@ -57,15 +58,15 @@ func newApprovalSigner(seed byte) approvalSigner {
 	public := private.Public().(ed25519.PublicKey)
 	text, id := base64.StdEncoding.EncodeToString(public), fmt.Sprintf("ed25519:%x", sha256.Sum256(public))
 	return approvalSigner{private, id, fmt.Sprintf(`{"format":"entelos.keyset/1","signer":"test","keys":[`+
-		`{"algorithm":"ed25519","key_id":%q,"public_key":%q,"status":"active"}]}`, id, text)}
+		`{"algorithm":"ed25519","key_id":%q,"public_key":%q,"status":"active"}]}`, id, text), "human"}
 }
 
-// sign gives a signed human decision for the snapshot reference, with the decision time and the
+// sign gives a signed decision with the kind of the signer for the snapshot reference, with the decision time and the
 // date range from "from" to "until".
 func (s approvalSigner) sign(subject, disposition string, decided, from, until time.Time) []byte {
 	const layout = "2006-01-02"
-	body := fmt.Appendf(nil, `{"kind":"human","snapshot_ref":%q,"disposition":%q,"scope":"gate","function":"pause",`+
-		`"format":"entelos.record/1","decided_at":%q,"from":%q,"until":%q}`, subject, disposition,
+	body := fmt.Appendf(nil, `{"kind":%q,"snapshot_ref":%q,"disposition":%q,"scope":"gate","function":"pause",`+
+		`"format":"entelos.record/1","decided_at":%q,"from":%q,"until":%q}`, s.kind, subject, disposition,
 		decided.UTC().Format(time.RFC3339), from.UTC().Format(layout), until.UTC().Format(layout))
 	envelope := append([]byte("application/vnd.cel-lifecycle.decision+json\x00"), body...)
 	signature := ed25519.Sign(s.private, append([]byte("entelos.signature/1\x00"), envelope...))
@@ -77,7 +78,7 @@ func (s approvalSigner) sign(subject, disposition string, decided, from, until t
 // approvalChain is the 3 parts of an ApprovalRecord.
 type approvalChain struct{ signed, snapshot, manifest []byte }
 
-// chain gives a signed human decision with a snapshot record and a manifest that bind the subject.
+// chain gives a signed decision with a snapshot record and a manifest that bind the subject.
 func (s approvalSigner) chain(subject, disposition string, decided, from, until time.Time) approvalChain {
 	manifest := fmt.Appendf(nil, `{"format":"entelos.content/1","items":[{"item_id":"request","digest":%q}]}`, subject)
 	snapshot := fmt.Appendf(nil, `{"format":"entelos.record/1","scope":"gate","candidate":{"kind":"content",`+
@@ -153,6 +154,17 @@ var _ = Describe("Agent approval", Ordered, func() {
 	old := func(subject, disposition string) approvalChain {
 		return signer.chain(subject, disposition, now.Add(-2*time.Hour), now.Add(-2*day), now.Add(2*day))
 	}
+	// expiredBy gives a chain with a decision that is 1 minute old and an until date in the past.
+	expiredBy := func(s approvalSigner, subject, disposition string) approvalChain {
+		return s.chain(subject, disposition, now.Add(-time.Minute), now.Add(-3*day), now.Add(-day))
+	}
+	// decidedAt gives a chain with an accept that was decided at the time and a date range around
+	// the time of the test.
+	decidedAt := func(subject string, at time.Time) approvalChain {
+		return signer.chain(subject, "accept", at, now.Add(-2*day), now.Add(2*day))
+	}
+	machine, policy := signer, signer
+	machine.kind, policy.kind = "model", "policy"
 	accept := func(subject string) approvalChain { return decide(signer, subject, "accept") }
 	one := func(make func(subject string) approvalChain) func(string) []approvalChain {
 		return func(subject string) []approvalChain { return []approvalChain{make(subject)} }
@@ -212,9 +224,24 @@ var _ = Describe("Agent approval", Ordered, func() {
 			one(func(s string) approvalChain { return old(s, "accept") }),
 			time.Duration(0), metav1.ConditionFalse, corev1alpha1.ApprovalExpired, "maximum age of 3600 seconds"),
 		Entry("Expired: an until date in the past", false,
-			one(func(s string) approvalChain {
-				return signer.chain(s, "accept", now.Add(-time.Minute), now.Add(-3*day), now.Add(-day))
-			}), time.Duration(0), metav1.ConditionFalse, corev1alpha1.ApprovalExpired, "until date"),
+			one(func(s string) approvalChain { return expiredBy(signer, s, "accept") }),
+			time.Duration(0), metav1.ConditionFalse, corev1alpha1.ApprovalExpired, "until date"),
+		Entry("NotVerified: a model accept with an until date in the past does not stop the run", false,
+			one(func(s string) approvalChain { return expiredBy(machine, s, "accept") }),
+			time.Duration(0), metav1.ConditionUnknown, corev1alpha1.ApprovalNotVerified, "not_human_verdict"),
+		Entry("NotVerified: a policy reject with an until date in the past does not stop the run", false,
+			one(func(s string) approvalChain { return expiredBy(policy, s, "reject") }),
+			time.Duration(0), metav1.ConditionUnknown, corev1alpha1.ApprovalNotVerified, "not_human_verdict"),
+		Entry("NotVerified: an invalid disposition with an until date in the past does not stop the run", false,
+			one(func(s string) approvalChain { return expiredBy(signer, s, "maybe") }),
+			time.Duration(0), metav1.ConditionUnknown, corev1alpha1.ApprovalNotVerified, "invalid_disposition"),
+		Entry("Timeout: an accept that was decided after the wait deadline", false,
+			one(func(s string) approvalChain { return decidedAt(s, now.Add(2*time.Hour)) }),
+			2*time.Hour+time.Minute, metav1.ConditionFalse, corev1alpha1.ApprovalTimeout, "no approval in 3600 seconds"),
+		Entry("Approved: an accept before the wait deadline, also with an accept after it", false,
+			func(s string) []approvalChain {
+				return []approvalChain{decidedAt(s, now.Add(65*time.Minute)), decidedAt(s, now.Add(55*time.Minute))}
+			}, 70*time.Minute, metav1.ConditionTrue, corev1alpha1.ApprovalApproved, "valid accept"),
 		Entry("NotYetValid: a from date in the future", false,
 			one(func(s string) approvalChain {
 				return signer.chain(s, "accept", now.Add(-time.Minute), now.Add(2*day), now.Add(4*day))
@@ -294,6 +321,30 @@ var _ = Describe("Agent approval", Ordered, func() {
 			To(Equal(corev1alpha1.ApprovalSubjectMismatch))
 	})
 
+	It("does not apply the check again to a Pending run whose Job exists", func() {
+		a, gw, _ := start(bound, one(accept), now)
+		Expect(a.Status.Phase).To(Equal(corev1alpha1.AgentRunning))
+		key := client.ObjectKey{Namespace: a.Namespace, Name: runName(a)}
+		job := &batchv1.Job{}
+		Expect(k8sClient.Get(ctx, key, job)).To(Succeed())
+		// The status update after the create of the Job failed, so the run is Pending.
+		a.Status.Phase = corev1alpha1.AgentPending
+		Expect(k8sClient.Status().Update(ctx, a)).To(Succeed())
+		// At the next reconcile, the decision is older than the maximum age, and a reject is there.
+		carry(a, decide(signer, subjectOf(a), "reject"))
+		r := &AgentReconciler{Client: k8sClient, Scheme: k8sClient.Scheme(), APIReader: k8sClient, Gateway: gw,
+			GatewayURL: testGatewayURL, Grace: time.Minute, Now: func() time.Time { return now.Add(2 * time.Hour) }}
+		_, err := r.Reconcile(ctx, reconcile.Request{NamespacedName: client.ObjectKeyFromObject(a)})
+		Expect(err).NotTo(HaveOccurred())
+		Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(a), a)).To(Succeed())
+		Expect(a.Status.Phase).To(Equal(corev1alpha1.AgentRunning))
+		Expect(gw.blocked).To(BeEmpty())
+		after := &batchv1.Job{}
+		Expect(k8sClient.Get(ctx, key, after)).To(Succeed())
+		Expect(after.UID).To(Equal(job.UID))
+		Expect(after.DeletionTimestamp).To(BeNil())
+	})
+
 	It("reads a bounded count of records in one check", func() {
 		a, _, _ := start(bound, func(string) []approvalChain {
 			return slices.Repeat([]approvalChain{junk}, approvalMaxRecords+approvalPageSize)
@@ -321,6 +372,16 @@ var _ = Describe("Agent approval", Ordered, func() {
 			Expect(checkRecord(rec, trust, subject, decided.Add(2*time.Hour)).reason).To(Equal(corev1alpha1.ApprovalExpired))
 			Expect(checkRecord(rec, trust, other, decided.Add(time.Minute)).reason).To(Equal(corev1alpha1.ApprovalSubjectMismatch))
 		}
+		// A signed activation in place of the decision keeps the run paused, also with a valid
+		// signature and a chain that binds the subject.
+		rec := &corev1alpha1.ApprovalRecord{ObjectMeta: metav1.ObjectMeta{Name: "activation"},
+			Spec: corev1alpha1.ApprovalRecordSpec{SignedRecord: read("activation.signed.json"),
+				SnapshotRecord: read("snapshot-accept.record"), Manifest: read("manifest-accept.json")}}
+		s := checkRecord(rec, trust, subject, decided.Add(time.Minute))
+		Expect(s.status).To(Equal(metav1.ConditionUnknown))
+		Expect(s.reason).To(Equal(corev1alpha1.ApprovalNotVerified))
+		Expect(s.message).To(ContainSubstring("not_a_decision"))
+		Expect(s.evidence).To(BeNil())
 	})
 
 	// A record after the bound can be a reject. Thus only a reject is final in an incomplete check.

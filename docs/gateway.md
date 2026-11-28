@@ -1,9 +1,11 @@
 # The gateway model
 
-Koodam will support 2 ways to run an agent:
+Release: v0.6.0.
 
-- **Gateway.** The harness calls the models through a LiteLLM gateway. Koodam makes a gateway key for each run. Koodam supports this model today.
-- **Subscription login.** The harness uses the login of a person, for example a Claude or a ChatGPT plan. This is the easy start, because it needs no gateway. The login comes with the profiles in v0.2.
+Koodam has 2 ways to run an agent:
+
+- **Gateway.** The harness calls the models through a LiteLLM gateway. Koodam makes a gateway key for each run.
+- **Subscription login.** The harness uses the login of a person, for example a Claude or a ChatGPT plan. This is the easy start, because it needs no gateway. [profiles.md](profiles.md) has the login.
 
 This guide tells why to use the gateway and how to configure it.
 
