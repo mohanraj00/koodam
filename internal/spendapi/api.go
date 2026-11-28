@@ -28,6 +28,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -86,10 +87,15 @@ type api struct {
 	logs       LogSource
 	watcher    AgentWatcher
 	watchTime  time.Duration
+	recheck    time.Duration
 	watches    atomic.Int32
-	claims     appclaim.Config
-	keys       *appclaim.KeySet
-	tokens     [][sha256.Size]byte
+	// watchMu guards callerWatches and each change of watches.
+	watchMu sync.Mutex
+	// callerWatches counts the open watches of each caller. The key is a caller key from scope.
+	callerWatches map[string]int
+	claims        appclaim.Config
+	keys          *appclaim.KeySet
+	tokens        [][sha256.Size]byte
 	// now gives the time for the period of a budget. If it is nil, the API uses time.Now.
 	now func() time.Time
 }
@@ -122,7 +128,7 @@ func New(c Config) (http.Handler, error) {
 	}
 	a := &api{
 		kube: c.Kube, namespaces: slices.Clone(c.Namespaces), viewers: c.Viewers,
-		gateway: l, timeout: c.Timeout, logs: c.Logs, watcher: c.Watch, watchTime: maxWatchTime, claims: c.Claims, keys: c.Keys,
+		gateway: l, timeout: c.Timeout, logs: c.Logs, watcher: c.Watch, watchTime: maxWatchTime, recheck: watchRecheck, claims: c.Claims, keys: c.Keys,
 	}
 	a.tokens = make([][sha256.Size]byte, 0, len(c.StaticTokens))
 	for _, token := range c.StaticTokens {
@@ -156,22 +162,28 @@ func bearer(r *http.Request) (string, bool) {
 	return token, ok && token != "" && strings.EqualFold(scheme, "Bearer")
 }
 
-// scope gives the namespaces of targets that the caller can read, or the HTTP status of the refusal.
+// scope gives the namespaces of targets that the caller can read and a key of the caller, or the
+// HTTP status of the refusal. The key is the user name of the viewer, the caller of the claim or a
+// hash of the local token. It is for the watch count only, and the server never writes it.
 func (a *api) scope(ctx context.Context, r *http.Request, targets []string,
-	checks []authorizationv1.ResourceAttributes) ([]string, int, problem) {
+	checks []authorizationv1.ResourceAttributes) ([]string, string, int, problem) {
 	token, ok := bearer(r)
-	if !ok || (a.viewers == nil && !a.authorized(token)) {
-		return nil, http.StatusUnauthorized, problem{"A valid bearer token is necessary."}
+	var caller string
+	if ok && a.viewers == nil {
+		caller, ok = a.authorized(token)
+	}
+	if !ok {
+		return nil, "", http.StatusUnauthorized, problem{"A valid bearer token is necessary."}
 	}
 	if a.viewers == nil {
 		if len(targets) == 0 {
-			return nil, http.StatusForbidden, problem{msgForbidden}
+			return nil, "", http.StatusForbidden, problem{msgForbidden}
 		}
-		return targets, http.StatusOK, problem{}
+		return targets, caller, http.StatusOK, problem{}
 	}
 	user, err := a.viewers.user(ctx, token)
 	if errors.Is(err, errNotAuthenticated) {
-		return nil, http.StatusUnauthorized, problem{"A valid bearer token is necessary."}
+		return nil, "", http.StatusUnauthorized, problem{"A valid bearer token is necessary."}
 	}
 	var namespaces []string
 	if err == nil {
@@ -179,26 +191,27 @@ func (a *api) scope(ctx context.Context, r *http.Request, targets []string,
 	}
 	switch {
 	case ctx.Err() != nil:
-		return nil, http.StatusGatewayTimeout, problem{msgTimeLimit}
+		return nil, "", http.StatusGatewayTimeout, problem{msgTimeLimit}
 	case err != nil:
-		return nil, http.StatusBadGateway, problem{"The Kubernetes access review is not available."}
+		return nil, "", http.StatusBadGateway, problem{"The Kubernetes access review is not available."}
 	case len(namespaces) == 0:
-		return nil, http.StatusForbidden, problem{msgForbidden}
+		return nil, "", http.StatusForbidden, problem{msgForbidden}
 	}
-	return namespaces, http.StatusOK, problem{}
+	return namespaces, "user:" + user.Username, http.StatusOK, problem{}
 }
 
-func (a *api) authorized(token string) bool {
+// authorized checks a token of the claim mode or the local token mode, and gives the caller key.
+func (a *api) authorized(token string) (string, bool) {
 	if a.keys != nil {
-		_, err := a.claims.Verify(a.keys, token, time.Now())
-		return err == nil
+		id, err := a.claims.Verify(a.keys, token, time.Now())
+		return "claim:" + id.Caller, err == nil
 	}
 	sum := sha256.Sum256([]byte(token))
 	var match int
 	for _, want := range a.tokens {
 		match |= subtle.ConstantTimeCompare(sum[:], want[:])
 	}
-	return match == 1
+	return "token:" + string(sum[:]), match == 1
 }
 
 func (a *api) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -223,7 +236,7 @@ func (a *api) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			checks = append(checks, readLog)
 		}
 	}
-	namespaces, status, refusal := a.scope(ctx, r, targets, checks)
+	namespaces, caller, status, refusal := a.scope(ctx, r, targets, checks)
 	if status != http.StatusOK {
 		if status == http.StatusUnauthorized {
 			w.Header().Set("WWW-Authenticate", "Bearer")
@@ -235,7 +248,7 @@ func (a *api) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	case isRun && ref.part == logPart:
 		a.serveLog(ctx, w, r, ref)
 	case isRun && ref.part == watchPart:
-		a.serveWatch(ctx, w, r, ref)
+		a.serveWatch(ctx, w, r, ref, caller)
 	case isRun:
 		a.serveRun(ctx, w, r, ref)
 	case path == specPath:
