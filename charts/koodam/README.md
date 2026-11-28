@@ -143,6 +143,11 @@ The CRDs have 2 versions: `v1beta1` is the storage version, and `v1alpha1` is de
 
 The webhook has no API token and no RBAC rule. If it is not ready, a request for an Agent, a Workspace or a TestKey in a version that is not the stored version fails, and no object changes.
 
+**The clients of the webhook:** in the default configuration, the API server gives no client certificate to a conversion webhook. Thus the webhook cannot identify its client, and it converts the objects of each request that it gets. It holds no data and it has no API access.
+
+- To permit only the API server, set `conversion.networkPolicy.from` to the address range of the control plane. The default permits each source, because the API server is not a pod on many clusters.
+- The server has a time limit for each part of a request, and a cap on the conversion requests in progress. A request over the cap gets HTTP 429, and the API server tries again.
+
 ### The webhook certificate
 
 - **Default:** the chart makes a CA and a certificate for 10 years, and keeps them in the Secret `<fullname>-conversion-tls`. To make a new certificate, delete the Secret and run `helm upgrade`.
@@ -257,6 +262,7 @@ connects in the pod network namespace. These connections work with an empty `ssh
 | `conversion.replicas` | `2` | The replicas of the webhook. With 2 or more, the chart adds a PodDisruptionBudget. |
 | `conversion.resources` | see `values.yaml` | The resources of the webhook container. |
 | `conversion.networkPolicy.enabled` | `true` | Add a NetworkPolicy that permits ingress only on the webhook port and permits no egress. |
+| `conversion.networkPolicy.from` | `[]` | The peers (`NetworkPolicyPeer`) that can connect to the webhook port. An empty list permits each source, because the API server is not a pod on many clusters. Set the address range of the control plane to permit only the API server. |
 | `conversion.tls.existingSecret` | empty | A Secret with `tls.crt` and `tls.key` for the webhook. It needs `conversion.tls.caBundle`. |
 | `conversion.tls.caBundle` | empty | The CA certificate of the existing Secret, in PEM, with base64 encoding. |
 | `conversion.tls.certManager.enabled` | `false` | Use cert-manager for the certificate and for the CA in the CRDs. |

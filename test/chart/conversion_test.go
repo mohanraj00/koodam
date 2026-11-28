@@ -21,9 +21,9 @@ import (
 	"compress/gzip"
 	"crypto/x509"
 	"encoding/base64"
+	"encoding/json"
 	"encoding/pem"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -89,7 +89,7 @@ func webhookClient(crd *apix.CustomResourceDefinition) *apix.WebhookClientConfig
 	}
 	client := c.Webhook.ClientConfig
 	svc := client.Service
-	if svc == nil || client.URL != nil || svc.Name != conversionName || svc.Namespace != "koodam-system" ||
+	if svc == nil || client.URL != nil || svc.Name != conversionName || svc.Namespace != releaseNS ||
 		svc.Path == nil || *svc.Path != "/convert" || svc.Port == nil || *svc.Port != 443 {
 		return nil
 	}
@@ -249,6 +249,30 @@ func TestConversionNetwork(t *testing.T) {
 	}
 }
 
+// TestConversionNetworkPeers makes sure that conversion.networkPolicy.from limits the sources of
+// the webhook port, and that it adds no second rule.
+func TestConversionNetworkPeers(t *testing.T) {
+	out := render(t, `conversion:
+  networkPolicy:
+    from:
+    - ipBlock:
+        cidr: 10.0.0.0/28
+    - namespaceSelector:
+        matchLabels:
+          kubernetes.io/metadata.name: kube-system`)
+	np := one[networkingv1.NetworkPolicy](t, out, kindPolicy).Spec
+	if len(np.Ingress) != 1 || len(np.Egress) != 0 || len(np.Ingress[0].Ports) != 1 ||
+		*np.Ingress[0].Ports[0].Port != intstr.FromInt32(9443) {
+		t.Fatalf("got the NetworkPolicy %+v", np)
+	}
+	from := np.Ingress[0].From
+	if len(from) != 2 || from[0].IPBlock == nil || from[0].IPBlock.CIDR != "10.0.0.0/28" ||
+		from[1].NamespaceSelector == nil ||
+		from[1].NamespaceSelector.MatchLabels["kubernetes.io/metadata.name"] != "kube-system" {
+		t.Errorf("got the ingress peers %+v", from)
+	}
+}
+
 func TestConversionOff(t *testing.T) {
 	out := render(t, "conversion: {enabled: false}")
 	if len(crds(t, out)) != 0 || strings.Contains(out, conversionName) {
@@ -327,35 +351,78 @@ func TestConversionCertManager(t *testing.T) {
 	}
 }
 
+// releaseFile is a file of the chart in a Helm release. JSON has the data as base64.
+type releaseFile struct {
+	Name string `json:"name"`
+	Data []byte `json:"data"`
+}
+
+// releaseJSON returns the JSON of a Helm release of the chart with the manifest. It has the parts
+// of a release that have a size: the chart files, the values and the rendered objects. The test
+// does not use "helm install --dry-run", because Helm 3 needs a cluster for it.
+func releaseJSON(t *testing.T, manifest string) []byte {
+	t.Helper()
+	chart := map[string]any{}
+	var templates, files []releaseFile
+	err := filepath.WalkDir(chartDir, func(path string, entry os.DirEntry, err error) error {
+		if err != nil || entry.IsDir() {
+			return err
+		}
+		data, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		name, err := filepath.Rel(chartDir, path)
+		if err != nil {
+			return err
+		}
+		switch name = filepath.ToSlash(name); {
+		case name == "Chart.yaml" || name == "values.yaml":
+			// Helm keeps these 2 files as objects.
+			var parsed any
+			if err := yaml.Unmarshal(data, &parsed); err != nil {
+				return err
+			}
+			chart[name] = parsed
+		case strings.HasPrefix(name, "templates/"):
+			templates = append(templates, releaseFile{Name: name, Data: data})
+		default:
+			files = append(files, releaseFile{Name: name, Data: data})
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(templates) == 0 || len(files) == 0 || len(chart) != 2 {
+		t.Fatalf("the chart has %d templates, %d files and %d of 2 objects", len(templates), len(files), len(chart))
+	}
+	chart["templates"], chart["files"] = templates, files
+	release, err := json.Marshal(map[string]any{"name": "koodam", "namespace": releaseNS, "chart": chart,
+		"manifest": manifest})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return release
+}
+
 // TestReleaseSize makes sure that Helm can store the release. Helm keeps the chart and the
 // rendered objects in one Secret, as JSON with gzip and base64, and the API server refuses a
 // Secret with more than 1 MiB of data. The CRDs with the Kubernetes pod template are the largest
 // part: the chart has each one, and the rendered objects have each one again.
 func TestReleaseSize(t *testing.T) {
 	const limit = 1 << 20
-	// The test keeps 20% of the limit free for the values of an install.
+	// The test keeps 20% of the limit free for the values of an install and for the release data
+	// that Helm adds.
 	const budget = limit * 8 / 10
-	helm, err := exec.LookPath("helm")
-	if err != nil {
-		if os.Getenv("CI") != "" {
-			t.Fatal("helm is not on the PATH")
-		}
-		t.Skip("helm is not on the PATH")
-	}
 	// The install with each CRD is the largest one.
-	cmd := exec.Command(helm, "install", "koodam", chartDir, "--namespace", "koodam-system", "--dry-run=client",
-		"-o", "json", "-f", filepath.Join(chartDir, "values-bundled.yaml"), "--set", "apps.enabled=true")
-	// The dry run of the client must not read a cluster.
-	cmd.Env = append(os.Environ(), "KUBECONFIG="+filepath.Join(t.TempDir(), "none"))
-	release, err := cmd.Output()
-	if err != nil {
-		t.Fatalf("helm install --dry-run=client: %v", err)
-	}
+	manifest := render(t, "", "apps.enabled=true")
 	for _, crd := range []string{webhookCRDs[0], "appversions.core.koodam.dev"} {
-		if !bytes.Contains(release, []byte(crd)) {
-			t.Fatalf("the output is not the release with the CRD %s", crd)
+		if !strings.Contains(manifest, crd) {
+			t.Fatalf("the rendered objects do not have the CRD %s", crd)
 		}
 	}
+	release := releaseJSON(t, manifest)
 	var packed bytes.Buffer
 	zip, err := gzip.NewWriterLevel(&packed, gzip.BestCompression)
 	if err != nil {
@@ -367,7 +434,9 @@ func TestReleaseSize(t *testing.T) {
 	if err := zip.Close(); err != nil {
 		t.Fatal(err)
 	}
-	if size := base64.StdEncoding.EncodedLen(packed.Len()); size > budget {
+	size := base64.StdEncoding.EncodedLen(packed.Len())
+	t.Logf("the release is %d bytes", size)
+	if size > budget {
 		t.Errorf("the release is %d bytes. The budget is %d bytes, and the limit of a Secret is %d bytes.",
 			size, budget, limit)
 	}

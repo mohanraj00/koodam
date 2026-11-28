@@ -115,8 +115,10 @@ spec:
       control-plane: conversion
       app.kubernetes.io/name: koodam
 ---
-# The API server has no pod label, so the rule permits each source on the webhook port only. The
-# process starts no connection, so the policy permits no egress.
+# On many clusters the API server is not a pod, and its source address is different on each
+# cluster. Thus the rule permits each source on the webhook port only. To permit only the API
+# server, add `from` with the address range of the control plane to the ingress rule. The process
+# starts no connection, so the policy permits no egress.
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:

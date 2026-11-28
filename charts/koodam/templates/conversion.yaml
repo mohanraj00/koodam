@@ -248,10 +248,13 @@ spec:
     matchLabels:
       {{- include "koodam.gatewaySelector" (list . "conversion") | nindent 6 }}
 {{- end }}
-{{- if ($conv.networkPolicy | default dict).enabled }}
+{{- $policy := $conv.networkPolicy | default dict }}
+{{- if $policy.enabled }}
 ---
-# The API server has no pod label, so the rule permits each source on the webhook port only. The
-# process starts no connection, so the policy permits no egress.
+# On many clusters the API server is not a pod, and its source address is different on each
+# cluster. Thus the default rule permits each source on the webhook port only, and
+# conversion.networkPolicy.from limits the sources. The process starts no connection, so the
+# policy permits no egress.
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
@@ -271,5 +274,9 @@ spec:
   - ports:
     - port: 9443
       protocol: TCP
+    {{- with $policy.from }}
+    from:
+      {{- toYaml . | nindent 4 }}
+    {{- end }}
 {{- end }}
 {{- end }}

@@ -40,7 +40,7 @@ Run `helm upgrade` as usual. The chart changes the CRDs and installs the convers
 - For some seconds after the CRD change, the webhook pods are not ready. During this time, a write of an Agent, a Workspace or a TestKey fails. The controller tries again.
 - The chart makes the webhook certificate and keeps it in the Secret `<release>-conversion-tls`. The [chart README](../charts/koodam/README.md#the-webhook-certificate) has the other options.
 
-**Install with kustomize:** `config/default` now has the conversion webhook, and it gets its certificate from cert-manager. Thus cert-manager must be in the cluster before `make deploy`. `make install` applies CRDs that name the webhook Service of `config/default`.
+**Install with kustomize:** `config/default` now has the conversion webhook, and it gets its certificate from cert-manager. Thus cert-manager must be in the cluster before `make deploy`. `make install` applies the CRDs with no conversion webhook, because it builds `config/crd` only. Use it for a cluster that has no v1alpha1 object of an Agent, a Workspace or a TestKey. With no webhook, the API server drops `spec.testID` of a v1alpha1 TestKey. `make deploy` adds the webhook to the 3 CRDs.
 
 ## Step 3: move the stored objects to v1beta1
 
@@ -63,6 +63,17 @@ A CRD conversion has no failure policy. If the API server cannot call the webhoo
 - A read or a write of an Agent, a Workspace or a TestKey fails if the request version is not the stored version of the object. The error names the conversion webhook. No object changes.
 - A request for a different kind, for example a Hold, does not use the webhook and continues to work.
 - The delete of a namespace can wait until the webhook is ready, because the API server lists each resource of the namespace.
+
+The webhook has a cap on the conversion requests in progress. A request over the cap gets HTTP 429, and the API server tries again.
+
+## The network access to the webhook
+
+In the default configuration, the API server gives no client certificate to a conversion webhook. Thus the webhook cannot identify its client. It holds no data and it has no API access, but a client that can connect can use its CPU and its memory.
+
+- The NetworkPolicy of the webhook permits ingress only on the webhook port, and it permits each source by default. The API server is not a pod on many clusters, so the chart cannot select it.
+- **To permit only the API server:** set `conversion.networkPolicy.from` to a list of peers (`NetworkPolicyPeer`), for example an `ipBlock` with the address range of the control plane. Make sure that a conversion works after the change: read a v1alpha1 Agent.
+- **Install with kustomize:** add `from` to the ingress rule of the NetworkPolicy `conversion` in `config/manager/conversion.yaml`, or use a patch.
+- The policy has an effect only if the CNI enforces NetworkPolicy.
 
 ## Downgrade
 

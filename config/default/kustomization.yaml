@@ -44,6 +44,13 @@ patches:
   target:
     kind: Deployment
     name: controller-manager
+# The conversion webhook of the 3 kinds that differ between v1alpha1 and v1beta1 (#511). The 4
+# other kinds have the same schema in the two versions, so the API server converts them with no
+# webhook. The patch is here and not in ../crd, because the Service and the certificate are here.
+- path: crd_conversion_patch.yaml
+  target:
+    kind: CustomResourceDefinition
+    name: (agents|testkeys|workspaces)\.core\.koodam\.dev
 
 # Uncomment the patches line if you enable Metrics and CertManager
 # [METRICS-WITH-CERTS] To enable metrics protected with certManager, uncomment the following line.

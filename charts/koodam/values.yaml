@@ -370,6 +370,15 @@ conversion:
   # only if the CNI enforces it.
   networkPolicy:
     enabled: true
+    # The peers (NetworkPolicyPeer) that can connect to the webhook port. Only the API server
+    # calls the webhook. An empty list permits each source, because the source address of the
+    # API server is different on each cluster and is frequently not a pod. Set the address range
+    # of the control plane here, for example:
+    #   from:
+    #   - ipBlock:
+    #       cidr: 10.0.0.0/28
+    # The kubelet probes must also reach the port: most CNIs always permit the node of the pod.
+    from: []
   # The serving certificate of the webhook. With no value here, the chart makes a CA and a
   # certificate for 10 years at the first install and keeps them in the Secret
   # <release>-conversion-tls. To make a new certificate, delete the Secret and run "helm upgrade".
