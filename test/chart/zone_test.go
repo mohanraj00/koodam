@@ -258,10 +258,18 @@ func TestZonePlacementPolicy(t *testing.T) {
 	}
 }
 
+// The API group and the resource names that the admission policies match.
+const (
+	koodamGroup         = "core.koodam.dev"
+	appVersionsResource = "appversions"
+	holdsResource       = "holds"
+	holdPolicyName      = "koodam-hold"
+)
+
 func TestKoodamAdmissionPolicyVersions(t *testing.T) {
 	out := render(t, "apps: {enabled: true}\nzone: {name: zone-a}\n")
-	want := map[string]string{"koodam-appversion": "appversions", "koodam-hold": "holds",
-		"koodam-zone-placement": "appversions"}
+	want := map[string]string{"koodam-appversion": appVersionsResource, holdPolicyName: holdsResource,
+		"koodam-zone-placement": appVersionsResource}
 	for _, doc := range objects(t, out, "ValidatingAdmissionPolicy") {
 		var p admissionv1.ValidatingAdmissionPolicy
 		if err := yaml.Unmarshal([]byte(doc), &p); err != nil {
@@ -277,7 +285,7 @@ func TestKoodamAdmissionPolicyVersions(t *testing.T) {
 			t.Fatalf("%s must have one resource rule and no matchPolicy", p.Name)
 		}
 		r := m.ResourceRules[0]
-		if !slices.Equal(r.APIGroups, []string{"core.koodam.dev"}) ||
+		if !slices.Equal(r.APIGroups, []string{koodamGroup}) ||
 			!slices.Equal(r.APIVersions, []string{"v1beta1"}) || !slices.Equal(r.Resources, []string{resource}) {
 			t.Errorf("%s must match v1beta1 %s", p.Name, resource)
 		}
