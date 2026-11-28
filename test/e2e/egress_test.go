@@ -325,7 +325,21 @@ var _ = Describe("Traced egress", Ordered, Label("egress"), func() {
 		for _, a := range attempts {
 			Expect(reach(control, a.addr)).To(BeTrue(), "The control pod cannot make "+a.what+": "+a.addr)
 		}
-		Expect(dnsUDP(control, "1.1.1.1")).To(BeTrue(), "The control pod cannot make a UDP DNS query.")
+		// The runner network can lose one UDP packet, so the positive check tries again and also
+		// tries a second server (#510). The negative checks below make one attempt, because one
+		// answer from a blocked pod must fail the test.
+		var udpResults []string
+		Eventually(func() bool {
+			for _, server := range []string{"1.1.1.1", "8.8.8.8"} {
+				ok := dnsUDP(control, server)
+				udpResults = append(udpResults, fmt.Sprintf("%s: %t", server, ok))
+				if ok {
+					return true
+				}
+			}
+			return false
+		}, 45*time.Second, 3*time.Second).Should(BeTrue(),
+			func() string { return "The control pod cannot make a UDP DNS query: " + strings.Join(udpResults, ", ") })
 
 		for _, pod := range []string{wsPod, agentPod} {
 			By("checking that each attempt fails from " + pod)
