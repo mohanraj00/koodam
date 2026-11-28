@@ -387,7 +387,7 @@
         "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Problem"}}}
       },
       "TooManyWatches": {
-        "description": "Too many watches are open on the server. The Retry-After header gives the wait in seconds.",
+        "description": "Too many watches are open on the server or for the caller. The Retry-After header gives the wait in seconds.",
         "headers": {"Retry-After": {"schema": {"type": "integer"}}},
         "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Problem"}}}
       },
@@ -570,7 +570,7 @@
       "WatchEnd": {
         "type": "object",
         "required": ["reason"],
-        "properties": {"reason": {"type": "string", "enum": ["timeLimit", "watchEnded"]}}
+        "properties": {"reason": {"type": "string", "enum": ["timeLimit", "watchEnded", "accessEnded", "accessCheckFailed"]}}
       },
       "Problem": {
         "type": "object",

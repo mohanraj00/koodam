@@ -255,7 +255,8 @@ namespace of the path only. The stream has these parts:
 4. A comment line `: ping` every 15 s.
 5. The event `deleted` when the Agent is deleted, or the event `end` with a `reason`. The reason
    `timeLimit` comes after the time limit of the watch. The reason `watchEnded` comes when the watch
-   of the API server ends.
+   of the API server ends. The reason `accessEnded` comes when a check during the watch refuses the
+   token or the access. The reason `accessCheckFailed` comes when that check cannot complete.
 
 The status event has no Job and no pods. If the phase changes, a client reads the run path again.
 The latency target is 5 s: `TestWatchLatency` in `internal/spendapi/watch_test.go` fails if a phase
@@ -265,8 +266,13 @@ The limits of the watch path are the constants in `internal/spendapi/watch.go`:
 
 - `maxWatchTime`: 5 min for one watch. Then the client connects again, and the server checks the
   token and the access again.
+- `watchRecheck`: 1 min. At this interval during a watch, the server checks the token and the access
+  again, with the same reviews as at the start. If the token or the access ended, the watch ends.
 - `maxOpenWatches`: 100 open watches for one server. If the server has this count, the response has
   status 429 and a `Retry-After` header.
+- `maxCallerWatches`: 10 open watches for one caller. The caller is the user name of the token review
+  in the viewer mode, the caller of the claim in the claim mode, or the local token. If the caller has
+  this count, the response has status 429 and a `Retry-After` header.
 - `watchWriteTime`: 30 s for each write. A client that does not read cannot keep a watch.
 - The request time limit of `-request-timeout` applies to the read of the Agent and to the start of
   the watch.
