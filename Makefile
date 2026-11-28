@@ -116,6 +116,17 @@ test-e2e: setup-test-e2e manifests generate fmt vet ## Run the e2e tests. Expect
 	KIND=$(KIND) KIND_CLUSTER=$(KIND_CLUSTER) go test -tags=e2e ./test/e2e/ -v -ginkgo.v -timeout 40m $(E2E_ARGS)
 	$(MAKE) cleanup-test-e2e
 
+# The upgrade test installs the released chart on kind, makes one v1alpha1 object of each kind,
+# upgrades to the chart and the image of this tree, and runs hack/migrate-storage.sh. It needs
+# kind, helm, kubectl and access to the registry of the release. UPGRADE_ARGS are more flags for
+# go test.
+UPGRADE_ARGS ?=
+
+.PHONY: test-upgrade
+test-upgrade: setup-test-e2e manifests generate fmt vet ## Run the upgrade test from the last release on Kind.
+	KIND=$(KIND) KIND_CLUSTER=$(KIND_CLUSTER) go test -tags=upgrade ./test/upgrade/ -run TestUpgrade -v -timeout 40m $(UPGRADE_ARGS)
+	$(MAKE) cleanup-test-e2e
+
 .PHONY: cleanup-test-e2e
 cleanup-test-e2e: ## Tear down the Kind cluster used for e2e tests
 	@$(KIND) delete cluster --name $(KIND_CLUSTER)
