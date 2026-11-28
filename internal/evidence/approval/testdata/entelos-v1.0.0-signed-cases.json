@@ -50,6 +50,29 @@
    "expect": {
     "key_id": "ed25519:7a0fe328375aeaed3b30f26d5bde835b01c92d0f37a67862e37753a68af64dde",
     "key_status": "active",
+    "record_kind": "suspension",
+    "record_ref": "sha256:f01218bc2da30ef023decd4cad3e0091178f1e4eec00d9b0930fc3e95a715d61",
+    "signer": "example-signer",
+    "valid": true
+   },
+   "key_set": "current",
+   "name": "valid-suspension",
+   "signed": {
+    "algorithm": "ed25519",
+    "format": "entelos.record/1",
+    "function": "record.visible",
+    "key_id": "ed25519:7a0fe328375aeaed3b30f26d5bde835b01c92d0f37a67862e37753a68af64dde",
+    "record": "eyJhY3RvciI6InJldmlld2VyLWEiLCJldmVudF9yZWYiOiJzaGEyNTY6Y2Q2YmFlZWVjNDkwODQwYmZjMzY3OWRmMTZhNWQzZjdkM2M4MjgyYmRmNzRmOThmY2M1MjBlNTlhMjgzY2RiZCIsImZvcm1hdCI6ImVudGVsb3MucmVjb3JkLzEiLCJmcm9tIjoiMjAyNi0xMS0wMSIsImZ1bmN0aW9uIjoicmVjb3JkLnZpc2libGUiLCJyZXF1ZXN0X2tleSI6InN1c3BlbmQtMSIsInNjb3BlIjoiZGVtbyIsInRhcmdldHMiOlsic2hhMjU2OmI4ZTFmODBiZDcwYWUwNzg0Yzc4NTVhNDUxNzMxYjc0NWZkZGI2Nzc0OWQyM2Y2MzdiZTkwODJiNzVlOTU3NWIiXSwidW50aWwiOiIyMDI3LTAxLTAxIn0K",
+    "record_kind": "suspension",
+    "record_ref": "sha256:f01218bc2da30ef023decd4cad3e0091178f1e4eec00d9b0930fc3e95a715d61",
+    "scope": "demo",
+    "signature": "3prC648BY6znrSxzFbBACxEl3qOS4i+GwEw32z4fr6Vv45tj4JVsuYs3QLKW68Tn9V542ivKLAVGZ8RJWKI0Dg=="
+   }
+  },
+  {
+   "expect": {
+    "key_id": "ed25519:7a0fe328375aeaed3b30f26d5bde835b01c92d0f37a67862e37753a68af64dde",
+    "key_status": "active",
     "record_kind": "decision",
     "record_ref": "sha256:e587a13a03ccf9d610e08848b745df19838992b189960b44aa16251978d902b2",
     "signer": "example-signer",
@@ -187,6 +210,25 @@
     "record_ref": "sha256:93573b5e5c27adb58aae3f785b9c756d93a8beb79d56306d50364fe9d6ffc3bd",
     "scope": "demo",
     "signature": "vnbViyViN5f4v8nNdzSc+lPD+vobT3rVR/Kxef80Ak/A0ycFumtgfFoYqWBFXPY1mMMM0edKiBTAprj4NyAhDw=="
+   }
+  },
+  {
+   "expect": {
+    "code": "signature_invalid",
+    "valid": false
+   },
+   "key_set": "current",
+   "name": "suspension-as-activation",
+   "signed": {
+    "algorithm": "ed25519",
+    "format": "entelos.record/1",
+    "function": "record.visible",
+    "key_id": "ed25519:7a0fe328375aeaed3b30f26d5bde835b01c92d0f37a67862e37753a68af64dde",
+    "record": "eyJhY3RvciI6InJldmlld2VyLWEiLCJldmVudF9yZWYiOiJzaGEyNTY6Y2Q2YmFlZWVjNDkwODQwYmZjMzY3OWRmMTZhNWQzZjdkM2M4MjgyYmRmNzRmOThmY2M1MjBlNTlhMjgzY2RiZCIsImZvcm1hdCI6ImVudGVsb3MucmVjb3JkLzEiLCJmcm9tIjoiMjAyNi0xMS0wMSIsImZ1bmN0aW9uIjoicmVjb3JkLnZpc2libGUiLCJyZXF1ZXN0X2tleSI6InN1c3BlbmQtMSIsInNjb3BlIjoiZGVtbyIsInRhcmdldHMiOlsic2hhMjU2OmI4ZTFmODBiZDcwYWUwNzg0Yzc4NTVhNDUxNzMxYjc0NWZkZGI2Nzc0OWQyM2Y2MzdiZTkwODJiNzVlOTU3NWIiXSwidW50aWwiOiIyMDI3LTAxLTAxIn0K",
+    "record_kind": "activation",
+    "record_ref": "sha256:bd471969d1007ec7550129737c17307a077a34b05fce2d0776bcbe80e41e955c",
+    "scope": "demo",
+    "signature": "3prC648BY6znrSxzFbBACxEl3qOS4i+GwEw32z4fr6Vv45tj4JVsuYs3QLKW68Tn9V542ivKLAVGZ8RJWKI0Dg=="
    }
   },
   {
@@ -1136,6 +1178,19 @@
    "scope": "demo",
    "snapshot_ref": "sha256:16a0eeb0791b6c92451fd284dd9f599e0a7dbe7f6ebea6e2d2d06c7f74aec112",
    "targets": [],
+   "until": "2027-01-01"
+  },
+  "suspension": {
+   "actor": "reviewer-a",
+   "event_ref": "sha256:cd6baeeec490840bfc3679df16a5d3f7d3c8282bdf74f98fcc520e59a283cdbd",
+   "format": "entelos.record/1",
+   "from": "2026-11-01",
+   "function": "record.visible",
+   "request_key": "suspend-1",
+   "scope": "demo",
+   "targets": [
+    "sha256:b8e1f80bd70ae0784c7855a451731b745fddb67749d23f637be9082b75e9575b"
+   ],
    "until": "2027-01-01"
   }
  }

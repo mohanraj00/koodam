@@ -1,6 +1,7 @@
 # Entelos signed record vectors
 
-`entelos-v0.5.0-signed-cases.json` comes from Entelos tag `v0.5.0`, path
+`entelos-v1.0.0-signed-cases.json` comes from Entelos tag `v1.0.0`, commit
+`90bc414b38bd9ccb8251dcfc1c1bfab3d7e5dc98`, path
 `src/protocol/signed/vectors/signed-cases.json`. The source licence is Apache-2.0.
 
 The source file has the private key seeds of the test keys in its top-level `keys` object. This
@@ -8,13 +9,13 @@ copy does not have that object. No other byte is changed.
 
 | File | SHA-256 |
 |---|---|
-| The source file | `05498e56d1c1a9a3d11da45a7b7d56d1b4abdf407c824f7eb5169166a8a0b90b` |
-| This copy | `f968adc4a59c69e9af17a20284c168b6980b5d4b4c02d53fbedb2eccf968754a` |
+| The source file | `6bb2fab3f0c7235cb816c9839f958eea0d8ad396dbb7360f19cce80183cf4d04` |
+| This copy | `7b60d01c078f717ca3b87b9e304aca01dac6349c851156c511e20fca4407af6d` |
 
 The strip step, with jq 1.7.1, on the source file:
 
 ```sh
-jq --indent 1 'del(.keys)' signed-cases.json > entelos-v0.5.0-signed-cases.json
+jq --indent 1 'del(.keys)' signed-cases.json > entelos-v1.0.0-signed-cases.json
 ```
 
 The source file has the jq format with an indent of 1, so the step removes only the lines of the
@@ -79,10 +80,9 @@ An ed25519 signature has no random part, so each run gives the same bytes.
 
 # The pin of the seam job
 
-`../entelos.pin` pins the tag `v0.7.0`, its commit and the SHA-256 of the signed record vectors
-of the tag (`src/protocol/signed/vectors/signed-cases.json`):
-`05498e56d1c1a9a3d11da45a7b7d56d1b4abdf407c824f7eb5169166a8a0b90b`. These are the same bytes as at
-the tag `v0.5.0`, so the copy above is also the copy of `v0.7.0`. The seam job of CI checks out
+`../entelos.pin` pins the tag `v1.0.0`, its commit `90bc414b38bd9ccb8251dcfc1c1bfab3d7e5dc98` and the
+SHA-256 of the signed record vectors of the tag (`src/protocol/signed/vectors/signed-cases.json`):
+`6bb2fab3f0c7235cb816c9839f958eea0d8ad396dbb7360f19cce80183cf4d04`. The copy above comes from these bytes. The seam job of CI checks out
 the tag, fails if the tag is not on the pinned commit, and compares the SHA-256 of the vectors
 file. Then `TestSeam` checks that the copy is the source file with no `keys` object. `TestPin`
 fails if this README does not name the values of the pin.

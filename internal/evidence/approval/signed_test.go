@@ -8,11 +8,11 @@ import (
 	"testing"
 )
 
-// vectorFile is the Entelos v0.5.0 vector file with the top-level keys object removed.
+// vectorFile is the Entelos v1.0.0 vector file with the top-level keys object removed.
 // testdata/README.md has the SHA-256 of the source file and the strip step.
 const (
-	vectorFile   = "testdata/entelos-v0.5.0-signed-cases.json"
-	vectorDigest = "f968adc4a59c69e9af17a20284c168b6980b5d4b4c02d53fbedb2eccf968754a"
+	vectorFile   = "testdata/entelos-v1.0.0-signed-cases.json"
+	vectorDigest = "7b60d01c078f717ca3b87b9e304aca01dac6349c851156c511e20fca4407af6d"
 )
 
 type vectorCase struct {

@@ -125,7 +125,7 @@ func validSignedFields(doc object) bool {
 	kind, encoded := doc.text("record_kind"), doc.text("record")
 	return doc.hasStrings("format", "scope", "function", "record_kind", "record_ref", "record", "algorithm", "key_id", "signature") &&
 		doc.text("scope") != "" && doc.text("function") != "" &&
-		(kind == "decision" || kind == "event" || kind == "activation") &&
+		(kind == "decision" || kind == "event" || kind == "activation" || kind == "suspension") &&
 		refPattern.MatchString(doc.text("record_ref")) && keyIDPattern.MatchString(doc.text("key_id")) &&
 		algorithmPattern.MatchString(doc.text("algorithm")) &&
 		len(encoded) > 0 && len(encoded) <= base64.StdEncoding.EncodedLen(maxRecordBytes)
