@@ -36,7 +36,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
-	corev1alpha1 "github.com/mohanraj00/koodam/api/v1alpha1"
+	corev1beta1 "github.com/mohanraj00/koodam/api/v1beta1"
 	"github.com/mohanraj00/koodam/internal/evidence"
 )
 
@@ -66,31 +66,31 @@ var _ = Describe("AppVersion evidence gate", func() {
 		_, err := rec.Reconcile(ctx, reconcile.Request{NamespacedName: nn(name)})
 		Expect(err).NotTo(HaveOccurred())
 	}
-	version := func() *corev1alpha1.AppVersion {
-		av := &corev1alpha1.AppVersion{}
+	version := func() *corev1beta1.AppVersion {
+		av := &corev1beta1.AppVersion{}
 		Expect(k8sClient.Get(ctx, nn(name), av)).To(Succeed())
 		return av
 	}
-	expectEvidence := func(status metav1.ConditionStatus, reason string) *corev1alpha1.AppVersion {
+	expectEvidence := func(status metav1.ConditionStatus, reason string) *corev1beta1.AppVersion {
 		GinkgoHelper()
 		av := version()
-		c := meta.FindStatusCondition(av.Status.Conditions, corev1alpha1.AppVersionEvidence)
+		c := meta.FindStatusCondition(av.Status.Conditions, corev1beta1.AppVersionEvidence)
 		Expect(c).NotTo(BeNil())
 		Expect([]string{string(c.Status), c.Reason}).To(Equal([]string{string(status), reason}), c.Message)
 		return av
 	}
 	newVersion := func(image string, gated bool) {
-		app := &corev1alpha1.App{ObjectMeta: metav1.ObjectMeta{Name: name + "-app", Namespace: ns}}
+		app := &corev1beta1.App{ObjectMeta: metav1.ObjectMeta{Name: name + "-app", Namespace: ns}}
 		Expect(k8sClient.Create(ctx, app)).To(Succeed())
-		av := &corev1alpha1.AppVersion{ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: ns},
-			Spec: corev1alpha1.AppVersionSpec{AppRef: corev1alpha1.AppReference{Name: app.Name},
-				Template: corev1alpha1.AppVersionTemplate{PodTemplate: corev1alpha1.PodTemplate{Spec: corev1.PodSpec{
-					Containers: []corev1.Container{{Name: corev1alpha1.AppContainerName, Image: image,
+		av := &corev1beta1.AppVersion{ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: ns},
+			Spec: corev1beta1.AppVersionSpec{AppRef: corev1beta1.AppReference{Name: app.Name},
+				Template: corev1beta1.AppVersionTemplate{PodTemplate: corev1beta1.PodTemplate{Spec: corev1.PodSpec{
+					Containers: []corev1.Container{{Name: corev1beta1.AppContainerName, Image: image,
 						Ports: []corev1.ContainerPort{{Name: jobIngHTTPPortName, ContainerPort: 8080}},
 						ReadinessProbe: &corev1.Probe{ProbeHandler: corev1.ProbeHandler{
 							HTTPGet: &corev1.HTTPGetAction{Path: healthPath, Port: intstr.FromString(jobIngHTTPPortName)}}}}}}}}}}
 		if gated {
-			av.Spec.Gate = &corev1alpha1.AppVersionGate{Nookku: corev1alpha1.NookkuGate{
+			av.Spec.Gate = &corev1beta1.AppVersionGate{Nookku: corev1beta1.NookkuGate{
 				Image: gateTestImage, Root: gateTestRoot, GateFile: gateTestFile, DeadlineSeconds: new(int32(600))}}
 		}
 		Expect(k8sClient.Create(ctx, av)).To(Succeed())
@@ -174,24 +174,24 @@ var _ = Describe("AppVersion evidence gate", func() {
 		newVersion(appImage, false)
 		run()
 		podsReady()
-		Expect(meta.FindStatusCondition(version().Status.Conditions, corev1alpha1.AppVersionEvidence)).To(BeNil())
+		Expect(meta.FindStatusCondition(version().Status.Conditions, corev1beta1.AppVersionEvidence)).To(BeNil())
 		Expect(apierrors.IsNotFound(k8sClient.Get(ctx, nn("kd-"+name+"-gate"), &batchv1.Job{}))).To(BeTrue())
 	})
 
 	It("refuses a gated version with an image that has no digest", func() {
 		newVersion("registry.example.com/app:v1", true)
 		run()
-		expectEvidence(metav1.ConditionFalse, corev1alpha1.EvidenceImageNotPinned)
+		expectEvidence(metav1.ConditionFalse, corev1beta1.EvidenceImageNotPinned)
 	})
 
 	It("waits for the pods, then makes the gate Job with the subject of the version", func() {
 		newVersion(appImage, true)
 		run()
-		expectEvidence(metav1.ConditionUnknown, corev1alpha1.EvidenceWaiting)
+		expectEvidence(metav1.ConditionUnknown, corev1beta1.EvidenceWaiting)
 		Expect(apierrors.IsNotFound(k8sClient.Get(ctx, nn("kd-"+name+"-gate"), &batchv1.Job{}))).To(BeTrue())
 
 		job := ready()
-		av := expectEvidence(metav1.ConditionUnknown, corev1alpha1.EvidenceRunning)
+		av := expectEvidence(metav1.ConditionUnknown, corev1beta1.EvidenceRunning)
 		Expect(metav1.IsControlledBy(job, av)).To(BeTrue())
 		Expect(isGatePod(&job.Spec.Template.Spec, av, "kd-"+name+".default.svc:8080")).To(BeTrue())
 		argv := job.Spec.Template.Spec.InitContainers[0].Command
@@ -202,14 +202,14 @@ var _ = Describe("AppVersion evidence gate", func() {
 		newVersion(appImage, true)
 		run()
 		ready()
-		expectEvidence(metav1.ConditionUnknown, corev1alpha1.EvidenceRunning)
+		expectEvidence(metav1.ConditionUnknown, corev1beta1.EvidenceRunning)
 
-		app := &corev1alpha1.App{}
+		app := &corev1beta1.App{}
 		Expect(k8sClient.Get(ctx, nn(name+"-app"), app)).To(Succeed())
 		Expect(k8sClient.Delete(ctx, app)).To(Succeed())
 		run()
-		av := expectEvidence(metav1.ConditionUnknown, corev1alpha1.EvidenceWaiting)
-		Expect(meta.IsStatusConditionTrue(av.Status.Conditions, corev1alpha1.AppVersionRevoked)).To(BeTrue())
+		av := expectEvidence(metav1.ConditionUnknown, corev1beta1.EvidenceWaiting)
+		Expect(meta.IsStatusConditionTrue(av.Status.Conditions, corev1beta1.AppVersionRevoked)).To(BeTrue())
 		Expect(apierrors.IsNotFound(k8sClient.Get(ctx, nn("kd-"+name+"-gate"), &batchv1.Job{}))).To(BeTrue())
 	})
 
@@ -220,10 +220,10 @@ var _ = Describe("AppVersion evidence gate", func() {
 		pod(job, report(0, "pass", subject()), nil)
 		end(job, true)
 		run()
-		av := expectEvidence(metav1.ConditionTrue, corev1alpha1.EvidencePassed)
-		Expect(av.Status.Evidence).To(Equal(&corev1alpha1.EvidenceRecord{
-			Source: corev1alpha1.EvidenceSourceNookkuGate, Subject: subject(), Verdict: corev1alpha1.EvidencePass,
-			ID: gateID, Digest: "sha256:" + resultSHA, Integrity: corev1alpha1.EvidenceSeal, NookkuVersion: "0.5.9",
+		av := expectEvidence(metav1.ConditionTrue, corev1beta1.EvidencePassed)
+		Expect(av.Status.Evidence).To(Equal(&corev1beta1.EvidenceRecord{
+			Source: corev1beta1.EvidenceSourceNookkuGate, Subject: subject(), Verdict: corev1beta1.EvidencePass,
+			ID: gateID, Digest: "sha256:" + resultSHA, Integrity: corev1beta1.EvidenceSeal, NookkuVersion: "0.5.9",
 			CheckedAt: metav1.NewTime(now.Local())}))
 
 		// The first Job goes. A new Job with the same name and a fail report does not change the record.
@@ -236,7 +236,7 @@ var _ = Describe("AppVersion evidence gate", func() {
 		pod(later, report(1, "fail", subject()), nil)
 		end(later, true)
 		run()
-		Expect(expectEvidence(metav1.ConditionTrue, corev1alpha1.EvidencePassed).Status.Evidence).To(Equal(av.Status.Evidence))
+		Expect(expectEvidence(metav1.ConditionTrue, corev1beta1.EvidencePassed).Status.Evidence).To(Equal(av.Status.Evidence))
 	})
 
 	It("opens the NetworkPolicy of the version to the gate pod only until the gate ends", func() {
@@ -263,12 +263,12 @@ var _ = Describe("AppVersion evidence gate", func() {
 		// A policy that a user deleted comes back while the Job runs.
 		Expect(k8sClient.Delete(ctx, gate)).To(Succeed())
 		run()
-		expectEvidence(metav1.ConditionUnknown, corev1alpha1.EvidenceRunning)
+		expectEvidence(metav1.ConditionUnknown, corev1beta1.EvidenceRunning)
 		Expect(policy(gatePolicyName(av)).Spec).To(Equal(gatePolicy(av, ports).Spec))
 		pod(job, report(0, "pass", subject()), nil)
 		end(job, true)
 		run()
-		expectEvidence(metav1.ConditionTrue, corev1alpha1.EvidencePassed)
+		expectEvidence(metav1.ConditionTrue, corev1beta1.EvidencePassed)
 		run()
 		Expect(policy("kd-" + name).Spec.Ingress).To(BeEmpty())
 	})
@@ -280,7 +280,7 @@ var _ = Describe("AppVersion evidence gate", func() {
 		DeferCleanup(func() { Expect(k8sClient.Delete(ctx, other)).To(Succeed()) })
 		run()
 		podsReady()
-		expectEvidence(metav1.ConditionUnknown, corev1alpha1.EvidenceWaiting)
+		expectEvidence(metav1.ConditionUnknown, corev1beta1.EvidenceWaiting)
 		Expect(apierrors.IsNotFound(k8sClient.Get(ctx, nn("kd-"+name+"-gate"), &batchv1.Job{}))).To(BeTrue())
 	})
 
@@ -295,25 +295,25 @@ var _ = Describe("AppVersion evidence gate", func() {
 			end(job, complete)
 			run()
 			av := expectEvidence(metav1.ConditionFalse, reason)
-			Expect(av.Status.Evidence != nil).To(Equal(reason == corev1alpha1.EvidenceFailed))
+			Expect(av.Status.Evidence != nil).To(Equal(reason == corev1beta1.EvidenceFailed))
 			// A False state is terminal: a later pass of the same Job does not change it.
 			pod(job, report(0, "pass", subject()), nil)
 			run()
 			expectEvidence(metav1.ConditionFalse, reason)
 		},
-		Entry("a fail", corev1alpha1.EvidenceFailed, true, func() string { return report(1, "fail", subject()) }, nil),
-		Entry("exit code 2", corev1alpha1.EvidenceNotVerified, true, func() string { return report(2, "", "") }, nil),
-		Entry("a report that is not JSON", corev1alpha1.EvidenceNotVerified, true, func() string { return "Traceback" }, nil),
-		Entry("a verdict that does not agree with the exit code", corev1alpha1.EvidenceNotVerified, true,
+		Entry("a fail", corev1beta1.EvidenceFailed, true, func() string { return report(1, "fail", subject()) }, nil),
+		Entry("exit code 2", corev1beta1.EvidenceNotVerified, true, func() string { return report(2, "", "") }, nil),
+		Entry("a report that is not JSON", corev1beta1.EvidenceNotVerified, true, func() string { return "Traceback" }, nil),
+		Entry("a verdict that does not agree with the exit code", corev1beta1.EvidenceNotVerified, true,
 			func() string { return report(1, "pass", subject()) }, nil),
-		Entry("a Job with no pod that succeeded", corev1alpha1.EvidenceNotVerified, true, nil, nil),
-		Entry("a pod with a different verify image", corev1alpha1.EvidenceNotVerified, true,
+		Entry("a Job with no pod that succeeded", corev1beta1.EvidenceNotVerified, true, nil, nil),
+		Entry("a pod with a different verify image", corev1beta1.EvidenceNotVerified, true,
 			func() string { return report(0, "pass", subject()) },
 			func(p *corev1.PodSpec) { p.Containers[0].Image = gateTestOtherImage }),
-		Entry("2 pods with a report", corev1alpha1.EvidenceNotVerified, true,
+		Entry("2 pods with a report", corev1beta1.EvidenceNotVerified, true,
 			func() string { pod(getJob(), report(0, "pass", subject()), nil); return report(0, "pass", subject()) }, nil),
-		Entry("a subject of a different object", corev1alpha1.EvidenceSubjectMismatch, true,
+		Entry("a subject of a different object", corev1beta1.EvidenceSubjectMismatch, true,
 			func() string { return report(0, "pass", evidence.AppVersionSubject(ns, "other", "uid", digest)) }, nil),
-		Entry("a Job that failed", corev1alpha1.EvidenceJobFailed, false, nil, nil),
+		Entry("a Job that failed", corev1beta1.EvidenceJobFailed, false, nil, nil),
 	)
 })

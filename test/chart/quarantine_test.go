@@ -41,7 +41,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/envtest"
 	"sigs.k8s.io/yaml"
 
-	corev1alpha1 "github.com/mohanraj00/koodam/api/v1alpha1"
+	corev1beta1 "github.com/mohanraj00/koodam/api/v1beta1"
 )
 
 const (
@@ -175,7 +175,7 @@ func TestQuarantinePolicyRules(t *testing.T) {
 	budget := &policyv1.PodDisruptionBudget{ObjectMeta: meta("kd-quarantine-agent-run", nil),
 		Spec: policyv1.PodDisruptionBudgetSpec{MinAvailable: new(intstr.FromInt32(1000)), Selector: selector}}
 	plain := &corev1.Pod{ObjectMeta: meta("plain", nil), Spec: podSpec}
-	agent := &corev1alpha1.Agent{ObjectMeta: meta("run", nil), Spec: corev1alpha1.AgentSpec{
+	agent := &corev1beta1.Agent{ObjectMeta: meta("run", nil), Spec: corev1beta1.AgentSpec{
 		Image: "example.com/quarantine:test", Command: []string{"/run"}, Model: "m", Budget: resource.MustParse("1"),
 		DeadlineSeconds: 600}}
 	// The koodam finalizer keeps the Agent after a permitted delete.
@@ -354,7 +354,7 @@ func quarantineClients(t *testing.T) (admin, manager client.Client) {
 	if err := clientgoscheme.AddToScheme(scheme); err != nil {
 		t.Fatal(err)
 	}
-	if err := corev1alpha1.AddToScheme(scheme); err != nil {
+	if err := corev1beta1.AddToScheme(scheme); err != nil {
 		t.Fatal(err)
 	}
 	admin, err := client.New(cfg, client.Options{Scheme: scheme})

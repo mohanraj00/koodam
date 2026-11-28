@@ -41,7 +41,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
 
-	corev1alpha1 "github.com/mohanraj00/koodam/api/v1alpha1"
+	corev1beta1 "github.com/mohanraj00/koodam/api/v1beta1"
 )
 
 const (
@@ -60,7 +60,7 @@ const (
 	jobUID      = types.UID("job-uid")
 )
 
-const manifest = `apiVersion: core.koodam.dev/v1alpha1
+const manifest = `apiVersion: core.koodam.dev/v1beta1
 kind: Agent
 metadata:
   name: fix-tests
@@ -71,12 +71,12 @@ spec:
   budget: "2"
 `
 
-func testAgent(phase corev1alpha1.AgentPhase, usage *corev1alpha1.AgentUsage) *corev1alpha1.Agent {
-	return &corev1alpha1.Agent{
+func testAgent(phase corev1beta1.AgentPhase, usage *corev1beta1.AgentUsage) *corev1beta1.Agent {
+	return &corev1beta1.Agent{
 		ObjectMeta: metav1.ObjectMeta{Name: testName, Namespace: testNS, UID: agentUID},
-		Spec: corev1alpha1.AgentSpec{Image: "example/agent:1", Command: []string{"sh"}, Model: "local-agent",
+		Spec: corev1beta1.AgentSpec{Image: "example/agent:1", Command: []string{"sh"}, Model: "local-agent",
 			Budget: resource.MustParse("2")},
-		Status: corev1alpha1.AgentStatus{Phase: phase, Job: testJob, KeyAlias: "koodam-dev-fix-tests", Usage: usage},
+		Status: corev1beta1.AgentStatus{Phase: phase, Job: testJob, KeyAlias: "koodam-dev-fix-tests", Usage: usage},
 	}
 }
 
@@ -156,7 +156,7 @@ func newKube(t *testing.T, funcs *interceptor.Funcs, objs ...client.Object) clie
 	if err := clientgoscheme.AddToScheme(scheme); err != nil {
 		t.Fatal(err)
 	}
-	if err := corev1alpha1.AddToScheme(scheme); err != nil {
+	if err := corev1beta1.AddToScheme(scheme); err != nil {
 		t.Fatal(err)
 	}
 	b := fake.NewClientBuilder().WithScheme(scheme).WithObjects(objs...)
@@ -191,9 +191,24 @@ func TestRunCreatesTheAgent(t *testing.T) {
 		t.Fatal(err)
 	}
 	wantAll(t, out, "agent/fix-tests created")
-	a := &corev1alpha1.Agent{}
+	a := &corev1beta1.Agent{}
 	if err := kube.Get(context.Background(), client.ObjectKey{Namespace: testNS, Name: testName}, a); err != nil {
 		t.Fatalf("the Agent is not in the namespace of the flags: %v", err)
+	}
+}
+
+func TestReadAgentUsesBetaVersion(t *testing.T) {
+	for _, version := range []string{"core.koodam.dev/v1alpha1", "core.koodam.dev/v1beta1"} {
+		t.Run(version, func(t *testing.T) {
+			body := strings.Replace(manifest, "core.koodam.dev/v1beta1", version, 1)
+			a, err := readAgent(writeManifest(t, body), testNS)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if a.APIVersion != "core.koodam.dev/v1beta1" {
+				t.Fatalf("the Agent uses %q, want core.koodam.dev/v1beta1", a.APIVersion)
+			}
+		})
 	}
 }
 
@@ -206,7 +221,7 @@ func TestRunRefusesANamespaceThatDoesNotAgreeWithTheFlag(t *testing.T) {
 }
 
 func TestRunRefusesAnAgentThatExists(t *testing.T) {
-	kube := newKube(t, nil, testAgent(corev1alpha1.AgentSucceeded, nil))
+	kube := newKube(t, nil, testAgent(corev1beta1.AgentSucceeded, nil))
 	_, err := run(t, kube, cmdRun, "-f", writeManifest(t, manifest))
 	if err == nil || !strings.Contains(err.Error(), "agent/fix-tests exists") {
 		t.Fatalf("run did not refuse an Agent that exists: %v", err)
@@ -233,7 +248,7 @@ func TestRunDoesNotShowValuesFromAnInvalidFile(t *testing.T) {
 const marker = "MARKER-user:password"
 
 func markerErrors() []error {
-	gk := corev1alpha1.GroupVersion.WithKind("Agent").GroupKind()
+	gk := corev1beta1.GroupVersion.WithKind("Agent").GroupKind()
 	return []error{
 		// The marker is in the name, the field path, the value and the detail.
 		apierrors.NewInvalid(gk, marker, field.ErrorList{
@@ -291,16 +306,16 @@ func TestRunRefusesAnotherKind(t *testing.T) {
 // runEnds gives an interceptor that does the work of the controller: on create, the run ends
 // and the usage is written.
 func runEnds() *interceptor.Funcs {
-	return runEndsWith(&corev1alpha1.AgentUsage{Spend: "0.25", Calls: 3, InputTokens: 10, OutputTokens: 20})
+	return runEndsWith(&corev1beta1.AgentUsage{Spend: "0.25", Calls: 3, InputTokens: 10, OutputTokens: 20})
 }
 
 // runEndsWith is runEnds with the usage u. If u is nil, the status has no usage.
-func runEndsWith(u *corev1alpha1.AgentUsage) *interceptor.Funcs {
+func runEndsWith(u *corev1beta1.AgentUsage) *interceptor.Funcs {
 	return &interceptor.Funcs{Create: func(ctx context.Context, c client.WithWatch, o client.Object,
 		opts ...client.CreateOption) error {
-		if a, ok := o.(*corev1alpha1.Agent); ok {
+		if a, ok := o.(*corev1beta1.Agent); ok {
 			a.UID, a.Status.Job = agentUID, testJob
-			a.Status.Phase = corev1alpha1.AgentSucceeded
+			a.Status.Phase = corev1beta1.AgentSucceeded
 			a.Status.Usage = u
 			a.Status.Conditions = []metav1.Condition{{Type: condRevoked, Status: metav1.ConditionTrue,
 				Reason: "JobComplete", Message: "The spend did not settle, so the usage can be low.",
@@ -339,10 +354,10 @@ func TestRunWaitShowsTheLogAndTheSpend(t *testing.T) {
 }
 
 func TestGetAndSpendShowThePhaseTheBudgetAndTheUsage(t *testing.T) {
-	a := testAgent(corev1alpha1.AgentSucceeded, &corev1alpha1.AgentUsage{Spend: "0.5", Calls: 4, FailedCalls: 1})
+	a := testAgent(corev1beta1.AgentSucceeded, &corev1beta1.AgentUsage{Spend: "0.5", Calls: 4, FailedCalls: 1})
 	a.Status.StartedAt = &metav1.Time{Time: time.Date(2026, 10, 18, 9, 0, 0, 0, time.UTC)}
 	a.Status.CompletedAt = &metav1.Time{Time: time.Date(2026, 10, 18, 9, 4, 30, 0, time.UTC)}
-	a.Spec.Harness = &corev1alpha1.HarnessSpec{Name: "codex"}
+	a.Spec.Harness = &corev1beta1.HarnessSpec{Name: "codex"}
 	kube := newKube(t, nil, a)
 	out, err := run(t, kube, "get")
 	if err != nil {
@@ -371,8 +386,8 @@ func TestRunWaitShowsTheGatewayNoteForARunWithNoGatewaySpend(t *testing.T) {
 }
 
 // endedAgent gives an Agent that the controller revoked, with the usage u.
-func endedAgent(u *corev1alpha1.AgentUsage) *corev1alpha1.Agent {
-	a := testAgent(corev1alpha1.AgentSucceeded, u)
+func endedAgent(u *corev1beta1.AgentUsage) *corev1beta1.Agent {
+	a := testAgent(corev1beta1.AgentSucceeded, u)
 	a.Status.Conditions = []metav1.Condition{{Type: condRevoked, Status: metav1.ConditionTrue,
 		Reason: "JobComplete", LastTransitionTime: metav1.Now()}}
 	return a
@@ -381,12 +396,12 @@ func endedAgent(u *corev1alpha1.AgentUsage) *corev1alpha1.Agent {
 func TestGetAndSpendShowTheGatewayNoteOnlyForAnEndedRunWithNoGatewaySpend(t *testing.T) {
 	cases := []struct {
 		name  string
-		agent *corev1alpha1.Agent
+		agent *corev1beta1.Agent
 		want  int // how many times the note shows
 	}{
 		{"ended with no usage", endedAgent(nil), 1},
-		{"ended with usage", endedAgent(&corev1alpha1.AgentUsage{Spend: "0.5", Calls: 1}), 0},
-		{"running with no usage", testAgent(corev1alpha1.AgentRunning, nil), 0},
+		{"ended with usage", endedAgent(&corev1beta1.AgentUsage{Spend: "0.5", Calls: 1}), 0},
+		{"running with no usage", testAgent(corev1beta1.AgentRunning, nil), 0},
 	}
 	for _, tc := range cases {
 		for _, cmd := range []string{"get", "spend"} {
@@ -408,7 +423,7 @@ func TestGetAndSpendShowTheGatewayNoteOnlyForAnEndedRunWithNoGatewaySpend(t *tes
 }
 
 func TestGetShowsADashForATimeThatIsNotSet(t *testing.T) {
-	agent := testAgent(corev1alpha1.AgentRunning, nil)
+	agent := testAgent(corev1beta1.AgentRunning, nil)
 	started := metav1.NewTime(time.Date(2026, 10, 18, 9, 0, 0, 0, time.UTC))
 	agent.Status.StartedAt = &started
 	out, err := run(t, newKube(t, nil, agent), "get", testName)
@@ -422,7 +437,7 @@ func TestGetShowsADashForATimeThatIsNotSet(t *testing.T) {
 }
 
 func TestLogsShowsThePodLog(t *testing.T) {
-	out, err := run(t, newKube(t, nil, testAgent(corev1alpha1.AgentRunning, nil), testJobObject(), testPod()),
+	out, err := run(t, newKube(t, nil, testAgent(corev1beta1.AgentRunning, nil), testJobObject(), testPod()),
 		cmdLogs, testName)
 	if err != nil {
 		t.Fatal(err)
@@ -438,7 +453,7 @@ func TestPodIsFromTheCurrentJobOnly(t *testing.T) {
 	other := testPod()
 	other.Name, other.OwnerReferences = "copied-label", owner("Job", testJob, "old-job-uid")
 	other.CreationTimestamp = metav1.NewTime(time.Now().Add(time.Hour))
-	a := testAgent(corev1alpha1.AgentRunning, nil)
+	a := testAgent(corev1beta1.AgentRunning, nil)
 	e := &env{kube: newKube(t, nil, a, testJobObject(), testPod(), other), namespace: testNS}
 	pod, err := e.pod(context.Background(), a)
 	if err != nil {
@@ -460,7 +475,7 @@ func TestLogsFollowWaitsForThePod(t *testing.T) {
 		}
 		return c.List(ctx, l, opts...)
 	}}
-	kube := newKube(t, funcs, testAgent(corev1alpha1.AgentRunning, nil), testJobObject(), testPod())
+	kube := newKube(t, funcs, testAgent(corev1beta1.AgentRunning, nil), testJobObject(), testPod())
 	out, err := run(t, kube, cmdLogs, testName, "-f")
 	if err != nil {
 		t.Fatal(err)
@@ -479,7 +494,7 @@ func TestTheLogStreamHasNoDeadlineFromTheTimeout(t *testing.T) {
 	} {
 		objs := []client.Object{testJobObject(), testPod()}
 		if args[0] == cmdLogs {
-			objs = append(objs, testAgent(corev1alpha1.AgentRunning, nil))
+			objs = append(objs, testAgent(corev1beta1.AgentRunning, nil))
 		}
 		streams := 0
 		e := &env{kube: newKube(t, funcs, objs...), clientset: kubefake.NewClientset(), namespace: testNS,
@@ -515,7 +530,7 @@ func TestAStalledLogOpenStopsAtTheTimeout(t *testing.T) {
 	} {
 		objs := []client.Object{testJobObject(), testPod()}
 		if args[0] == cmdLogs {
-			objs = append(objs, testAgent(corev1alpha1.AgentRunning, nil))
+			objs = append(objs, testAgent(corev1beta1.AgentRunning, nil))
 		}
 		e := &env{kube: newKube(t, runEnds(), objs...), clientset: kubefake.NewClientset(), namespace: testNS,
 			poll: time.Millisecond, stream: stalled}
@@ -543,7 +558,7 @@ func TestAStalledLogOpenStopsAtTheTimeout(t *testing.T) {
 }
 
 func TestDeleteWaitsUntilTheAgentIsGone(t *testing.T) {
-	kube := newKube(t, nil, testAgent(corev1alpha1.AgentRunning, nil))
+	kube := newKube(t, nil, testAgent(corev1beta1.AgentRunning, nil))
 	out, err := run(t, kube, "delete", testName, flagWait)
 	if err != nil {
 		t.Fatal(err)
@@ -553,7 +568,7 @@ func TestDeleteWaitsUntilTheAgentIsGone(t *testing.T) {
 
 func TestDeleteWaitStopsAtTheTimeout(t *testing.T) {
 	// The finalizer stays because no controller runs, so the Agent does not go.
-	a := testAgent(corev1alpha1.AgentRunning, nil)
+	a := testAgent(corev1beta1.AgentRunning, nil)
 	a.Finalizers = []string{"koodam.dev/revoke"}
 	_, err := run(t, newKube(t, nil, a), "delete", testName, flagWait, flagTimeout, "20ms")
 	if err == nil {

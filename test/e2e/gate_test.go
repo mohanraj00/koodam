@@ -39,7 +39,7 @@ import (
 	"k8s.io/apimachinery/pkg/util/intstr"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
-	corev1alpha1 "github.com/mohanraj00/koodam/api/v1alpha1"
+	corev1beta1 "github.com/mohanraj00/koodam/api/v1beta1"
 	"github.com/mohanraj00/koodam/test/utils"
 )
 
@@ -86,31 +86,31 @@ var _ = Describe("Evidence gate", Ordered, Label("gate"), func() {
 		nookkuVersion string
 	)
 
-	version := func(name, gateFile string) *corev1alpha1.AppVersion {
-		av := &corev1alpha1.AppVersion{ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: gateNS},
-			Spec: corev1alpha1.AppVersionSpec{AppRef: corev1alpha1.AppReference{Name: appName},
-				Template: corev1alpha1.AppVersionTemplate{PodTemplate: corev1alpha1.PodTemplate{Spec: corev1.PodSpec{
+	version := func(name, gateFile string) *corev1beta1.AppVersion {
+		av := &corev1beta1.AppVersion{ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: gateNS},
+			Spec: corev1beta1.AppVersionSpec{AppRef: corev1beta1.AppReference{Name: appName},
+				Template: corev1beta1.AppVersionTemplate{PodTemplate: corev1beta1.PodTemplate{Spec: corev1.PodSpec{
 					Containers: []corev1.Container{{
-						Name: corev1alpha1.AppContainerName, Image: appImage,
+						Name: corev1beta1.AppContainerName, Image: appImage,
 						Command: []string{"python", "-u", "-c", gateApp},
 						Ports:   []corev1.ContainerPort{{Name: "http", ContainerPort: 8080}},
 						ReadinessProbe: &corev1.Probe{PeriodSeconds: 1, ProbeHandler: corev1.ProbeHandler{
 							HTTPGet: &corev1.HTTPGetAction{Path: "/", Port: intstr.FromString("http")}}},
 					}}}}}}}
 		if gateFile != "" {
-			av.Spec.Gate = &corev1alpha1.AppVersionGate{Nookku: corev1alpha1.NookkuGate{
+			av.Spec.Gate = &corev1beta1.AppVersionGate{Nookku: corev1beta1.NookkuGate{
 				Image: gateImage, Root: "/project", GateFile: gateFile, DeadlineSeconds: new(int32(300))}}
 		}
 		return av
 	}
-	weight := func(name string, w int32) corev1alpha1.AppEndpointVersion {
-		return corev1alpha1.AppEndpointVersion{Name: name, Weight: &w}
+	weight := func(name string, w int32) corev1beta1.AppEndpointVersion {
+		return corev1beta1.AppEndpointVersion{Name: name, Weight: &w}
 	}
 	// setWeights writes the weights of the endpoint to the spec of the App.
-	setWeights := func(versions ...corev1alpha1.AppEndpointVersion) {
+	setWeights := func(versions ...corev1beta1.AppEndpointVersion) {
 		GinkgoHelper()
 		Eventually(func() error {
-			app := &corev1alpha1.App{}
+			app := &corev1beta1.App{}
 			if err := k8s.Get(ctx, client.ObjectKey{Namespace: gateNS, Name: appName}, app); err != nil {
 				return err
 			}
@@ -119,8 +119,8 @@ var _ = Describe("Evidence gate", Ordered, Label("gate"), func() {
 		}, time.Minute, time.Second).Should(Succeed())
 	}
 	// inEffect gives back the weights in effect of the endpoint, from the status of the App.
-	inEffect := func() []corev1alpha1.AppEndpointVersion {
-		app := &corev1alpha1.App{}
+	inEffect := func() []corev1beta1.AppEndpointVersion {
+		app := &corev1beta1.App{}
 		if err := k8s.Get(ctx, client.ObjectKey{Namespace: gateNS, Name: appName}, app); err != nil ||
 			len(app.Status.Endpoints) != 1 {
 			return nil
@@ -150,14 +150,14 @@ var _ = Describe("Evidence gate", Ordered, Label("gate"), func() {
 		return got
 	}
 	// evidence waits for the end state of the gate of a version and gives back the version.
-	evidence := func(name string, status metav1.ConditionStatus, reason string) *corev1alpha1.AppVersion {
+	evidence := func(name string, status metav1.ConditionStatus, reason string) *corev1beta1.AppVersion {
 		GinkgoHelper()
-		av := &corev1alpha1.AppVersion{}
+		av := &corev1beta1.AppVersion{}
 		Eventually(func() string {
 			if err := k8s.Get(ctx, client.ObjectKey{Namespace: gateNS, Name: name}, av); err != nil {
 				return err.Error()
 			}
-			c := meta.FindStatusCondition(av.Status.Conditions, corev1alpha1.AppVersionEvidence)
+			c := meta.FindStatusCondition(av.Status.Conditions, corev1beta1.AppVersionEvidence)
 			if c == nil || c.Status == metav1.ConditionUnknown {
 				return "the gate has no end state"
 			}
@@ -213,19 +213,19 @@ var _ = Describe("Evidence gate", Ordered, Label("gate"), func() {
 		Expect(client.IgnoreAlreadyExists(k8s.Create(ctx, &corev1.Namespace{
 			ObjectMeta: metav1.ObjectMeta{Name: gateNS}}))).To(Succeed())
 		DeferCleanup(func() {
-			_ = k8s.DeleteAllOf(ctx, &corev1alpha1.AppVersion{}, client.InNamespace(gateNS))
+			_ = k8s.DeleteAllOf(ctx, &corev1beta1.AppVersion{}, client.InNamespace(gateNS))
 			Eventually(func() int {
-				l := &corev1alpha1.AppVersionList{}
+				l := &corev1beta1.AppVersionList{}
 				_ = k8s.List(ctx, l, client.InNamespace(gateNS))
 				return len(l.Items)
 			}, 2*time.Minute, time.Second).Should(BeZero(), "The finalizer kept an AppVersion.")
 			_ = k8s.Delete(ctx, &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: gateNS}})
 		})
 		// The Gateway of the endpoint does not exist. The spec reads only the backends of the route.
-		Expect(k8s.Create(ctx, &corev1alpha1.App{ObjectMeta: metav1.ObjectMeta{Name: appName, Namespace: gateNS},
-			Spec: corev1alpha1.AppSpec{Endpoints: []corev1alpha1.AppEndpoint{{Name: "web", Port: "http",
-				Gateway:  corev1alpha1.AppGatewayReference{Name: "public"},
-				Versions: []corev1alpha1.AppEndpointVersion{weight(live, 100)}}}}})).To(Succeed())
+		Expect(k8s.Create(ctx, &corev1beta1.App{ObjectMeta: metav1.ObjectMeta{Name: appName, Namespace: gateNS},
+			Spec: corev1beta1.AppSpec{Endpoints: []corev1beta1.AppEndpoint{{Name: "web", Port: "http",
+				Gateway:  corev1beta1.AppGatewayReference{Name: "public"},
+				Versions: []corev1beta1.AppEndpointVersion{weight(live, 100)}}}}})).To(Succeed())
 		Expect(k8s.Create(ctx, version(live, ""))).To(Succeed())
 		Eventually(routeWeights, gateTimeout, gateInterval).Should(Equal(
 			map[string]int64{"kd-" + live: 100, sessionRules: 1}))
@@ -252,14 +252,14 @@ var _ = Describe("Evidence gate", Ordered, Label("gate"), func() {
 		Expect(k8s.Create(ctx, version(bad, "gates/fail.json"))).To(Succeed())
 		setWeights(weight(live, 50), weight(bad, 50))
 
-		av := evidence(bad, metav1.ConditionFalse, corev1alpha1.EvidenceFailed)
+		av := evidence(bad, metav1.ConditionFalse, corev1beta1.EvidenceFailed)
 		Expect(av.Status.Evidence).NotTo(BeNil())
-		Expect(av.Status.Evidence.Verdict).To(Equal(corev1alpha1.EvidenceFail))
+		Expect(av.Status.Evidence.Verdict).To(Equal(corev1beta1.EvidenceFail))
 		Expect(av.Status.Evidence.NookkuVersion).To(Equal(nookkuVersion))
 
 		By("reading the weights: the old version keeps its traffic, and the new version gets none")
 		Eventually(inEffect, gateTimeout, gateInterval).Should(Equal(
-			[]corev1alpha1.AppEndpointVersion{weight(live, 50), weight(bad, 0)}))
+			[]corev1beta1.AppEndpointVersion{weight(live, 50), weight(bad, 0)}))
 		Expect(routeWeights()).To(Equal(map[string]int64{"kd-" + live: 50, sessionRules: 1}))
 		Consistently(routeWeights, 10*time.Second, gateInterval).Should(Equal(
 			map[string]int64{"kd-" + live: 50, sessionRules: 1}))
@@ -270,7 +270,7 @@ var _ = Describe("Evidence gate", Ordered, Label("gate"), func() {
 		Expect(k8s.Create(ctx, version(good, "gates/pass.json"))).To(Succeed())
 		setWeights(weight(live, 50), weight(bad, 50), weight(good, 50))
 
-		av := evidence(good, metav1.ConditionTrue, corev1alpha1.EvidencePassed)
+		av := evidence(good, metav1.ConditionTrue, corev1beta1.EvidencePassed)
 		digest := appImage[strings.LastIndex(appImage, "@")+1:]
 		rec := av.Status.Evidence
 		Expect(rec).NotTo(BeNil())
@@ -282,7 +282,7 @@ var _ = Describe("Evidence gate", Ordered, Label("gate"), func() {
 
 		By("reading the weights: the new version gets the weight of the spec")
 		Eventually(inEffect, gateTimeout, gateInterval).Should(Equal(
-			[]corev1alpha1.AppEndpointVersion{weight(live, 50), weight(bad, 0), weight(good, 50)}))
+			[]corev1beta1.AppEndpointVersion{weight(live, 50), weight(bad, 0), weight(good, 50)}))
 		Expect(routeWeights()).To(Equal(map[string]int64{"kd-" + live: 50, "kd-" + good: 50, sessionRules: 2}))
 
 		By("reading the gate pod: no ServiceAccount token, and a NetworkPolicy of its own")

@@ -26,7 +26,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
-	corev1alpha1 "github.com/mohanraj00/koodam/api/v1alpha1"
+	corev1beta1 "github.com/mohanraj00/koodam/api/v1beta1"
 	"github.com/mohanraj00/koodam/internal/tenanttoken"
 )
 
@@ -34,14 +34,14 @@ import (
 // rule. It has the finalizer and the status of a TenantQuota that had an effect.
 func reservedQuota(t *testing.T) (client.Client, *TenantQuotaReconciler, *fakeCustomers, reconcile.Request) {
 	t.Helper()
-	q := &corev1alpha1.TenantQuota{
+	q := &corev1beta1.TenantQuota{
 		ObjectMeta: metav1.ObjectMeta{Name: "reserved", Namespace: testTeam, Finalizers: []string{tenantQuotaFinalizer}},
-		Spec:       corev1alpha1.TenantQuotaSpec{Tenant: tenanttoken.NoTenant, Requests: new(int64(10))},
-		Status: corev1alpha1.TenantQuotaStatus{Requests: 12, Spend: "1", Conditions: []metav1.Condition{{
-			Type: corev1alpha1.TenantQuotaExceeded, Status: metav1.ConditionTrue, Reason: "TenantQuotaExceeded"}}},
+		Spec:       corev1beta1.TenantQuotaSpec{Tenant: tenanttoken.NoTenant, Requests: new(int64(10))},
+		Status: corev1beta1.TenantQuotaStatus{Requests: 12, Spend: "1", Conditions: []metav1.Condition{{
+			Type: corev1beta1.TenantQuotaExceeded, Status: metav1.ConditionTrue, Reason: "TenantQuotaExceeded"}}},
 	}
 	c := fake.NewClientBuilder().WithScheme(ingWorld(t).Scheme()).WithObjects(q).
-		WithStatusSubresource(&corev1alpha1.TenantQuota{}).Build()
+		WithStatusSubresource(&corev1beta1.TenantQuota{}).Build()
 	customers := newFakeCustomers()
 	return c, &TenantQuotaReconciler{Client: c, Customers: customers}, customers,
 		reconcile.Request{NamespacedName: client.ObjectKeyFromObject(q)}
@@ -56,15 +56,15 @@ func TestTenantQuotaWithTheReservedLabelHasNoEffect(t *testing.T) {
 			t.Fatalf("Reconcile gave the result %+v and the error %v.", res, err)
 		}
 	}
-	q := &corev1alpha1.TenantQuota{}
+	q := &corev1beta1.TenantQuota{}
 	if err := c.Get(t.Context(), req.NamespacedName, q); err != nil {
 		t.Fatal(err)
 	}
-	ready := meta.FindStatusCondition(q.Status.Conditions, corev1alpha1.TenantQuotaReady)
+	ready := meta.FindStatusCondition(q.Status.Conditions, corev1beta1.TenantQuotaReady)
 	if ready == nil || ready.Status != metav1.ConditionFalse || ready.Reason != reasonTenantReserved {
 		t.Errorf("The condition Ready is %+v.", ready)
 	}
-	if meta.FindStatusCondition(q.Status.Conditions, corev1alpha1.TenantQuotaExceeded) != nil ||
+	if meta.FindStatusCondition(q.Status.Conditions, corev1beta1.TenantQuotaExceeded) != nil ||
 		q.Status.Requests != 0 || q.Status.Spend != "" {
 		t.Errorf("The status has the use of a tenant: %+v.", q.Status)
 	}
@@ -80,7 +80,7 @@ func TestTenantQuotaWithTheReservedLabelHasNoEffect(t *testing.T) {
 // which has the count of each model call with no tenant.
 func TestDeleteOfATenantQuotaWithTheReservedLabelKeepsTheCustomer(t *testing.T) {
 	c, r, customers, req := reservedQuota(t)
-	q := &corev1alpha1.TenantQuota{}
+	q := &corev1beta1.TenantQuota{}
 	if err := c.Get(t.Context(), req.NamespacedName, q); err != nil {
 		t.Fatal(err)
 	}

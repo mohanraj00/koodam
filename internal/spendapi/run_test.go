@@ -36,7 +36,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
-	corev1alpha1 "github.com/mohanraj00/koodam/api/v1alpha1"
+	corev1beta1 "github.com/mohanraj00/koodam/api/v1beta1"
 	"github.com/mohanraj00/koodam/docs"
 )
 
@@ -54,17 +54,17 @@ var runTime = metav1.NewTime(time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC))
 // runObjects gives an Agent, its Job, the pod of the Job and a pod with the same labels that the
 // Job does not control.
 func runObjects(hash string) []client.Object {
-	agent := &corev1alpha1.Agent{
+	agent := &corev1beta1.Agent{
 		ObjectMeta: metav1.ObjectMeta{Name: runName, Namespace: testNamespace, UID: "uid-agent"},
-		Status: corev1alpha1.AgentStatus{
-			RunID: "run-7", Phase: corev1alpha1.AgentRunning, Job: jobName, KeyHash: hash, StartedAt: &runTime,
+		Status: corev1beta1.AgentStatus{
+			RunID: "run-7", Phase: corev1beta1.AgentRunning, Job: jobName, KeyHash: hash, StartedAt: &runTime,
 			Conditions: []metav1.Condition{{Type: "Provisioned", Status: metav1.ConditionTrue, Reason: "KeyReady",
 				Message: "The key is ready.", LastTransitionTime: runTime}},
 		},
 	}
 	job := &batchv1.Job{
 		ObjectMeta: metav1.ObjectMeta{Name: jobName, Namespace: testNamespace, UID: "uid-job",
-			OwnerReferences: []metav1.OwnerReference{{APIVersion: corev1alpha1.GroupVersion.String(), Kind: "Agent",
+			OwnerReferences: []metav1.OwnerReference{{APIVersion: corev1beta1.GroupVersion.String(), Kind: "Agent",
 				Name: runName, UID: agent.UID, Controller: new(true)}}},
 		Status: batchv1.JobStatus{Active: 1, StartTime: &runTime, Conditions: []batchv1.JobCondition{{
 			Type: batchv1.JobSuccessCriteriaMet, Status: corev1.ConditionFalse, LastTransitionTime: runTime}}},
@@ -89,7 +89,7 @@ func runObjects(hash string) []client.Object {
 func runClient(t testing.TB, objects ...client.Object) client.WithWatch {
 	t.Helper()
 	s := runtime.NewScheme()
-	for _, add := range []func(*runtime.Scheme) error{corev1alpha1.AddToScheme, batchv1.AddToScheme, corev1.AddToScheme} {
+	for _, add := range []func(*runtime.Scheme) error{corev1beta1.AddToScheme, batchv1.AddToScheme, corev1.AddToScheme} {
 		if err := add(s); err != nil {
 			t.Fatal(err)
 		}
@@ -275,7 +275,7 @@ func TestRunPodsReadsEachPage(t *testing.T) {
 func TestConditionMessagesAreRedacted(t *testing.T) {
 	f := newFixture(t, 0)
 	objects := runObjects(f.runKeys[0].hash)
-	agent := objects[0].(*corev1alpha1.Agent)
+	agent := objects[0].(*corev1beta1.Agent)
 	agent.Status.Conditions[0].Message = "the gateway refused the key " + f.runKeys[0].value
 	job := objects[1].(*batchv1.Job)
 	job.Status.Conditions[0].Message = "mount failed:\n-----BEGIN PRIVATE KEY-----\n" + keyBody + "\n-----END PRIVATE KEY-----\nend"

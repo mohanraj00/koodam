@@ -33,7 +33,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
-	corev1alpha1 "github.com/mohanraj00/koodam/api/v1alpha1"
+	corev1beta1 "github.com/mohanraj00/koodam/api/v1beta1"
 )
 
 // noRouteReader is an API reader of a cluster that does not have the Gateway API.
@@ -63,29 +63,29 @@ var _ = Describe("App controller", func() {
 		n       int
 	)
 	nn := func(s string) types.NamespacedName { return types.NamespacedName{Namespace: ns, Name: s} }
-	weight := func(v string, w int32) corev1alpha1.AppEndpointVersion {
-		return corev1alpha1.AppEndpointVersion{Name: v, Weight: &w}
+	weight := func(v string, w int32) corev1beta1.AppEndpointVersion {
+		return corev1beta1.AppEndpointVersion{Name: v, Weight: &w}
 	}
-	endpoint := func(name string, versions ...corev1alpha1.AppEndpointVersion) corev1alpha1.AppEndpoint {
-		return corev1alpha1.AppEndpoint{Name: name, Port: port, Hostnames: []string{"shop.example.com"},
-			Gateway: corev1alpha1.AppGatewayReference{Name: "public", Namespace: "gateways"}, Versions: versions}
+	endpoint := func(name string, versions ...corev1beta1.AppEndpointVersion) corev1beta1.AppEndpoint {
+		return corev1beta1.AppEndpoint{Name: name, Port: port, Hostnames: []string{"shop.example.com"},
+			Gateway: corev1beta1.AppGatewayReference{Name: "public", Namespace: "gateways"}, Versions: versions}
 	}
-	newApp := func(endpoints ...corev1alpha1.AppEndpoint) *corev1alpha1.App {
-		app := &corev1alpha1.App{ObjectMeta: metav1.ObjectMeta{Name: appName, Namespace: ns},
-			Spec: corev1alpha1.AppSpec{Endpoints: endpoints}}
+	newApp := func(endpoints ...corev1beta1.AppEndpoint) *corev1beta1.App {
+		app := &corev1beta1.App{ObjectMeta: metav1.ObjectMeta{Name: appName, Namespace: ns},
+			Spec: corev1beta1.AppSpec{Endpoints: endpoints}}
 		Expect(k8sClient.Create(ctx, app)).To(Succeed())
 		DeferCleanup(func() { Expect(client.IgnoreNotFound(k8sClient.Delete(ctx, app))).To(Succeed()) })
 		return app
 	}
 	// newVersion makes an AppVersion in the state that the AppVersion controller gives it: bound
 	// to the App, with a key hash and a Service. The hash is a fixture, not the hash of a key.
-	newVersion := func(app *corev1alpha1.App, s string, containerPort int32) *corev1alpha1.AppVersion {
-		av := &corev1alpha1.AppVersion{ObjectMeta: metav1.ObjectMeta{Name: s, Namespace: ns},
-			Spec: corev1alpha1.AppVersionSpec{
-				AppRef: corev1alpha1.AppReference{Name: app.Name}, BudgetPerDay: new(resource.MustParse("5")),
-				Template: corev1alpha1.AppVersionTemplate{Model: testGatewayModel,
-					PodTemplate: corev1alpha1.PodTemplate{Spec: corev1.PodSpec{Containers: []corev1.Container{{
-						Name: corev1alpha1.AppContainerName, Image: "registry.example.com/app:v1",
+	newVersion := func(app *corev1beta1.App, s string, containerPort int32) *corev1beta1.AppVersion {
+		av := &corev1beta1.AppVersion{ObjectMeta: metav1.ObjectMeta{Name: s, Namespace: ns},
+			Spec: corev1beta1.AppVersionSpec{
+				AppRef: corev1beta1.AppReference{Name: app.Name}, BudgetPerDay: new(resource.MustParse("5")),
+				Template: corev1beta1.AppVersionTemplate{Model: testGatewayModel,
+					PodTemplate: corev1beta1.PodTemplate{Spec: corev1.PodSpec{Containers: []corev1.Container{{
+						Name: corev1beta1.AppContainerName, Image: "registry.example.com/app:v1",
 						Ports: []corev1.ContainerPort{{Name: port, ContainerPort: containerPort}},
 						ReadinessProbe: &corev1.Probe{ProbeHandler: corev1.ProbeHandler{
 							HTTPGet: &corev1.HTTPGetAction{Path: "/ready", Port: intstr.FromString(port)}}},
@@ -141,14 +141,14 @@ var _ = Describe("App controller", func() {
 			Expect(refs).To(HaveLen(1))
 			svc := refs[0].(map[string]any)[metaNameKey].(string)
 			// The header value is the version of the backend, so a session stays on its version.
-			Expect(headers[0]).To(Equal(map[string]any{metaNameKey: corev1alpha1.AppVersionHeader,
+			Expect(headers[0]).To(Equal(map[string]any{metaNameKey: corev1beta1.AppVersionHeader,
 				"value": svc[len("kd-"):]}))
 			names = append(names, svc)
 		}
 		return names
 	}
-	status := func() []corev1alpha1.AppEndpointStatus {
-		app := &corev1alpha1.App{}
+	status := func() []corev1beta1.AppEndpointStatus {
+		app := &corev1beta1.App{}
 		Expect(k8sClient.Get(ctx, nn(appName), app)).To(Succeed())
 		return app.Status.Endpoints
 	}
@@ -187,17 +187,17 @@ var _ = Describe("App controller", func() {
 		}))
 		Expect(pinned(u)).To(Equal([]string{"kd-" + appName + "-v1", "kd-" + appName + "-v2"}))
 		Expect(status()).To(HaveLen(1))
-		Expect(status()[0].RouteState).To(Equal(corev1alpha1.AppRoutePending))
-		Expect(status()[0].Weights).To(Equal([]corev1alpha1.AppEndpointVersion{
+		Expect(status()[0].RouteState).To(Equal(corev1beta1.AppRoutePending))
+		Expect(status()[0].Weights).To(Equal([]corev1beta1.AppEndpointVersion{
 			weight(appName+"-v1", 90), weight(appName+"-v2", 10)}))
 
 		report(u, "Accepted", "True", "Accepted")
 		mustReconcile()
-		Expect(status()[0].RouteState).To(Equal(corev1alpha1.AppRouteAccepted))
+		Expect(status()[0].RouteState).To(Equal(corev1beta1.AppRouteAccepted))
 
 		report(route("web"), "ResolvedRefs", "False", "BackendNotFound")
 		mustReconcile()
-		Expect(status()[0].RouteState).To(Equal(corev1alpha1.AppRouteNotAccepted))
+		Expect(status()[0].RouteState).To(Equal(corev1beta1.AppRouteNotAccepted))
 		Expect(status()[0].Message).To(ContainSubstring("BackendNotFound"))
 	})
 
@@ -206,17 +206,17 @@ var _ = Describe("App controller", func() {
 			weight(appName+"-v3", 50), weight(appName+"-v4", 0), weight(appName+"-v5", 0)))
 		newVersion(app, appName+"-v1", 8080)
 		retiring := newVersion(app, appName+"-v2", 8080)
-		retiring.Spec.Lifecycle = corev1alpha1.AppVersionRetiring
+		retiring.Spec.Lifecycle = corev1beta1.AppVersionRetiring
 		Expect(k8sClient.Update(ctx, retiring)).To(Succeed())
 		// v3 does not exist. v4 has the weight 0.
 		newVersion(app, appName+"-v4", 8080)
 		// v5 has the weight 0 and retires. It never got traffic, so it stays closed.
 		closed := newVersion(app, appName+"-v5", 8080)
-		closed.Spec.Lifecycle = corev1alpha1.AppVersionRetiring
+		closed.Spec.Lifecycle = corev1beta1.AppVersionRetiring
 		Expect(k8sClient.Update(ctx, closed)).To(Succeed())
 		mustReconcile()
 		// A version with a model and no key waits, so it gets no traffic.
-		waits := &corev1alpha1.AppVersion{}
+		waits := &corev1beta1.AppVersion{}
 		Expect(k8sClient.Get(ctx, nn(appName+"-v4"), waits)).To(Succeed())
 		waits.Status.KeyHash = ""
 		Expect(k8sClient.Status().Update(ctx, waits)).To(Succeed())
@@ -235,7 +235,7 @@ var _ = Describe("App controller", func() {
 		// header.
 		Expect(pinned(route("web"))).To(Equal([]string{"kd-" + appName + "-v1", "kd-" + appName + "-v2"}))
 		st := status()[0]
-		Expect(st.Weights).To(Equal([]corev1alpha1.AppEndpointVersion{weight(appName+"-v1", 50),
+		Expect(st.Weights).To(Equal([]corev1beta1.AppEndpointVersion{weight(appName+"-v1", 50),
 			weight(appName+"-v2", 0), weight(appName+"-v3", 0), weight(appName+"-v4", 0),
 			weight(appName+"-v5", 0)}))
 		Expect(st.Message).To(ContainSubstring(appName + "-v2, " + appName + "-v3."))
@@ -244,12 +244,12 @@ var _ = Describe("App controller", func() {
 	It("gives a gated version the weight 0 and no session rule until the controller accepts a pass", func() {
 		app := newApp(endpoint("web", weight(appName+"-v1", 90), weight(appName+"-v2", 10)))
 		newVersion(app, appName+"-v1", 8080)
-		gated := &corev1alpha1.AppVersion{ObjectMeta: metav1.ObjectMeta{Name: appName + "-v2", Namespace: ns},
-			Spec: corev1alpha1.AppVersionSpec{AppRef: corev1alpha1.AppReference{Name: app.Name},
-				Gate: &corev1alpha1.AppVersionGate{Nookku: corev1alpha1.NookkuGate{
+		gated := &corev1beta1.AppVersion{ObjectMeta: metav1.ObjectMeta{Name: appName + "-v2", Namespace: ns},
+			Spec: corev1beta1.AppVersionSpec{AppRef: corev1beta1.AppReference{Name: app.Name},
+				Gate: &corev1beta1.AppVersionGate{Nookku: corev1beta1.NookkuGate{
 					Image: gateTestImage, Root: gateTestRoot, GateFile: gateTestFile}},
-				Template: corev1alpha1.AppVersionTemplate{PodTemplate: corev1alpha1.PodTemplate{Spec: corev1.PodSpec{
-					Containers: []corev1.Container{{Name: corev1alpha1.AppContainerName, Image: "registry.example.com/app:v2",
+				Template: corev1beta1.AppVersionTemplate{PodTemplate: corev1beta1.PodTemplate{Spec: corev1.PodSpec{
+					Containers: []corev1.Container{{Name: corev1beta1.AppContainerName, Image: "registry.example.com/app:v2",
 						Ports: []corev1.ContainerPort{{Name: port, ContainerPort: 8080}},
 						ReadinessProbe: &corev1.Probe{ProbeHandler: corev1.ProbeHandler{
 							HTTPGet: &corev1.HTTPGetAction{Path: "/gate-ready", Port: intstr.FromString(port)}}}}}}}}}}
@@ -262,14 +262,14 @@ var _ = Describe("App controller", func() {
 			Expect(k8sClient.Delete(ctx, gated)).To(Succeed())
 		})
 		// setGate writes the status that the AppVersion controller gives a gated version.
-		setGate := func(status metav1.ConditionStatus, reason string, verdict corev1alpha1.EvidenceVerdict) {
+		setGate := func(status metav1.ConditionStatus, reason string, verdict corev1beta1.EvidenceVerdict) {
 			Expect(k8sClient.Get(ctx, nn(gated.Name), gated)).To(Succeed())
 			gated.Status.BoundAppUID = app.UID
 			meta.SetStatusCondition(&gated.Status.Conditions, metav1.Condition{
-				Type: corev1alpha1.AppVersionEvidence, Status: status, Reason: reason})
+				Type: corev1beta1.AppVersionEvidence, Status: status, Reason: reason})
 			if verdict != "" {
-				gated.Status.Evidence = &corev1alpha1.EvidenceRecord{Source: corev1alpha1.EvidenceSourceNookkuGate,
-					Subject: "subject", Verdict: verdict, ID: "gate-20261119-030000-0a1b2c3d", Integrity: corev1alpha1.EvidenceSeal,
+				gated.Status.Evidence = &corev1beta1.EvidenceRecord{Source: corev1beta1.EvidenceSourceNookkuGate,
+					Subject: "subject", Verdict: verdict, ID: "gate-20261119-030000-0a1b2c3d", Integrity: corev1beta1.EvidenceSeal,
 					Digest:    "sha256:3333333333333333333333333333333333333333333333333333333333333333",
 					CheckedAt: metav1.Now()}
 			}
@@ -280,19 +280,19 @@ var _ = Describe("App controller", func() {
 			GinkgoHelper()
 			Expect(backends(route("web"))).To(Equal([]any{backend("-v1", 8080, 90)}))
 			Expect(pinned(route("web"))).To(Equal([]string{"kd-" + appName + "-v1"}))
-			Expect(status()[0].Weights).To(Equal([]corev1alpha1.AppEndpointVersion{
+			Expect(status()[0].Weights).To(Equal([]corev1beta1.AppEndpointVersion{
 				weight(appName+"-v1", 90), weight(appName+"-v2", 0)}))
 			Expect(status()[0].Message).To(ContainSubstring(appName + "-v2."))
 		}
 		// The gate runs. Then the version has a True condition with no record. Then it has a pass record.
-		setGate(metav1.ConditionUnknown, corev1alpha1.EvidenceRunning, "")
+		setGate(metav1.ConditionUnknown, corev1beta1.EvidenceRunning, "")
 		expectClosed()
-		setGate(metav1.ConditionTrue, corev1alpha1.EvidencePassed, "")
+		setGate(metav1.ConditionTrue, corev1beta1.EvidencePassed, "")
 		expectClosed()
-		setGate(metav1.ConditionTrue, corev1alpha1.EvidencePassed, corev1alpha1.EvidencePass)
+		setGate(metav1.ConditionTrue, corev1beta1.EvidencePassed, corev1beta1.EvidencePass)
 		Expect(backends(route("web"))).To(Equal([]any{backend("-v1", 8080, 90), backend("-v2", 8080, 10)}))
 		Expect(pinned(route("web"))).To(Equal([]string{"kd-" + appName + "-v1", "kd-" + appName + "-v2"}))
-		Expect(status()[0].Weights).To(Equal([]corev1alpha1.AppEndpointVersion{
+		Expect(status()[0].Weights).To(Equal([]corev1beta1.AppEndpointVersion{
 			weight(appName+"-v1", 90), weight(appName+"-v2", 10)}))
 	})
 
@@ -319,7 +319,7 @@ var _ = Describe("App controller", func() {
 		route("admin")
 
 		Expect(k8sClient.Get(ctx, nn(appName), app)).To(Succeed())
-		app.Spec.Endpoints = []corev1alpha1.AppEndpoint{endpoint("web", weight(appName+"-v1", 20))}
+		app.Spec.Endpoints = []corev1beta1.AppEndpoint{endpoint("web", weight(appName+"-v1", 20))}
 		Expect(k8sClient.Update(ctx, app)).To(Succeed())
 		mustReconcile()
 		Expect(backends(route("web"))[0]).To(HaveKeyWithValue("weight", int64(20)))
@@ -341,7 +341,7 @@ var _ = Describe("App controller", func() {
 		app := newApp(endpoint("web", weight(appName+"-v1", 1)))
 		newVersion(app, appName+"-v1", 8080)
 		mustReconcile()
-		Expect(status()[0].RouteState).To(Equal(corev1alpha1.AppRouteNameConflict))
+		Expect(status()[0].RouteState).To(Equal(corev1beta1.AppRouteNameConflict))
 		Expect(route("web").Object).NotTo(HaveKey("spec"))
 
 		// The App has no endpoint now. The route of a different owner stays.
@@ -357,20 +357,20 @@ var _ = Describe("App controller", func() {
 		rec.APIReader = noRouteReader{k8sClient}
 		newApp(endpoint("web", weight(appName+"-v1", 1)))
 		mustReconcile()
-		Expect(status()[0].RouteState).To(Equal(corev1alpha1.AppRouteNoGatewayAPI))
+		Expect(status()[0].RouteState).To(Equal(corev1beta1.AppRouteNoGatewayAPI))
 		Expect(apierrors.IsNotFound(k8sClient.Get(ctx, nn("kd-"+appName+".web"), newRoute()))).To(BeTrue())
 	})
 
 	It("refuses an endpoint that is not valid", func() {
-		bad := func(change func(*corev1alpha1.AppEndpoint)) error {
+		bad := func(change func(*corev1beta1.AppEndpoint)) error {
 			ep := endpoint("web", weight("v1", 1))
 			change(&ep)
-			return k8sClient.Create(ctx, &corev1alpha1.App{ObjectMeta: metav1.ObjectMeta{GenerateName: "bad-", Namespace: ns},
-				Spec: corev1alpha1.AppSpec{Endpoints: []corev1alpha1.AppEndpoint{ep}}})
+			return k8sClient.Create(ctx, &corev1beta1.App{ObjectMeta: metav1.ObjectMeta{GenerateName: "bad-", Namespace: ns},
+				Spec: corev1beta1.AppSpec{Endpoints: []corev1beta1.AppEndpoint{ep}}})
 		}
-		Expect(apierrors.IsInvalid(bad(func(e *corev1alpha1.AppEndpoint) { e.Name = "a.b" }))).To(BeTrue())
-		Expect(apierrors.IsInvalid(bad(func(e *corev1alpha1.AppEndpoint) { e.Versions = nil }))).To(BeTrue())
-		Expect(apierrors.IsInvalid(bad(func(e *corev1alpha1.AppEndpoint) { e.Versions[0] = weight("v1", -1) }))).To(BeTrue())
-		Expect(apierrors.IsInvalid(bad(func(e *corev1alpha1.AppEndpoint) { e.Gateway.Name = "" }))).To(BeTrue())
+		Expect(apierrors.IsInvalid(bad(func(e *corev1beta1.AppEndpoint) { e.Name = "a.b" }))).To(BeTrue())
+		Expect(apierrors.IsInvalid(bad(func(e *corev1beta1.AppEndpoint) { e.Versions = nil }))).To(BeTrue())
+		Expect(apierrors.IsInvalid(bad(func(e *corev1beta1.AppEndpoint) { e.Versions[0] = weight("v1", -1) }))).To(BeTrue())
+		Expect(apierrors.IsInvalid(bad(func(e *corev1beta1.AppEndpoint) { e.Gateway.Name = "" }))).To(BeTrue())
 	})
 })

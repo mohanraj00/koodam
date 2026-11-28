@@ -28,7 +28,7 @@ import (
 	"k8s.io/apimachinery/pkg/util/validation"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
-	corev1alpha1 "github.com/mohanraj00/koodam/api/v1alpha1"
+	corev1beta1 "github.com/mohanraj00/koodam/api/v1beta1"
 )
 
 // The egress proxy reads these pod labels to find the run and the user of a call.
@@ -53,16 +53,16 @@ func boundProfile(ctx context.Context, c client.Reader, namespace string) (strin
 }
 
 // boundProfileObject returns the bound Profile, or nil if no Profile binds the namespace.
-func boundProfileObject(ctx context.Context, c client.Reader, namespace string) (*corev1alpha1.Profile, error) {
+func boundProfileObject(ctx context.Context, c client.Reader, namespace string) (*corev1beta1.Profile, error) {
 	ns := &corev1.Namespace{}
 	if err := c.Get(ctx, types.NamespacedName{Name: namespace}, ns); err != nil {
 		return nil, client.IgnoreNotFound(err)
 	}
-	name := ns.Labels[corev1alpha1.ProfileLabel]
+	name := ns.Labels[corev1beta1.ProfileLabel]
 	if name == "" {
 		return nil, nil
 	}
-	p := &corev1alpha1.Profile{}
+	p := &corev1beta1.Profile{}
 	if err := c.Get(ctx, types.NamespacedName{Name: name}, p); err != nil {
 		return nil, client.IgnoreNotFound(err)
 	}

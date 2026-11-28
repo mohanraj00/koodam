@@ -56,7 +56,7 @@ import (
 	metricsserver "sigs.k8s.io/controller-runtime/pkg/metrics/server"
 	"sigs.k8s.io/controller-runtime/pkg/webhook"
 
-	corev1alpha1 "github.com/mohanraj00/koodam/api/v1alpha1"
+	corev1beta1 "github.com/mohanraj00/koodam/api/v1beta1"
 	"github.com/mohanraj00/koodam/internal/appclaim"
 	"github.com/mohanraj00/koodam/internal/controller"
 	"github.com/mohanraj00/koodam/internal/gateway"
@@ -72,7 +72,7 @@ var (
 func init() {
 	utilruntime.Must(clientgoscheme.AddToScheme(scheme))
 
-	utilruntime.Must(corev1alpha1.AddToScheme(scheme))
+	utilruntime.Must(corev1beta1.AddToScheme(scheme))
 	// +kubebuilder:scaffold:scheme
 }
 
@@ -474,7 +474,7 @@ func main() {
 			"The value must be from 60 to 2147483647.")
 	flag.StringVar(&installerImage, "installer-image", "",
 		"The image with /harness-install, for an Agent or a Workspace with a harness. The chart gives the manager image.")
-	flag.StringVar(&nookkuImage, "nookku-image", "",
+	flag.StringVar(&nookkuImage, controller.NookkuImageFlag, "",
 		"The Nookku data image with the pinned Nookku files, for a harness with the nookku plugin (#83). "+
 			"The reference must have a digest (@sha256:).")
 	flag.StringVar(&workspaceImage, "workspace-image", defaultWorkspaceImage(),
@@ -666,7 +666,7 @@ func main() {
 		Egress:         egress,
 		Grace:          keyGrace,
 		InstallerImage: installerImage,
-		NookkuImage:    nookkuImage,
+		PresetImages:   map[string]string{controller.NookkuImageFlag: nookkuImage},
 		JobTTL:         int32(jobTTLSeconds),
 		IngressEnabled: agentIngressEnabled,
 		Recorder:       recorder,
@@ -693,7 +693,7 @@ func main() {
 		Image:          workspaceImage,
 		StorageClass:   workspaceStorageClass,
 		InstallerImage: installerImage,
-		NookkuImage:    nookkuImage,
+		PresetImages:   map[string]string{controller.NookkuImageFlag: nookkuImage},
 		Gateway:        revokeFailures.Gateway(gw, "Workspace"),
 		GatewayURL:     strings.TrimRight(agentGatewayURL, "/"),
 		Egress:         egress,

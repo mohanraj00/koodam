@@ -29,7 +29,7 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
-	corev1alpha1 "github.com/mohanraj00/koodam/api/v1alpha1"
+	corev1beta1 "github.com/mohanraj00/koodam/api/v1beta1"
 )
 
 // The CRD validation of the Workspace. These tests do not run the Workspace controller. They only
@@ -43,17 +43,17 @@ var _ = Describe("Workspace CRD", func() {
 	}
 
 	// newWorkspace returns a valid Workspace. The caller changes it before the create.
-	newWorkspace := func(name string) *corev1alpha1.Workspace {
-		return &corev1alpha1.Workspace{
+	newWorkspace := func(name string) *corev1beta1.Workspace {
+		return &corev1beta1.Workspace{
 			ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: metav1.NamespaceDefault},
-			Spec: corev1alpha1.WorkspaceSpec{
+			Spec: corev1beta1.WorkspaceSpec{
 				SSHPublicKeys: []string{
 					testKey(1),
 					"ecdsa-sha2-nistp256 AAAAE2VjZHNhLXNoYTItbmlzdHAyNTY=",
 					"sk-ssh-ed25519@openssh.com AAAAGnNrLXNzaC1lZDI1NTE5QG9wZW5zc2guY29t yubikey",
 				},
-				Harnesses: []corev1alpha1.HarnessSpec{{Name: "claude-code"}, {Name: codexName}},
-				Gateway: &corev1alpha1.WorkspaceGateway{
+				Harnesses: []corev1beta1.HarnessSpec{{Name: "claude-code"}, {Name: codexName}},
+				Gateway: &corev1beta1.WorkspaceGateway{
 					Model:        "claude-haiku-5-5",
 					BudgetPerDay: resource.MustParse("5"),
 				},
@@ -62,7 +62,7 @@ var _ = Describe("Workspace CRD", func() {
 	}
 
 	// create makes the Workspace and deletes it at the end of the test.
-	create := func(ws *corev1alpha1.Workspace) error {
+	create := func(ws *corev1beta1.Workspace) error {
 		err := k8sClient.Create(ctx, ws)
 		if err == nil {
 			DeferCleanup(func() { Expect(client.IgnoreNotFound(k8sClient.Delete(ctx, ws))).To(Succeed()) })
@@ -79,7 +79,7 @@ var _ = Describe("Workspace CRD", func() {
 	It("accepts a valid Workspace and sets the default storage", func() {
 		Expect(create(newWorkspace("ws-valid"))).To(Succeed())
 
-		got := &corev1alpha1.Workspace{}
+		got := &corev1beta1.Workspace{}
 		Expect(k8sClient.Get(ctx, types.NamespacedName{Name: "ws-valid", Namespace: metav1.NamespaceDefault}, got)).To(Succeed())
 		Expect(got.Spec.Storage.Cmp(resource.MustParse("20Gi"))).To(Equal(0))
 		Expect(got.Spec.Harnesses[0].Libc).To(Equal("glibc"))
@@ -114,7 +114,7 @@ var _ = Describe("Workspace CRD", func() {
 
 	It("refuses a duplicate harness name", func() {
 		ws := newWorkspace("ws-dup-harness")
-		ws.Spec.Harnesses = []corev1alpha1.HarnessSpec{{Name: codexName}, {Name: codexName, Version: "1.2.3"}}
+		ws.Spec.Harnesses = []corev1beta1.HarnessSpec{{Name: codexName}, {Name: codexName, Version: "1.2.3"}}
 		expectInvalid(create(ws))
 	})
 

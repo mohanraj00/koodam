@@ -33,13 +33,13 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
-	corev1alpha1 "github.com/mohanraj00/koodam/api/v1alpha1"
+	corev1beta1 "github.com/mohanraj00/koodam/api/v1beta1"
 	"github.com/mohanraj00/koodam/internal/gateway"
 	"github.com/mohanraj00/koodam/internal/podtemplate"
 )
 
 // markBound sets the condition ProfileBound of ws, as the Workspace controller does.
-func markBound(ctx context.Context, ws *corev1alpha1.Workspace, status metav1.ConditionStatus) {
+func markBound(ctx context.Context, ws *corev1beta1.Workspace, status metav1.ConditionStatus) {
 	GinkgoHelper()
 	Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(ws), ws)).To(Succeed())
 	meta.SetStatusCondition(&ws.Status.Conditions, metav1.Condition{Type: condProfileBound,
@@ -103,7 +103,7 @@ type hookReader struct {
 
 func (h *hookReader) Get(ctx context.Context, key client.ObjectKey, obj client.Object, opts ...client.GetOption) error {
 	err := h.Reader.Get(ctx, key, obj, opts...)
-	if _, ok := obj.(*corev1alpha1.Workspace); ok && err == nil {
+	if _, ok := obj.(*corev1beta1.Workspace); ok && err == nil {
 		h.reads++
 		h.after(h.reads)
 	}
@@ -117,21 +117,21 @@ var _ = Describe("TestKey lifecycle", func() {
 		gw        *tkGateway
 		rec       *TestKeyReconciler
 		now       time.Time
-		workspace *corev1alpha1.Workspace
+		workspace *corev1beta1.Workspace
 	)
 
-	newKey := func(testID string, models ...string) *corev1alpha1.TestKey {
-		k := &corev1alpha1.TestKey{
+	newKey := func(testRunID string, models ...string) *corev1beta1.TestKey {
+		k := &corev1beta1.TestKey{
 			ObjectMeta: metav1.ObjectMeta{GenerateName: "tk-life-", Namespace: workspace.Namespace},
-			Spec: corev1alpha1.TestKeySpec{
-				WorkspaceRef: corev1alpha1.TestKeyWorkspaceRef{Name: workspace.Name, UID: workspace.UID},
-				TestID:       testID, Budget: resource.MustParse("0.5"), TTL: metav1.Duration{Duration: ttl},
+			Spec: corev1beta1.TestKeySpec{
+				WorkspaceRef: corev1beta1.TestKeyWorkspaceRef{Name: workspace.Name, UID: workspace.UID},
+				TestRunID:    testRunID, Budget: resource.MustParse("0.5"), TTL: metav1.Duration{Duration: ttl},
 				Models: models,
 			},
 		}
 		Expect(k8sClient.Create(ctx, k)).To(Succeed())
 		DeferCleanup(func() {
-			got := &corev1alpha1.TestKey{}
+			got := &corev1beta1.TestKey{}
 			if k8sClient.Get(ctx, client.ObjectKeyFromObject(k), got) == nil {
 				controllerutil.RemoveFinalizer(got, testKeyFinalizer)
 				_ = k8sClient.Update(ctx, got)
@@ -140,13 +140,13 @@ var _ = Describe("TestKey lifecycle", func() {
 		})
 		return k
 	}
-	reconcileKey := func(k *corev1alpha1.TestKey) reconcile.Result {
+	reconcileKey := func(k *corev1beta1.TestKey) reconcile.Result {
 		res, err := rec.Reconcile(ctx, reconcile.Request{NamespacedName: client.ObjectKeyFromObject(k)})
 		Expect(err).NotTo(HaveOccurred())
 		return res
 	}
-	get := func(k *corev1alpha1.TestKey) *corev1alpha1.TestKey {
-		got := &corev1alpha1.TestKey{}
+	get := func(k *corev1beta1.TestKey) *corev1beta1.TestKey {
+		got := &corev1beta1.TestKey{}
 		Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(k), got)).To(Succeed())
 		return got
 	}
@@ -156,7 +156,7 @@ var _ = Describe("TestKey lifecycle", func() {
 			Name: testKeySecretName(workspace.Name)}, s)
 		return s, err
 	}
-	reason := func(k *corev1alpha1.TestKey) string {
+	reason := func(k *corev1beta1.TestKey) string {
 		c := meta.FindStatusCondition(get(k).Status.Conditions, condActive)
 		Expect(c).NotTo(BeNil())
 		return c.Reason
@@ -169,11 +169,11 @@ var _ = Describe("TestKey lifecycle", func() {
 		rec = &TestKeyReconciler{Client: k8sClient, APIReader: k8sClient, Gateway: gw,
 			GatewayURL: "http://gateway.test:4000", SingleInstanceGateway: true,
 			RevokeWait: time.Minute, Now: func() time.Time { return now }}
-		workspace = &corev1alpha1.Workspace{
+		workspace = &corev1beta1.Workspace{
 			ObjectMeta: metav1.ObjectMeta{GenerateName: "tk-life-ws-", Namespace: metav1.NamespaceDefault},
-			Spec: corev1alpha1.WorkspaceSpec{
-				Gateway: &corev1alpha1.WorkspaceGateway{Model: testGatewayModel, BudgetPerDay: resource.MustParse("5")},
-				TestKeys: &corev1alpha1.WorkspaceTestKeys{
+			Spec: corev1beta1.WorkspaceSpec{
+				Gateway: &corev1beta1.WorkspaceGateway{Model: testGatewayModel, BudgetPerDay: resource.MustParse("5")},
+				TestKeys: &corev1beta1.WorkspaceTestKeys{
 					MaxBudget: resource.MustParse("1"), MaxTTL: metav1.Duration{Duration: time.Hour}},
 			},
 		}
@@ -190,7 +190,7 @@ var _ = Describe("TestKey lifecycle", func() {
 		k := newKey("in-flight")
 		rec.APIReader = &hookReader{Reader: k8sClient, after: func(n int) {
 			if n == 1 {
-				ws := &corev1alpha1.Workspace{}
+				ws := &corev1beta1.Workspace{}
 				Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(workspace), ws)).To(Succeed())
 				ws.Spec.Suspend = true
 				Expect(k8sClient.Update(ctx, ws)).To(Succeed())
@@ -213,7 +213,7 @@ var _ = Describe("TestKey lifecycle", func() {
 	})
 
 	It("refuses a key while the Workspace has no finalizer", func() {
-		ws := &corev1alpha1.Workspace{}
+		ws := &corev1beta1.Workspace{}
 		Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(workspace), ws)).To(Succeed())
 		controllerutil.RemoveFinalizer(ws, workspaceFinalizer)
 		Expect(k8sClient.Update(ctx, ws)).To(Succeed())
@@ -225,7 +225,7 @@ var _ = Describe("TestKey lifecycle", func() {
 
 	Context("with a models list in the Workspace gateway", func() {
 		setModels := func(models ...string) {
-			ws := &corev1alpha1.Workspace{}
+			ws := &corev1beta1.Workspace{}
 			Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(workspace), ws)).To(Succeed())
 			ws.Spec.Gateway.Model, ws.Spec.Gateway.Models = "", models
 			Expect(k8sClient.Update(ctx, ws)).To(Succeed())
@@ -316,7 +316,7 @@ var _ = Describe("TestKey lifecycle", func() {
 	})
 
 	It("issues a key in the approved order and keeps it on a retry", func() {
-		k := newKey(testKeyTestID)
+		k := newKey(testKeyTestRunID)
 		res := reconcileKey(k)
 		Expect(res.RequeueAfter).To(Equal(ttl))
 
@@ -339,7 +339,7 @@ var _ = Describe("TestKey lifecycle", func() {
 		Expect(gw.specs).To(HaveLen(1))
 		Expect(gw.specs[0]).To(Equal(gateway.KeySpec{Value: value, Alias: got.Status.KeyAlias,
 			Model: testGatewayModel, Models: []string{}, Budget: 0.5, TTL: ttl,
-			Metadata: map[string]string{"koodam_test_id": testKeyTestID, "koodam_testkey": got.Name}}))
+			Metadata: map[string]string{"koodam_test_id": testKeyTestRunID, "koodam_testkey": got.Name}}))
 
 		// No key value in the status.
 		status, err := json.Marshal(got.Status)
@@ -412,8 +412,8 @@ var _ = Describe("TestKey lifecycle", func() {
 		got := get(k)
 		Expect(reason(k)).To(Equal(reasonTKRevoked))
 		Expect(got.Status.RevokedAt).NotTo(BeNil())
-		Expect(got.Status.Usage).To(Equal(&corev1alpha1.AgentUsage{Spend: "0.25", Calls: 3,
-			InputTokens: 12, OutputTokens: 4, Models: []corev1alpha1.ModelUsage{
+		Expect(got.Status.Usage).To(Equal(&corev1beta1.AgentUsage{Spend: "0.25", Calls: 3,
+			InputTokens: 12, OutputTokens: 4, Models: []corev1beta1.ModelUsage{
 				{Model: testGatewayModel, Spend: "0.2", Calls: 3, InputTokens: 12, OutputTokens: 4}}}))
 		Expect(controllerutil.ContainsFinalizer(got, testKeyFinalizer)).To(BeFalse())
 
@@ -426,7 +426,7 @@ var _ = Describe("TestKey lifecycle", func() {
 		k := newKey("missing")
 		reconcileKey(k)
 		gw.missing = true
-		ws := &corev1alpha1.Workspace{}
+		ws := &corev1beta1.Workspace{}
 		Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(workspace), ws)).To(Succeed())
 		ws.Spec.Suspend = true
 		Expect(k8sClient.Update(ctx, ws)).To(Succeed())
@@ -481,8 +481,8 @@ var _ = Describe("TestKey lifecycle", func() {
 		// A pod template cannot refer to a name with this prefix, so no pod names the slot.
 		Expect(testKeySecretName("dev")).To(HavePrefix(podtemplate.TestKeySecretPrefix))
 		for _, name := range []string{"dev", "dev-testkey", "kt-dev", "kt-dev-testkey", "kd-dev"} {
-			other := &corev1alpha1.Workspace{ObjectMeta: metav1.ObjectMeta{Name: name}}
-			agent := &corev1alpha1.Agent{ObjectMeta: metav1.ObjectMeta{Name: name}}
+			other := &corev1beta1.Workspace{ObjectMeta: metav1.ObjectMeta{Name: name}}
+			agent := &corev1beta1.Agent{ObjectMeta: metav1.ObjectMeta{Name: name}}
 			Expect(testKeySecretName("dev")).NotTo(BeElementOf(gatewaySecretName(other),
 				hostKeySecretName(other), runName(agent)))
 		}

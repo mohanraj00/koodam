@@ -42,7 +42,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
-	corev1alpha1 "github.com/mohanraj00/koodam/api/v1alpha1"
+	corev1beta1 "github.com/mohanraj00/koodam/api/v1beta1"
 	"github.com/mohanraj00/koodam/test/utils"
 )
 
@@ -67,7 +67,7 @@ var _ = Describe("Workspaces", Ordered, Label("workspace"), func() {
 		home   string
 		koodam string
 		env    []string
-		ws     *corev1alpha1.Workspace
+		ws     *corev1beta1.Workspace
 		marker string
 	)
 
@@ -122,20 +122,20 @@ var _ = Describe("Workspaces", Ordered, Label("workspace"), func() {
 		DeferCleanup(cleanWorkspaces)
 		objs := []client.Object{
 			&corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: wsNS,
-				Labels: map[string]string{corev1alpha1.ProfileLabel: wsProfile}}},
+				Labels: map[string]string{corev1beta1.ProfileLabel: wsProfile}}},
 			&corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: freeNS}},
-			&corev1alpha1.Profile{ObjectMeta: metav1.ObjectMeta{Name: wsProfile},
-				Spec: corev1alpha1.ProfileSpec{Namespaces: []string{wsNS}}},
+			&corev1beta1.Profile{ObjectMeta: metav1.ObjectMeta{Name: wsProfile},
+				Spec: corev1beta1.ProfileSpec{Namespaces: []string{wsNS}}},
 		}
 		for _, o := range objs {
 			Expect(client.IgnoreAlreadyExists(k8s.Create(ctx, o))).To(Succeed())
 		}
-		ws = &corev1alpha1.Workspace{ObjectMeta: metav1.ObjectMeta{Name: wsName, Namespace: wsNS},
-			Spec: corev1alpha1.WorkspaceSpec{
+		ws = &corev1beta1.Workspace{ObjectMeta: metav1.ObjectMeta{Name: wsName, Namespace: wsNS},
+			Spec: corev1beta1.WorkspaceSpec{
 				SSHPublicKeys: []string{strings.TrimSpace(string(pub))},
 				Image:         workspaceImage, Storage: resource.MustParse("1Gi"),
-				Gateway:   &corev1alpha1.WorkspaceGateway{Model: mockModel, BudgetPerDay: resource.MustParse("1")},
-				Harnesses: []corev1alpha1.HarnessSpec{{Name: "claude-code"}, {Name: "codex"}},
+				Gateway:   &corev1beta1.WorkspaceGateway{Model: mockModel, BudgetPerDay: resource.MustParse("1")},
+				Harnesses: []corev1beta1.HarnessSpec{{Name: "claude-code"}, {Name: "codex"}},
 			}}
 		b := make([]byte, 8)
 		_, err = rand.Read(b)
@@ -156,7 +156,7 @@ var _ = Describe("Workspaces", Ordered, Label("workspace"), func() {
 	It("keeps the tmux session after an SSH disconnect", func() {
 		By("making the Workspace with the SSH public key")
 		Expect(k8s.Create(ctx, ws)).To(Succeed())
-		waitPhase(ws, corev1alpha1.WorkspaceRunning)
+		waitPhase(ws, corev1beta1.WorkspaceRunning)
 
 		By("running koodam ssh setup in the temporary HOME")
 		cmd := exec.Command(koodam, "-n", wsNS, "ssh", "setup", wsName, "--yes")
@@ -215,7 +215,7 @@ var _ = Describe("Workspaces", Ordered, Label("workspace"), func() {
 
 		By("suspending the Workspace")
 		setSuspend(ws, true)
-		waitPhase(ws, corev1alpha1.WorkspaceSuspended)
+		waitPhase(ws, corev1beta1.WorkspaceSuspended)
 		Eventually(func() string {
 			_ = k8s.Get(ctx, client.ObjectKeyFromObject(ws), ws)
 			if c := meta.FindStatusCondition(ws.Status.Conditions, "GatewayKey"); c != nil {
@@ -250,7 +250,7 @@ var _ = Describe("Workspaces", Ordered, Label("workspace"), func() {
 
 		By("resuming the Workspace and reading the file from the first session")
 		setSuspend(ws, false)
-		waitPhase(ws, corev1alpha1.WorkspaceRunning)
+		waitPhase(ws, corev1beta1.WorkspaceRunning)
 		Eventually(func(g Gomega) {
 			out, err := ssh("cat ~/e2e-marker")
 			g.Expect(err).NotTo(HaveOccurred())
@@ -262,10 +262,10 @@ var _ = Describe("Workspaces", Ordered, Label("workspace"), func() {
 		key, hash := holdKey(ws)
 
 		By("holding the Profile " + wsProfile)
-		h := makeHold("e2e-profile-stop", corev1alpha1.HoldTarget{Kind: corev1alpha1.HoldTargetProfile,
+		h := makeHold("e2e-profile-stop", corev1beta1.HoldTarget{Kind: corev1beta1.HoldTargetProfile,
 			Name: wsProfile})
-		waitPhase(ws, corev1alpha1.WorkspaceSuspended)
-		Expect(meta.IsStatusConditionTrue(ws.Status.Conditions, corev1alpha1.HoldHeld)).To(BeTrue(),
+		waitPhase(ws, corev1beta1.WorkspaceSuspended)
+		Expect(meta.IsStatusConditionTrue(ws.Status.Conditions, corev1beta1.HoldHeld)).To(BeTrue(),
 			"The Workspace has no true Held condition.")
 		Expect(ws.Spec.Suspend).To(BeFalse(), "The Hold changed the spec of the Workspace.")
 
@@ -291,7 +291,7 @@ var _ = Describe("Workspaces", Ordered, Label("workspace"), func() {
 
 		By("releasing the Hold and reading the file from the first session")
 		releaseHold(h)
-		waitPhase(ws, corev1alpha1.WorkspaceRunning)
+		waitPhase(ws, corev1beta1.WorkspaceRunning)
 		_, next := holdKey(ws)
 		Expect(next).NotTo(Equal(hash), "The Workspace got the blocked key again.")
 		Eventually(func(g Gomega) {
@@ -323,10 +323,10 @@ var _ = Describe("Workspaces", Ordered, Label("workspace"), func() {
 		Expect(k8s.Get(ctx, client.ObjectKeyFromObject(ws), ws)).To(Succeed())
 		patch := client.MergeFrom(ws.DeepCopy())
 		ws.Spec.Image = pythonWorkspaceImage
-		ws.Spec.TestKeys = &corev1alpha1.WorkspaceTestKeys{MaxBudget: resource.MustParse("1"),
+		ws.Spec.TestKeys = &corev1beta1.WorkspaceTestKeys{MaxBudget: resource.MustParse("1"),
 			MaxTTL: metav1.Duration{Duration: 10 * time.Minute}}
-		ws.Spec.Harnesses = []corev1alpha1.HarnessSpec{{Name: "claude-code"},
-			{Name: "codex", Plugins: []corev1alpha1.HarnessPlugin{corev1alpha1.HarnessPluginNookku}}}
+		ws.Spec.Harnesses = []corev1beta1.HarnessSpec{{Name: "claude-code"},
+			{Name: "codex", Plugins: []corev1beta1.HarnessPlugin{"nookku"}}}
 		// The Workspace permits 2 models, so the TestKey can permit the 2 models (#295).
 		models := []string{mockModel, "fake-responses-b"}
 		ws.Spec.Gateway.Model, ws.Spec.Gateway.Models = "", models
@@ -334,7 +334,7 @@ var _ = Describe("Workspaces", Ordered, Label("workspace"), func() {
 		// Only the new pod has the marker. The old pod stays Running during the roll.
 		Eventually(func() error { _, err := ssh("test -d /etc/koodam/nookku"); return err },
 			5*time.Minute, 5*time.Second).Should(Succeed(), "The Workspace pod has no Nookku marker.")
-		waitPhase(ws, corev1alpha1.WorkspaceRunning)
+		waitPhase(ws, corev1beta1.WorkspaceRunning)
 		By("finding Nookku with and without a login shell")
 		out, err = ssh("command -v nookku")
 		Expect(err).NotTo(HaveOccurred(), "An SSH command cannot find Nookku.")
@@ -353,12 +353,12 @@ var _ = Describe("Workspaces", Ordered, Label("workspace"), func() {
 			HaveField("State.Terminated.ExitCode", BeZero()))), "The python3 check did not pass.")
 
 		By("making a TestKey for one test")
-		const testID = "e2e-nookku-1"
+		const testRunID = "e2e-nookku-1"
 		Expect(k8s.Get(ctx, client.ObjectKeyFromObject(ws), ws)).To(Succeed())
-		tk := &corev1alpha1.TestKey{ObjectMeta: metav1.ObjectMeta{Name: "e2e-test", Namespace: wsNS},
-			Spec: corev1alpha1.TestKeySpec{
-				WorkspaceRef: corev1alpha1.TestKeyWorkspaceRef{Name: ws.Name, UID: ws.UID},
-				TestID:       testID, Budget: resource.MustParse("0.5"),
+		tk := &corev1beta1.TestKey{ObjectMeta: metav1.ObjectMeta{Name: "e2e-test", Namespace: wsNS},
+			Spec: corev1beta1.TestKeySpec{
+				WorkspaceRef: corev1beta1.TestKeyWorkspaceRef{Name: ws.Name, UID: ws.UID},
+				TestRunID:    testRunID, Budget: resource.MustParse("0.5"),
 				TTL: metav1.Duration{Duration: 3 * time.Minute}, Models: models}}
 		Expect(k8s.Create(ctx, tk)).To(Succeed())
 		Eventually(func(g Gomega) {
@@ -368,7 +368,7 @@ var _ = Describe("Workspaces", Ordered, Label("workspace"), func() {
 			g.Expect(c.Reason).To(Equal("Issued"), c.Message)
 		}, time.Minute, time.Second).Should(Succeed(), "The TestKey is not issued.")
 		hash := tk.Status.KeyHash
-		Expect(keyInfo(hash).Metadata).To(HaveKeyWithValue("koodam_test_id", testID),
+		Expect(keyInfo(hash).Metadata).To(HaveKeyWithValue("koodam_test_id", testRunID),
 			"The gateway key does not name the test.")
 		Expect(keyInfo(hash).Models).To(ConsistOf(models), "The gateway key does not permit the 2 models.")
 
@@ -411,12 +411,12 @@ var _ = Describe("Workspaces", Ordered, Label("workspace"), func() {
 	})
 
 	It("keeps a Workspace Pending in a namespace that no Profile binds", func() {
-		free := &corev1alpha1.Workspace{ObjectMeta: metav1.ObjectMeta{Name: wsName, Namespace: freeNS},
-			Spec: corev1alpha1.WorkspaceSpec{Image: workspaceImage, SSHPublicKeys: ws.Spec.SSHPublicKeys}}
+		free := &corev1beta1.Workspace{ObjectMeta: metav1.ObjectMeta{Name: wsName, Namespace: freeNS},
+			Spec: corev1beta1.WorkspaceSpec{Image: workspaceImage, SSHPublicKeys: ws.Spec.SSHPublicKeys}}
 		Expect(k8s.Create(ctx, free)).To(Succeed())
 		Eventually(func(g Gomega) {
 			g.Expect(k8s.Get(ctx, client.ObjectKeyFromObject(free), free)).To(Succeed())
-			g.Expect(free.Status.Phase).To(Equal(corev1alpha1.WorkspacePending))
+			g.Expect(free.Status.Phase).To(Equal(corev1beta1.WorkspacePending))
 			c := meta.FindStatusCondition(free.Status.Conditions, "ProfileBound")
 			g.Expect(c).NotTo(BeNil())
 			g.Expect(c.Status).To(Equal(metav1.ConditionFalse))
@@ -428,9 +428,9 @@ var _ = Describe("Workspaces", Ordered, Label("workspace"), func() {
 })
 
 // waitPhase waits until the Workspace ws has the phase p.
-func waitPhase(ws *corev1alpha1.Workspace, p corev1alpha1.WorkspacePhase) {
+func waitPhase(ws *corev1beta1.Workspace, p corev1beta1.WorkspacePhase) {
 	By("waiting for the phase " + string(p))
-	Eventually(func() corev1alpha1.WorkspacePhase {
+	Eventually(func() corev1beta1.WorkspacePhase {
 		_ = k8s.Get(ctx, client.ObjectKeyFromObject(ws), ws)
 		return ws.Status.Phase
 	}, 5*time.Minute, time.Second).Should(Equal(p), "The Workspace does not have the phase "+string(p)+".")
@@ -442,18 +442,18 @@ func cleanWorkspaces() {
 	By("deleting the Workspaces, the Profile and the namespaces")
 	namespaces := []string{wsNS, freeNS}
 	for _, ns := range namespaces {
-		_ = k8s.DeleteAllOf(ctx, &corev1alpha1.Workspace{}, client.InNamespace(ns))
+		_ = k8s.DeleteAllOf(ctx, &corev1beta1.Workspace{}, client.InNamespace(ns))
 	}
 	Eventually(func() int {
 		n := 0
 		for _, ns := range namespaces {
-			l := &corev1alpha1.WorkspaceList{}
+			l := &corev1beta1.WorkspaceList{}
 			_ = k8s.List(ctx, l, client.InNamespace(ns))
 			n += len(l.Items)
 		}
 		return n
 	}, 2*time.Minute, time.Second).Should(BeZero(), "The finalizer kept a Workspace.")
-	_ = k8s.Delete(ctx, &corev1alpha1.Profile{ObjectMeta: metav1.ObjectMeta{Name: wsProfile}})
+	_ = k8s.Delete(ctx, &corev1beta1.Profile{ObjectMeta: metav1.ObjectMeta{Name: wsProfile}})
 	for _, ns := range namespaces {
 		_ = k8s.Delete(ctx, &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: ns}})
 	}
@@ -468,7 +468,7 @@ func cleanWorkspaces() {
 }
 
 // setSuspend writes spec.suspend of ws with a merge patch.
-func setSuspend(ws *corev1alpha1.Workspace, suspend bool) {
+func setSuspend(ws *corev1beta1.Workspace, suspend bool) {
 	Expect(k8s.Get(ctx, client.ObjectKeyFromObject(ws), ws)).To(Succeed())
 	patch := client.MergeFrom(ws.DeepCopy())
 	ws.Spec.Suspend = suspend

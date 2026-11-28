@@ -36,7 +36,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/yaml"
 
-	corev1alpha1 "github.com/mohanraj00/koodam/api/v1alpha1"
+	corev1beta1 "github.com/mohanraj00/koodam/api/v1beta1"
 )
 
 // These specs render the zone policies of the chart with helm and apply them to the envtest API
@@ -54,13 +54,13 @@ var _ = Describe("Zone placement admission policy", Ordered, func() {
 		before, beforeOut = "placed-before", "placed-out"
 	)
 	ctx := context.Background()
-	newVersion := func(ns, name string, change func(*corev1.PodSpec)) *corev1alpha1.AppVersion {
-		av := &corev1alpha1.AppVersion{ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: ns},
-			Spec: corev1alpha1.AppVersionSpec{
-				AppRef: corev1alpha1.AppReference{Name: "zone-app"}, BudgetPerDay: new(resource.MustParse("5")),
-				Template: corev1alpha1.AppVersionTemplate{Model: testGatewayModel,
-					PodTemplate: corev1alpha1.PodTemplate{Spec: corev1.PodSpec{Containers: []corev1.Container{{
-						Name: corev1alpha1.AppContainerName, Image: "registry.example.com/zone:v1",
+	newVersion := func(ns, name string, change func(*corev1.PodSpec)) *corev1beta1.AppVersion {
+		av := &corev1beta1.AppVersion{ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: ns},
+			Spec: corev1beta1.AppVersionSpec{
+				AppRef: corev1beta1.AppReference{Name: "zone-app"}, BudgetPerDay: new(resource.MustParse("5")),
+				Template: corev1beta1.AppVersionTemplate{Model: testGatewayModel,
+					PodTemplate: corev1beta1.PodTemplate{Spec: corev1.PodSpec{Containers: []corev1.Container{{
+						Name: corev1beta1.AppContainerName, Image: "registry.example.com/zone:v1",
 						Ports: []corev1.ContainerPort{{Name: "zoned", ContainerPort: 8080}},
 						ReadinessProbe: &corev1.Probe{ProbeHandler: corev1.ProbeHandler{
 							HTTPGet: &corev1.HTTPGetAction{Path: "/ok", Port: intstr.FromString("zoned")}}},
@@ -236,7 +236,7 @@ var _ = Describe("Zone placement admission policy", Ordered, func() {
 		// The home claim of a Workspace has the storage class that the controller gets from the chart.
 		home := func(name, class string) *corev1.PersistentVolumeClaim {
 			r := &WorkspaceReconciler{Image: testWorkspaceImage, StorageClass: class}
-			ws := &corev1alpha1.Workspace{ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: inNS}}
+			ws := &corev1beta1.Workspace{ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: inNS}}
 			c := r.statefulSet(ws, testProfile).Spec.VolumeClaimTemplates[0]
 			c.Name, c.Namespace = name, inNS
 			return &c
@@ -252,7 +252,7 @@ var _ = Describe("Zone placement admission policy", Ordered, func() {
 	})
 
 	It("lets a version from before the policy change only if its template stays the same", func() {
-		av := &corev1alpha1.AppVersion{}
+		av := &corev1beta1.AppVersion{}
 		Expect(k8sClient.Get(ctx, client.ObjectKey{Namespace: inNS, Name: before}, av)).To(Succeed())
 		av.Labels = map[string]string{"example.com/team": "ledger"}
 		Expect(k8sClient.Update(ctx, av)).To(Succeed())

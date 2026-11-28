@@ -1,4 +1,4 @@
-apiVersion: core.koodam.dev/v1alpha1
+apiVersion: core.koodam.dev/v1beta1
 kind: Workspace
 metadata:
   labels:

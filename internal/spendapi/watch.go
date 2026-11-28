@@ -32,7 +32,7 @@ import (
 	"k8s.io/apimachinery/pkg/watch"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
-	corev1alpha1 "github.com/mohanraj00/koodam/api/v1alpha1"
+	corev1beta1 "github.com/mohanraj00/koodam/api/v1beta1"
 )
 
 const (
@@ -74,7 +74,7 @@ type runStatus struct {
 	Conditions  []condition `json:"conditions"`
 }
 
-func statusOf(agent *corev1alpha1.Agent) runStatus {
+func statusOf(agent *corev1beta1.Agent) runStatus {
 	s := runStatus{
 		ID: agent.Status.RunID, Name: agent.Name, Namespace: agent.Namespace, Phase: string(agent.Status.Phase),
 		StartedAt: utc(agent.Status.StartedAt), CompletedAt: utc(agent.Status.CompletedAt),
@@ -146,7 +146,7 @@ func (a *api) serveWatch(ctx context.Context, w http.ResponseWriter, r *http.Req
 		return
 	}
 	defer a.closeWatch(caller)
-	agent := &corev1alpha1.Agent{}
+	agent := &corev1beta1.Agent{}
 	err := a.kube.Get(ctx, client.ObjectKey{Namespace: ref.namespace, Name: ref.name}, agent)
 	var stream watch.Interface
 	watchCtx, cancel := context.WithTimeout(r.Context(), a.watchTime)
@@ -154,7 +154,7 @@ func (a *api) serveWatch(ctx context.Context, w http.ResponseWriter, r *http.Req
 	if err == nil && r.Method == http.MethodGet {
 		// The stream lives in watchCtx, but the request time limit also limits the start of the watch.
 		stop := context.AfterFunc(ctx, cancel)
-		stream, err = a.watcher.Watch(watchCtx, &corev1alpha1.AgentList{}, client.InNamespace(ref.namespace),
+		stream, err = a.watcher.Watch(watchCtx, &corev1beta1.AgentList{}, client.InNamespace(ref.namespace),
 			&client.ListOptions{FieldSelector: fields.OneTermEqualSelector("metadata.name", ref.name),
 				Raw: &metav1.ListOptions{ResourceVersion: agent.ResourceVersion}})
 		stop()
@@ -186,7 +186,7 @@ func (a *api) serveWatch(ctx context.Context, w http.ResponseWriter, r *http.Req
 // sendEvents writes the events of stream. Every recheck interval, it calls check, and it ends the
 // watch if check gives a reason.
 func sendEvents(ctx context.Context, w io.Writer, rc *http.ResponseController, stream watch.Interface,
-	agent *corev1alpha1.Agent, recheck time.Duration, check func(context.Context) string) {
+	agent *corev1beta1.Agent, recheck time.Duration, check func(context.Context) string) {
 	write := func(text string) bool {
 		_ = rc.SetWriteDeadline(time.Now().Add(watchWriteTime))
 		if _, err := io.WriteString(w, text); err != nil {
@@ -233,7 +233,7 @@ func sendEvents(ctx context.Context, w io.Writer, rc *http.ResponseController, s
 				return
 			}
 		case event, ok := <-stream.ResultChan():
-			next, isAgent := event.Object.(*corev1alpha1.Agent)
+			next, isAgent := event.Object.(*corev1beta1.Agent)
 			switch {
 			case !ok || event.Type == watch.Error:
 				sendEnd("watchEnded")

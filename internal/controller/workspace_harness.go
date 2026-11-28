@@ -23,28 +23,33 @@ import (
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
-	corev1alpha1 "github.com/mohanraj00/koodam/api/v1alpha1"
+	corev1beta1 "github.com/mohanraj00/koodam/api/v1beta1"
 )
 
 // condHarnesses tells if the pod installs the harnesses of spec.harnesses.
 const condHarnesses = "Harnesses"
 
-// harnessCondition is True if spec.harnesses is empty or the controller has an installer image,
-// and also a Nookku image if a harness selects nookku. With no installer image,
-// addWorkspaceHarnesses adds no harness. With no Nookku image, the pod has no Nookku files. The
-// condition says so.
-func harnessCondition(ws *corev1alpha1.Workspace, image, nookkuImage string) metav1.Condition {
+// harnessCondition checks that the controller can install each harness and its presets.
+func harnessCondition(ws *corev1beta1.Workspace, image string, presetImages map[string]string) metav1.Condition {
 	c := metav1.Condition{Type: condHarnesses, Status: metav1.ConditionTrue, Reason: "Installed",
 		Message: "The pod installs each harness of spec.harnesses.", ObservedGeneration: ws.Generation}
 	switch {
 	case len(ws.Spec.Harnesses) == 0:
 		c.Reason, c.Message = "None", "spec.harnesses is empty."
+	case slices.ContainsFunc(ws.Spec.Harnesses, unknownPreset):
+		c.Status, c.Reason, c.Message = metav1.ConditionFalse, reasonUnknownPreset, msgUnknownPreset
 	case image == "":
 		c.Status, c.Reason = metav1.ConditionFalse, "NoInstallerImage"
 		c.Message = "The controller has no --installer-image, so the pod has no harness."
-	case nookkuImage == "" && slices.ContainsFunc(ws.Spec.Harnesses, func(h corev1alpha1.HarnessSpec) bool { return hasNookku(&h) }):
-		c.Status, c.Reason = metav1.ConditionFalse, "NoNookkuImage"
-		c.Message = "The controller has no --nookku-image, so the pod has no Nookku files."
+	default:
+		for _, name := range workspacePresetNames(ws.Spec.Harnesses) {
+			p := harnessPresets[name]
+			if p.imageFlag != "" && presetImages[p.imageFlag] == "" {
+				c.Status, c.Reason = metav1.ConditionFalse, p.missingImageReason
+				c.Message = "The controller has no --" + p.imageFlag + ", so the pod has no " + p.filesDescription + "."
+				break
+			}
+		}
 	}
 	return c
 }
@@ -55,7 +60,7 @@ func harnessCondition(ws *corev1alpha1.Workspace, image, nookkuImage string) met
 // Workspace image links the binaries from /usr/local/bin. SSH commands and login shells have
 // /usr/local/bin on their PATH. The init containers have no credential env.
 // If there is no harness or no installer image, the pod does not change.
-func addWorkspaceHarnesses(pod *corev1.PodSpec, harnesses []corev1alpha1.HarnessSpec, image string) {
+func addWorkspaceHarnesses(pod *corev1.PodSpec, harnesses []corev1beta1.HarnessSpec, image string) {
 	if len(harnesses) == 0 || image == "" {
 		return
 	}

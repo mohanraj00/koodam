@@ -51,7 +51,7 @@ import (
 	"k8s.io/client-go/rest"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
-	corev1alpha1 "github.com/mohanraj00/koodam/api/v1alpha1"
+	corev1beta1 "github.com/mohanraj00/koodam/api/v1beta1"
 	"github.com/mohanraj00/koodam/test/utils"
 )
 
@@ -276,13 +276,13 @@ func dumpOnFailure() {
 
 // sampleAgent reads config/samples/core_v1alpha1_agent.yaml and changes it to run script with the
 // mock model in runNS. The budget, the deadline and the rules stay as in the sample.
-func sampleAgent(name, script string) *corev1alpha1.Agent {
+func sampleAgent(name, script string) *corev1beta1.Agent {
 	dir, err := utils.GetProjectDir()
 	Expect(err).NotTo(HaveOccurred())
 	f, err := os.Open(filepath.Join(dir, "config", "samples", "core_v1alpha1_agent.yaml"))
 	Expect(err).NotTo(HaveOccurred())
 	defer func() { _ = f.Close() }()
-	a := &corev1alpha1.Agent{}
+	a := &corev1beta1.Agent{}
 	Expect(yaml.NewYAMLOrJSONDecoder(f, 4096).Decode(a)).To(Succeed())
 	a.Name, a.Namespace = name, runNS
 	a.Spec.Image, a.Spec.Model = curlImage, mockModel
@@ -291,16 +291,16 @@ func sampleAgent(name, script string) *corev1alpha1.Agent {
 }
 
 // harnessAgent is a sample Agent that installs the latest version of harness and runs script.
-func harnessAgent(name, harness, model, script string) *corev1alpha1.Agent {
+func harnessAgent(name, harness, model, script string) *corev1beta1.Agent {
 	a := sampleAgent(name, script)
 	a.Spec.Image, a.Spec.Model = harnessImage, model
-	a.Spec.Harness = &corev1alpha1.HarnessSpec{Name: harness}
+	a.Spec.Harness = &corev1beta1.HarnessSpec{Name: harness}
 	return a
 }
 
 // expectHarnessRun runs the harness Agent a to Succeeded. It checks the residual access, the
 // installer log, the harness in "kubectl get" and in the key metadata, and the usage.
-func expectHarnessRun(a *corev1alpha1.Agent) {
+func expectHarnessRun(a *corev1beta1.Agent) {
 	h := a.Spec.Harness.Name
 	r := start(a)
 	expectNoAccess(a, r, jobEnd(a))
@@ -341,13 +341,13 @@ func expectHarnessRun(a *corev1alpha1.Agent) {
 }
 
 // start makes the Agent, waits until the run is live, and gets the key and a ServiceAccount token.
-func start(a *corev1alpha1.Agent) run {
+func start(a *corev1beta1.Agent) run {
 	By("making the Agent " + a.Name)
 	Expect(k8s.Create(ctx, a)).To(Succeed())
-	Eventually(func() corev1alpha1.AgentPhase {
+	Eventually(func() corev1beta1.AgentPhase {
 		_ = k8s.Get(ctx, client.ObjectKeyFromObject(a), a)
 		return a.Status.Phase
-	}).Should(Equal(corev1alpha1.AgentRunning))
+	}).Should(Equal(corev1beta1.AgentRunning))
 
 	By("reading the run key and making a run token while the run is live")
 	s := &corev1.Secret{}
@@ -372,7 +372,7 @@ func jobEnded(job *batchv1.Job) (time.Time, bool) {
 
 // jobEnd waits for the end of the run Job and returns the time of the end condition. It does not
 // wait for the controller.
-func jobEnd(a *corev1alpha1.Agent) time.Time {
+func jobEnd(a *corev1beta1.Agent) time.Time {
 	By("waiting for the end of the run Job")
 	var end time.Time
 	Eventually(func() bool {
@@ -390,19 +390,19 @@ func jobEnd(a *corev1alpha1.Agent) time.Time {
 // expectSucceeded checks that the Agent is Succeeded, with the Revoked condition and the usage.
 // The controller writes the usage and the Revoked condition in the same status update, so the
 // test waits for the condition and then reads the usage.
-func expectSucceeded(a *corev1alpha1.Agent) {
+func expectSucceeded(a *corev1beta1.Agent) {
 	Eventually(func() bool {
 		_ = k8s.Get(ctx, client.ObjectKeyFromObject(a), a)
 		return meta.IsStatusConditionTrue(a.Status.Conditions, "Revoked")
 	}, time.Minute).Should(BeTrue(), "The Agent has no true Revoked condition.")
-	Expect(a.Status.Phase).To(Equal(corev1alpha1.AgentSucceeded))
+	Expect(a.Status.Phase).To(Equal(corev1beta1.AgentSucceeded))
 	Expect(meta.IsStatusConditionTrue(a.Status.Conditions, "Revoked")).To(BeTrue())
 	Expect(a.Status.Usage).NotTo(BeNil())
 }
 
 // expectNoAccess probes the run credentials 30 s after end. All the probes share a deadline
 // 5 s after that time. A probe that does not complete before the deadline fails the test.
-func expectNoAccess(a *corev1alpha1.Agent, r run, end time.Time) {
+func expectNoAccess(a *corev1beta1.Agent, r run, end time.Time) {
 	By("calling the model with the master key, as a control")
 	code, _ := modelCall(ctx, masterKey)
 	Expect(code).To(Equal(http.StatusOK), "The control call with the master key did not work.")

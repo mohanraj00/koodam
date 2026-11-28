@@ -34,7 +34,7 @@ import (
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
-	corev1alpha1 "github.com/mohanraj00/koodam/api/v1alpha1"
+	corev1beta1 "github.com/mohanraj00/koodam/api/v1beta1"
 	"github.com/mohanraj00/koodam/internal/evidence/approval"
 )
 
@@ -67,7 +67,7 @@ type approvalRequest struct {
 
 // approvalDocument gives the request document of the run of a. The document has the SHA-256 of
 // the JSON text of the spec, so a change of the spec gives a different document.
-func approvalDocument(a *corev1alpha1.Agent) ([]byte, error) {
+func approvalDocument(a *corev1beta1.Agent) ([]byte, error) {
 	spec, err := json.Marshal(a.Spec)
 	if err != nil {
 		return nil, err
@@ -82,7 +82,7 @@ func approvalSubject(doc []byte) string { return fmt.Sprintf("sha256:%x", sha256
 // decisionSubject gives the snapshot reference that the decision in rec must name for the
 // subject of the run. The snapshot record of rec must have the scope and a content candidate, and
 // the manifest of rec must have the subject as its one item.
-func decisionSubject(rec *corev1alpha1.ApprovalRecord, scope, subject string) (string, error) {
+func decisionSubject(rec *corev1beta1.ApprovalRecord, scope, subject string) (string, error) {
 	return approval.Binding(rec.Spec.SnapshotRecord, rec.Spec.Manifest, scope, subject)
 }
 
@@ -100,15 +100,15 @@ type approvalState struct {
 // reject comes before an accept. A record that the verifier refused has the lowest rank of the
 // records, so a writer with no signing key cannot change the result of a signed record.
 var approvalRank = map[string]int{
-	corev1alpha1.ApprovalWaiting: 0, corev1alpha1.ApprovalNotVerified: 1, corev1alpha1.ApprovalSubjectMismatch: 2,
-	corev1alpha1.ApprovalNotYetValid: 3, corev1alpha1.ApprovalExpired: 4, corev1alpha1.ApprovalApproved: 5,
-	corev1alpha1.ApprovalDenied: 6,
+	corev1beta1.ApprovalWaiting: 0, corev1beta1.ApprovalNotVerified: 1, corev1beta1.ApprovalSubjectMismatch: 2,
+	corev1beta1.ApprovalNotYetValid: 3, corev1beta1.ApprovalExpired: 4, corev1beta1.ApprovalApproved: 5,
+	corev1beta1.ApprovalDenied: 6,
 }
 
 // checkRecord verifies the signed decision of rec with the trust of the Profile and gives its
 // state. It is the only call of the verifier. The message has the name of the record and the
 // code of the verifier. It never has bytes of the record.
-func checkRecord(rec *corev1alpha1.ApprovalRecord, trust *corev1alpha1.ProfileApproval, subject string,
+func checkRecord(rec *corev1beta1.ApprovalRecord, trust *corev1beta1.ProfileApproval, subject string,
 	now time.Time) approvalState {
 	state := func(status metav1.ConditionStatus, reason, format string, args ...any) approvalState {
 		return approvalState{status: status, reason: reason, message: fmt.Sprintf("The record %s "+format, append([]any{rec.Name}, args...)...)}
@@ -130,23 +130,23 @@ func checkRecord(rec *corev1alpha1.ApprovalRecord, trust *corev1alpha1.ProfileAp
 	decided, ok := approval.DecidedAt(rec.Spec.SignedRecord)
 	switch {
 	case code == approval.CodeExpired:
-		return state(metav1.ConditionFalse, corev1alpha1.ApprovalExpired, "has an until date that is not after the date of the check.")
+		return state(metav1.ConditionFalse, corev1beta1.ApprovalExpired, "has an until date that is not after the date of the check.")
 	case code == approval.CodeNotYetValid:
-		return state(metav1.ConditionUnknown, corev1alpha1.ApprovalNotYetValid, "has a from date in the future.")
+		return state(metav1.ConditionUnknown, corev1beta1.ApprovalNotYetValid, "has a from date in the future.")
 	case code == approval.CodeSubjectMismatch:
-		return state(metav1.ConditionUnknown, corev1alpha1.ApprovalSubjectMismatch,
+		return state(metav1.ConditionUnknown, corev1beta1.ApprovalSubjectMismatch,
 			"does not bind the subject of the run, which is %s.", subject)
 	case err != nil:
-		return state(metav1.ConditionUnknown, corev1alpha1.ApprovalNotVerified, "did not pass the verifier: %s.", text)
+		return state(metav1.ConditionUnknown, corev1beta1.ApprovalNotVerified, "did not pass the verifier: %s.", text)
 	case !ok || decided.After(now):
-		return state(metav1.ConditionUnknown, corev1alpha1.ApprovalNotVerified, "did not pass the verifier: invalid_decided_at.")
+		return state(metav1.ConditionUnknown, corev1beta1.ApprovalNotVerified, "did not pass the verifier: invalid_decided_at.")
 	case now.Sub(decided) > time.Duration(trust.MaxAgeSeconds)*time.Second:
-		return state(metav1.ConditionFalse, corev1alpha1.ApprovalExpired,
+		return state(metav1.ConditionFalse, corev1beta1.ApprovalExpired,
 			"has a decision that is older than the maximum age of %d seconds.", trust.MaxAgeSeconds)
 	}
-	s := state(metav1.ConditionFalse, corev1alpha1.ApprovalDenied, "has a valid reject for the subject %s.", subject)
-	if result.Record.Verdict == string(corev1alpha1.EvidencePass) {
-		s = state(metav1.ConditionTrue, corev1alpha1.ApprovalApproved, "has a valid accept for the subject %s.", subject)
+	s := state(metav1.ConditionFalse, corev1beta1.ApprovalDenied, "has a valid reject for the subject %s.", subject)
+	if result.Record.Verdict == string(corev1beta1.EvidencePass) {
+		s = state(metav1.ConditionTrue, corev1beta1.ApprovalApproved, "has a valid accept for the subject %s.", subject)
 	}
 	// The subject of the evidence is the subject of the run, and not the snapshot reference.
 	result.Record.Subject = subject
@@ -157,19 +157,19 @@ func checkRecord(rec *corev1alpha1.ApprovalRecord, trust *corev1alpha1.ProfileAp
 // approvalState reads the Profile of the namespace and the ApprovalRecords of a, and gives the
 // state with the highest rank. It reads from the API server in small pages, so the manager keeps
 // no record in its cache. It reads approvalMaxRecords records at most.
-func (r *AgentReconciler) approvalState(ctx context.Context, a *corev1alpha1.Agent, subject string,
+func (r *AgentReconciler) approvalState(ctx context.Context, a *corev1beta1.Agent, subject string,
 	now time.Time) (approvalState, error) {
 	p, err := boundProfileObject(ctx, r.APIReader, a.Namespace)
 	if err != nil {
 		return approvalState{}, err
 	}
 	if p == nil || p.Spec.Approval == nil {
-		return approvalState{status: metav1.ConditionFalse, reason: corev1alpha1.ApprovalNoKeySet,
+		return approvalState{status: metav1.ConditionFalse, reason: corev1beta1.ApprovalNoKeySet,
 			message: "The Profile of the namespace has no spec.approval."}, nil
 	}
-	best := approvalState{status: metav1.ConditionUnknown, reason: corev1alpha1.ApprovalWaiting,
+	best := approvalState{status: metav1.ConditionUnknown, reason: corev1beta1.ApprovalWaiting,
 		message: fmt.Sprintf("No ApprovalRecord targets the Agent. The subject of the run is %s.", subject)}
-	list := &corev1alpha1.ApprovalRecordList{}
+	list := &corev1beta1.ApprovalRecordList{}
 	for token, read := "", 0; ; {
 		if err := r.APIReader.List(ctx, list, client.InNamespace(a.Namespace),
 			client.MatchingFields{approvalTargetField: a.Name}, client.Limit(approvalPageSize),
@@ -180,8 +180,8 @@ func (r *AgentReconciler) approvalState(ctx context.Context, a *corev1alpha1.Age
 			// Of two accepts, the state keeps the accept with the earlier decision, because the
 			// wait deadline applies to the time of the decision.
 			s := checkRecord(&list.Items[i], p.Spec.Approval, subject, now)
-			if approvalRank[s.reason] > approvalRank[best.reason] || (s.reason == corev1alpha1.ApprovalApproved &&
-				best.reason == corev1alpha1.ApprovalApproved && s.decided.Before(best.decided)) {
+			if approvalRank[s.reason] > approvalRank[best.reason] || (s.reason == corev1beta1.ApprovalApproved &&
+				best.reason == corev1beta1.ApprovalApproved && s.decided.Before(best.decided)) {
 				best = s
 			}
 		}
@@ -192,8 +192,8 @@ func (r *AgentReconciler) approvalState(ctx context.Context, a *corev1alpha1.Age
 		if read >= approvalMaxRecords {
 			// A record that the check did not read can have a higher rank. Only Denied has the
 			// highest rank, so each other state waits: an incomplete check never starts a run.
-			if best.reason != corev1alpha1.ApprovalDenied {
-				best = approvalState{status: metav1.ConditionUnknown, reason: corev1alpha1.ApprovalWaiting,
+			if best.reason != corev1beta1.ApprovalDenied {
+				best = approvalState{status: metav1.ConditionUnknown, reason: corev1beta1.ApprovalWaiting,
 					message: fmt.Sprintf("The check read only %d records of the Agent, so it cannot start the run. "+
 						"Delete the ApprovalRecords that are not necessary. The subject of the run is %s.", read, subject)}
 			}
@@ -214,7 +214,7 @@ func (w approvalWait) Error() string { return "the run waits for an approval" }
 // has no key and no pod. Each provision attempt does the check again, until the Job exists: a change of
 // the spec, a later reject or a decision that is too old then keeps or stops a run that did not
 // start. It is true if the run stopped. A paused run gives an approvalWait error.
-func (r *AgentReconciler) awaitApproval(ctx context.Context, a *corev1alpha1.Agent) (bool, error) {
+func (r *AgentReconciler) awaitApproval(ctx context.Context, a *corev1beta1.Agent) (bool, error) {
 	if a.Spec.Approval == nil {
 		return false, nil
 	}
@@ -246,13 +246,13 @@ func (r *AgentReconciler) awaitApproval(ctx context.Context, a *corev1alpha1.Age
 	// attempt, so its retry continues.
 	late := s.status == metav1.ConditionTrue && a.Status.KeyHash == "" && s.decided.After(deadline)
 	if late || (s.status == metav1.ConditionUnknown && !now.Before(deadline)) {
-		s = approvalState{status: metav1.ConditionFalse, reason: corev1alpha1.ApprovalTimeout, message: fmt.Sprintf(
+		s = approvalState{status: metav1.ConditionFalse, reason: corev1beta1.ApprovalTimeout, message: fmt.Sprintf(
 			"The run got no approval in %d seconds.", a.Spec.Approval.WaitSeconds)}
 	}
 	before := a.Status.DeepCopy()
 	// An approver integration reads the request and the subject from the status.
-	a.Status.Approval = &corev1alpha1.AgentApprovalStatus{Request: string(doc), Subject: subject}
-	meta.SetStatusCondition(&a.Status.Conditions, metav1.Condition{Type: corev1alpha1.AgentApproval,
+	a.Status.Approval = &corev1beta1.AgentApprovalStatus{Request: string(doc), Subject: subject}
+	meta.SetStatusCondition(&a.Status.Conditions, metav1.Condition{Type: corev1beta1.AgentApproval,
 		Status: s.status, Reason: s.reason, Message: s.message, ObservedGeneration: a.Generation})
 	setApprovalEvidence(a, s.evidence, now)
 	// A run with a key hash had an approval at an earlier start attempt. If the approval is not
@@ -260,10 +260,10 @@ func (r *AgentReconciler) awaitApproval(ctx context.Context, a *corev1alpha1.Age
 	// key. The revoke blocks the key first.
 	if s.status == metav1.ConditionFalse || (s.status == metav1.ConditionUnknown && a.Status.KeyHash != "") {
 		logf.FromContext(ctx).Info("The approval stops the run", "reason", s.reason)
-		return true, r.fail(ctx, a, corev1alpha1.AgentFailed, s.reason)
+		return true, r.fail(ctx, a, corev1beta1.AgentFailed, s.reason)
 	}
 	if s.status == metav1.ConditionUnknown {
-		a.Status.Phase = corev1alpha1.AgentPending
+		a.Status.Phase = corev1beta1.AgentPending
 	}
 	// Write the status only if it changed, because each write starts a new reconcile.
 	if !equality.Semantic.DeepEqual(before, &a.Status) {
@@ -280,7 +280,7 @@ func (r *AgentReconciler) awaitApproval(ctx context.Context, a *corev1alpha1.Age
 // setApprovalEvidence writes the record of an accept or of a reject to the status. It keeps a
 // record that is there for the same decision, so the time of the first check stays. A state with
 // no accepted decision has no record.
-func setApprovalEvidence(a *corev1alpha1.Agent, rec *approval.Record, now time.Time) {
+func setApprovalEvidence(a *corev1beta1.Agent, rec *approval.Record, now time.Time) {
 	if rec == nil {
 		a.Status.Evidence = nil
 		return
@@ -289,22 +289,22 @@ func setApprovalEvidence(a *corev1alpha1.Agent, rec *approval.Record, now time.T
 		string(old.Verdict) == rec.Verdict {
 		return
 	}
-	a.Status.Evidence = &corev1alpha1.EvidenceRecord{Source: corev1alpha1.EvidenceSourceApproval,
-		Subject: rec.Subject, Verdict: corev1alpha1.EvidenceVerdict(rec.Verdict), ID: rec.ID, Digest: rec.Digest,
-		Integrity: corev1alpha1.EvidenceSignature, CheckedAt: metav1.NewTime(now)}
+	a.Status.Evidence = &corev1beta1.EvidenceRecord{Source: corev1beta1.EvidenceSourceApproval,
+		Subject: rec.Subject, Verdict: corev1beta1.EvidenceVerdict(rec.Verdict), ID: rec.ID, Digest: rec.Digest,
+		Integrity: corev1beta1.EvidenceSignature, CheckedAt: metav1.NewTime(now)}
 }
 
 // approvalWaiters maps an ApprovalRecord to the Agents of its namespace that can wait for an
 // approval. The watch has only the metadata of the record, so the target is not known here.
 func (r *AgentReconciler) approvalWaiters(ctx context.Context, o client.Object) []reconcile.Request {
-	list := &corev1alpha1.AgentList{}
+	list := &corev1beta1.AgentList{}
 	if err := r.List(ctx, list, client.InNamespace(o.GetNamespace())); err != nil {
 		logf.FromContext(ctx).Error(err, "Cannot list the Agents that wait for an approval")
 		return nil
 	}
 	var out []reconcile.Request
 	for i := range list.Items {
-		if a := &list.Items[i]; a.Spec.Approval != nil && (a.Status.Phase == "" || a.Status.Phase == corev1alpha1.AgentPending) {
+		if a := &list.Items[i]; a.Spec.Approval != nil && (a.Status.Phase == "" || a.Status.Phase == corev1beta1.AgentPending) {
 			out = append(out, reconcile.Request{NamespacedName: client.ObjectKeyFromObject(a)})
 		}
 	}

@@ -31,7 +31,7 @@ import (
 	"k8s.io/apimachinery/pkg/util/validation"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
-	corev1alpha1 "github.com/mohanraj00/koodam/api/v1alpha1"
+	corev1beta1 "github.com/mohanraj00/koodam/api/v1beta1"
 )
 
 const (
@@ -138,7 +138,7 @@ func (a *api) serveRun(ctx context.Context, w http.ResponseWriter, r *http.Reque
 }
 
 func (a *api) runDetail(ctx context.Context, ref runRef) (runDetail, error) {
-	agent := &corev1alpha1.Agent{}
+	agent := &corev1beta1.Agent{}
 	if err := a.kube.Get(ctx, client.ObjectKey{Namespace: ref.namespace, Name: ref.name}, agent); err != nil {
 		return runDetail{}, err
 	}
@@ -173,7 +173,7 @@ func (a *api) runDetail(ctx context.Context, ref runRef) (runDetail, error) {
 
 // runPods gives the Job of the Agent and its pods, newest first. A Job or a pod with the same name
 // or labels that the run does not control is not part of the run, so the result does not have it.
-func (a *api) runPods(ctx context.Context, agent *corev1alpha1.Agent) (*batchv1.Job, []corev1.Pod, error) {
+func (a *api) runPods(ctx context.Context, agent *corev1beta1.Agent) (*batchv1.Job, []corev1.Pod, error) {
 	if agent.Status.Job == "" {
 		return nil, nil, nil
 	}

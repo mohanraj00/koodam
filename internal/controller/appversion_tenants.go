@@ -36,7 +36,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/predicate"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
-	corev1alpha1 "github.com/mohanraj00/koodam/api/v1alpha1"
+	corev1beta1 "github.com/mohanraj00/koodam/api/v1beta1"
 	"github.com/mohanraj00/koodam/internal/appclaim"
 )
 
@@ -64,7 +64,7 @@ type AppTenantLimits struct {
 // only with a tenant claim.
 func (c AppClaimCheck) tenantsEnabled() bool { return c.enabled() && c.TenantClaim != "" }
 
-func tenantLimitsName(av *corev1alpha1.AppVersion) string { return appVersionName(av) + "-tenants" }
+func tenantLimitsName(av *corev1beta1.AppVersion) string { return appVersionName(av) + "-tenants" }
 
 // podLimit gives back the limit of one pod: the rate and the burst divided by the replicas. Thus
 // the pods of an App permit the rate of the tenant together. The burst of a pod is 1 or more,
@@ -83,8 +83,8 @@ func podLimit(rate float64, burst, replicas int32) appclaim.TenantLimit {
 // tenantOwners gives back the owner of each tenant label in a list of TenantQuotas. It reads the
 // list one time, so the limits file of an App with many tenants uses little time. It must agree
 // with tenantOwner.
-func tenantOwners(all []corev1alpha1.TenantQuota) map[string]*corev1alpha1.TenantQuota {
-	owners := make(map[string]*corev1alpha1.TenantQuota, len(all))
+func tenantOwners(all []corev1beta1.TenantQuota) map[string]*corev1beta1.TenantQuota {
+	owners := make(map[string]*corev1beta1.TenantQuota, len(all))
 	for i := range all {
 		q := &all[i]
 		if !q.DeletionTimestamp.IsZero() {
@@ -99,7 +99,7 @@ func tenantOwners(all []corev1alpha1.TenantQuota) map[string]*corev1alpha1.Tenan
 
 // versionReplicas gives back the number of pods of a version. For a version with a scale, it is
 // the maximum. Thus the pods of a tenant never get more than its rate together.
-func versionReplicas(av *corev1alpha1.AppVersion) int32 {
+func versionReplicas(av *corev1beta1.AppVersion) int32 {
 	if av.Spec.Scale != nil {
 		return av.Spec.Scale.MaxReplicas
 	}
@@ -115,9 +115,9 @@ func versionReplicas(av *corev1alpha1.AppVersion) int32 {
 // Koodam-App-Version. With a rate for each version, a tenant gets the rate one time for each
 // version. If the replicas are not in proportion to the weights, a tenant gets less than its
 // rate.
-func appReplicas(ctx context.Context, c client.Client, av *corev1alpha1.AppVersion) (int32, error) {
+func appReplicas(ctx context.Context, c client.Client, av *corev1beta1.AppVersion) (int32, error) {
 	total := int64(versionReplicas(av))
-	app := &corev1alpha1.App{}
+	app := &corev1beta1.App{}
 	err := c.Get(ctx, types.NamespacedName{Namespace: av.Namespace, Name: av.Spec.AppRef.Name}, app)
 	if apierrors.IsNotFound(err) {
 		return int32(total), nil
@@ -133,7 +133,7 @@ func appReplicas(ctx context.Context, c client.Client, av *corev1alpha1.AppVersi
 			}
 		}
 	}
-	list := &corev1alpha1.AppVersionList{}
+	list := &corev1beta1.AppVersionList{}
 	if err := c.List(ctx, list, client.InNamespace(av.Namespace)); err != nil {
 		return 0, err
 	}
@@ -152,23 +152,23 @@ func appReplicas(ctx context.Context, c client.Client, av *corev1alpha1.AppVersi
 }
 
 // revokeComplete tells if the controller blocked the key of a version and deleted its Deployment.
-func revokeComplete(av *corev1alpha1.AppVersion) bool {
-	return meta.IsStatusConditionTrue(av.Status.Conditions, corev1alpha1.AppVersionRevoked)
+func revokeComplete(av *corev1beta1.AppVersion) bool {
+	return meta.IsStatusConditionTrue(av.Status.Conditions, corev1beta1.AppVersionRevoked)
 }
 
 // revokeCompleted tells if an update completed the revoke of a version. The pods of the other
 // versions of the App then share the rate of a tenant without the pods of this version.
 func revokeCompleted(e event.UpdateEvent) bool {
-	was, ok := e.ObjectOld.(*corev1alpha1.AppVersion)
-	is, ok2 := e.ObjectNew.(*corev1alpha1.AppVersion)
+	was, ok := e.ObjectOld.(*corev1beta1.AppVersion)
+	is, ok2 := e.ObjectNew.(*corev1beta1.AppVersion)
 	return ok && ok2 && !revokeComplete(was) && revokeComplete(is)
 }
 
 // limits gives back the limits file of a version. It has each TenantQuota of the namespace that
 // has its tenant label in the install and that applies to the App of the version. The replicas
 // are the pods that share the rate of a tenant: see appReplicas.
-func (c AppClaimCheck) limits(av *corev1alpha1.AppVersion, replicas int32,
-	quotas []corev1alpha1.TenantQuota) appclaim.TenantLimits {
+func (c AppClaimCheck) limits(av *corev1beta1.AppVersion, replicas int32,
+	quotas []corev1beta1.TenantQuota) appclaim.TenantLimits {
 	out := appclaim.TenantLimits{RefuseUnknown: c.Tenants.RefuseUnknown, Tenants: map[string]appclaim.TenantLimit{}}
 	if c.Tenants.DefaultRate > 0 {
 		out.Default = new(podLimit(c.Tenants.DefaultRate, c.Tenants.DefaultBurst, replicas))
@@ -190,7 +190,7 @@ func (c AppClaimCheck) limits(av *corev1alpha1.AppVersion, replicas int32,
 			}
 			limit = podLimit(rl.RequestsPerSecond.AsApproximateFloat64(), burst, replicas)
 		}
-		limit.Exceeded = meta.IsStatusConditionTrue(q.Status.Conditions, corev1alpha1.TenantQuotaExceeded)
+		limit.Exceeded = meta.IsStatusConditionTrue(q.Status.Conditions, corev1beta1.TenantQuotaExceeded)
 		out.Tenants[q.Spec.Tenant] = limit
 	}
 	return out
@@ -200,11 +200,11 @@ func (c AppClaimCheck) limits(av *corev1alpha1.AppVersion, replicas int32,
 // the file in the pods, and the check container reads it again. It gives back errNotOwned if a
 // ConfigMap with the name is not from the version.
 func applyTenantLimits(ctx context.Context, c client.Client, reader client.Reader, claim AppClaimCheck,
-	av *corev1alpha1.AppVersion) error {
+	av *corev1beta1.AppVersion) error {
 	if !claim.tenantsEnabled() {
 		return nil
 	}
-	list := &corev1alpha1.TenantQuotaList{}
+	list := &corev1beta1.TenantQuotaList{}
 	if err := c.List(ctx, list); err != nil {
 		return err
 	}
@@ -249,7 +249,7 @@ type TenantLimitsReconciler struct {
 
 // Reconcile writes the limits file of one AppVersion.
 func (r *TenantLimitsReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
-	av := &corev1alpha1.AppVersion{}
+	av := &corev1beta1.AppVersion{}
 	if err := r.Get(ctx, req.NamespacedName, av); err != nil {
 		return ctrl.Result{}, client.IgnoreNotFound(err)
 	}
@@ -275,9 +275,9 @@ func (r *TenantLimitsReconciler) allVersions(ctx context.Context, _ client.Objec
 // versions. The weights of the App and the replicas of each version decide the rate of a pod.
 func (r *TenantLimitsReconciler) appVersions(ctx context.Context, obj client.Object) []reconcile.Request {
 	switch o := obj.(type) {
-	case *corev1alpha1.App:
+	case *corev1beta1.App:
 		return r.versions(ctx, o.Namespace, o.Name)
-	case *corev1alpha1.AppVersion:
+	case *corev1beta1.AppVersion:
 		return r.versions(ctx, o.Namespace, o.Spec.AppRef.Name)
 	}
 	return nil
@@ -286,7 +286,7 @@ func (r *TenantLimitsReconciler) appVersions(ctx context.Context, obj client.Obj
 // versions gives the AppVersions of an App in a namespace. With no namespace and no App, it
 // gives each AppVersion.
 func (r *TenantLimitsReconciler) versions(ctx context.Context, namespace, app string) []reconcile.Request {
-	list := &corev1alpha1.AppVersionList{}
+	list := &corev1beta1.AppVersionList{}
 	if err := r.List(ctx, list, client.InNamespace(namespace)); err != nil {
 		logf.FromContext(ctx).Error(err, "Failed to list the AppVersions for the tenant limits")
 		return nil
@@ -303,13 +303,13 @@ func (r *TenantLimitsReconciler) versions(ctx context.Context, namespace, app st
 // SetupWithManager sets up the controller with the Manager.
 func (r *TenantLimitsReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	return ctrl.NewControllerManagedBy(mgr).
-		For(&corev1alpha1.AppVersion{}).
-		Watches(&corev1alpha1.TenantQuota{}, handler.EnqueueRequestsFromMapFunc(r.allVersions)).
+		For(&corev1beta1.AppVersion{}).
+		Watches(&corev1beta1.TenantQuota{}, handler.EnqueueRequestsFromMapFunc(r.allVersions)).
 		// Only a change of the spec changes the weights of an App or the replicas of a version.
-		Watches(&corev1alpha1.App{}, handler.EnqueueRequestsFromMapFunc(r.appVersions),
+		Watches(&corev1beta1.App{}, handler.EnqueueRequestsFromMapFunc(r.appVersions),
 			builder.WithPredicates(predicate.GenerationChangedPredicate{})).
 		// The end of a revoke is a change of the status.
-		Watches(&corev1alpha1.AppVersion{}, handler.EnqueueRequestsFromMapFunc(r.appVersions),
+		Watches(&corev1beta1.AppVersion{}, handler.EnqueueRequestsFromMapFunc(r.appVersions),
 			builder.WithPredicates(predicate.Or(predicate.GenerationChangedPredicate{},
 				predicate.Funcs{UpdateFunc: revokeCompleted}))).
 		Named("tenantlimits").

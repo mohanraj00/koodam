@@ -26,7 +26,7 @@ import (
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	dynamicfake "k8s.io/client-go/dynamic/fake"
 
-	corev1alpha1 "github.com/mohanraj00/koodam/api/v1alpha1"
+	corev1beta1 "github.com/mohanraj00/koodam/api/v1beta1"
 	"github.com/mohanraj00/koodam/internal/tenanttoken"
 )
 
@@ -43,7 +43,7 @@ func appVersion(namespace, name, key string) *unstructured.Unstructured {
 }
 
 func TestAppVersionsAgreeWithTheAPI(t *testing.T) {
-	if AppVersions.GroupVersion() != corev1alpha1.GroupVersion {
+	if AppVersions.GroupVersion() != corev1beta1.GroupVersion {
 		t.Fatalf("The resource has the group and version %v.", AppVersions.GroupVersion())
 	}
 }

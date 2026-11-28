@@ -25,29 +25,29 @@ import (
 	"github.com/spf13/cobra"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
-	corev1alpha1 "github.com/mohanraj00/koodam/api/v1alpha1"
+	corev1beta1 "github.com/mohanraj00/koodam/api/v1beta1"
 )
 
 // byFlag is the group flag of koodam usage.
 const byFlag = "--by"
 
-func tenantQuota(name, tenant, app, spend string, requests int64, ready, exceeded bool) *corev1alpha1.TenantQuota {
+func tenantQuota(name, tenant, app, spend string, requests int64, ready, exceeded bool) *corev1beta1.TenantQuota {
 	status := func(on bool) metav1.ConditionStatus {
 		if on {
 			return metav1.ConditionTrue
 		}
 		return metav1.ConditionFalse
 	}
-	q := &corev1alpha1.TenantQuota{ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: testNS},
-		Spec: corev1alpha1.TenantQuotaSpec{Tenant: tenant},
-		Status: corev1alpha1.TenantQuotaStatus{Requests: requests, Spend: spend,
+	q := &corev1beta1.TenantQuota{ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: testNS},
+		Spec: corev1beta1.TenantQuotaSpec{Tenant: tenant},
+		Status: corev1beta1.TenantQuotaStatus{Requests: requests, Spend: spend,
 			PeriodEnd: &metav1.Time{Time: time.Date(2026, 11, 26, 0, 0, 0, 0, time.UTC)},
 			Conditions: []metav1.Condition{
-				{Type: corev1alpha1.TenantQuotaReady, Status: status(ready)},
-				{Type: corev1alpha1.TenantQuotaExceeded, Status: status(exceeded)},
+				{Type: corev1beta1.TenantQuotaReady, Status: status(ready)},
+				{Type: corev1beta1.TenantQuotaExceeded, Status: status(exceeded)},
 			}}}
 	if app != "" {
-		q.Spec.AppRef = &corev1alpha1.AppReference{Name: app}
+		q.Spec.AppRef = &corev1beta1.AppReference{Name: app}
 	}
 	return q
 }

@@ -26,13 +26,13 @@ import (
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
-	corev1alpha1 "github.com/mohanraj00/koodam/api/v1alpha1"
+	corev1beta1 "github.com/mohanraj00/koodam/api/v1beta1"
 )
 
 var _ = Describe("Profile costGroups CRD", func() {
 	DescribeTable("checks the allowed set", func(groups []string, valid bool) {
-		p := &corev1alpha1.Profile{ObjectMeta: metav1.ObjectMeta{GenerateName: "cost-crd-"},
-			Spec: corev1alpha1.ProfileSpec{CostGroups: groups}}
+		p := &corev1beta1.Profile{ObjectMeta: metav1.ObjectMeta{GenerateName: "cost-crd-"},
+			Spec: corev1beta1.ProfileSpec{CostGroups: groups}}
 		err := k8sClient.Create(context.Background(), p)
 		if err == nil {
 			DeferCleanup(func() { Expect(k8sClient.Delete(context.Background(), p)).To(Succeed()) })

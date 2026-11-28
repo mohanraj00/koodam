@@ -35,7 +35,7 @@ import (
 	"k8s.io/client-go/tools/clientcmd"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
-	corev1alpha1 "github.com/mohanraj00/koodam/api/v1alpha1"
+	corev1beta1 "github.com/mohanraj00/koodam/api/v1beta1"
 )
 
 // version is the version of the CLI. GoReleaser sets it with -X main.version.
@@ -115,7 +115,7 @@ func kubeEnv(rules *clientcmd.ClientConfigLoadingRules, overrides *clientcmd.Con
 	if err := clientgoscheme.AddToScheme(scheme); err != nil {
 		return nil, err
 	}
-	if err := corev1alpha1.AddToScheme(scheme); err != nil {
+	if err := corev1beta1.AddToScheme(scheme); err != nil {
 		return nil, err
 	}
 	kube, err := client.New(cfg, client.Options{Scheme: scheme})

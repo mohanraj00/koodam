@@ -28,7 +28,7 @@ import (
 
 	"k8s.io/apimachinery/pkg/types"
 
-	corev1alpha1 "github.com/mohanraj00/koodam/api/v1alpha1"
+	corev1beta1 "github.com/mohanraj00/koodam/api/v1beta1"
 )
 
 const (
@@ -105,7 +105,7 @@ func ParseReport(msg string) (Report, error) {
 		return Report{}, ErrFormat
 	case !reGateID.MatchString(r.Gate) || !validSubject(r.Subject) || !reSHA256.MatchString(r.SHA256) ||
 		!reVersion.MatchString(r.Nookku) ||
-		(r.Verdict != string(corev1alpha1.EvidencePass) && r.Verdict != string(corev1alpha1.EvidenceFail)):
+		(r.Verdict != string(corev1beta1.EvidencePass) && r.Verdict != string(corev1beta1.EvidenceFail)):
 		return Report{}, ErrFieldForm
 	}
 	return r, nil
@@ -150,18 +150,18 @@ func validSubject(s string) bool {
 // Check gives the reason of the condition Evidence for a report that parsed, and the verdict of
 // an accepted record. want is the subject that the controller computes again at the time of the
 // check. The verdict is empty if the controller does not accept the record.
-func (r Report) Check(want string) (reason string, verdict corev1alpha1.EvidenceVerdict) {
+func (r Report) Check(want string) (reason string, verdict corev1beta1.EvidenceVerdict) {
 	switch {
 	case r.Exit != 0 && r.Exit != 1:
-		return corev1alpha1.EvidenceNotVerified, ""
+		return corev1beta1.EvidenceNotVerified, ""
 	case r.Subject != want:
-		return corev1alpha1.EvidenceSubjectMismatch, ""
-	case r.Exit == 0 && r.Verdict == string(corev1alpha1.EvidencePass):
-		return corev1alpha1.EvidencePassed, corev1alpha1.EvidencePass
-	case r.Exit == 1 && r.Verdict == string(corev1alpha1.EvidenceFail):
-		return corev1alpha1.EvidenceFailed, corev1alpha1.EvidenceFail
+		return corev1beta1.EvidenceSubjectMismatch, ""
+	case r.Exit == 0 && r.Verdict == string(corev1beta1.EvidencePass):
+		return corev1beta1.EvidencePassed, corev1beta1.EvidencePass
+	case r.Exit == 1 && r.Verdict == string(corev1beta1.EvidenceFail):
+		return corev1beta1.EvidenceFailed, corev1beta1.EvidenceFail
 	}
-	return corev1alpha1.EvidenceNotVerified, ""
+	return corev1beta1.EvidenceNotVerified, ""
 }
 
 // ImageDigest gives back the sha256 digest of an image reference, and false if the reference

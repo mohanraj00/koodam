@@ -44,7 +44,7 @@ import (
 	k8stesting "k8s.io/client-go/testing"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
-	corev1alpha1 "github.com/mohanraj00/koodam/api/v1alpha1"
+	corev1beta1 "github.com/mohanraj00/koodam/api/v1beta1"
 	"github.com/mohanraj00/koodam/internal/gateway"
 	"github.com/mohanraj00/koodam/internal/opspage"
 	"github.com/mohanraj00/koodam/internal/spendapi"
@@ -65,13 +65,13 @@ var namespaces = []string{namespaceA, namespaceB}
 // agentReader lists the synthetic Agents of one namespace, a page at a time.
 type agentReader struct {
 	client.Reader
-	items   []corev1alpha1.Agent
-	budgets []corev1alpha1.SpendBudget
+	items   []corev1beta1.Agent
+	budgets []corev1beta1.SpendBudget
 }
 
 // Get reads a SpendBudget by its name. The spend API reads no other object with Get.
 func (r agentReader) Get(_ context.Context, key client.ObjectKey, target client.Object, _ ...client.GetOption) error {
-	b, ok := target.(*corev1alpha1.SpendBudget)
+	b, ok := target.(*corev1beta1.SpendBudget)
 	if !ok {
 		return errors.New("the example reader gets only SpendBudgets")
 	}
@@ -85,12 +85,12 @@ func (r agentReader) Get(_ context.Context, key client.ObjectKey, target client.
 }
 
 func (r agentReader) List(_ context.Context, target client.ObjectList, options ...client.ListOption) error {
-	list, ok := target.(*corev1alpha1.AgentList)
+	list, ok := target.(*corev1beta1.AgentList)
 	opts := (&client.ListOptions{}).ApplyOptions(options)
 	if !ok || opts.Namespace == "" || opts.Limit < 1 {
 		return errors.New("the example reader lists Agents in one namespace with a limit")
 	}
-	var items []corev1alpha1.Agent
+	var items []corev1beta1.Agent
 	for _, item := range r.items {
 		if item.Namespace == opts.Namespace {
 			items = append(items, item)
@@ -132,7 +132,7 @@ func newExample(now time.Time) (*example, error) {
 	}
 	spend, values := map[string]float64{}, map[string]string{}
 	ex := &example{}
-	agents := make([]corev1alpha1.Agent, 0, len(runs))
+	agents := make([]corev1beta1.Agent, 0, len(runs))
 	for i, r := range runs {
 		value, err := gateway.NewKeyValue()
 		if err != nil {
@@ -142,19 +142,19 @@ func newExample(now time.Time) (*example, error) {
 		ex.keys = append(ex.keys, value, hash)
 		spend[hash], values[hash] = r.spend, value
 		started := metav1.NewTime(now.Add(-time.Duration(len(runs)-i) * time.Hour))
-		status := corev1alpha1.AgentStatus{
-			Phase: corev1alpha1.AgentPhase(r.phase), StartedAt: &started, KeyHash: hash, CostGroup: r.group,
+		status := corev1beta1.AgentStatus{
+			Phase: corev1beta1.AgentPhase(r.phase), StartedAt: &started, KeyHash: hash, CostGroup: r.group,
 		}
 		if r.phase != "Running" {
 			ended := metav1.NewTime(started.Add(20 * time.Minute))
 			status.CompletedAt = &ended
 		}
-		agents = append(agents, corev1alpha1.Agent{
+		agents = append(agents, corev1beta1.Agent{
 			ObjectMeta: metav1.ObjectMeta{
 				Name: r.name, Namespace: r.namespace, UID: types.UID(fmt.Sprintf("run-%d", i)),
 				CreationTimestamp: started, Labels: map[string]string{costGroup: r.group},
 			},
-			Spec: corev1alpha1.AgentSpec{
+			Spec: corev1beta1.AgentSpec{
 				Model: "example-model", Budget: resource.MustParse(strconv.FormatFloat(r.budget, 'f', -1, 64)),
 			},
 			Status: status,
@@ -162,7 +162,7 @@ func newExample(now time.Time) (*example, error) {
 	}
 	gw := httptest.NewServer(fakeGateway(spend, values))
 	api, err := spendapi.New(spendapi.Config{
-		Kube:       agentReader{items: agents, budgets: []corev1alpha1.SpendBudget{exampleBudget(now)}},
+		Kube:       agentReader{items: agents, budgets: []corev1beta1.SpendBudget{exampleBudget(now)}},
 		Namespaces: namespaces, GatewayURL: gw.URL, MasterKey: masterKey,
 		Timeout: 5 * time.Second, Viewers: fakeViewers(),
 	})
@@ -176,15 +176,15 @@ func newExample(now time.Time) (*example, error) {
 
 // exampleBudget is the SpendBudget of the first namespace. The ended run has a spend of 1.25, and the
 // running run reserves its budget of 2.
-func exampleBudget(now time.Time) corev1alpha1.SpendBudget {
+func exampleBudget(now time.Time) corev1beta1.SpendBudget {
 	start := now.UTC().Truncate(24 * time.Hour)
-	return corev1alpha1.SpendBudget{
-		ObjectMeta: metav1.ObjectMeta{Name: corev1alpha1.SpendBudgetName, Namespace: namespaceA},
-		Spec:       corev1alpha1.SpendBudgetSpec{PeriodLimits: corev1alpha1.PeriodLimits{Spend: resource.MustParse("10")}},
-		Status: corev1alpha1.SpendBudgetStatus{
+	return corev1beta1.SpendBudget{
+		ObjectMeta: metav1.ObjectMeta{Name: corev1beta1.SpendBudgetName, Namespace: namespaceA},
+		Spec:       corev1beta1.SpendBudgetSpec{PeriodLimits: corev1beta1.PeriodLimits{Spend: resource.MustParse("10")}},
+		Status: corev1beta1.SpendBudgetStatus{
 			PeriodStart: &metav1.Time{Time: start}, PeriodEnd: &metav1.Time{Time: start.AddDate(0, 0, 1)},
 			Spend: "1.25", Reserved: "2",
-			Reservations: []corev1alpha1.SpendReservation{{RunID: "run-1", Agent: "triage-issues", Budget: "2"}},
+			Reservations: []corev1beta1.SpendReservation{{RunID: "run-1", Agent: "triage-issues", Budget: "2"}},
 		},
 	}
 }

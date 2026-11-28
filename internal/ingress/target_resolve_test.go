@@ -30,7 +30,7 @@ import (
 	"k8s.io/apimachinery/pkg/util/intstr"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
-	corev1alpha1 "github.com/mohanraj00/koodam/api/v1alpha1"
+	corev1beta1 "github.com/mohanraj00/koodam/api/v1beta1"
 )
 
 func TestResolveTarget(t *testing.T) {
@@ -51,6 +51,15 @@ func TestResolveTarget(t *testing.T) {
 		if !equality.Semantic.DeepEqual(before[k], o) {
 			t.Fatal("resolve changed a stored object")
 		}
+	}
+}
+
+func TestResolveTargetWithAlphaAgentOwner(t *testing.T) {
+	f := newTargetWorld(t.Context())
+	f.job().OwnerReferences[0].APIVersion = "core.koodam.dev/v1alpha1"
+	got, err := tgResolver(t, f).resolve(f.ctx, tgNamespace, tgAgentName)
+	if err != nil || got != tgWant() {
+		t.Fatal("resolve did not find the Job with a v1alpha1 Agent owner")
 	}
 }
 
@@ -180,7 +189,7 @@ func TestResolveTargetRecheck(t *testing.T) {
 		{"agent status job missing", atAgent, func(f *targetReader) { f.agent().Status.Job = tgNextJob }},
 		{"agent status job empty", atAgent, func(f *targetReader) { f.agent().Status.Job = "" }},
 		{"agent run replaced", atAgent, replaceRun},
-		{"agent phase", atAgent, func(f *targetReader) { f.agent().Status.Phase = corev1alpha1.AgentSucceeded }},
+		{"agent phase", atAgent, func(f *targetReader) { f.agent().Status.Phase = corev1beta1.AgentSucceeded }},
 		{"agent deleting", atAgent, func(f *targetReader) { f.agent().DeletionTimestamp = tgDeleting() }},
 		{"agent removed", atAgent, func(f *targetReader) { f.remove(agentKind, tgNamespace, tgAgentName) }},
 		{"second ready pod early", atAgent, func(f *targetReader) { f.put(tgPod(tgSecondPodName, tgSecondPodUID)) }},

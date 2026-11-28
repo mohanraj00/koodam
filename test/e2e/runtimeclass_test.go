@@ -32,7 +32,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
-	corev1alpha1 "github.com/mohanraj00/koodam/api/v1alpha1"
+	corev1beta1 "github.com/mohanraj00/koodam/api/v1beta1"
 )
 
 const (
@@ -47,17 +47,17 @@ const (
 )
 
 var _ = Describe("Runtime class", Ordered, Label("workspace"), func() {
-	workspace := func(name, class string) *corev1alpha1.Workspace {
-		ws := &corev1alpha1.Workspace{ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: rcNS},
-			Spec: corev1alpha1.WorkspaceSpec{Image: workspaceImage, Storage: resource.MustParse("1Gi")}}
+	workspace := func(name, class string) *corev1beta1.Workspace {
+		ws := &corev1beta1.Workspace{ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: rcNS},
+			Spec: corev1beta1.WorkspaceSpec{Image: workspaceImage, Storage: resource.MustParse("1Gi")}}
 		if class != "" {
-			ws.Spec.PodTemplate = &corev1alpha1.PodTemplate{Spec: corev1.PodSpec{RuntimeClassName: &class}}
+			ws.Spec.PodTemplate = &corev1beta1.PodTemplate{Spec: corev1.PodSpec{RuntimeClassName: &class}}
 		}
 		return ws
 	}
 	// expectRefused waits for the FailedCreate event of the StatefulSet of ws. Then it checks
 	// that the Workspace is Pending and has no pod.
-	expectRefused := func(ws *corev1alpha1.Workspace, text string) {
+	expectRefused := func(ws *corev1beta1.Workspace, text string) {
 		Eventually(func() []string {
 			l := &corev1.EventList{}
 			_ = k8s.List(ctx, l, client.InNamespace(rcNS))
@@ -69,7 +69,7 @@ var _ = Describe("Runtime class", Ordered, Label("workspace"), func() {
 			}
 			return msgs
 		}, 2*time.Minute, 2*time.Second).Should(ContainElement(ContainSubstring(text)))
-		waitPhase(ws, corev1alpha1.WorkspacePending)
+		waitPhase(ws, corev1beta1.WorkspacePending)
 		err := k8s.Get(ctx, client.ObjectKey{Namespace: rcNS, Name: ws.Name + "-0"}, &corev1.Pod{})
 		Expect(apierrors.IsNotFound(err)).To(BeTrue(), "The API server made a refused pod.")
 	}
@@ -93,19 +93,19 @@ var _ = Describe("Runtime class", Ordered, Label("workspace"), func() {
 			Spec: admissionv1.ValidatingAdmissionPolicyBindingSpec{PolicyName: rcPolicy,
 				ValidationActions: []admissionv1.ValidationAction{admissionv1.Deny},
 				MatchResources: &admissionv1.MatchResources{NamespaceSelector: &metav1.LabelSelector{
-					MatchLabels: map[string]string{corev1alpha1.ProfileLabel: rcProfile}}}}}
+					MatchLabels: map[string]string{corev1beta1.ProfileLabel: rcProfile}}}}}
 		objects := []client.Object{
 			&corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: rcNS,
-				Labels: map[string]string{corev1alpha1.ProfileLabel: rcProfile}}},
-			&corev1alpha1.Profile{ObjectMeta: metav1.ObjectMeta{Name: rcProfile},
-				Spec: corev1alpha1.ProfileSpec{Namespaces: []string{rcNS}}},
+				Labels: map[string]string{corev1beta1.ProfileLabel: rcProfile}}},
+			&corev1beta1.Profile{ObjectMeta: metav1.ObjectMeta{Name: rcProfile},
+				Spec: corev1beta1.ProfileSpec{Namespaces: []string{rcNS}}},
 			&nodev1.RuntimeClass{ObjectMeta: metav1.ObjectMeta{Name: rcClass}, Handler: "runc"},
 			policy, binding,
 		}
 		DeferCleanup(func() {
-			_ = k8s.DeleteAllOf(ctx, &corev1alpha1.Workspace{}, client.InNamespace(rcNS))
+			_ = k8s.DeleteAllOf(ctx, &corev1beta1.Workspace{}, client.InNamespace(rcNS))
 			Eventually(func() int {
-				l := &corev1alpha1.WorkspaceList{}
+				l := &corev1beta1.WorkspaceList{}
 				if err := k8s.List(ctx, l, client.InNamespace(rcNS)); err != nil {
 					return -1
 				}
@@ -135,7 +135,7 @@ var _ = Describe("Runtime class", Ordered, Label("workspace"), func() {
 	It("runs the Workspace pod with the runtime class of the pod template", func() {
 		ws := workspace("isolated", rcClass)
 		Expect(k8s.Create(ctx, ws)).To(Succeed())
-		waitPhase(ws, corev1alpha1.WorkspaceRunning)
+		waitPhase(ws, corev1beta1.WorkspaceRunning)
 		pod := &corev1.Pod{}
 		Expect(k8s.Get(ctx, client.ObjectKey{Namespace: rcNS, Name: ws.Name + "-0"}, pod)).To(Succeed())
 		Expect(pod.Spec.RuntimeClassName).To(HaveValue(Equal(rcClass)))

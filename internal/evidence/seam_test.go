@@ -27,7 +27,7 @@ import (
 	"strings"
 	"testing"
 
-	corev1alpha1 "github.com/mohanraj00/koodam/api/v1alpha1"
+	corev1beta1 "github.com/mohanraj00/koodam/api/v1beta1"
 )
 
 // The seam test proves that the fixed verify program and the report parser read the gate result
@@ -73,18 +73,18 @@ func TestSeam(t *testing.T) {
 		// want is the subject that the check expects. If it is empty, it is the subject of the case.
 		want, reason string
 	}{
-		{name: "a pass", folder: passCase, reason: corev1alpha1.EvidencePassed},
-		{name: "a fail", folder: "fail", reason: corev1alpha1.EvidenceFailed},
-		{name: "a missing test", folder: "missing_test", reason: corev1alpha1.EvidenceFailed},
+		{name: "a pass", folder: passCase, reason: corev1beta1.EvidencePassed},
+		{name: "a fail", folder: "fail", reason: corev1beta1.EvidenceFailed},
+		{name: "a missing test", folder: "missing_test", reason: corev1beta1.EvidenceFailed},
 		// Nookku 0.6.0 adds the cases of a persona set and of a second message. The result of a persona
 		// set has the key persona in each test, and the verify program does not read the tests.
-		{name: "a persona set with one persona that fails", folder: "persona_set", reason: corev1alpha1.EvidenceFailed},
-		{name: "a second message that passes", folder: "second_message_pass", reason: corev1alpha1.EvidencePassed},
-		{name: "a second message that is late", folder: "second_message_late", reason: corev1alpha1.EvidenceFailed},
+		{name: "a persona set with one persona that fails", folder: "persona_set", reason: corev1beta1.EvidenceFailed},
+		{name: "a second message that passes", folder: "second_message_pass", reason: corev1beta1.EvidencePassed},
+		{name: "a second message that is late", folder: "second_message_late", reason: corev1beta1.EvidenceFailed},
 		{name: "a result.json that changed after the seal", folder: passCase, tamper: true,
-			reason: corev1alpha1.EvidenceNotVerified},
+			reason: corev1beta1.EvidenceNotVerified},
 		{name: "a subject that does not match", folder: passCase, want: other,
-			reason: corev1alpha1.EvidenceSubjectMismatch},
+			reason: corev1beta1.EvidenceSubjectMismatch},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			work := t.TempDir()

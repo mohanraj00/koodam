@@ -34,7 +34,7 @@ import (
 	"github.com/mohanraj00/koodam/internal/tenanttoken"
 )
 
-// AppVersions is the resource of the AppVersions. The values must agree with api/v1alpha1.
+// AppVersions is the resource of the AppVersions. The values must agree with api/v1beta1.
 var AppVersions = koodamResource("appversions")
 
 // TenantKeys has the public key of the tenant token of each AppVersion. The keys come from the

@@ -44,7 +44,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
-	corev1alpha1 "github.com/mohanraj00/koodam/api/v1alpha1"
+	corev1beta1 "github.com/mohanraj00/koodam/api/v1beta1"
 	"github.com/mohanraj00/koodam/internal/gateway"
 )
 
@@ -56,7 +56,7 @@ func TestAppVersionPolicyAPIServerEgress(t *testing.T) {
 		Ports: []networkingv1.NetworkPolicyPort{{Protocol: new(corev1.ProtocolTCP), Port: new(intstr.FromInt(6443))}},
 	}
 	proxy := EgressProxy{IP: appVersionProxyIP, Port: 3128, Namespace: "proxy-system", PodLabels: map[string]string{"app": "proxy"}}
-	av := &corev1alpha1.AppVersion{ObjectMeta: metav1.ObjectMeta{Name: "policy-test", Namespace: appName}}
+	av := &corev1beta1.AppVersion{ObjectMeta: metav1.ObjectMeta{Name: "policy-test", Namespace: appName}}
 	base := proxy.policy(appVersionMeta(av), appVersionLabels(av), nil, nil)
 	for _, tc := range []struct {
 		name     string
@@ -105,8 +105,8 @@ var _ = Describe("AppVersion controller", func() {
 		Expect(err).NotTo(HaveOccurred())
 		return res
 	}
-	version := func(s string) *corev1alpha1.AppVersion {
-		av := &corev1alpha1.AppVersion{}
+	version := func(s string) *corev1beta1.AppVersion {
+		av := &corev1beta1.AppVersion{}
 		Expect(k8sClient.Get(ctx, nn(s), av)).To(Succeed())
 		return av
 	}
@@ -118,17 +118,17 @@ var _ = Describe("AppVersion controller", func() {
 	}
 	newApp := func(maxLive int32) {
 		// The drain time is 0, so that a retiring version revokes its key immediately.
-		app := &corev1alpha1.App{ObjectMeta: metav1.ObjectMeta{Name: appName, Namespace: ns},
-			Spec: corev1alpha1.AppSpec{MaxLiveVersions: maxLive, DrainSeconds: new(int32(0))}}
+		app := &corev1beta1.App{ObjectMeta: metav1.ObjectMeta{Name: appName, Namespace: ns},
+			Spec: corev1beta1.AppSpec{MaxLiveVersions: maxLive, DrainSeconds: new(int32(0))}}
 		Expect(k8sClient.Create(ctx, app)).To(Succeed())
 	}
 	newVersion := func(s string, rules ...rbacv1.PolicyRule) {
-		av := &corev1alpha1.AppVersion{ObjectMeta: metav1.ObjectMeta{Name: s, Namespace: ns},
-			Spec: corev1alpha1.AppVersionSpec{
-				AppRef: corev1alpha1.AppReference{Name: appName}, BudgetPerDay: new(resource.MustParse("5")),
-				Template: corev1alpha1.AppVersionTemplate{Model: testGatewayModel, Rules: rules,
-					PodTemplate: corev1alpha1.PodTemplate{Spec: corev1.PodSpec{Containers: []corev1.Container{{
-						Name: corev1alpha1.AppContainerName, Image: "registry.example.com/app:v1",
+		av := &corev1beta1.AppVersion{ObjectMeta: metav1.ObjectMeta{Name: s, Namespace: ns},
+			Spec: corev1beta1.AppVersionSpec{
+				AppRef: corev1beta1.AppReference{Name: appName}, BudgetPerDay: new(resource.MustParse("5")),
+				Template: corev1beta1.AppVersionTemplate{Model: testGatewayModel, Rules: rules,
+					PodTemplate: corev1beta1.PodTemplate{Spec: corev1.PodSpec{Containers: []corev1.Container{{
+						Name: corev1beta1.AppContainerName, Image: "registry.example.com/app:v1",
 						Ports: []corev1.ContainerPort{{Name: port, ContainerPort: 8080}},
 						ReadinessProbe: &corev1.Probe{ProbeHandler: corev1.ProbeHandler{
 							HTTPGet: &corev1.HTTPGetAction{Path: "/healthz", Port: intstr.FromString(port)}}},
@@ -138,12 +138,12 @@ var _ = Describe("AppVersion controller", func() {
 	}
 	cleanup := func(s string) {
 		bg := context.Background()
-		av := &corev1alpha1.AppVersion{}
+		av := &corev1beta1.AppVersion{}
 		if k8sClient.Get(bg, nn(s), av) == nil && controllerutil.RemoveFinalizer(av, appFinalizer) {
 			Expect(k8sClient.Update(bg, av)).To(Succeed())
 		}
 		om := metav1.ObjectMeta{Name: "kd-" + s, Namespace: ns}
-		for _, o := range []client.Object{&corev1alpha1.AppVersion{ObjectMeta: metav1.ObjectMeta{Name: s, Namespace: ns}},
+		for _, o := range []client.Object{&corev1beta1.AppVersion{ObjectMeta: metav1.ObjectMeta{Name: s, Namespace: ns}},
 			&corev1.Secret{ObjectMeta: om}, &appsv1.Deployment{ObjectMeta: om}, &corev1.Service{ObjectMeta: om},
 			&rbacv1.RoleBinding{ObjectMeta: om}, &rbacv1.Role{ObjectMeta: om}, &corev1.ServiceAccount{ObjectMeta: om},
 			&networkingv1.NetworkPolicy{ObjectMeta: om}} {
@@ -166,7 +166,7 @@ var _ = Describe("AppVersion controller", func() {
 		DeferCleanup(func() {
 			cleanup(name)
 			cleanup(name + "-b")
-			app := &corev1alpha1.App{ObjectMeta: metav1.ObjectMeta{Name: appName, Namespace: ns}}
+			app := &corev1beta1.App{ObjectMeta: metav1.ObjectMeta{Name: appName, Namespace: ns}}
 			Expect(client.IgnoreNotFound(k8sClient.Delete(context.Background(), app))).To(Succeed())
 		})
 	})
@@ -204,7 +204,7 @@ var _ = Describe("AppVersion controller", func() {
 				"kubernetes.io/metadata.name": "koodam-system"}},
 			PodSelector: &metav1.LabelSelector{MatchLabels: proxy}}}))
 		Expect(np.Spec.Egress[0].Ports).To(HaveLen(5))
-		egress := cond(name, corev1alpha1.AppVersionTracedEgress)
+		egress := cond(name, corev1beta1.AppVersionTracedEgress)
 		Expect(egress.Status).To(Equal(metav1.ConditionTrue))
 
 		// The controller restores a policy that a person made wider.
@@ -221,7 +221,7 @@ var _ = Describe("AppVersion controller", func() {
 		_, err := reconcileName(name + "-b")
 		Expect(err).NotTo(HaveOccurred())
 		Expect(cond(name+"-b", condProvisioned).Reason).To(Equal(reasonNameConflict))
-		Expect(cond(name+"-b", corev1alpha1.AppVersionTracedEgress).Reason).To(Equal(reasonNoEgressPolicy))
+		Expect(cond(name+"-b", corev1beta1.AppVersionTracedEgress).Reason).To(Equal(reasonNoEgressPolicy))
 		Expect(gone(&appsv1.Deployment{}, name+"-b")).To(BeTrue())
 	})
 
@@ -249,7 +249,7 @@ var _ = Describe("AppVersion controller", func() {
 			Expect(meta.IsStatusConditionTrue(av.Status.Conditions, t)).To(BeTrue(), t)
 		}
 		// No NetworkPolicy enforces the egress path of an App pod, so the condition is False.
-		egress := meta.FindStatusCondition(av.Status.Conditions, corev1alpha1.AppVersionTracedEgress)
+		egress := meta.FindStatusCondition(av.Status.Conditions, corev1beta1.AppVersionTracedEgress)
 		Expect(egress.Status).To(Equal(metav1.ConditionFalse))
 		Expect(egress.Reason).To(Equal(reasonNoEgressPolicy))
 
@@ -362,7 +362,7 @@ var _ = Describe("AppVersion controller", func() {
 
 		// The first version retires. Then the slot is free.
 		av := version(name)
-		av.Spec.Lifecycle = corev1alpha1.AppVersionRetiring
+		av.Spec.Lifecycle = corev1beta1.AppVersionRetiring
 		Expect(k8sClient.Update(ctx, av)).To(Succeed())
 		mustReconcile()
 		_, err = reconcileName(name + "-b")
@@ -566,7 +566,7 @@ var _ = Describe("AppVersion controller", func() {
 			&rbacv1.Role{}, &corev1.ServiceAccount{}, &corev1.Secret{}} {
 			Expect(gone(o, name)).To(BeTrue(), "%T", o)
 		}
-		Expect(apierrors.IsNotFound(k8sClient.Get(ctx, nn(name), &corev1alpha1.AppVersion{}))).To(BeTrue())
+		Expect(apierrors.IsNotFound(k8sClient.Get(ctx, nn(name), &corev1beta1.AppVersion{}))).To(BeTrue())
 	})
 
 	It("keeps the Secret, the objects and the finalizer while the gateway does not confirm the block", func() {
@@ -578,14 +578,14 @@ var _ = Describe("AppVersion controller", func() {
 		_, err := reconcileName(name)
 		Expect(err).To(HaveOccurred())
 		Expect(version(name).Finalizers).To(ContainElement(appFinalizer))
-		Expect(cond(name, corev1alpha1.AppVersionRevoked).Status).To(Equal(metav1.ConditionUnknown))
-		Expect(cond(name, corev1alpha1.AppVersionRevoking).Status).To(Equal(metav1.ConditionTrue))
+		Expect(cond(name, corev1beta1.AppVersionRevoked).Status).To(Equal(metav1.ConditionUnknown))
+		Expect(cond(name, corev1beta1.AppVersionRevoking).Status).To(Equal(metav1.ConditionTrue))
 		Expect(gone(&corev1.Secret{}, name)).To(BeFalse())
 		Expect(gone(&appsv1.Deployment{}, name)).To(BeFalse())
 
 		gw.blockErr = nil
 		mustReconcile()
-		Expect(apierrors.IsNotFound(k8sClient.Get(ctx, nn(name), &corev1alpha1.AppVersion{}))).To(BeTrue())
+		Expect(apierrors.IsNotFound(k8sClient.Get(ctx, nn(name), &corev1beta1.AppVersion{}))).To(BeTrue())
 	})
 
 	It("revokes a retired version and keeps the AppVersion", func() {
@@ -593,11 +593,11 @@ var _ = Describe("AppVersion controller", func() {
 		newVersion(name)
 		mustReconcile()
 		av := version(name)
-		av.Spec.Lifecycle = corev1alpha1.AppVersionRetiring
+		av.Spec.Lifecycle = corev1beta1.AppVersionRetiring
 		Expect(k8sClient.Update(ctx, av)).To(Succeed())
 		mustReconcile()
 		Expect(gw.order).To(Equal([]string{opCreate, opBlock}))
-		c := cond(name, corev1alpha1.AppVersionRevoked)
+		c := cond(name, corev1beta1.AppVersionRevoked)
 		Expect(c.Status).To(Equal(metav1.ConditionTrue))
 		Expect(c.Reason).To(Equal("Retired"))
 		Expect(version(name).Finalizers).To(BeEmpty())
@@ -626,10 +626,10 @@ var _ = Describe("AppVersion controller", func() {
 			corev1.EnvVar{Name: appModelsEnv, Value: small + "," + large}))
 
 		// The API server refuses the 2 forms together, a model with no budget and a budget with no model.
-		for _, change := range []func(*corev1alpha1.AppVersion){
-			func(v *corev1alpha1.AppVersion) { v.Spec.Template.Model = small },
-			func(v *corev1alpha1.AppVersion) { v.Spec.BudgetPerDay = nil },
-			func(v *corev1alpha1.AppVersion) { v.Spec.Template.Models = nil },
+		for _, change := range []func(*corev1beta1.AppVersion){
+			func(v *corev1beta1.AppVersion) { v.Spec.Template.Model = small },
+			func(v *corev1beta1.AppVersion) { v.Spec.BudgetPerDay = nil },
+			func(v *corev1beta1.AppVersion) { v.Spec.Template.Models = nil },
 		} {
 			bad := version(name)
 			change(bad)
@@ -639,7 +639,7 @@ var _ = Describe("AppVersion controller", func() {
 
 	It("makes no key for a version with no model, and drains it before the delete of its pods", func() {
 		newApp(2)
-		app := &corev1alpha1.App{}
+		app := &corev1beta1.App{}
 		Expect(k8sClient.Get(ctx, nn(appName), app)).To(Succeed())
 		app.Spec.DrainSeconds = new(int32(600))
 		Expect(k8sClient.Update(ctx, app)).To(Succeed())
@@ -696,18 +696,18 @@ var _ = Describe("AppVersion controller", func() {
 			Expect(gone(o, name+"-d")).To(BeTrue())
 		}
 		// envtest has no garbage collector, so the orphan finalizer of the API server can stay.
-		left := &corev1alpha1.AppVersion{}
+		left := &corev1beta1.AppVersion{}
 		if k8sClient.Get(ctx, nn(name+"-d"), left) == nil {
 			Expect(left.Finalizers).NotTo(ContainElement(appFinalizer))
 		}
 
-		av.Spec.Lifecycle = corev1alpha1.AppVersionRetiring
+		av.Spec.Lifecycle = corev1beta1.AppVersionRetiring
 		Expect(k8sClient.Update(ctx, av)).To(Succeed())
 		Expect(mustReconcile().RequeueAfter).To(Equal(10 * time.Minute))
 		Expect(gone(&appsv1.Deployment{}, name)).To(BeFalse())
 		now = now.Add(10 * time.Minute)
 		mustReconcile()
-		Expect(cond(name, corev1alpha1.AppVersionRevoked).Status).To(Equal(metav1.ConditionTrue))
+		Expect(cond(name, corev1beta1.AppVersionRevoked).Status).To(Equal(metav1.ConditionTrue))
 		Expect(gone(&appsv1.Deployment{}, name)).To(BeTrue())
 		Expect(gone(&corev1.Service{}, name)).To(BeTrue())
 		Expect(gw.order).NotTo(ContainElement(opBlock))
@@ -716,22 +716,22 @@ var _ = Describe("AppVersion controller", func() {
 
 	It("drains a retiring version before the revoke", func() {
 		newApp(2)
-		app := &corev1alpha1.App{}
+		app := &corev1beta1.App{}
 		Expect(k8sClient.Get(ctx, nn(appName), app)).To(Succeed())
 		app.Spec.DrainSeconds = new(int32(600))
 		Expect(k8sClient.Update(ctx, app)).To(Succeed())
 		newVersion(name)
 		mustReconcile()
-		Expect(cond(name, corev1alpha1.AppVersionTrafficAllowed).Status).To(Equal(metav1.ConditionTrue))
+		Expect(cond(name, corev1beta1.AppVersionTrafficAllowed).Status).To(Equal(metav1.ConditionTrue))
 
 		av := version(name)
-		av.Spec.Lifecycle = corev1alpha1.AppVersionRetiring
+		av.Spec.Lifecycle = corev1beta1.AppVersionRetiring
 		Expect(k8sClient.Update(ctx, av)).To(Succeed())
 		// In the drain time the version keeps its key, its Secret and its pods.
 		Expect(mustReconcile().RequeueAfter).To(Equal(10 * time.Minute))
-		Expect(cond(name, corev1alpha1.AppVersionTrafficAllowed).Status).To(Equal(metav1.ConditionFalse))
-		Expect(cond(name, corev1alpha1.AppVersionSessionsEnded).Reason).To(Equal("Draining"))
-		Expect(cond(name, corev1alpha1.AppVersionRevoking)).To(BeNil())
+		Expect(cond(name, corev1beta1.AppVersionTrafficAllowed).Status).To(Equal(metav1.ConditionFalse))
+		Expect(cond(name, corev1beta1.AppVersionSessionsEnded).Reason).To(Equal("Draining"))
+		Expect(cond(name, corev1beta1.AppVersionRevoking)).To(BeNil())
 		Expect(gw.order).NotTo(ContainElement(opBlock))
 		Expect(gone(&appsv1.Deployment{}, name)).To(BeFalse())
 
@@ -744,21 +744,21 @@ var _ = Describe("AppVersion controller", func() {
 		now = now.Add(time.Minute)
 		mustReconcile()
 		Expect(gw.order[len(gw.order)-1]).To(Equal(opBlock))
-		Expect(cond(name, corev1alpha1.AppVersionSessionsEnded).Status).To(Equal(metav1.ConditionTrue))
-		Expect(cond(name, corev1alpha1.AppVersionRevoked).Reason).To(Equal("Retired"))
+		Expect(cond(name, corev1beta1.AppVersionSessionsEnded).Status).To(Equal(metav1.ConditionTrue))
+		Expect(cond(name, corev1beta1.AppVersionRevoked).Reason).To(Equal("Retired"))
 		Expect(gone(&appsv1.Deployment{}, name)).To(BeTrue())
 	})
 
 	It("scales a version with a HorizontalPodAutoscaler and holds a retiring version at its minimum", func() {
 		newApp(2)
-		app := &corev1alpha1.App{}
+		app := &corev1beta1.App{}
 		Expect(k8sClient.Get(ctx, nn(appName), app)).To(Succeed())
 		app.Spec.DrainSeconds = new(int32(600))
 		Expect(k8sClient.Update(ctx, app)).To(Succeed())
 		newVersion(name)
 		av := version(name)
-		av.Spec.Scale = &corev1alpha1.AppVersionScale{MinReplicas: new(int32(2)), MaxReplicas: 5,
-			Metric: corev1alpha1.AppVersionScaleMetric{Pods: &corev1alpha1.AppVersionPodsMetric{
+		av.Spec.Scale = &corev1beta1.AppVersionScale{MinReplicas: new(int32(2)), MaxReplicas: 5,
+			Metric: corev1beta1.AppVersionScaleMetric{Pods: &corev1beta1.AppVersionPodsMetric{
 				Name: "requests_in_flight", AverageValue: resource.MustParse("10")}}}
 		Expect(k8sClient.Update(ctx, av)).To(Succeed())
 		mustReconcile()
@@ -787,8 +787,8 @@ var _ = Describe("AppVersion controller", func() {
 		// A change of the scale updates the autoscaler.
 		av = version(name)
 		av.Spec.Scale.MaxReplicas = 3
-		av.Spec.Scale.Metric = corev1alpha1.AppVersionScaleMetric{
-			CPU: &corev1alpha1.AppVersionCPUMetric{AverageUtilization: 70}}
+		av.Spec.Scale.Metric = corev1beta1.AppVersionScaleMetric{
+			CPU: &corev1beta1.AppVersionCPUMetric{AverageUtilization: 70}}
 		Expect(k8sClient.Update(ctx, av)).To(Succeed())
 		mustReconcile()
 		Expect(k8sClient.Get(ctx, nn("kd-"+name), hpa)).To(Succeed())
@@ -798,7 +798,7 @@ var _ = Describe("AppVersion controller", func() {
 
 		// In the drain time, the version gets no new session, so it stays at its minimum.
 		av = version(name)
-		av.Spec.Lifecycle = corev1alpha1.AppVersionRetiring
+		av.Spec.Lifecycle = corev1beta1.AppVersionRetiring
 		Expect(k8sClient.Update(ctx, av)).To(Succeed())
 		mustReconcile()
 		Expect(k8sClient.Get(ctx, nn("kd-"+name), hpa)).To(Succeed())
@@ -817,8 +817,8 @@ var _ = Describe("AppVersion controller", func() {
 		newApp(2)
 		newVersion(name)
 		av := version(name)
-		av.Spec.Scale = &corev1alpha1.AppVersionScale{MaxReplicas: 3, Metric: corev1alpha1.AppVersionScaleMetric{
-			CPU: &corev1alpha1.AppVersionCPUMetric{AverageUtilization: 50}}}
+		av.Spec.Scale = &corev1beta1.AppVersionScale{MaxReplicas: 3, Metric: corev1beta1.AppVersionScaleMetric{
+			CPU: &corev1beta1.AppVersionCPUMetric{AverageUtilization: 50}}}
 		Expect(k8sClient.Update(ctx, av)).To(Succeed())
 		mustReconcile()
 		Expect(gone(&autoscalingv2.HorizontalPodAutoscaler{}, name)).To(BeFalse())
@@ -835,20 +835,20 @@ var _ = Describe("AppVersion controller", func() {
 
 	It("does not wait for the drain time when a retiring version is deleted", func() {
 		newApp(2)
-		app := &corev1alpha1.App{}
+		app := &corev1beta1.App{}
 		Expect(k8sClient.Get(ctx, nn(appName), app)).To(Succeed())
 		app.Spec.DrainSeconds = new(int32(600))
 		Expect(k8sClient.Update(ctx, app)).To(Succeed())
 		newVersion(name)
 		mustReconcile()
 		av := version(name)
-		av.Spec.Lifecycle = corev1alpha1.AppVersionRetiring
+		av.Spec.Lifecycle = corev1beta1.AppVersionRetiring
 		Expect(k8sClient.Update(ctx, av)).To(Succeed())
 		mustReconcile()
 		Expect(k8sClient.Delete(ctx, version(name))).To(Succeed())
 		mustReconcile()
 		Expect(gw.order[len(gw.order)-1]).To(Equal(opBlock))
-		Expect(apierrors.IsNotFound(k8sClient.Get(ctx, nn(name), &corev1alpha1.AppVersion{}))).To(BeTrue())
+		Expect(apierrors.IsNotFound(k8sClient.Get(ctx, nn(name), &corev1beta1.AppVersion{}))).To(BeTrue())
 	})
 
 	It("revokes and makes no second key when the gateway lost the key", func() {
@@ -859,7 +859,7 @@ var _ = Describe("AppVersion controller", func() {
 		now = now.Add(ttl)
 		mustReconcile()
 		Expect(gw.order).To(Equal([]string{opCreate, opBlock}))
-		Expect(cond(name, corev1alpha1.AppVersionRevoked).Reason).To(Equal("KeyLost"))
+		Expect(cond(name, corev1beta1.AppVersionRevoked).Reason).To(Equal("KeyLost"))
 	})
 
 	It("revokes when the Secret is gone, and when a different App has the name", func() {
@@ -873,14 +873,14 @@ var _ = Describe("AppVersion controller", func() {
 		s := &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: "kd-" + name, Namespace: ns}}
 		Expect(k8sClient.Delete(ctx, s)).To(Succeed())
 		mustReconcile()
-		Expect(cond(name, corev1alpha1.AppVersionRevoked).Reason).To(Equal("SecretLost"))
+		Expect(cond(name, corev1beta1.AppVersionRevoked).Reason).To(Equal("SecretLost"))
 
-		app := &corev1alpha1.App{ObjectMeta: metav1.ObjectMeta{Name: appName, Namespace: ns}}
+		app := &corev1beta1.App{ObjectMeta: metav1.ObjectMeta{Name: appName, Namespace: ns}}
 		Expect(k8sClient.Delete(ctx, app)).To(Succeed())
 		newApp(2)
 		_, err = reconcileName(name + "-b")
 		Expect(err).NotTo(HaveOccurred())
-		Expect(cond(name+"-b", corev1alpha1.AppVersionRevoked).Reason).To(Equal("AppGone"))
+		Expect(cond(name+"-b", corev1beta1.AppVersionRevoked).Reason).To(Equal("AppGone"))
 		Expect(gw.order).To(Equal([]string{opCreate, opCreate, opBlock, opBlock}))
 	})
 })

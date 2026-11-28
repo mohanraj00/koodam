@@ -30,7 +30,7 @@ import (
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
-	corev1alpha1 "github.com/mohanraj00/koodam/api/v1alpha1"
+	corev1beta1 "github.com/mohanraj00/koodam/api/v1beta1"
 )
 
 // tenantText gives back a tenant label or an App name for the table. The API server accepts each
@@ -50,7 +50,7 @@ const exceededUnknown = "unknown"
 // has 3 states. It is Unknown when the gateway stopped the count of the requests below the limit
 // of the spec. A condition that is not there is also not known.
 func exceededText(conditions []metav1.Condition) string {
-	c := meta.FindStatusCondition(conditions, corev1alpha1.TenantQuotaExceeded)
+	c := meta.FindStatusCondition(conditions, corev1beta1.TenantQuotaExceeded)
 	switch {
 	case c != nil && c.Status == metav1.ConditionTrue:
 		return "yes"
@@ -62,7 +62,7 @@ func exceededText(conditions []metav1.Condition) string {
 
 // printTenantUsage writes 1 line for each TenantQuota that has the use of its tenant, and 1 total
 // line. The use is the status of the TenantQuota: the count of the gateway for the current period.
-func printTenantUsage(out, errOut io.Writer, quotas []corev1alpha1.TenantQuota, namespace string) error {
+func printTenantUsage(out, errOut io.Writer, quotas []corev1beta1.TenantQuota, namespace string) error {
 	type row struct {
 		tenant, app, end, exceeded string
 		requests                   int64
@@ -73,7 +73,7 @@ func printTenantUsage(out, errOut io.Writer, quotas []corev1alpha1.TenantQuota, 
 	var notReady, invalid, unknown int
 	for i := range quotas {
 		q := &quotas[i]
-		if !meta.IsStatusConditionTrue(q.Status.Conditions, corev1alpha1.TenantQuotaReady) {
+		if !meta.IsStatusConditionTrue(q.Status.Conditions, corev1beta1.TenantQuotaReady) {
 			notReady++
 			continue
 		}

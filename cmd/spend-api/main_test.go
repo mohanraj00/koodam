@@ -22,17 +22,17 @@ import (
 	"k8s.io/apimachinery/pkg/api/meta"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 
-	corev1alpha1 "github.com/mohanraj00/koodam/api/v1alpha1"
+	corev1beta1 "github.com/mohanraj00/koodam/api/v1beta1"
 )
 
 // The mapper has each kind that the spend API reads, as a namespaced resource.
 func TestKubeMapper(t *testing.T) {
 	m := kubeMapper()
 	for gvk, resource := range map[schema.GroupVersionKind]string{
-		corev1alpha1.GroupVersion.WithKind("Agent"):       "agents",
-		corev1alpha1.GroupVersion.WithKind("SpendBudget"): "spendbudgets",
-		{Group: "batch", Version: "v1", Kind: "Job"}:      "jobs",
-		{Version: "v1", Kind: "Pod"}:                      "pods",
+		corev1beta1.GroupVersion.WithKind("Agent"):       "agents",
+		corev1beta1.GroupVersion.WithKind("SpendBudget"): "spendbudgets",
+		{Group: "batch", Version: "v1", Kind: "Job"}:     "jobs",
+		{Version: "v1", Kind: "Pod"}:                     "pods",
 	} {
 		kind := gvk.Kind
 		mapping, err := m.RESTMapping(gvk.GroupKind(), gvk.Version)

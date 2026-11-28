@@ -25,7 +25,7 @@ import (
 	"k8s.io/apimachinery/pkg/api/resource"
 	"k8s.io/apimachinery/pkg/types"
 
-	corev1alpha1 "github.com/mohanraj00/koodam/api/v1alpha1"
+	corev1beta1 "github.com/mohanraj00/koodam/api/v1beta1"
 )
 
 const budgetsPath = "/v1/budgets"
@@ -46,9 +46,9 @@ type budget struct {
 
 // currentPeriod gives the UTC day or the UTC month that has t. It uses the same rule as the Agent
 // controller.
-func currentPeriod(p corev1alpha1.SpendPeriod, t time.Time) (time.Time, time.Time) {
+func currentPeriod(p corev1beta1.SpendPeriod, t time.Time) (time.Time, time.Time) {
 	t = t.UTC()
-	if p == corev1alpha1.SpendPeriodMonth {
+	if p == corev1beta1.SpendPeriodMonth {
 		start := time.Date(t.Year(), t.Month(), 1, 0, 0, 0, 0, time.UTC)
 		return start, start.AddDate(0, 1, 0)
 	}
@@ -68,10 +68,10 @@ func amount(s string) float64 {
 // ledger to this period yet, the period has no spend and no reservation. The one exception is a
 // status period that overlaps the current period, after a change of spec.period. The controller
 // then keeps the old spend and rebuilds the reservations, so the item shows the status values.
-func budgetItem(b *corev1alpha1.SpendBudget, now time.Time) budget {
+func budgetItem(b *corev1beta1.SpendBudget, now time.Time) budget {
 	period := b.Spec.Period
 	if period == "" {
-		period = corev1alpha1.SpendPeriodDay
+		period = corev1beta1.SpendPeriodDay
 	}
 	start, end := currentPeriod(period, now)
 	item := budget{Namespace: b.Namespace, Period: string(period), PeriodStart: start, PeriodEnd: end,
@@ -82,7 +82,7 @@ func budgetItem(b *corev1alpha1.SpendBudget, now time.Time) budget {
 		start.Before(s.PeriodEnd.Time)
 	if current || overlaps {
 		item.Spend, item.Reserved, item.WaitingRuns = amount(s.Spend), amount(s.Reserved), s.WaitingRuns
-		item.Exceeded = meta.IsStatusConditionTrue(s.Conditions, corev1alpha1.SpendBudgetExceeded)
+		item.Exceeded = meta.IsStatusConditionTrue(s.Conditions, corev1beta1.SpendBudgetExceeded)
 	}
 	item.Remaining = max(0, item.Limit-item.Spend-item.Reserved)
 	return item
@@ -97,8 +97,8 @@ func (a *api) budgets(ctx context.Context, namespaces []string) (page[budget], e
 		now = a.now()
 	}
 	err := parallel(ctx, len(namespaces), func(ctx context.Context, i int) error {
-		b := &corev1alpha1.SpendBudget{}
-		key := types.NamespacedName{Namespace: namespaces[i], Name: corev1alpha1.SpendBudgetName}
+		b := &corev1beta1.SpendBudget{}
+		key := types.NamespacedName{Namespace: namespaces[i], Name: corev1beta1.SpendBudgetName}
 		err := a.kube.Get(ctx, key, b)
 		if apierrors.IsNotFound(err) {
 			return nil

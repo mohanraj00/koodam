@@ -47,7 +47,7 @@ import (
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
-	corev1alpha1 "github.com/mohanraj00/koodam/api/v1alpha1"
+	corev1beta1 "github.com/mohanraj00/koodam/api/v1beta1"
 	"github.com/mohanraj00/koodam/internal/gateway"
 	"github.com/mohanraj00/koodam/internal/podtemplate"
 )
@@ -73,7 +73,7 @@ const (
 	// has the first model.
 	appModelsEnv = "KOODAM_GATEWAY_MODELS"
 	// appVersionEnv has the name of the AppVersion. The app can give it to a client, and the
-	// client sends it in the header corev1alpha1.AppVersionHeader to stay on this version.
+	// client sends it in the header corev1beta1.AppVersionHeader to stay on this version.
 	appVersionEnv = "KOODAM_APP_VERSION"
 	// appKeyGroup is the group of the key file in the pod.
 	appKeyGroup = int64(1000)
@@ -152,21 +152,21 @@ func (r *AppVersionReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 	if r.APIReader == nil {
 		return ctrl.Result{}, errNoAPIReader
 	}
-	av := &corev1alpha1.AppVersion{}
+	av := &corev1beta1.AppVersion{}
 	if err := r.APIReader.Get(ctx, req.NamespacedName, av); err != nil {
 		return ctrl.Result{}, client.IgnoreNotFound(err)
 	}
 	if handled, err := r.applyQuarantine(ctx, av); handled {
 		return ctrl.Result{}, err
 	}
-	switch c := meta.FindStatusCondition(av.Status.Conditions, corev1alpha1.AppVersionRevoking); {
+	switch c := meta.FindStatusCondition(av.Status.Conditions, corev1beta1.AppVersionRevoking); {
 	case c != nil:
 		// The revoke is terminal. A retry continues it and does not provision again.
 		return ctrl.Result{}, r.revoke(ctx, av, c.Reason)
 	case !av.DeletionTimestamp.IsZero():
 		return ctrl.Result{}, r.revoke(ctx, av, "Deleted")
 	}
-	hold, err := stopHold(ctx, r.Client, corev1alpha1.HoldTargetAppVersion, av.Namespace, av.Name, av.Spec.AppRef.Name)
+	hold, err := stopHold(ctx, r.Client, corev1beta1.HoldTargetAppVersion, av.Namespace, av.Name, av.Spec.AppRef.Name)
 	if err != nil {
 		return ctrl.Result{}, err
 	}
@@ -176,7 +176,7 @@ func (r *AppVersionReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 		holdEvent(r.Recorder, av, hold)
 		return ctrl.Result{}, r.revoke(ctx, av, reasonStopped)
 	}
-	if av.Spec.Lifecycle == corev1alpha1.AppVersionRetiring {
+	if av.Spec.Lifecycle == corev1beta1.AppVersionRetiring {
 		return r.retire(ctx, av)
 	}
 	return r.apply(ctx, av)
@@ -186,7 +186,7 @@ func (r *AppVersionReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 // its key and its pods, and the App controller sends it no new session. A version that waits for
 // its key has no pod and no session, so its revoke starts immediately. A version with no model
 // drains as a version with a key.
-func (r *AppVersionReconciler) retire(ctx context.Context, av *corev1alpha1.AppVersion) (ctrl.Result, error) {
+func (r *AppVersionReconciler) retire(ctx context.Context, av *corev1beta1.AppVersion) (ctrl.Result, error) {
 	const reason = "Retired"
 	if av.Status.KeyHash == "" && len(av.Spec.Template.ModelList()) > 0 {
 		return ctrl.Result{}, r.revoke(ctx, av, reason)
@@ -195,16 +195,16 @@ func (r *AppVersionReconciler) retire(ctx context.Context, av *corev1alpha1.AppV
 		meta.SetStatusCondition(&av.Status.Conditions, metav1.Condition{Type: t, Status: s, Reason: why,
 			Message: msg, ObservedGeneration: av.Generation, LastTransitionTime: metav1.NewTime(r.now())})
 	}
-	if !meta.IsStatusConditionFalse(av.Status.Conditions, corev1alpha1.AppVersionTrafficAllowed) {
+	if !meta.IsStatusConditionFalse(av.Status.Conditions, corev1beta1.AppVersionTrafficAllowed) {
 		// The time of this condition is the start of the drain.
-		set(corev1alpha1.AppVersionTrafficAllowed, metav1.ConditionFalse, "Retiring", "The version gets no new session.")
-		set(corev1alpha1.AppVersionSessionsEnded, metav1.ConditionFalse, "Draining",
+		set(corev1beta1.AppVersionTrafficAllowed, metav1.ConditionFalse, "Retiring", "The version gets no new session.")
+		set(corev1beta1.AppVersionSessionsEnded, metav1.ConditionFalse, "Draining",
 			"The version keeps its key and its pods until the end of the drain time.")
 		if err := r.Status().Update(ctx, av); err != nil {
 			return ctrl.Result{}, err
 		}
 	}
-	app := &corev1alpha1.App{}
+	app := &corev1beta1.App{}
 	err := r.APIReader.Get(ctx, types.NamespacedName{Namespace: av.Namespace, Name: av.Spec.AppRef.Name}, app)
 	if err != nil && !apierrors.IsNotFound(err) {
 		return ctrl.Result{}, err
@@ -214,10 +214,10 @@ func (r *AppVersionReconciler) retire(ctx context.Context, av *corev1alpha1.AppV
 	if err == nil && app.Spec.DrainSeconds != nil {
 		drain = time.Duration(*app.Spec.DrainSeconds) * time.Second
 	}
-	start := meta.FindStatusCondition(av.Status.Conditions, corev1alpha1.AppVersionTrafficAllowed).LastTransitionTime
+	start := meta.FindStatusCondition(av.Status.Conditions, corev1beta1.AppVersionTrafficAllowed).LastTransitionTime
 	left := start.Add(drain).Sub(r.now())
 	if left <= 0 {
-		set(corev1alpha1.AppVersionSessionsEnded, metav1.ConditionTrue, "DrainTimeEnded", "The drain time is at its end.")
+		set(corev1beta1.AppVersionSessionsEnded, metav1.ConditionTrue, "DrainTimeEnded", "The drain time is at its end.")
 		return ctrl.Result{}, r.revoke(ctx, av, reason)
 	}
 	// The version keeps its objects and the renew of its key.
@@ -228,23 +228,23 @@ func (r *AppVersionReconciler) retire(ctx context.Context, av *corev1alpha1.AppV
 	return res, err
 }
 
-func appVersionName(av *corev1alpha1.AppVersion) string { return "kd-" + av.Name }
+func appVersionName(av *corev1beta1.AppVersion) string { return "kd-" + av.Name }
 
-func appVersionLabels(av *corev1alpha1.AppVersion) map[string]string {
+func appVersionLabels(av *corev1beta1.AppVersion) map[string]string {
 	return map[string]string{appLabel: av.Spec.AppRef.Name, appVersionLabel: av.Name}
 }
 
-func appVersionMeta(av *corev1alpha1.AppVersion) metav1.ObjectMeta {
+func appVersionMeta(av *corev1beta1.AppVersion) metav1.ObjectMeta {
 	return metav1.ObjectMeta{
 		Name: appVersionName(av), Namespace: av.Namespace, Labels: appVersionLabels(av),
 		OwnerReferences: []metav1.OwnerReference{*metav1.NewControllerRef(av,
-			corev1alpha1.GroupVersion.WithKind("AppVersion"))},
+			corev1beta1.GroupVersion.WithKind("AppVersion"))},
 	}
 }
 
 // invalidAppVersion returns the reason why the controller cannot make the objects of av, or "".
 // The text has field names only, never a value of the template.
-func invalidAppVersion(av *corev1alpha1.AppVersion) string {
+func invalidAppVersion(av *corev1beta1.AppVersion) string {
 	// The Service name is a DNS label, and the 2 names are label values.
 	if len(appVersionName(av)) > validation.DNS1123LabelMaxLength ||
 		len(validation.IsDNS1123Label(appVersionName(av))) > 0 {
@@ -301,7 +301,7 @@ func inCeiling(rules []rbacv1.PolicyRule) bool {
 }
 
 func appContainer(pod *corev1.PodSpec) *corev1.Container {
-	i := slices.IndexFunc(pod.Containers, func(c corev1.Container) bool { return c.Name == corev1alpha1.AppContainerName })
+	i := slices.IndexFunc(pod.Containers, func(c corev1.Container) bool { return c.Name == corev1beta1.AppContainerName })
 	if i < 0 {
 		return nil
 	}
@@ -309,9 +309,9 @@ func appContainer(pod *corev1.PodSpec) *corev1.Container {
 }
 
 // apply makes the key and the objects of an active AppVersion.
-func (r *AppVersionReconciler) apply(ctx context.Context, av *corev1alpha1.AppVersion) (ctrl.Result, error) {
+func (r *AppVersionReconciler) apply(ctx context.Context, av *corev1beta1.AppVersion) (ctrl.Result, error) {
 	old := av.Status.DeepCopy()
-	app := &corev1alpha1.App{}
+	app := &corev1beta1.App{}
 	err := r.APIReader.Get(ctx, types.NamespacedName{Namespace: av.Namespace, Name: av.Spec.AppRef.Name}, app)
 	if err != nil && !apierrors.IsNotFound(err) {
 		return ctrl.Result{}, err
@@ -369,8 +369,8 @@ func (r *AppVersionReconciler) apply(ctx context.Context, av *corev1alpha1.AppVe
 		setProvisioned(av, reason)
 		applied = reason == ""
 	}
-	if av.Spec.Lifecycle != corev1alpha1.AppVersionRetiring {
-		meta.SetStatusCondition(&av.Status.Conditions, metav1.Condition{Type: corev1alpha1.AppVersionTrafficAllowed,
+	if av.Spec.Lifecycle != corev1beta1.AppVersionRetiring {
+		meta.SetStatusCondition(&av.Status.Conditions, metav1.Condition{Type: corev1beta1.AppVersionTrafficAllowed,
 			Status: metav1.ConditionTrue, Reason: "Serving", Message: "The version can get new sessions.",
 			ObservedGeneration: av.Generation})
 	}
@@ -408,8 +408,8 @@ func (r *AppVersionReconciler) apply(ctx context.Context, av *corev1alpha1.AppVe
 // applyVersionKey makes or renews the key of a version with a model. A version with no model
 // gets no key. done is true if the reconcile stops here: the version waits or its revoke started.
 // valid is false if the template is not valid and the version keeps its last objects.
-func (r *AppVersionReconciler) applyVersionKey(ctx context.Context, av *corev1alpha1.AppVersion, app *corev1alpha1.App,
-	old *corev1alpha1.AppVersionStatus, valid bool) (renewErr, done bool, res ctrl.Result, err error) {
+func (r *AppVersionReconciler) applyVersionKey(ctx context.Context, av *corev1beta1.AppVersion, app *corev1beta1.App,
+	old *corev1beta1.AppVersionStatus, valid bool) (renewErr, done bool, res ctrl.Result, err error) {
 	models := av.Spec.Template.ModelList()
 	if len(models) == 0 && av.Status.KeyHash == "" {
 		// A version with no model makes no model call. It gets no key and no Secret. It gets the
@@ -424,7 +424,7 @@ func (r *AppVersionReconciler) applyVersionKey(ctx context.Context, av *corev1al
 		return false, false, res, nil
 	}
 	if av.Status.KeyHash == "" {
-		msg, err := costGroupMessage(ctx, r.APIReader, av.Namespace, app.Labels[corev1alpha1.CostGroupLabel])
+		msg, err := costGroupMessage(ctx, r.APIReader, av.Namespace, app.Labels[corev1beta1.CostGroupLabel])
 		if err != nil {
 			return false, true, res, err
 		}
@@ -443,7 +443,7 @@ func (r *AppVersionReconciler) applyVersionKey(ctx context.Context, av *corev1al
 				"The App has spec.maxLiveVersions versions with a key. This version waits.")
 		}
 	}
-	key, err := r.enroll(ctx, av, old, app.Labels[corev1alpha1.CostGroupLabel])
+	key, err := r.enroll(ctx, av, old, app.Labels[corev1beta1.CostGroupLabel])
 	if err != nil || key == "" {
 		return false, true, res, err
 	}
@@ -464,7 +464,7 @@ func (r *AppVersionReconciler) applyVersionKey(ctx context.Context, av *corev1al
 // egressCondition gives back the condition TracedEgress. It is True only if the pod DNS goes to
 // the egress proxy and the NetworkPolicy of the version exists. Without the policy, an App pod
 // can make a direct call with no span.
-func (r *AppVersionReconciler) egressCondition(ctx context.Context, av *corev1alpha1.AppVersion) (metav1.Condition, error) {
+func (r *AppVersionReconciler) egressCondition(ctx context.Context, av *corev1beta1.AppVersion) (metav1.Condition, error) {
 	c := r.Egress.condition(av.Generation)
 	if c.Status != metav1.ConditionTrue {
 		return c, nil
@@ -491,8 +491,8 @@ func (r *AppVersionReconciler) egressCondition(ctx context.Context, av *corev1al
 
 // template makes the Deployment of a valid version. If the version is not valid, it writes the
 // condition and gives back no Deployment.
-func (r *AppVersionReconciler) template(ctx context.Context, av *corev1alpha1.AppVersion,
-	old *corev1alpha1.AppVersionStatus) (*appsv1.Deployment, error) {
+func (r *AppVersionReconciler) template(ctx context.Context, av *corev1beta1.AppVersion,
+	old *corev1beta1.AppVersionStatus) (*appsv1.Deployment, error) {
 	msg, reason := invalidAppVersion(av), reasonInvalid
 	if msg == "" {
 		user, err := boundProfile(ctx, r.Client, av.Namespace)
@@ -519,7 +519,7 @@ func (r *AppVersionReconciler) template(ctx context.Context, av *corev1alpha1.Ap
 
 // addFinalizer adds the finalizer and keeps the status in memory, because Update gives back the
 // status of the API server.
-func (r *AppVersionReconciler) addFinalizer(ctx context.Context, av *corev1alpha1.AppVersion) error {
+func (r *AppVersionReconciler) addFinalizer(ctx context.Context, av *corev1beta1.AppVersion) error {
 	if !controllerutil.AddFinalizer(av, appFinalizer) {
 		return nil
 	}
@@ -534,8 +534,8 @@ func (r *AppVersionReconciler) addFinalizer(ctx context.Context, av *corev1alpha
 // enroll adds the finalizer, makes the key Secret and writes the key hash to the status. It
 // gives back the key value. If the version waits or the controller revokes it, the value is
 // empty. It sets old to the status that the API server has.
-func (r *AppVersionReconciler) enroll(ctx context.Context, av *corev1alpha1.AppVersion,
-	old *corev1alpha1.AppVersionStatus, costGroup string) (string, error) {
+func (r *AppVersionReconciler) enroll(ctx context.Context, av *corev1beta1.AppVersion,
+	old *corev1beta1.AppVersionStatus, costGroup string) (string, error) {
 	if err := r.addFinalizer(ctx, av); err != nil {
 		return "", err
 	}
@@ -585,7 +585,7 @@ func (r *AppVersionReconciler) enroll(ctx context.Context, av *corev1alpha1.AppV
 
 // setProvisioned sets the condition Provisioned after the controller applied the objects. An
 // empty reason is success. A different reason is from applyObjects.
-func setProvisioned(av *corev1alpha1.AppVersion, reason string) {
+func setProvisioned(av *corev1beta1.AppVersion, reason string) {
 	c := metav1.Condition{Type: condProvisioned, Status: metav1.ConditionTrue, Reason: "Provisioned",
 		Message: "The objects of the version are ready.", ObservedGeneration: av.Generation}
 	if reason != "" {
@@ -596,8 +596,8 @@ func setProvisioned(av *corev1alpha1.AppVersion, reason string) {
 }
 
 // wait writes the condition Provisioned=False. The controller changes no object of the version.
-func (r *AppVersionReconciler) wait(ctx context.Context, av *corev1alpha1.AppVersion,
-	old *corev1alpha1.AppVersionStatus, reason, msg string) error {
+func (r *AppVersionReconciler) wait(ctx context.Context, av *corev1beta1.AppVersion,
+	old *corev1beta1.AppVersionStatus, reason, msg string) error {
 	logf.FromContext(ctx).Info("The AppVersion waits", "reason", reason)
 	meta.SetStatusCondition(&av.Status.Conditions, metav1.Condition{
 		Type: condProvisioned, Status: metav1.ConditionFalse, Reason: reason, Message: msg,
@@ -606,8 +606,8 @@ func (r *AppVersionReconciler) wait(ctx context.Context, av *corev1alpha1.AppVer
 	return r.writeStatus(ctx, av, old)
 }
 
-func (r *AppVersionReconciler) writeStatus(ctx context.Context, av *corev1alpha1.AppVersion,
-	old *corev1alpha1.AppVersionStatus) error {
+func (r *AppVersionReconciler) writeStatus(ctx context.Context, av *corev1beta1.AppVersion,
+	old *corev1beta1.AppVersionStatus) error {
 	if equality.Semantic.DeepEqual(*old, av.Status) {
 		return nil
 	}
@@ -617,9 +617,9 @@ func (r *AppVersionReconciler) writeStatus(ctx context.Context, av *corev1alpha1
 // liveFull is true if the App already has spec.maxLiveVersions other versions with a key. A
 // version has a key from the enrollment until the gateway blocked the key. The controller has 1
 // worker, thus 2 versions do not take the last slot at the same time.
-func (r *AppVersionReconciler) liveFull(ctx context.Context, av *corev1alpha1.AppVersion,
-	app *corev1alpha1.App) (bool, error) {
-	list := &corev1alpha1.AppVersionList{}
+func (r *AppVersionReconciler) liveFull(ctx context.Context, av *corev1beta1.AppVersion,
+	app *corev1beta1.App) (bool, error) {
+	list := &corev1beta1.AppVersionList{}
 	if err := r.APIReader.List(ctx, list, client.InNamespace(av.Namespace)); err != nil {
 		return false, err
 	}
@@ -627,7 +627,7 @@ func (r *AppVersionReconciler) liveFull(ctx context.Context, av *corev1alpha1.Ap
 	for i := range list.Items {
 		o := &list.Items[i]
 		if o.UID != av.UID && o.Spec.AppRef.Name == app.Name && o.Status.KeyHash != "" &&
-			!meta.IsStatusConditionTrue(o.Status.Conditions, corev1alpha1.AppVersionRevoked) {
+			!meta.IsStatusConditionTrue(o.Status.Conditions, corev1beta1.AppVersionRevoked) {
 			live++
 		}
 	}
@@ -636,7 +636,7 @@ func (r *AppVersionReconciler) liveFull(ctx context.Context, av *corev1alpha1.Ap
 
 // readSecret reads the key Secret. It returns nil if there is no Secret, and errNotOwned if the
 // Secret is not from av or has no key.
-func (r *AppVersionReconciler) readSecret(ctx context.Context, av *corev1alpha1.AppVersion) (*corev1.Secret, error) {
+func (r *AppVersionReconciler) readSecret(ctx context.Context, av *corev1beta1.AppVersion) (*corev1.Secret, error) {
 	s := &corev1.Secret{}
 	found, err := r.getOwned(ctx, av, s)
 	if !found || err != nil {
@@ -650,7 +650,7 @@ func (r *AppVersionReconciler) readSecret(ctx context.Context, av *corev1alpha1.
 
 // getOwned reads the object of this kind with the version name into o. It returns false if there
 // is no object, and errNotOwned if the object is not controlled by av.
-func (r *AppVersionReconciler) getOwned(ctx context.Context, av *corev1alpha1.AppVersion, o client.Object) (bool, error) {
+func (r *AppVersionReconciler) getOwned(ctx context.Context, av *corev1beta1.AppVersion, o client.Object) (bool, error) {
 	err := r.APIReader.Get(ctx, types.NamespacedName{Namespace: av.Namespace, Name: appVersionName(av)}, o)
 	if apierrors.IsNotFound(err) {
 		return false, nil
@@ -666,7 +666,7 @@ func (r *AppVersionReconciler) getOwned(ctx context.Context, av *corev1alpha1.Ap
 
 // appliedModel is the model in the Deployment of the version. If the version has no Deployment,
 // it is the model of the spec.
-func (r *AppVersionReconciler) appliedModels(ctx context.Context, av *corev1alpha1.AppVersion) ([]string, error) {
+func (r *AppVersionReconciler) appliedModels(ctx context.Context, av *corev1beta1.AppVersion) ([]string, error) {
 	d := &appsv1.Deployment{}
 	found, err := r.getOwned(ctx, av, d)
 	if err != nil && !errors.Is(err, errNotOwned) {
@@ -691,7 +691,7 @@ func (r *AppVersionReconciler) appliedModels(ctx context.Context, av *corev1alph
 // after a CreateKey without error. Thus a missing key after that is a lost key, and applyKey
 // returns gateway.ErrKeyNotFound. A new budget is in the condition only after the gateway
 // accepted it. renewFailed is true if a renew failed and the key stays valid until its TTL ends.
-func (r *AppVersionReconciler) applyKey(ctx context.Context, av *corev1alpha1.AppVersion, key string,
+func (r *AppVersionReconciler) applyKey(ctx context.Context, av *corev1beta1.AppVersion, key string,
 	models []string) (renewFailed bool, err error) {
 	if av.Spec.BudgetPerDay == nil {
 		return false, errors.New("the AppVersion has a key and no spec.budgetPerDay")
@@ -743,7 +743,7 @@ func (r *AppVersionReconciler) applyKey(ctx context.Context, av *corev1alpha1.Ap
 // applyObjects makes the ServiceAccount, the Role, the RoleBinding, the Service and the
 // Deployment. It returns a reason if an object with the version name is not from av, or if the
 // API server refuses an object.
-func (r *AppVersionReconciler) applyObjects(ctx context.Context, av *corev1alpha1.AppVersion,
+func (r *AppVersionReconciler) applyObjects(ctx context.Context, av *corev1beta1.AppVersion,
 	deploy *appsv1.Deployment) (string, error) {
 	name := appVersionName(av)
 	ports := appContainer(&deploy.Spec.Template.Spec).Ports
@@ -829,7 +829,7 @@ func (r *AppVersionReconciler) applyObjects(ctx context.Context, av *corev1alpha
 
 // applyDeployment makes or updates the Deployment of the version. It returns a reason if a
 // Deployment with the version name is not from av, or if the API server refuses the Deployment.
-func (r *AppVersionReconciler) applyDeployment(ctx context.Context, av *corev1alpha1.AppVersion,
+func (r *AppVersionReconciler) applyDeployment(ctx context.Context, av *corev1beta1.AppVersion,
 	deploy *appsv1.Deployment) (string, error) {
 	have := &appsv1.Deployment{}
 	found, err := r.getOwned(ctx, av, have)
@@ -861,7 +861,7 @@ func (r *AppVersionReconciler) applyDeployment(ctx context.Context, av *corev1al
 // deployment makes the Deployment of av with the pod template of the version. The pod has the
 // App labels and no Agent, Workspace or run label. It reads the key from a read-only file. It
 // has a ServiceAccount token only if the version has rules.
-func (r *AppVersionReconciler) deployment(ctx context.Context, av *corev1alpha1.AppVersion, user string) (
+func (r *AppVersionReconciler) deployment(ctx context.Context, av *corev1beta1.AppVersion, user string) (
 	*appsv1.Deployment, error) {
 	const vol = "koodam-gateway"
 	name, labels := appVersionName(av), appVersionLabels(av)
@@ -874,7 +874,7 @@ func (r *AppVersionReconciler) deployment(ctx context.Context, av *corev1alpha1.
 		// this group, so an app that is not root can read the key.
 		SecurityContext: &corev1.PodSecurityContext{FSGroup: new(appKeyGroup)},
 		Containers: []corev1.Container{{
-			Name: corev1alpha1.AppContainerName,
+			Name: corev1beta1.AppContainerName,
 			Env:  []corev1.EnvVar{{Name: appVersionEnv, Value: av.Name}},
 		}},
 	}
@@ -898,7 +898,7 @@ func (r *AppVersionReconciler) deployment(ctx context.Context, av *corev1alpha1.
 	u := appContainer(&t.Spec)
 	ports, ready, live, start := u.Ports, u.ReadinessProbe, u.LivenessProbe, u.StartupProbe
 	u.Ports, u.ReadinessProbe, u.LivenessProbe, u.StartupProbe = nil, nil, nil, nil
-	tmpl, err := withPodTemplate(ctx, r.APIReader, av.Namespace, base, t, corev1alpha1.AppContainerName)
+	tmpl, err := withPodTemplate(ctx, r.APIReader, av.Namespace, base, t, corev1beta1.AppContainerName)
 	if err != nil {
 		return nil, err
 	}
@@ -958,11 +958,11 @@ const msgNoKey = "There was no key to revoke."
 // revoke blocks the key first, by the hash in the status. Then it deletes the Deployment, the
 // Service and the access, writes Revoked, deletes the Secret and removes the finalizer. Each step
 // can run again. If the block fails, the Secret and the finalizer stay, and Revoked is Unknown.
-func (r *AppVersionReconciler) revoke(ctx context.Context, av *corev1alpha1.AppVersion, reason string) error {
+func (r *AppVersionReconciler) revoke(ctx context.Context, av *corev1beta1.AppVersion, reason string) error {
 	old := av.Status.DeepCopy()
 	if !controllerutil.ContainsFinalizer(av, appFinalizer) {
 		// The finalizer comes before the Secret and the key. Thus there is nothing to revoke.
-		if !av.DeletionTimestamp.IsZero() || meta.IsStatusConditionTrue(av.Status.Conditions, corev1alpha1.AppVersionRevoked) {
+		if !av.DeletionTimestamp.IsZero() || meta.IsStatusConditionTrue(av.Status.Conditions, corev1beta1.AppVersionRevoked) {
 			return nil
 		}
 		// A version with no model from an earlier controller has objects, no key and no finalizer.
@@ -972,7 +972,7 @@ func (r *AppVersionReconciler) revoke(ctx context.Context, av *corev1alpha1.AppV
 		r.setRevoke(av, reason, metav1.ConditionTrue, msgNoKey)
 		return r.writeStatus(ctx, av, old)
 	}
-	if meta.FindStatusCondition(av.Status.Conditions, corev1alpha1.AppVersionRevoking) == nil {
+	if meta.FindStatusCondition(av.Status.Conditions, corev1beta1.AppVersionRevoking) == nil {
 		// Write the terminal state before the block, so that a retry does not renew the key.
 		r.setRevoke(av, reason, metav1.ConditionFalse, "The revoke started.")
 		if err := r.Status().Update(ctx, av); err != nil {
@@ -1001,7 +1001,7 @@ func (r *AppVersionReconciler) revoke(ctx context.Context, av *corev1alpha1.AppV
 	if err := r.deleteObjects(ctx, av); err != nil {
 		return err
 	}
-	if !meta.IsStatusConditionTrue(av.Status.Conditions, corev1alpha1.AppVersionRevoked) {
+	if !meta.IsStatusConditionTrue(av.Status.Conditions, corev1beta1.AppVersionRevoked) {
 		msg := "The key is blocked and the objects of the version are deleted."
 		if hash == "" {
 			msg = msgNoKey
@@ -1026,7 +1026,7 @@ func (r *AppVersionReconciler) revoke(ctx context.Context, av *corev1alpha1.AppV
 // setRevoke sets the conditions Revoking, Revoked and Provisioned of a version in the revoke.
 // deleteObjects deletes the pods of the version, their access and the gate Job. The NetworkPolicy
 // stays until the garbage collector deletes it with the AppVersion.
-func (r *AppVersionReconciler) deleteObjects(ctx context.Context, av *corev1alpha1.AppVersion) error {
+func (r *AppVersionReconciler) deleteObjects(ctx context.Context, av *corev1beta1.AppVersion) error {
 	for _, o := range []client.Object{&autoscalingv2.HorizontalPodAutoscaler{}, &appsv1.Deployment{},
 		&corev1.Service{}, &rbacv1.RoleBinding{}, &rbacv1.Role{}, &corev1.ServiceAccount{}} {
 		if err := r.deleteOwned(ctx, av, o); err != nil {
@@ -1036,21 +1036,21 @@ func (r *AppVersionReconciler) deleteObjects(ctx context.Context, av *corev1alph
 	return r.stopGate(ctx, av)
 }
 
-func (r *AppVersionReconciler) setRevoke(av *corev1alpha1.AppVersion, reason string, revoked metav1.ConditionStatus,
+func (r *AppVersionReconciler) setRevoke(av *corev1beta1.AppVersion, reason string, revoked metav1.ConditionStatus,
 	msg string) {
 	set := func(t string, s metav1.ConditionStatus, m string) {
 		meta.SetStatusCondition(&av.Status.Conditions, metav1.Condition{Type: t, Status: s, Reason: reason,
 			Message: m, ObservedGeneration: av.Generation})
 	}
-	set(corev1alpha1.AppVersionRevoking, metav1.ConditionTrue, "The revoke of the key started. This state is terminal.")
-	set(corev1alpha1.AppVersionRevoked, revoked, msg)
+	set(corev1beta1.AppVersionRevoking, metav1.ConditionTrue, "The revoke of the key started. This state is terminal.")
+	set(corev1beta1.AppVersionRevoked, revoked, msg)
 	set(condProvisioned, metav1.ConditionFalse, "The version has no key.")
 }
 
 // deleteOwned deletes the object of this kind with the version name. It keeps an object that is
 // not from av, but it deletes a Deployment of the version that lost its owner reference. The UID
 // precondition stops the delete if the object changed after the read.
-func (r *AppVersionReconciler) deleteOwned(ctx context.Context, av *corev1alpha1.AppVersion, o client.Object) error {
+func (r *AppVersionReconciler) deleteOwned(ctx context.Context, av *corev1beta1.AppVersion, o client.Object) error {
 	found, err := r.getOwned(ctx, av, o)
 	if errors.Is(err, errNotOwned) && orphanWorkload(o, appVersionLabels(av)) {
 		logf.FromContext(ctx).Info("Deletes a Deployment of the version that has no controller")
@@ -1114,7 +1114,7 @@ func (r *AppVersionReconciler) forgetRenewed(hash string) {
 // versionsOfApp gives the AppVersions of an App that changed, so that a version binds when its
 // App appears and revokes when its App goes.
 func (r *AppVersionReconciler) versionsOfApp(ctx context.Context, obj client.Object) []reconcile.Request {
-	list := &corev1alpha1.AppVersionList{}
+	list := &corev1beta1.AppVersionList{}
 	if err := r.List(ctx, list, client.InNamespace(obj.GetNamespace())); err != nil {
 		logf.FromContext(ctx).Error(err, "Failed to list the AppVersions of an App")
 		return nil
@@ -1131,17 +1131,17 @@ func (r *AppVersionReconciler) versionsOfApp(ctx context.Context, obj client.Obj
 // SetupWithManager sets up the controller with the Manager.
 func (r *AppVersionReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	return ctrl.NewControllerManagedBy(mgr).
-		For(&corev1alpha1.AppVersion{}).
+		For(&corev1beta1.AppVersion{}).
 		Owns(&appsv1.Deployment{}).
 		Owns(&corev1.Service{}).
 		Owns(&batchv1.Job{}).
-		Watches(&corev1alpha1.App{}, handler.EnqueueRequestsFromMapFunc(r.versionsOfApp)).
-		Watches(&corev1alpha1.Hold{},
-			handler.EnqueueRequestsFromMapFunc(holdMapper(r.Client, corev1alpha1.HoldTargetAppVersion, r.Namespaces))).
+		Watches(&corev1beta1.App{}, handler.EnqueueRequestsFromMapFunc(r.versionsOfApp)).
+		Watches(&corev1beta1.Hold{},
+			handler.EnqueueRequestsFromMapFunc(holdMapper(r.Client, corev1beta1.HoldTargetAppVersion, r.Namespaces))).
 		Watches(&corev1.Namespace{},
-			handler.EnqueueRequestsFromMapFunc(profileHoldMapper(r.Client, corev1alpha1.HoldTargetAppVersion, r.Namespaces))).
-		Watches(&corev1alpha1.Profile{},
-			handler.EnqueueRequestsFromMapFunc(profileHoldMapper(r.Client, corev1alpha1.HoldTargetAppVersion, r.Namespaces))).
+			handler.EnqueueRequestsFromMapFunc(profileHoldMapper(r.Client, corev1beta1.HoldTargetAppVersion, r.Namespaces))).
+		Watches(&corev1beta1.Profile{},
+			handler.EnqueueRequestsFromMapFunc(profileHoldMapper(r.Client, corev1beta1.HoldTargetAppVersion, r.Namespaces))).
 		Named("appversion").
 		Complete(r)
 }

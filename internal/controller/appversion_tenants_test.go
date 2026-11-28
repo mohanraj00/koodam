@@ -35,7 +35,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/event"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
-	corev1alpha1 "github.com/mohanraj00/koodam/api/v1alpha1"
+	corev1beta1 "github.com/mohanraj00/koodam/api/v1beta1"
 	"github.com/mohanraj00/koodam/internal/appclaim"
 )
 
@@ -48,18 +48,18 @@ const (
 	limitsClaimKey = "tenant"
 )
 
-func limitsQuota(name, ns, tenant string, change func(*corev1alpha1.TenantQuota)) corev1alpha1.TenantQuota {
-	q := corev1alpha1.TenantQuota{ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: ns, UID: types.UID(ns + "/" + name)},
-		Spec: corev1alpha1.TenantQuotaSpec{Tenant: tenant}}
+func limitsQuota(name, ns, tenant string, change func(*corev1beta1.TenantQuota)) corev1beta1.TenantQuota {
+	q := corev1beta1.TenantQuota{ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: ns, UID: types.UID(ns + "/" + name)},
+		Spec: corev1beta1.TenantQuotaSpec{Tenant: tenant}}
 	if change != nil {
 		change(&q)
 	}
 	return q
 }
 
-func limitsRate(perSecond string, burst *int32) func(*corev1alpha1.TenantQuota) {
-	return func(q *corev1alpha1.TenantQuota) {
-		q.Spec.RateLimit = &corev1alpha1.TenantRateLimit{RequestsPerSecond: resource.MustParse(perSecond), Burst: burst}
+func limitsRate(perSecond string, burst *int32) func(*corev1beta1.TenantQuota) {
+	return func(q *corev1beta1.TenantQuota) {
+		q.Spec.RateLimit = &corev1beta1.TenantRateLimit{RequestsPerSecond: resource.MustParse(perSecond), Burst: burst}
 	}
 }
 
@@ -85,32 +85,32 @@ func TestPodLimit(t *testing.T) {
 }
 
 func TestTenantLimitsOfVersion(t *testing.T) {
-	av := &corev1alpha1.AppVersion{ObjectMeta: metav1.ObjectMeta{Name: "v1", Namespace: limitsNS},
-		Spec: corev1alpha1.AppVersionSpec{AppRef: corev1alpha1.AppReference{Name: limitsApp}, Replicas: new(int32(2))}}
+	av := &corev1beta1.AppVersion{ObjectMeta: metav1.ObjectMeta{Name: "v1", Namespace: limitsNS},
+		Spec: corev1beta1.AppVersionSpec{AppRef: corev1beta1.AppReference{Name: limitsApp}, Replicas: new(int32(2))}}
 	older := metav1.NewTime(metav1.Now().Add(-3600e9))
-	quotas := []corev1alpha1.TenantQuota{
+	quotas := []corev1beta1.TenantQuota{
 		// A quota of the namespace with no App, at its limit.
-		limitsQuota("a", limitsNS, limitsTenantA, func(q *corev1alpha1.TenantQuota) {
+		limitsQuota("a", limitsNS, limitsTenantA, func(q *corev1beta1.TenantQuota) {
 			limitsRate("4", new(int32(6)))(q)
-			q.Status.Conditions = []metav1.Condition{{Type: corev1alpha1.TenantQuotaExceeded, Status: metav1.ConditionTrue}}
+			q.Status.Conditions = []metav1.Condition{{Type: corev1beta1.TenantQuotaExceeded, Status: metav1.ConditionTrue}}
 		}),
 		// A quota for this App, with no limit: the tenant is known.
-		limitsQuota("b", limitsNS, limitsTenantB, func(q *corev1alpha1.TenantQuota) {
-			q.Spec.AppRef = &corev1alpha1.AppReference{Name: limitsApp}
+		limitsQuota("b", limitsNS, limitsTenantB, func(q *corev1beta1.TenantQuota) {
+			q.Spec.AppRef = &corev1beta1.AppReference{Name: limitsApp}
 		}),
 		// These have no effect on this version: a different App, a different namespace, a quota in
 		// delete, and a tenant label that an older quota of a different namespace has.
-		limitsQuota("c", limitsNS, "other-app", func(q *corev1alpha1.TenantQuota) {
-			q.Spec.AppRef = &corev1alpha1.AppReference{Name: "search"}
+		limitsQuota("c", limitsNS, "other-app", func(q *corev1beta1.TenantQuota) {
+			q.Spec.AppRef = &corev1beta1.AppReference{Name: "search"}
 		}),
 		limitsQuota("d", "tenants-z", "other-namespace", limitsRate("1", nil)),
-		limitsQuota("e", limitsNS, "in-delete", func(q *corev1alpha1.TenantQuota) { q.DeletionTimestamp = &older }),
-		limitsQuota("f", limitsNS, "taken", func(q *corev1alpha1.TenantQuota) {
+		limitsQuota("e", limitsNS, "in-delete", func(q *corev1beta1.TenantQuota) { q.DeletionTimestamp = &older }),
+		limitsQuota("f", limitsNS, "taken", func(q *corev1beta1.TenantQuota) {
 			limitsRate("1", nil)(q)
 			q.CreationTimestamp = metav1.Now()
 		}),
-		limitsQuota("g", "tenants-z", "taken", func(q *corev1alpha1.TenantQuota) { q.CreationTimestamp = older }),
-		limitsQuota("h", limitsNS, "taken", func(q *corev1alpha1.TenantQuota) { q.CreationTimestamp = metav1.Now() }),
+		limitsQuota("g", "tenants-z", "taken", func(q *corev1beta1.TenantQuota) { q.CreationTimestamp = older }),
+		limitsQuota("h", limitsNS, "taken", func(q *corev1beta1.TenantQuota) { q.CreationTimestamp = metav1.Now() }),
 	}
 	claim := AppClaimCheck{Issuer: limitsIssuer, TenantClaim: limitsClaimKey,
 		Tenants: AppTenantLimits{DefaultRate: 1, RefuseUnknown: true}}
@@ -149,8 +149,8 @@ func TestTenantLimitsOfVersion(t *testing.T) {
 // The check container gets the zone flags only if the install has a zone.
 func TestClaimZoneArgs(t *testing.T) {
 	const zone, zoneClaim, flag = "zone-a", "zone", "--zone"
-	av := &corev1alpha1.AppVersion{ObjectMeta: metav1.ObjectMeta{Name: "v1"},
-		Spec: corev1alpha1.AppVersionSpec{AppRef: corev1alpha1.AppReference{Name: limitsApp}}}
+	av := &corev1beta1.AppVersion{ObjectMeta: metav1.ObjectMeta{Name: "v1"},
+		Spec: corev1beta1.AppVersionSpec{AppRef: corev1beta1.AppReference{Name: limitsApp}}}
 	for name, tc := range map[string]struct {
 		claim AppClaimCheck
 		want  []string
@@ -183,19 +183,19 @@ func TestClaimZoneArgs(t *testing.T) {
 // A caller can select each version with a weight above 0. Thus the pods of all these versions
 // share the rate of a tenant, and 2 versions do not give the tenant 2 times its rate.
 func TestTenantRateIsForAllTheVersionsOfTheApp(t *testing.T) {
-	version := func(name, app string, replicas int32) *corev1alpha1.AppVersion {
-		return &corev1alpha1.AppVersion{ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: limitsNS, UID: types.UID(name)},
-			Spec: corev1alpha1.AppVersionSpec{AppRef: corev1alpha1.AppReference{Name: app}, Replicas: &replicas}}
+	version := func(name, app string, replicas int32) *corev1beta1.AppVersion {
+		return &corev1beta1.AppVersion{ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: limitsNS, UID: types.UID(name)},
+			Spec: corev1beta1.AppVersionSpec{AppRef: corev1beta1.AppReference{Name: app}, Replicas: &replicas}}
 	}
-	weights := func(pairs map[string]int32) []corev1alpha1.AppEndpointVersion {
-		out := make([]corev1alpha1.AppEndpointVersion, 0, len(pairs))
+	weights := func(pairs map[string]int32) []corev1beta1.AppEndpointVersion {
+		out := make([]corev1beta1.AppEndpointVersion, 0, len(pairs))
 		for name, w := range pairs {
-			out = append(out, corev1alpha1.AppEndpointVersion{Name: name, Weight: &w})
+			out = append(out, corev1beta1.AppEndpointVersion{Name: name, Weight: &w})
 		}
 		return out
 	}
-	app := &corev1alpha1.App{ObjectMeta: metav1.ObjectMeta{Name: limitsApp, Namespace: limitsNS},
-		Spec: corev1alpha1.AppSpec{Endpoints: []corev1alpha1.AppEndpoint{
+	app := &corev1beta1.App{ObjectMeta: metav1.ObjectMeta{Name: limitsApp, Namespace: limitsNS},
+		Spec: corev1beta1.AppSpec{Endpoints: []corev1beta1.AppEndpoint{
 			{Name: "front", Versions: weights(map[string]int32{"v1": 90, "v2": 0, "v3": 0, "v5": 10})},
 			// A weight in one endpoint is sufficient.
 			{Name: "back", Versions: weights(map[string]int32{"v2": 1})},
@@ -206,7 +206,7 @@ func TestTenantRateIsForAllTheVersionsOfTheApp(t *testing.T) {
 	alone := version("alone", "no-app", 4)
 	// A version with a weight and a complete revoke has no pods. A revoke that started has pods.
 	revoked := func(status metav1.ConditionStatus) []metav1.Condition {
-		return []metav1.Condition{{Type: corev1alpha1.AppVersionRevoked, Status: status, Reason: "Retired"}}
+		return []metav1.Condition{{Type: corev1beta1.AppVersionRevoked, Status: status, Reason: "Retired"}}
 	}
 	v5 := version("v5", limitsApp, 9)
 	v5.Status.Conditions = revoked(metav1.ConditionTrue)
@@ -214,7 +214,7 @@ func TestTenantRateIsForAllTheVersionsOfTheApp(t *testing.T) {
 	c := fake.NewClientBuilder().WithScheme(ingWorld(t).Scheme()).
 		WithObjects(app, v1, v2, v3, v4, v5, other, alone, &quota).Build()
 	claim := AppClaimCheck{Issuer: limitsIssuer, TenantClaim: limitsClaimKey}
-	pod := func(av *corev1alpha1.AppVersion) appclaim.TenantLimit {
+	pod := func(av *corev1beta1.AppVersion) appclaim.TenantLimit {
 		t.Helper()
 		if err := applyTenantLimits(t.Context(), c, c, claim, av); err != nil {
 			t.Fatal(err)
@@ -270,7 +270,7 @@ func TestTenantRateIsForAllTheVersionsOfTheApp(t *testing.T) {
 	started, done := version("v6", limitsApp, 1), version("v6", limitsApp, 1)
 	started.Status.Conditions, done.Status.Conditions = revoked(metav1.ConditionFalse), revoked(metav1.ConditionTrue)
 	for name, c := range map[string]struct {
-		was, is *corev1alpha1.AppVersion
+		was, is *corev1beta1.AppVersion
 		want    bool
 	}{
 		"the revoke starts":           {v1, started, false},
@@ -286,8 +286,8 @@ func TestTenantRateIsForAllTheVersionsOfTheApp(t *testing.T) {
 }
 
 func TestClaimTenantsVolume(t *testing.T) {
-	av := &corev1alpha1.AppVersion{ObjectMeta: metav1.ObjectMeta{Name: "v1"},
-		Spec: corev1alpha1.AppVersionSpec{AppRef: corev1alpha1.AppReference{Name: limitsApp}}}
+	av := &corev1beta1.AppVersion{ObjectMeta: metav1.ObjectMeta{Name: "v1"},
+		Spec: corev1beta1.AppVersionSpec{AppRef: corev1beta1.AppReference{Name: limitsApp}}}
 	ports := []corev1.ContainerPort{{ContainerPort: 8080}}
 	for _, tenantClaim := range []string{"", limitsClaimKey} {
 		claim := AppClaimCheck{Issuer: limitsIssuer, TenantClaim: tenantClaim, Image: "registry.example.com/koodam:tenants"}
@@ -325,18 +325,18 @@ var _ = Describe("Tenant limits file", func() {
 		ns = n.Name
 	})
 
-	newVersion := func(name string) *corev1alpha1.AppVersion {
-		av := &corev1alpha1.AppVersion{ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: ns},
-			Spec: corev1alpha1.AppVersionSpec{AppRef: corev1alpha1.AppReference{Name: limitsApp},
-				Template: corev1alpha1.AppVersionTemplate{PodTemplate: corev1alpha1.PodTemplate{Spec: corev1.PodSpec{
-					Containers: []corev1.Container{{Name: corev1alpha1.AppContainerName, Image: "registry.example.com/app:t",
+	newVersion := func(name string) *corev1beta1.AppVersion {
+		av := &corev1beta1.AppVersion{ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: ns},
+			Spec: corev1beta1.AppVersionSpec{AppRef: corev1beta1.AppReference{Name: limitsApp},
+				Template: corev1beta1.AppVersionTemplate{PodTemplate: corev1beta1.PodTemplate{Spec: corev1.PodSpec{
+					Containers: []corev1.Container{{Name: corev1beta1.AppContainerName, Image: "registry.example.com/app:t",
 						Ports: []corev1.ContainerPort{{Name: "web", ContainerPort: 8080}},
 						ReadinessProbe: &corev1.Probe{ProbeHandler: corev1.ProbeHandler{
 							TCPSocket: &corev1.TCPSocketAction{Port: intstr.FromInt32(8080)}}}}}}}}}}
 		Expect(k8sClient.Create(ctx, av)).To(Succeed())
 		return av
 	}
-	file := func(av *corev1alpha1.AppVersion) appclaim.TenantLimits {
+	file := func(av *corev1beta1.AppVersion) appclaim.TenantLimits {
 		cm := &corev1.ConfigMap{}
 		Expect(k8sClient.Get(ctx, types.NamespacedName{Namespace: ns, Name: tenantLimitsName(av)}, cm)).To(Succeed())
 		Expect(metav1.IsControlledBy(cm, av)).To(BeTrue())
@@ -354,8 +354,8 @@ var _ = Describe("Tenant limits file", func() {
 		Expect(file(av).Tenants).To(BeEmpty())
 		Expect(r.allVersions(ctx, nil)).To(ContainElement(req))
 
-		q := &corev1alpha1.TenantQuota{ObjectMeta: metav1.ObjectMeta{Name: "tl-q", Namespace: ns},
-			Spec: corev1alpha1.TenantQuotaSpec{Tenant: "tl-" + ns}}
+		q := &corev1beta1.TenantQuota{ObjectMeta: metav1.ObjectMeta{Name: "tl-q", Namespace: ns},
+			Spec: corev1beta1.TenantQuotaSpec{Tenant: "tl-" + ns}}
 		limitsRate("2", nil)(q)
 		Expect(k8sClient.Create(ctx, q)).To(Succeed())
 		_, err = r.Reconcile(ctx, req)
@@ -363,8 +363,8 @@ var _ = Describe("Tenant limits file", func() {
 		Expect(file(av).Tenants).To(Equal(map[string]appclaim.TenantLimit{q.Spec.Tenant: {Rate: 2, Burst: 2}}))
 
 		// The mark of the controller goes into the file.
-		q.Status.Conditions = []metav1.Condition{{Type: corev1alpha1.TenantQuotaExceeded, Status: metav1.ConditionTrue,
-			Reason: corev1alpha1.ReasonTenantQuotaExceeded, LastTransitionTime: metav1.Now()}}
+		q.Status.Conditions = []metav1.Condition{{Type: corev1beta1.TenantQuotaExceeded, Status: metav1.ConditionTrue,
+			Reason: corev1beta1.ReasonTenantQuotaExceeded, LastTransitionTime: metav1.Now()}}
 		Expect(k8sClient.Status().Update(ctx, q)).To(Succeed())
 		_, err = r.Reconcile(ctx, req)
 		Expect(err).NotTo(HaveOccurred())

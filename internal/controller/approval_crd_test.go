@@ -28,7 +28,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
-	corev1alpha1 "github.com/mohanraj00/koodam/api/v1alpha1"
+	corev1beta1 "github.com/mohanraj00/koodam/api/v1beta1"
 )
 
 // These specs apply the CRDs to the envtest API server. They run no controller.
@@ -48,14 +48,14 @@ var _ = Describe("Approval CRD rules", func() {
 		Expect(apierrors.IsInvalid(err)).To(BeTrue(), "the error is not Invalid: %v", err)
 		Expect(err.Error()).To(ContainSubstring(text))
 	}
-	record := func(target string, signed []byte) *corev1alpha1.ApprovalRecord {
-		return &corev1alpha1.ApprovalRecord{ObjectMeta: metav1.ObjectMeta{GenerateName: prefix},
-			Spec: corev1alpha1.ApprovalRecordSpec{Target: target, SignedRecord: signed,
+	record := func(target string, signed []byte) *corev1beta1.ApprovalRecord {
+		return &corev1beta1.ApprovalRecord{ObjectMeta: metav1.ObjectMeta{GenerateName: prefix},
+			Spec: corev1beta1.ApprovalRecordSpec{Target: target, SignedRecord: signed,
 				SnapshotRecord: []byte("{}"), Manifest: []byte("{}")}}
 	}
-	agent := func(approval *corev1alpha1.AgentApprovalSpec) *corev1alpha1.Agent {
-		return &corev1alpha1.Agent{ObjectMeta: metav1.ObjectMeta{GenerateName: prefix},
-			Spec: corev1alpha1.AgentSpec{Image: testAgentImage, Command: []string{jobIngRunCommand}, Model: "m",
+	agent := func(approval *corev1beta1.AgentApprovalSpec) *corev1beta1.Agent {
+		return &corev1beta1.Agent{ObjectMeta: metav1.ObjectMeta{GenerateName: prefix},
+			Spec: corev1beta1.AgentSpec{Image: testAgentImage, Command: []string{jobIngRunCommand}, Model: "m",
 				Budget: resource.MustParse("1"), Approval: approval}}
 	}
 
@@ -64,14 +64,14 @@ var _ = Describe("Approval CRD rules", func() {
 		largest := record("job-7", bytes.Repeat([]byte("a"), 1000000))
 		largest.Spec.SnapshotRecord, largest.Spec.Manifest = bytes.Repeat([]byte("b"), 65536), bytes.Repeat([]byte("c"), 65536)
 		Expect(create(largest)).To(Succeed())
-		for _, change := range []func(*corev1alpha1.ApprovalRecordSpec) string{
-			func(s *corev1alpha1.ApprovalRecordSpec) string { s.SnapshotRecord = nil; return "spec.snapshotRecord" },
-			func(s *corev1alpha1.ApprovalRecordSpec) string { s.Manifest = nil; return "spec.manifest" },
-			func(s *corev1alpha1.ApprovalRecordSpec) string {
+		for _, change := range []func(*corev1beta1.ApprovalRecordSpec) string{
+			func(s *corev1beta1.ApprovalRecordSpec) string { s.SnapshotRecord = nil; return "spec.snapshotRecord" },
+			func(s *corev1beta1.ApprovalRecordSpec) string { s.Manifest = nil; return "spec.manifest" },
+			func(s *corev1beta1.ApprovalRecordSpec) string {
 				s.SnapshotRecord = bytes.Repeat([]byte("b"), 65537)
 				return "65,536 bytes"
 			},
-			func(s *corev1alpha1.ApprovalRecordSpec) string {
+			func(s *corev1beta1.ApprovalRecordSpec) string {
 				s.Manifest = bytes.Repeat([]byte("c"), 65537)
 				return "65,536 bytes"
 			},
@@ -89,7 +89,7 @@ var _ = Describe("Approval CRD rules", func() {
 	It("selects the ApprovalRecords of one Agent by spec.target", func() {
 		Expect(create(record("select-a", []byte("{}")))).To(Succeed())
 		Expect(create(record("select-b", []byte("{}")))).To(Succeed())
-		list := &corev1alpha1.ApprovalRecordList{}
+		list := &corev1beta1.ApprovalRecordList{}
 		Expect(k8sClient.List(ctx, list, client.InNamespace(metav1.NamespaceDefault),
 			client.MatchingFields{"spec.target": "select-b"})).To(Succeed())
 		Expect(list.Items).To(HaveLen(1))
@@ -106,7 +106,7 @@ var _ = Describe("Approval CRD rules", func() {
 	})
 
 	It("gives spec.approval of an Agent a default wait and keeps it immutable", func() {
-		a := agent(&corev1alpha1.AgentApprovalSpec{})
+		a := agent(&corev1beta1.AgentApprovalSpec{})
 		Expect(create(a)).To(Succeed())
 		Expect(a.Spec.Approval.WaitSeconds).To(Equal(int64(86400)))
 		a.Spec.Approval.WaitSeconds = 60
@@ -115,21 +115,21 @@ var _ = Describe("Approval CRD rules", func() {
 		invalid(k8sClient.Update(ctx, a), "spec.approval is immutable")
 
 		// The status takes the request and a subject of the fixed form.
-		a.Status.Approval = &corev1alpha1.AgentApprovalStatus{Request: "{}", Subject: "sha256:" + strings.Repeat("0", 64)}
+		a.Status.Approval = &corev1beta1.AgentApprovalStatus{Request: "{}", Subject: "sha256:" + strings.Repeat("0", 64)}
 		Expect(k8sClient.Status().Update(ctx, a)).To(Succeed())
 		a.Status.Approval.Subject = "sha256:short"
 		invalid(k8sClient.Status().Update(ctx, a), "status.approval.subject")
 
 		none := agent(nil)
 		Expect(create(none)).To(Succeed())
-		none.Spec.Approval = &corev1alpha1.AgentApprovalSpec{WaitSeconds: 60}
+		none.Spec.Approval = &corev1beta1.AgentApprovalSpec{WaitSeconds: 60}
 		invalid(k8sClient.Update(ctx, none), "spec.approval is immutable")
-		invalid(create(agent(&corev1alpha1.AgentApprovalSpec{WaitSeconds: 2592001})), "spec.approval.waitSeconds")
+		invalid(create(agent(&corev1beta1.AgentApprovalSpec{WaitSeconds: 2592001})), "spec.approval.waitSeconds")
 	})
 
 	DescribeTable("checks spec.approval of a Profile", func(keySet, scope, function string, maxAge int64, text string) {
-		p := &corev1alpha1.Profile{ObjectMeta: metav1.ObjectMeta{GenerateName: prefix},
-			Spec: corev1alpha1.ProfileSpec{Approval: &corev1alpha1.ProfileApproval{
+		p := &corev1beta1.Profile{ObjectMeta: metav1.ObjectMeta{GenerateName: prefix},
+			Spec: corev1beta1.ProfileSpec{Approval: &corev1beta1.ProfileApproval{
 				KeySet: keySet, Scope: scope, Function: function, MaxAgeSeconds: maxAge}}}
 		err := create(p)
 		if text == "" {

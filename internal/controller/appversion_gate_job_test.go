@@ -27,7 +27,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/validation"
 
-	corev1alpha1 "github.com/mohanraj00/koodam/api/v1alpha1"
+	corev1beta1 "github.com/mohanraj00/koodam/api/v1beta1"
 	"github.com/mohanraj00/koodam/internal/evidence"
 )
 
@@ -46,17 +46,17 @@ var _ = Describe("AppVersion gate Job", func() {
 		subject = "koodam.dev/appversion/v1:store/v2:uid:sha256:1111"
 		target  = "kd-v2.store.svc:8080"
 	)
-	newVersion := func() *corev1alpha1.AppVersion {
-		return &corev1alpha1.AppVersion{
+	newVersion := func() *corev1beta1.AppVersion {
+		return &corev1beta1.AppVersion{
 			ObjectMeta: metav1.ObjectMeta{Name: "v2", Namespace: "store", UID: "uid"},
-			Spec: corev1alpha1.AppVersionSpec{AppRef: corev1alpha1.AppReference{Name: "store-app"},
-				Gate: &corev1alpha1.AppVersionGate{Nookku: corev1alpha1.NookkuGate{
+			Spec: corev1beta1.AppVersionSpec{AppRef: corev1beta1.AppReference{Name: "store-app"},
+				Gate: &corev1beta1.AppVersionGate{Nookku: corev1beta1.NookkuGate{
 					Image: gateTestImage, Root: gateTestRoot, GateFile: gateTestFile, DeadlineSeconds: new(int32(600))}}}}
 	}
 
 	It("gives the address of the Service of the version, with the first port of the app container", func() {
 		deploy := &appsv1.Deployment{Spec: appsv1.DeploymentSpec{Template: corev1.PodTemplateSpec{Spec: corev1.PodSpec{
-			Containers: []corev1.Container{{Name: "first"}, {Name: corev1alpha1.AppContainerName,
+			Containers: []corev1.Container{{Name: "first"}, {Name: corev1beta1.AppContainerName,
 				Ports: []corev1.ContainerPort{{ContainerPort: 8080}, {ContainerPort: 9090}}}}}}}}
 		Expect(gateTarget(newVersion(), deploy)).To(Equal(target))
 	})
@@ -155,22 +155,22 @@ var _ = Describe("AppVersion gate Job", func() {
 
 	It("gives the weights only to a version with no gate or with an accepted pass", func() {
 		av := newVersion()
-		setEvidence := func(status metav1.ConditionStatus, verdict corev1alpha1.EvidenceVerdict) {
-			av.Status.Conditions = []metav1.Condition{{Type: corev1alpha1.AppVersionEvidence, Status: status}}
-			av.Status.Evidence = &corev1alpha1.EvidenceRecord{Verdict: verdict}
+		setEvidence := func(status metav1.ConditionStatus, verdict corev1beta1.EvidenceVerdict) {
+			av.Status.Conditions = []metav1.Condition{{Type: corev1beta1.AppVersionEvidence, Status: status}}
+			av.Status.Evidence = &corev1beta1.EvidenceRecord{Verdict: verdict}
 		}
 		Expect([]bool{gatePassed(av), gateOpen(av)}).To(Equal([]bool{false, true}), "no condition")
-		av.Status.Conditions = []metav1.Condition{{Type: corev1alpha1.AppVersionEvidence, Status: metav1.ConditionTrue}}
+		av.Status.Conditions = []metav1.Condition{{Type: corev1beta1.AppVersionEvidence, Status: metav1.ConditionTrue}}
 		Expect([]bool{gatePassed(av), gateOpen(av)}).To(Equal([]bool{false, true}), "a True condition with no record")
 		av.Status.Conditions[0].Status = metav1.ConditionFalse
 		Expect([]bool{gatePassed(av), gateOpen(av)}).To(Equal([]bool{false, false}), "a False condition")
-		setEvidence(metav1.ConditionFalse, corev1alpha1.EvidenceFail)
+		setEvidence(metav1.ConditionFalse, corev1beta1.EvidenceFail)
 		Expect([]bool{gatePassed(av), gateOpen(av)}).To(Equal([]bool{false, false}), "a fail record")
-		setEvidence(metav1.ConditionUnknown, corev1alpha1.EvidencePass)
+		setEvidence(metav1.ConditionUnknown, corev1beta1.EvidencePass)
 		Expect([]bool{gatePassed(av), gateOpen(av)}).To(Equal([]bool{false, false}), "a pass record with no True condition")
-		setEvidence(metav1.ConditionTrue, corev1alpha1.EvidencePass)
+		setEvidence(metav1.ConditionTrue, corev1beta1.EvidencePass)
 		Expect([]bool{gatePassed(av), gateOpen(av)}).To(Equal([]bool{true, false}), "an accepted pass")
-		av.Spec.Gate, av.Status = nil, corev1alpha1.AppVersionStatus{}
+		av.Spec.Gate, av.Status = nil, corev1beta1.AppVersionStatus{}
 		Expect([]bool{gatePassed(av), gateOpen(av)}).To(Equal([]bool{true, false}), "no gate")
 	})
 

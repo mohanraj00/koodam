@@ -31,7 +31,7 @@ import (
 )
 
 // Holds and Profiles are the resources that the quarantine reads. The values must agree with
-// api/v1alpha1.
+// api/v1beta1.
 var (
 	Holds    = koodamResource("holds")
 	Profiles = koodamResource("profiles")
@@ -39,7 +39,7 @@ var (
 
 // koodamResource gives the resource in the API group of Koodam.
 func koodamResource(resource string) schema.GroupVersionResource {
-	return schema.GroupVersionResource{Group: "core.koodam.dev", Version: "v1alpha1", Resource: resource}
+	return schema.GroupVersionResource{Group: "core.koodam.dev", Version: "v1beta1", Resource: resource}
 }
 
 const (
@@ -52,7 +52,7 @@ const (
 	ReasonQuarantined = "quarantined"
 )
 
-// The values of a Hold. They must agree with api/v1alpha1.
+// The values of a Hold. They must agree with api/v1beta1.
 const (
 	holdQuarantine = "Quarantine"
 	targetAgent    = "Agent"

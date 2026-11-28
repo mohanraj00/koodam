@@ -34,7 +34,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
 
-	corev1alpha1 "github.com/mohanraj00/koodam/api/v1alpha1"
+	corev1beta1 "github.com/mohanraj00/koodam/api/v1beta1"
 	"github.com/mohanraj00/koodam/internal/gateway"
 )
 
@@ -54,7 +54,7 @@ const (
 	reasonRenewFailed = "RenewFailed"
 )
 
-func gatewaySecretName(ws *corev1alpha1.Workspace) string { return ws.Name + gatewaySecretSuffix }
+func gatewaySecretName(ws *corev1beta1.Workspace) string { return ws.Name + gatewaySecretSuffix }
 
 // gatewaySecretSuffix and hostKeySecretSuffix are the name suffixes of the Workspace Secrets.
 const (
@@ -63,13 +63,13 @@ const (
 )
 
 // wantKey is true if the pod must have a gateway key now.
-func wantKey(ws *corev1alpha1.Workspace) bool {
+func wantKey(ws *corev1beta1.Workspace) bool {
 	return hasGateway(ws) && !ws.Spec.Suspend && !heldWorkspace(ws) && ws.DeletionTimestamp.IsZero()
 }
 
 // hasGateway is true if the Workspace has a gateway with a model. The CRD refuses a gateway
 // with no model. The controller reads the first model, so it does the check again.
-func hasGateway(ws *corev1alpha1.Workspace) bool {
+func hasGateway(ws *corev1beta1.Workspace) bool {
 	return ws.Spec.Gateway != nil && len(ws.Spec.Gateway.ModelList()) > 0 &&
 		!slices.Contains(ws.Spec.Gateway.ModelList(), "")
 }
@@ -98,7 +98,7 @@ func (r *WorkspaceReconciler) keyTTL() time.Duration {
 
 // readKey reads the gateway Secret. It returns nil if there is no Secret, and errNotOwned if
 // the Secret is not from ws.
-func (r *WorkspaceReconciler) readKey(ctx context.Context, ws *corev1alpha1.Workspace) (*corev1.Secret, error) {
+func (r *WorkspaceReconciler) readKey(ctx context.Context, ws *corev1beta1.Workspace) (*corev1.Secret, error) {
 	s := &corev1.Secret{}
 	err := r.APIReader.Get(ctx, types.NamespacedName{Namespace: ws.Namespace, Name: gatewaySecretName(ws)}, s)
 	if apierrors.IsNotFound(err) {
@@ -116,7 +116,7 @@ func (r *WorkspaceReconciler) readKey(ctx context.Context, ws *corev1alpha1.Work
 // applyKey makes or renews the gateway key if the pod must have one. Otherwise it revokes the
 // key. It runs before the StatefulSet changes, so a suspend blocks the key before the pod stops.
 // The key value goes only to the Secret: never to a log, an event, the status or an error.
-func (r *WorkspaceReconciler) applyKey(ctx context.Context, ws *corev1alpha1.Workspace) error {
+func (r *WorkspaceReconciler) applyKey(ctx context.Context, ws *corev1beta1.Workspace) error {
 	if ws.Spec.Gateway == nil && ws.Status.KeyHash == "" && !controllerutil.ContainsFinalizer(ws, workspaceFinalizer) {
 		return nil
 	}
@@ -171,7 +171,7 @@ func (r *WorkspaceReconciler) applyKey(ctx context.Context, ws *corev1alpha1.Wor
 // writeKeySecret makes the gateway Secret if key is empty, with a new key. The gateway URL
 // changes if the egress proxy goes on or off. Then the key stays, and the controller makes the
 // immutable Secret again with the same key and the new URL (#142). It returns the key.
-func (r *WorkspaceReconciler) writeKeySecret(ctx context.Context, ws *corev1alpha1.Workspace,
+func (r *WorkspaceReconciler) writeKeySecret(ctx context.Context, ws *corev1beta1.Workspace,
 	secret *corev1.Secret, key string) (string, error) {
 	moved := key != "" && string(secret.Data[baseURLField]) != r.GatewayURL
 	if key != "" && !moved {
@@ -203,7 +203,7 @@ func (r *WorkspaceReconciler) writeKeySecret(ctx context.Context, ws *corev1alph
 // renewKey renews the key if the last renew is older than TTL/4. If the gateway has no key, it
 // makes the key. It writes the result to the condition GatewayKey and returns no error, so the
 // pod apply continues.
-func (r *WorkspaceReconciler) renewKey(ctx context.Context, ws *corev1alpha1.Workspace, key string) {
+func (r *WorkspaceReconciler) renewKey(ctx context.Context, ws *corev1beta1.Workspace, key string) {
 	g := ws.Spec.Gateway
 	models := g.ModelList()
 	spec := gateway.KeySpec{Value: key, Alias: ws.Status.KeyAlias, Model: models[0], Models: models[1:],
@@ -273,7 +273,7 @@ func (r *WorkspaceReconciler) now() time.Time {
 
 // updateMeta writes the finalizers. It keeps the status in memory, which Reconcile writes later,
 // because Update gives back the status of the API server.
-func (r *WorkspaceReconciler) updateMeta(ctx context.Context, ws *corev1alpha1.Workspace) error {
+func (r *WorkspaceReconciler) updateMeta(ctx context.Context, ws *corev1beta1.Workspace) error {
 	st := ws.Status.DeepCopy()
 	err := r.Update(ctx, ws)
 	ws.Status = *st
@@ -282,7 +282,7 @@ func (r *WorkspaceReconciler) updateMeta(ctx context.Context, ws *corev1alpha1.W
 
 // revokeKey blocks the key first, then reads the usage, deletes the Secret and clears the key
 // from the status. secret is the gateway Secret of ws, or nil. Each step can run again.
-func (r *WorkspaceReconciler) revokeKey(ctx context.Context, ws *corev1alpha1.Workspace, secret *corev1.Secret) error {
+func (r *WorkspaceReconciler) revokeKey(ctx context.Context, ws *corev1beta1.Workspace, secret *corev1.Secret) error {
 	hash := ws.Status.KeyHash
 	if hash == "" && secret != nil {
 		// The Secret exists, but the status write before CreateKey did not complete.
@@ -312,9 +312,9 @@ func (r *WorkspaceReconciler) revokeKey(ctx context.Context, ws *corev1alpha1.Wo
 		if err != nil {
 			cond.Message += spendNotSettledNote
 		}
-		ws.Status.Usage = &corev1alpha1.WorkspaceUsage{Spend: strconv.FormatFloat(u.Spend, 'f', -1, 64),
+		ws.Status.Usage = &corev1beta1.WorkspaceUsage{Spend: strconv.FormatFloat(u.Spend, 'f', -1, 64),
 			Calls: u.Calls, InputTokens: u.InputTokens, OutputTokens: u.OutputTokens,
-			Source: corev1alpha1.UsageFromGateway}
+			Source: corev1beta1.UsageFromGateway}
 	default:
 		return err
 	}
@@ -333,7 +333,7 @@ func (r *WorkspaceReconciler) revokeKey(ctx context.Context, ws *corev1alpha1.Wo
 
 // releaseKey removes the finalizer after a Workspace delete or a gateway removal. The Workspace
 // stays until each of its TestKeys is revoked (#192).
-func (r *WorkspaceReconciler) releaseKey(ctx context.Context, ws *corev1alpha1.Workspace) error {
+func (r *WorkspaceReconciler) releaseKey(ctx context.Context, ws *corev1beta1.Workspace) error {
 	if hasGateway(ws) && ws.DeletionTimestamp.IsZero() {
 		return nil
 	}
@@ -359,7 +359,7 @@ var errTestKeysUnblocked = errors.New("a TestKey of the Workspace is not blocked
 
 // waitTestKeyBlocks returns errTestKeysUnblocked while a TestKey of ws has a key that is not
 // blocked. A suspend, an unbind and a removed opt-in also start the TestKey revoke.
-func (r *WorkspaceReconciler) waitTestKeyBlocks(ctx context.Context, ws *corev1alpha1.Workspace) error {
+func (r *WorkspaceReconciler) waitTestKeyBlocks(ctx context.Context, ws *corev1beta1.Workspace) error {
 	pending, err := r.testKeysPending(ctx, ws, testKeyBlocked)
 	if err == nil && pending {
 		err = errTestKeysUnblocked
@@ -372,10 +372,10 @@ func (r *WorkspaceReconciler) waitTestKeyBlocks(ctx context.Context, ws *corev1a
 var errUnbindPending = errors.New("the status does not show the unbind yet")
 
 // testKeyRevoked is true if the TestKey has a revoke time.
-func testKeyRevoked(k *corev1alpha1.TestKey) bool { return k.Status.RevokedAt != nil }
+func testKeyRevoked(k *corev1beta1.TestKey) bool { return k.Status.RevokedAt != nil }
 
 // testKeyBlocked is true if the gateway blocked the key of the TestKey.
-func testKeyBlocked(k *corev1alpha1.TestKey) bool {
+func testKeyBlocked(k *corev1beta1.TestKey) bool {
 	c := meta.FindStatusCondition(k.Status.Conditions, condActive)
 	return testKeyRevoked(k) || (c != nil && (c.Reason == reasonTKBlocked || c.Reason == reasonTKRevoked))
 }
@@ -383,9 +383,9 @@ func testKeyBlocked(k *corev1alpha1.TestKey) bool {
 // testKeysPending is true if a TestKey of ws has a recorded key and done is false for it. The
 // TestKey controller blocks and revokes these keys, because it watches the Workspace. The list
 // is not from the cache: a cached TestKey can show no hash after the gateway has its key.
-func (r *WorkspaceReconciler) testKeysPending(ctx context.Context, ws *corev1alpha1.Workspace,
-	done func(*corev1alpha1.TestKey) bool) (bool, error) {
-	list := &corev1alpha1.TestKeyList{}
+func (r *WorkspaceReconciler) testKeysPending(ctx context.Context, ws *corev1beta1.Workspace,
+	done func(*corev1beta1.TestKey) bool) (bool, error) {
+	list := &corev1beta1.TestKeyList{}
 	if err := r.APIReader.List(ctx, list, client.InNamespace(ws.Namespace)); err != nil {
 		return false, err
 	}

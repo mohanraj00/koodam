@@ -31,7 +31,7 @@ import (
 	"k8s.io/client-go/kubernetes/fake"
 	k8stesting "k8s.io/client-go/testing"
 
-	corev1alpha1 "github.com/mohanraj00/koodam/api/v1alpha1"
+	corev1beta1 "github.com/mohanraj00/koodam/api/v1beta1"
 )
 
 const (
@@ -137,7 +137,7 @@ func TestViewerSeesOnlyPermittedNamespaces(t *testing.T) {
 	sample, other := testBudget(budgetNow.Truncate(24*time.Hour)), testBudget(budgetNow.Truncate(24*time.Hour))
 	other.Namespace = otherNamespace
 	reader := f.kube.(agentReader)
-	reader.budgets = []corev1alpha1.SpendBudget{sample, other}
+	reader.budgets = []corev1beta1.SpendBudget{sample, other}
 	f.kube = reader
 	for token, want := range map[string][]string{f.reader: {testNamespace}, f.admin: {testNamespace, otherNamespace}} {
 		b := decode[page[budget]](t, f.call(t, http.MethodGet, budgetsPath, token, http.StatusOK))

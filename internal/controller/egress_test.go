@@ -22,7 +22,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
-	corev1alpha1 "github.com/mohanraj00/koodam/api/v1alpha1"
+	corev1beta1 "github.com/mohanraj00/koodam/api/v1beta1"
 )
 
 const egressSpace = "egress-team"
@@ -46,8 +46,8 @@ var _ = Describe("Egress proxy", func() {
 	})
 
 	It("replaces the DNS of a Workspace spec.podTemplate", func() {
-		ws := &corev1alpha1.Workspace{ObjectMeta: metav1.ObjectMeta{Name: "w", Namespace: egressSpace},
-			Spec: corev1alpha1.WorkspaceSpec{PodTemplate: &corev1alpha1.PodTemplate{Spec: corev1.PodSpec{
+		ws := &corev1beta1.Workspace{ObjectMeta: metav1.ObjectMeta{Name: "w", Namespace: egressSpace},
+			Spec: corev1beta1.WorkspaceSpec{PodTemplate: &corev1beta1.PodTemplate{Spec: corev1.PodSpec{
 				DNSPolicy:   corev1.DNSDefault,
 				DNSConfig:   &corev1.PodDNSConfig{Nameservers: []string{"8.8.8.8"}},
 				HostAliases: []corev1.HostAlias{{IP: "203.0.113.1", Hostnames: []string{"api.example.com"}}}}}}}

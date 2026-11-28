@@ -28,7 +28,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
-	corev1alpha1 "github.com/mohanraj00/koodam/api/v1alpha1"
+	corev1beta1 "github.com/mohanraj00/koodam/api/v1beta1"
 	"github.com/mohanraj00/koodam/test/utils"
 )
 
@@ -44,8 +44,8 @@ var _ = Describe("Run output", Ordered, func() {
 		// The file has the 6 bytes "hello\n". This is its digest from sha256sum.
 		const digest = "5891b5b522d5df086d0ff0b110fbd9d21bb4fc7163af34d08286a2e846f6be03"
 		a := sampleAgent("output", `printf 'hello\n' > /out/report.txt; test -n "$KOODAM_RUN_ID"; sleep 45`)
-		a.Spec.Output = &corev1alpha1.AgentOutput{Path: "/out/report.txt"}
-		a.Spec.PodTemplate = &corev1alpha1.PodTemplate{Spec: corev1.PodSpec{
+		a.Spec.Output = &corev1beta1.AgentOutput{Path: "/out/report.txt"}
+		a.Spec.PodTemplate = &corev1beta1.PodTemplate{Spec: corev1.PodSpec{
 			Volumes: []corev1.Volume{{Name: "out", VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{}}}},
 			Containers: []corev1.Container{{Name: "agent",
 				VolumeMounts: []corev1.VolumeMount{{Name: "out", MountPath: "/out"}}}}}}
@@ -65,7 +65,7 @@ var _ = Describe("Run output", Ordered, func() {
 		expectSucceeded(a)
 		Expect(k8s.Get(ctx, client.ObjectKeyFromObject(a), a)).To(Succeed())
 		Expect(a.Status.RunID).To(Equal(runID), "The run identity changed after the controller restart.")
-		Expect(a.Status.Output).To(Equal(&corev1alpha1.AgentOutputStatus{Path: "/out/report.txt", SHA256: digest,
+		Expect(a.Status.Output).To(Equal(&corev1beta1.AgentOutputStatus{Path: "/out/report.txt", SHA256: digest,
 			Size: new(int64(6))}))
 	})
 })

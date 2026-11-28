@@ -29,7 +29,7 @@ import (
 	"k8s.io/apimachinery/pkg/api/equality"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
-	corev1alpha1 "github.com/mohanraj00/koodam/api/v1alpha1"
+	corev1beta1 "github.com/mohanraj00/koodam/api/v1beta1"
 )
 
 const testAgent = "web"
@@ -73,7 +73,7 @@ func reviewEvidenceWantStop(name string, refusal error) error {
 }
 
 func TestReview(t *testing.T) {
-	if corev1alpha1.GroupVersion.Group != litAgentGroup {
+	if corev1beta1.GroupVersion.Group != litAgentGroup {
 		t.Fatal("the review group is not the Agent API group")
 	}
 	for _, audiences := range [][]string{{Audience}, {litKubeServiceURL, Audience}} {

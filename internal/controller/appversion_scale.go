@@ -25,11 +25,11 @@ import (
 	"k8s.io/apimachinery/pkg/api/equality"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
 
-	corev1alpha1 "github.com/mohanraj00/koodam/api/v1alpha1"
+	corev1beta1 "github.com/mohanraj00/koodam/api/v1beta1"
 )
 
 // scaleMin is the smallest number of pods of a version with a scale.
-func scaleMin(s *corev1alpha1.AppVersionScale) int32 {
+func scaleMin(s *corev1beta1.AppVersionScale) int32 {
 	if s.MinReplicas != nil {
 		return *s.MinReplicas
 	}
@@ -38,10 +38,10 @@ func scaleMin(s *corev1alpha1.AppVersionScale) int32 {
 
 // autoscaler gives back the HorizontalPodAutoscaler of a version with a scale. A version in its
 // drain stays at its minimum, so the load of old sessions cannot keep a retired version large.
-func autoscaler(av *corev1alpha1.AppVersion) *autoscalingv2.HorizontalPodAutoscaler {
+func autoscaler(av *corev1beta1.AppVersion) *autoscalingv2.HorizontalPodAutoscaler {
 	s := av.Spec.Scale
 	low, high := scaleMin(s), s.MaxReplicas
-	if av.Spec.Lifecycle == corev1alpha1.AppVersionRetiring {
+	if av.Spec.Lifecycle == corev1beta1.AppVersionRetiring {
 		high = low
 	}
 	var m autoscalingv2.MetricSpec
@@ -66,7 +66,7 @@ func autoscaler(av *corev1alpha1.AppVersion) *autoscalingv2.HorizontalPodAutosca
 // applyScale makes or updates the HorizontalPodAutoscaler of a version with a scale. It deletes
 // the autoscaler of a version with no scale. It returns a reason if an autoscaler with the version
 // name is not from av, or if the API server refuses the autoscaler.
-func (r *AppVersionReconciler) applyScale(ctx context.Context, av *corev1alpha1.AppVersion) (string, error) {
+func (r *AppVersionReconciler) applyScale(ctx context.Context, av *corev1beta1.AppVersion) (string, error) {
 	if av.Spec.Scale == nil {
 		return "", r.deleteOwned(ctx, av, &autoscalingv2.HorizontalPodAutoscaler{})
 	}

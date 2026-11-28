@@ -29,7 +29,7 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
-	corev1alpha1 "github.com/mohanraj00/koodam/api/v1alpha1"
+	corev1beta1 "github.com/mohanraj00/koodam/api/v1beta1"
 	"github.com/mohanraj00/koodam/internal/agentingress"
 )
 
@@ -108,7 +108,7 @@ func (r *targetResolver) lookup(ctx context.Context, namespace, agent string) (t
 	if _, ok := r.guards[namespace]; !ok {
 		return target{}, ErrTargetUnavailable
 	}
-	a := &corev1alpha1.Agent{}
+	a := &corev1beta1.Agent{}
 	if err := r.get(ctx, namespace, agent, a); err != nil {
 		return target{}, err
 	}

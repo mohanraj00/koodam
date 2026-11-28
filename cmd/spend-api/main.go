@@ -40,7 +40,7 @@ import (
 	"k8s.io/client-go/tools/clientcmd"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
-	corev1alpha1 "github.com/mohanraj00/koodam/api/v1alpha1"
+	corev1beta1 "github.com/mohanraj00/koodam/api/v1beta1"
 	"github.com/mohanraj00/koodam/internal/appclaim"
 	"github.com/mohanraj00/koodam/internal/opspage"
 	"github.com/mohanraj00/koodam/internal/spendapi"
@@ -167,7 +167,7 @@ func setupKube(c *spendapi.Config, rules *clientcmd.ClientConfigLoadingRules) er
 		c.Viewers.Access = clients.AuthorizationV1().SubjectAccessReviews()
 	}
 	scheme := runtime.NewScheme()
-	for _, add := range []func(*runtime.Scheme) error{corev1alpha1.AddToScheme, batchv1.AddToScheme, corev1.AddToScheme} {
+	for _, add := range []func(*runtime.Scheme) error{corev1beta1.AddToScheme, batchv1.AddToScheme, corev1.AddToScheme} {
 		if err := add(scheme); err != nil {
 			return errors.New("the Agent, Job and pod schemes could not be registered")
 		}
@@ -211,7 +211,7 @@ func serve(address string, timeout time.Duration, handler http.Handler) error {
 // access. Each kind that the server reads must be here, or the read fails before it goes to the API
 // server.
 func kubeMapper() meta.RESTMapper {
-	gv := corev1alpha1.GroupVersion
+	gv := corev1beta1.GroupVersion
 	mapper := meta.NewDefaultRESTMapper([]schema.GroupVersion{gv, batchv1.SchemeGroupVersion, corev1.SchemeGroupVersion})
 	mapper.AddSpecific(batchv1.SchemeGroupVersion.WithKind("Job"), batchv1.SchemeGroupVersion.WithResource("jobs"),
 		batchv1.SchemeGroupVersion.WithResource("job"), meta.RESTScopeNamespace)

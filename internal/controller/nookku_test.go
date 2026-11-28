@@ -26,9 +26,14 @@ import (
 	"testing"
 
 	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/api/meta"
 	"k8s.io/apimachinery/pkg/api/resource"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/client/fake"
+	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
-	corev1alpha1 "github.com/mohanraj00/koodam/api/v1alpha1"
+	corev1beta1 "github.com/mohanraj00/koodam/api/v1beta1"
 )
 
 // The expected values are literals, not the production constants, so a change to a production
@@ -40,17 +45,83 @@ const (
 	nookkuTestAgentDir = "/koodam/nookku-tests"
 	nookkuTestMarker   = "/etc/koodam/nookku"
 	nookkuTestOther    = "/tmp/other"
+	unknownPresetText  = "The harness names a plugin preset that this controller does not have."
 )
+
+func TestAgentPresetReconcile(t *testing.T) {
+	for _, tc := range []struct {
+		name corev1beta1.HarnessPlugin
+		want string
+	}{
+		{"nookku", ""},
+		{"unknown", unknownPresetText},
+		{"../x", unknownPresetText},
+	} {
+		t.Run(string(tc.name), func(t *testing.T) {
+			a := ingAgent()
+			a.Spec.Harness = &corev1beta1.HarnessSpec{Name: claudeName, Plugins: []corev1beta1.HarnessPlugin{tc.name}}
+			a.Spec.PodTemplate = nookkuAgent(claudeName, true).Spec.PodTemplate
+			live := ingWorld(t, a)
+			g := &countGateway{live: live}
+			r := ingReconciler(live, live, g)
+			r.InstallerImage, r.PresetImages = jobIngInstaller, jobIngPresetImages
+			ingReconcile(t, r)
+			if tc.want != "" {
+				got := ingLive(t, live)
+				c := meta.FindStatusCondition(got.Status.Conditions, condProvisioned)
+				if got.Status.Phase != corev1beta1.AgentFailed || c == nil ||
+					c.Status != metav1.ConditionFalse || c.Reason != "Invalid" || c.Message != tc.want || len(g.order) != 0 {
+					t.Fatal("The Agent did not fail with the fixed message before a gateway call.")
+				}
+				ingNoAccess(t, live)
+				return
+			}
+			ingExpectRunning(t, live, g)
+			job := ingJob(a)
+			if err := live.Get(t.Context(), client.ObjectKeyFromObject(job), job); err != nil {
+				t.Fatal(err)
+			}
+			pod := job.Spec.Template.Spec
+			m, ok := nookkuMount(pod.Containers[0])
+			if !ok || m.MountPath != "/koodam/nookku-tests" || m.ReadOnly {
+				t.Fatal("The Agent pod has no writable nookku-tests mount.")
+			}
+		})
+	}
+}
+
+func TestWorkspaceUnknownPresetCondition(t *testing.T) {
+	ws := &corev1beta1.Workspace{
+		ObjectMeta: metav1.ObjectMeta{Name: "preset", Namespace: "work", Generation: 2},
+		Spec: corev1beta1.WorkspaceSpec{Harnesses: []corev1beta1.HarnessSpec{
+			{Name: claudeName, Plugins: []corev1beta1.HarnessPlugin{"unknown"}},
+		}},
+	}
+	live := fake.NewClientBuilder().WithScheme(ingWorld(t).Scheme()).WithObjects(ws).WithStatusSubresource(ws).Build()
+	r := &WorkspaceReconciler{Client: live, APIReader: live, InstallerImage: jobIngInstaller}
+	key := client.ObjectKeyFromObject(ws)
+	if _, err := r.Reconcile(t.Context(), reconcile.Request{NamespacedName: key}); err != nil {
+		t.Fatal(err)
+	}
+	if err := live.Get(t.Context(), key, ws); err != nil {
+		t.Fatal(err)
+	}
+	c := meta.FindStatusCondition(ws.Status.Conditions, "Harnesses")
+	if c == nil || c.Status != metav1.ConditionFalse || c.Reason != "UnknownPluginPreset" ||
+		c.Message != unknownPresetText || c.ObservedGeneration != ws.Generation {
+		t.Fatal("The Workspace does not have the fixed Harnesses condition.")
+	}
+}
 
 // nookkuAgent is an Agent with the harness h, the nookku plugin if on, and a template with the
 // user PVC nookku-tests.
-func nookkuAgent(h string, on bool) *corev1alpha1.Agent {
-	tmpl := &corev1alpha1.PodTemplate{Spec: corev1.PodSpec{Volumes: []corev1.Volume{{Name: nookkuTestVolume,
+func nookkuAgent(h string, on bool) *corev1beta1.Agent {
+	tmpl := &corev1beta1.PodTemplate{Spec: corev1.PodSpec{Volumes: []corev1.Volume{{Name: nookkuTestVolume,
 		VolumeSource: corev1.VolumeSource{PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{
 			ClaimName: "my-tests"}}}}}}
 	a := jobIngAgent(nil, h, tmpl)
 	if on {
-		a.Spec.Harness.Plugins = []corev1alpha1.HarnessPlugin{nookkuTestPlugin}
+		a.Spec.Harness.Plugins = []corev1beta1.HarnessPlugin{nookkuTestPlugin}
 	}
 	return a
 }
@@ -109,9 +180,9 @@ func TestAgentNookkuFolder(t *testing.T) {
 }
 
 func TestAgentNoNookkuFolder(t *testing.T) {
-	for _, a := range []*corev1alpha1.Agent{nookkuAgent(claudeName, false), nookkuAgent(codexName, false),
+	for _, a := range []*corev1beta1.Agent{nookkuAgent(claudeName, false), nookkuAgent(codexName, false),
 		jobIngAgent(nil, "", nil)} {
-		c := runJob(a, jobIngInstaller, jobIngNookku, jobIngGatewayURL).Spec.Template.Spec.Containers[0]
+		c := runJob(a, jobIngInstaller, jobIngPresetImages, jobIngGatewayURL).Spec.Template.Spec.Containers[0]
 		if _, ok := nookkuMount(c); ok {
 			t.Error("an Agent with no nookku plugin mounts nookku-tests")
 		}
@@ -148,13 +219,13 @@ func TestAgentNookkuRefusesUserValues(t *testing.T) {
 }
 
 func TestWorkspaceNookkuMarker(t *testing.T) {
-	ws := func(h ...corev1alpha1.HarnessSpec) *corev1alpha1.Workspace {
-		w := &corev1alpha1.Workspace{Spec: corev1alpha1.WorkspaceSpec{Harnesses: h}}
+	ws := func(h ...corev1beta1.HarnessSpec) *corev1beta1.Workspace {
+		w := &corev1beta1.Workspace{Spec: corev1beta1.WorkspaceSpec{Harnesses: h}}
 		w.Name, w.Namespace = "n", testTeam
 		return w
 	}
-	on := corev1alpha1.HarnessSpec{Name: codexName, Plugins: []corev1alpha1.HarnessPlugin{nookkuTestPlugin}}
-	off := corev1alpha1.HarnessSpec{Name: claudeName}
+	on := corev1beta1.HarnessSpec{Name: codexName, Plugins: []corev1beta1.HarnessPlugin{nookkuTestPlugin}}
+	off := corev1beta1.HarnessSpec{Name: claudeName}
 	marker := func(p corev1.PodSpec) (vols, mounts int, ok bool) {
 		ok = true
 		for _, m := range p.Containers[0].VolumeMounts {
@@ -174,7 +245,7 @@ func TestWorkspaceNookkuMarker(t *testing.T) {
 	for _, image := range []string{"", installer} {
 		r := &WorkspaceReconciler{Image: testWorkspaceImage, InstallerImage: image}
 		for name, c := range map[string]struct {
-			w    *corev1alpha1.Workspace
+			w    *corev1beta1.Workspace
 			want int
 		}{
 			"none": {ws(), 0}, "off": {ws(off), 0}, "on": {ws(on), 1}, "second": {ws(off, on), 1},
@@ -278,7 +349,7 @@ func TestAgentNookkuPythonCheck(t *testing.T) {
 			t.Fatalf("%s: the merge failed: %v", h, err)
 		}
 		checkNookkuCheck(t, h, out.Spec)
-		off := runJob(nookkuAgent(h, false), jobIngInstaller, jobIngNookku, jobIngGatewayURL).Spec.Template.Spec
+		off := runJob(nookkuAgent(h, false), jobIngInstaller, jobIngPresetImages, jobIngGatewayURL).Spec.Template.Spec
 		if len(nookkuCheck(off)) != 0 {
 			t.Errorf("%s: an Agent with no nookku plugin has a Python check", h)
 		}
@@ -286,8 +357,8 @@ func TestAgentNookkuPythonCheck(t *testing.T) {
 }
 
 func TestWorkspaceNookkuPythonCheck(t *testing.T) {
-	w := &corev1alpha1.Workspace{Spec: corev1alpha1.WorkspaceSpec{Harnesses: []corev1alpha1.HarnessSpec{
-		{Name: claudeName}, {Name: codexName, Plugins: []corev1alpha1.HarnessPlugin{nookkuTestPlugin}}}}}
+	w := &corev1beta1.Workspace{Spec: corev1beta1.WorkspaceSpec{Harnesses: []corev1beta1.HarnessSpec{
+		{Name: claudeName}, {Name: codexName, Plugins: []corev1beta1.HarnessPlugin{nookkuTestPlugin}}}}}
 	w.Name, w.Namespace = "n", testTeam
 	r := &WorkspaceReconciler{Image: testWorkspaceImage, InstallerImage: installer}
 	checkNookkuCheck(t, "on", r.statefulSet(w, testProfile).Spec.Template.Spec)
@@ -303,14 +374,14 @@ func TestWorkspaceNookkuPythonCheck(t *testing.T) {
 func TestNookkuPythonCheckFollowsMerge(t *testing.T) {
 	pod := corev1.PodSpec{Containers: []corev1.Container{{Name: "main", Image: "example.com/a:1",
 		Env: []corev1.EnvVar{{Name: pathEnv, Value: "/a"}}}}}
-	addNookkuPythonCheck(&pod)
+	harnessPresets[nookkuTestPlugin].addPythonCheck(&pod)
 	pod.Containers[0].Image = "example.com/b:1"
 	pod.Containers[0].Env = []corev1.EnvVar{{Name: pathEnv, Value: "/b"}, {Name: "OTHER", Value: "x"}}
 	pod.Containers[0].WorkingDir, pod.Containers[0].ImagePullPolicy = "/work", corev1.PullNever
 	pod.Containers[0].SecurityContext = &corev1.SecurityContext{RunAsUser: new(int64(0)),
 		RunAsGroup: new(int64(10)), Privileged: new(true), Capabilities: &corev1.Capabilities{
 			Add: []corev1.Capability{"NET_ADMIN"}}}
-	syncNookkuPythonCheck(&pod, "main")
+	syncPresetPythonChecks(&pod, "main")
 	if c := nookkuCheck(pod)[0]; c.Image != "example.com/b:1" || !slices.Equal(c.Env, []corev1.EnvVar{{Name: pathEnv, Value: "/b"}}) {
 		t.Errorf("the Python check is %+v after the merge", c)
 	}
@@ -338,7 +409,7 @@ func TestNookkuPythonCheckFollowsMerge(t *testing.T) {
 	}{{"ConfigMap", cm, true}, {"field", field, true}, {"Secret", secret, false}, {"resource", res, false}} {
 		name := c.name
 		pod.Containers[0].Env = []corev1.EnvVar{{Name: "LANG", Value: "C"}, {Name: pathEnv, ValueFrom: c.from}}
-		syncNookkuPythonCheck(&pod, "main")
+		syncPresetPythonChecks(&pod, "main")
 		var want []corev1.EnvVar
 		if c.copy {
 			want = []corev1.EnvVar{{Name: pathEnv, ValueFrom: c.from}}
@@ -354,7 +425,7 @@ func TestNookkuPythonCheckFollowsMerge(t *testing.T) {
 	// The check keeps its fixed resources if the main container has larger ones.
 	pod.Containers[0].Resources = corev1.ResourceRequirements{Limits: corev1.ResourceList{
 		corev1.ResourceCPU: resource.MustParse("4"), corev1.ResourceMemory: resource.MustParse("8Gi")}}
-	syncNookkuPythonCheck(&pod, "main")
+	syncPresetPythonChecks(&pod, "main")
 	checkNookkuResources(t, "large main", nookkuCheck(pod)[0])
 }
 
@@ -449,7 +520,7 @@ func TestAgentNookkuFiles(t *testing.T) {
 		if title != (h == claudeName) {
 			t.Errorf("%s: the env CLAUDE_CODE_DISABLE_TERMINAL_TITLE=1 is %v", h, title)
 		}
-		off := runJob(nookkuAgent(h, false), jobIngInstaller, jobIngNookku, jobIngGatewayURL).Spec.Template.Spec
+		off := runJob(nookkuAgent(h, false), jobIngInstaller, jobIngPresetImages, jobIngGatewayURL).Spec.Template.Spec
 		if slices.ContainsFunc(off.InitContainers, func(c corev1.Container) bool { return c.Name == nookkuTestFiles }) ||
 			slices.ContainsFunc(off.Containers[0].Env, func(e corev1.EnvVar) bool { return e.Name == nookkuTestTitle }) {
 			t.Errorf("%s: an Agent with no nookku plugin gets Nookku files or the title env", h)
@@ -458,23 +529,23 @@ func TestAgentNookkuFiles(t *testing.T) {
 	// A value of spec.env stays.
 	a := nookkuAgent(claudeName, true)
 	a.Spec.Env = map[string]string{nookkuTestTitle: "0"}
-	env := runJob(a, jobIngInstaller, jobIngNookku, jobIngGatewayURL).Spec.Template.Spec.Containers[0].Env
+	env := runJob(a, jobIngInstaller, jobIngPresetImages, jobIngGatewayURL).Spec.Template.Spec.Containers[0].Env
 	if n := slices.IndexFunc(env, func(e corev1.EnvVar) bool { return e.Name == nookkuTestTitle }); n < 0 ||
 		env[n].Value != "0" || slices.ContainsFunc(env[n+1:], func(e corev1.EnvVar) bool { return e.Name == nookkuTestTitle }) {
 		t.Errorf("the env of spec.env changed: %+v", env)
 	}
 	// With no Nookku image, the controller refuses the run.
 	r := &AgentReconciler{InstallerImage: jobIngInstaller}
-	if r.noInstaller(nookkuAgent(codexName, true)) != msgNoNookkuImage || r.noInstaller(nookkuAgent(codexName, false)) != "" {
+	if r.noInstaller(nookkuAgent(codexName, true)) != "The controller has no --nookku-image, so it cannot install the nookku plugin." || r.noInstaller(nookkuAgent(codexName, false)) != "" {
 		t.Error("the controller does not refuse an Agent with nookku and no Nookku image")
 	}
 }
 
 func TestWorkspaceNookkuFiles(t *testing.T) {
-	w := &corev1alpha1.Workspace{Spec: corev1alpha1.WorkspaceSpec{Harnesses: []corev1alpha1.HarnessSpec{
-		{Name: claudeName}, {Name: codexName, Plugins: []corev1alpha1.HarnessPlugin{nookkuTestPlugin}}}}}
+	w := &corev1beta1.Workspace{Spec: corev1beta1.WorkspaceSpec{Harnesses: []corev1beta1.HarnessSpec{
+		{Name: claudeName}, {Name: codexName, Plugins: []corev1beta1.HarnessPlugin{nookkuTestPlugin}}}}}
 	w.Name, w.Namespace = "n", testTeam
-	r := &WorkspaceReconciler{Image: testWorkspaceImage, InstallerImage: installer, NookkuImage: jobIngNookku}
+	r := &WorkspaceReconciler{Image: testWorkspaceImage, InstallerImage: installer, PresetImages: jobIngPresetImages}
 	spec := r.statefulSet(w, testProfile).Spec.Template.Spec
 	checkNookkuFiles(t, "on", jobIngNookku, spec)
 	if slices.ContainsFunc(spec.Containers[0].Env, func(e corev1.EnvVar) bool { return e.Name == nookkuTestTitle }) {
@@ -482,10 +553,10 @@ func TestWorkspaceNookkuFiles(t *testing.T) {
 	}
 	// With no Nookku image or no installer image, the pod has no copy.
 	for _, r := range []*WorkspaceReconciler{{Image: testWorkspaceImage, InstallerImage: installer},
-		{Image: testWorkspaceImage, NookkuImage: jobIngNookku}} {
+		{Image: testWorkspaceImage, PresetImages: jobIngPresetImages}} {
 		if spec := r.statefulSet(w, testProfile).Spec.Template.Spec; slices.ContainsFunc(spec.InitContainers,
 			func(c corev1.Container) bool { return c.Name == nookkuTestFiles }) {
-			t.Errorf("the pod has a Nookku file copy with the images %q and %q", r.InstallerImage, r.NookkuImage)
+			t.Errorf("the pod has a Nookku file copy with the images %q and %q", r.InstallerImage, r.PresetImages[NookkuImageFlag])
 		}
 	}
 }

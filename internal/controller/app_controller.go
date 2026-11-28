@@ -35,7 +35,7 @@ import (
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
-	corev1alpha1 "github.com/mohanraj00/koodam/api/v1alpha1"
+	corev1beta1 "github.com/mohanraj00/koodam/api/v1beta1"
 )
 
 const (
@@ -73,7 +73,7 @@ func (r *AppReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.R
 	if r.APIReader == nil {
 		return ctrl.Result{}, errNoAPIReader
 	}
-	app := &corev1alpha1.App{}
+	app := &corev1beta1.App{}
 	if err := r.APIReader.Get(ctx, req.NamespacedName, app); err != nil {
 		return ctrl.Result{}, client.IgnoreNotFound(err)
 	}
@@ -81,11 +81,11 @@ func (r *AppReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.R
 		// The garbage collector deletes the routes of the App.
 		return ctrl.Result{}, nil
 	}
-	versions := &corev1alpha1.AppVersionList{}
+	versions := &corev1beta1.AppVersionList{}
 	if err := r.APIReader.List(ctx, versions, client.InNamespace(app.Namespace)); err != nil {
 		return ctrl.Result{}, err
 	}
-	status := make([]corev1alpha1.AppEndpointStatus, 0, len(app.Spec.Endpoints))
+	status := make([]corev1beta1.AppEndpointStatus, 0, len(app.Spec.Endpoints))
 	keep := map[string]bool{}
 	for i := range app.Spec.Endpoints {
 		ep := &app.Spec.Endpoints[i]
@@ -114,7 +114,7 @@ func (r *AppReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.R
 
 // appRouteName is the name of the route of an endpoint. An endpoint name has no dot, so 2
 // endpoints of 2 Apps cannot have the same route name.
-func appRouteName(app *corev1alpha1.App, endpoint string) string {
+func appRouteName(app *corev1beta1.App, endpoint string) string {
 	return "kd-" + app.Name + "." + endpoint
 }
 
@@ -125,9 +125,9 @@ func newRoute() *unstructured.Unstructured {
 }
 
 // applyRoute makes or updates the route of one endpoint and gives back its status.
-func (r *AppReconciler) applyRoute(ctx context.Context, app *corev1alpha1.App, ep *corev1alpha1.AppEndpoint,
-	versions []corev1alpha1.AppVersion) (corev1alpha1.AppEndpointStatus, error) {
-	st := corev1alpha1.AppEndpointStatus{Name: ep.Name}
+func (r *AppReconciler) applyRoute(ctx context.Context, app *corev1beta1.App, ep *corev1beta1.AppEndpoint,
+	versions []corev1beta1.AppVersion) (corev1beta1.AppEndpointStatus, error) {
+	st := corev1beta1.AppEndpointStatus{Name: ep.Name}
 	refs, pins, down, err := r.backends(ctx, app, ep, versions, &st)
 	if err != nil {
 		return st, err
@@ -137,7 +137,7 @@ func (r *AppReconciler) applyRoute(ctx context.Context, app *corev1alpha1.App, e
 	err = r.APIReader.Get(ctx, client.ObjectKeyFromObject(want), have)
 	switch {
 	case meta.IsNoMatchError(err):
-		st.RouteState = corev1alpha1.AppRouteNoGatewayAPI
+		st.RouteState = corev1beta1.AppRouteNoGatewayAPI
 		st.Message = "The cluster does not have the Gateway API HTTPRoute."
 		return st, nil
 	case apierrors.IsNotFound(err):
@@ -146,7 +146,7 @@ func (r *AppReconciler) applyRoute(ctx context.Context, app *corev1alpha1.App, e
 	case err != nil:
 		return st, err
 	case !metav1.IsControlledBy(have, app):
-		st.RouteState = corev1alpha1.AppRouteNameConflict
+		st.RouteState = corev1beta1.AppRouteNameConflict
 		st.Message = "An HTTPRoute with the route name is not from this App."
 		return st, nil
 	default:
@@ -160,7 +160,7 @@ func (r *AppReconciler) applyRoute(ctx context.Context, app *corev1alpha1.App, e
 		// The reason can have a host name of the endpoint. It is not a credential.
 		logf.FromContext(ctx).Info("The API server refused the HTTPRoute of an endpoint", "endpoint", ep.Name,
 			"reason", string(apierrors.ReasonForError(err)))
-		st.RouteState, st.Message = corev1alpha1.AppRouteRefused, "The API server refused the HTTPRoute."
+		st.RouteState, st.Message = corev1beta1.AppRouteRefused, "The API server refused the HTTPRoute."
 		return st, nil
 	}
 	if err != nil {
@@ -178,8 +178,8 @@ func (r *AppReconciler) applyRoute(ctx context.Context, app *corev1alpha1.App, e
 // has the weight 0 and no backendRef. A version that drains keeps its session rule if it has a
 // weight in the spec. A version with the weight 0 in the spec has no session rule. down has the
 // names of the versions that have a weight in the spec and cannot get a new session.
-func (r *AppReconciler) backends(ctx context.Context, app *corev1alpha1.App, ep *corev1alpha1.AppEndpoint,
-	versions []corev1alpha1.AppVersion, st *corev1alpha1.AppEndpointStatus) (refs, pins []any, down []string, err error) {
+func (r *AppReconciler) backends(ctx context.Context, app *corev1beta1.App, ep *corev1beta1.AppEndpoint,
+	versions []corev1beta1.AppVersion, st *corev1beta1.AppEndpointStatus) (refs, pins []any, down []string, err error) {
 	for _, v := range ep.Versions {
 		weight := int32(0)
 		if v.Weight != nil {
@@ -196,7 +196,7 @@ func (r *AppReconciler) backends(ctx context.Context, app *corev1alpha1.App, ep 
 		if port != 0 && weight > 0 {
 			pins = append(pins, map[string]any{
 				"matches": []any{map[string]any{"headers": []any{map[string]any{
-					metaNameKey: corev1alpha1.AppVersionHeader, "value": v.Name}}}},
+					metaNameKey: corev1beta1.AppVersionHeader, "value": v.Name}}}},
 				"backendRefs": []any{backendRef("kd-"+v.Name, port, 1)},
 			})
 		}
@@ -206,7 +206,7 @@ func (r *AppReconciler) backends(ctx context.Context, app *corev1alpha1.App, ep 
 		case weight > 0:
 			refs = append(refs, backendRef("kd-"+v.Name, port, weight))
 		}
-		st.Weights = append(st.Weights, corev1alpha1.AppEndpointVersion{Name: v.Name, Weight: &weight})
+		st.Weights = append(st.Weights, corev1beta1.AppEndpointVersion{Name: v.Name, Weight: &weight})
 	}
 	return refs, pins, down, nil
 }
@@ -220,7 +220,7 @@ func backendRef(service string, port, weight int32) map[string]any {
 // serve. It gives back 0 if the version is not bound to this App, waits for its key, has a revoke that
 // started, has a gate with no accepted pass or has no Service with this port. active is false for a version that retires: it can
 // serve the sessions that it has, and it gets no new session.
-func (r *AppReconciler) servingPort(ctx context.Context, app *corev1alpha1.App, versions []corev1alpha1.AppVersion,
+func (r *AppReconciler) servingPort(ctx context.Context, app *corev1beta1.App, versions []corev1beta1.AppVersion,
 	name, port string) (number int32, active bool, err error) {
 	for i := range versions {
 		av := &versions[i]
@@ -229,10 +229,10 @@ func (r *AppReconciler) servingPort(ctx context.Context, app *corev1alpha1.App, 
 		}
 		if av.Spec.AppRef.Name != app.Name || av.Status.BoundAppUID != app.UID || !av.DeletionTimestamp.IsZero() ||
 			(av.Status.KeyHash == "" && len(av.Spec.Template.ModelList()) > 0) ||
-			meta.FindStatusCondition(av.Status.Conditions, corev1alpha1.AppVersionRevoking) != nil || !gatePassed(av) {
+			meta.FindStatusCondition(av.Status.Conditions, corev1beta1.AppVersionRevoking) != nil || !gatePassed(av) {
 			return 0, false, nil
 		}
-		active = av.Spec.Lifecycle != corev1alpha1.AppVersionRetiring
+		active = av.Spec.Lifecycle != corev1beta1.AppVersionRetiring
 		svc := &corev1.Service{}
 		err := r.APIReader.Get(ctx, types.NamespacedName{Namespace: av.Namespace, Name: appVersionName(av)}, svc)
 		if apierrors.IsNotFound(err) || (err == nil && !metav1.IsControlledBy(svc, av)) {
@@ -253,7 +253,7 @@ func (r *AppReconciler) servingPort(ctx context.Context, app *corev1alpha1.App, 
 // appRoute is the HTTPRoute of an endpoint. The values are JSON types, as unstructured needs.
 // The session rules have a header match, so they come before the weight rule in the order of
 // the Gateway API.
-func appRoute(app *corev1alpha1.App, ep *corev1alpha1.AppEndpoint, refs, pins []any) *unstructured.Unstructured {
+func appRoute(app *corev1beta1.App, ep *corev1beta1.AppEndpoint, refs, pins []any) *unstructured.Unstructured {
 	parent := map[string]any{"group": gatewayAPIGroup, "kind": "Gateway", "name": ep.Gateway.Name}
 	if ep.Gateway.Namespace != "" {
 		parent["namespace"] = ep.Gateway.Namespace
@@ -278,7 +278,7 @@ func appRoute(app *corev1alpha1.App, ep *corev1alpha1.AppEndpoint, refs, pins []
 	u.SetNamespace(app.Namespace)
 	u.SetLabels(map[string]string{appLabel: app.Name})
 	u.SetOwnerReferences([]metav1.OwnerReference{*metav1.NewControllerRef(app,
-		corev1alpha1.GroupVersion.WithKind("App"))})
+		corev1beta1.GroupVersion.WithKind("App"))})
 	u.Object["spec"] = spec
 	return u
 }
@@ -301,7 +301,7 @@ func routeState(route *unstructured.Unstructured) (state, msg string) {
 			}
 			if status == string(metav1.ConditionFalse) {
 				reason, _ := cond["reason"].(string)
-				return corev1alpha1.AppRouteNotAccepted,
+				return corev1beta1.AppRouteNotAccepted,
 					"A Gateway reports " + typ.(string) + " False with the reason " + reason + "."
 			}
 			ok = ok || (typ == "Accepted" && status == string(metav1.ConditionTrue))
@@ -309,13 +309,13 @@ func routeState(route *unstructured.Unstructured) (state, msg string) {
 		accepted = accepted && ok
 	}
 	if !accepted {
-		return corev1alpha1.AppRoutePending, "No Gateway controller accepted the route at this time."
+		return corev1beta1.AppRoutePending, "No Gateway controller accepted the route at this time."
 	}
-	return corev1alpha1.AppRouteAccepted, "Each parent Gateway accepted the route."
+	return corev1beta1.AppRouteAccepted, "Each parent Gateway accepted the route."
 }
 
 // prune deletes the routes of this App that are not in keep.
-func (r *AppReconciler) prune(ctx context.Context, app *corev1alpha1.App, keep map[string]bool) error {
+func (r *AppReconciler) prune(ctx context.Context, app *corev1beta1.App, keep map[string]bool) error {
 	list := &unstructured.UnstructuredList{}
 	list.SetGroupVersionKind(httpRouteGVK.GroupVersion().WithKind("HTTPRouteList"))
 	err := r.APIReader.List(ctx, list, client.InNamespace(app.Namespace), client.MatchingLabels{appLabel: app.Name})
@@ -340,7 +340,7 @@ func (r *AppReconciler) prune(ctx context.Context, app *corev1alpha1.App, keep m
 
 // appOfVersion gives back the App of an AppVersion.
 func appOfVersion(_ context.Context, obj client.Object) []reconcile.Request {
-	av, ok := obj.(*corev1alpha1.AppVersion)
+	av, ok := obj.(*corev1beta1.AppVersion)
 	if !ok {
 		return nil
 	}
@@ -350,8 +350,8 @@ func appOfVersion(_ context.Context, obj client.Object) []reconcile.Request {
 // SetupWithManager sets up the controller with the Manager.
 func (r *AppReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	return ctrl.NewControllerManagedBy(mgr).
-		For(&corev1alpha1.App{}).
-		Watches(&corev1alpha1.AppVersion{}, handler.EnqueueRequestsFromMapFunc(appOfVersion)).
+		For(&corev1beta1.App{}).
+		Watches(&corev1beta1.AppVersion{}, handler.EnqueueRequestsFromMapFunc(appOfVersion)).
 		Named("app").
 		Complete(r)
 }

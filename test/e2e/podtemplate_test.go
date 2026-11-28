@@ -32,7 +32,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
-	corev1alpha1 "github.com/mohanraj00/koodam/api/v1alpha1"
+	corev1beta1 "github.com/mohanraj00/koodam/api/v1beta1"
 )
 
 const (
@@ -45,9 +45,9 @@ const (
 )
 
 var _ = Describe("Pod template", Ordered, Label("workspace"), func() {
-	workspace := func(name string, t *corev1alpha1.PodTemplate) *corev1alpha1.Workspace {
-		return &corev1alpha1.Workspace{ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: ptNS},
-			Spec: corev1alpha1.WorkspaceSpec{Image: workspaceImage, Storage: resource.MustParse("1Gi"),
+	workspace := func(name string, t *corev1beta1.PodTemplate) *corev1beta1.Workspace {
+		return &corev1beta1.Workspace{ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: ptNS},
+			Spec: corev1beta1.WorkspaceSpec{Image: workspaceImage, Storage: resource.MustParse("1Gi"),
 				PodTemplate: t}}
 	}
 	envFrom := func(secret string) []corev1.EnvVar {
@@ -57,13 +57,13 @@ var _ = Describe("Pod template", Ordered, Label("workspace"), func() {
 
 	BeforeAll(func() {
 		DeferCleanup(func() {
-			_ = k8s.DeleteAllOf(ctx, &corev1alpha1.Workspace{}, client.InNamespace(ptNS))
+			_ = k8s.DeleteAllOf(ctx, &corev1beta1.Workspace{}, client.InNamespace(ptNS))
 			Eventually(func() int {
-				l := &corev1alpha1.WorkspaceList{}
+				l := &corev1beta1.WorkspaceList{}
 				_ = k8s.List(ctx, l, client.InNamespace(ptNS))
 				return len(l.Items)
 			}, 2*time.Minute, time.Second).Should(BeZero(), "The finalizer kept a Workspace.")
-			_ = k8s.Delete(ctx, &corev1alpha1.Profile{ObjectMeta: metav1.ObjectMeta{Name: ptProfile}})
+			_ = k8s.Delete(ctx, &corev1beta1.Profile{ObjectMeta: metav1.ObjectMeta{Name: ptProfile}})
 			_ = k8s.Delete(ctx, &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: ptNS}})
 			Eventually(func() bool {
 				return apierrors.IsNotFound(k8s.Get(ctx, client.ObjectKey{Name: ptNS}, &corev1.Namespace{}))
@@ -71,9 +71,9 @@ var _ = Describe("Pod template", Ordered, Label("workspace"), func() {
 		})
 		for _, o := range []client.Object{
 			&corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: ptNS,
-				Labels: map[string]string{corev1alpha1.ProfileLabel: ptProfile}}},
-			&corev1alpha1.Profile{ObjectMeta: metav1.ObjectMeta{Name: ptProfile},
-				Spec: corev1alpha1.ProfileSpec{Namespaces: []string{ptNS}}},
+				Labels: map[string]string{corev1beta1.ProfileLabel: ptProfile}}},
+			&corev1beta1.Profile{ObjectMeta: metav1.ObjectMeta{Name: ptProfile},
+				Spec: corev1beta1.ProfileSpec{Namespaces: []string{ptNS}}},
 			&corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: ptSecret, Namespace: ptNS},
 				StringData: map[string]string{"config": "e2e"}},
 		} {
@@ -84,8 +84,8 @@ var _ = Describe("Pod template", Ordered, Label("workspace"), func() {
 	AfterEach(func() { dumpWorkspaces() })
 
 	It("merges spec.podTemplate into the Workspace pod", func() {
-		ws := workspace("merged", &corev1alpha1.PodTemplate{
-			Metadata: corev1alpha1.PodTemplateMetadata{Labels: map[string]string{"group": "e2e"}},
+		ws := workspace("merged", &corev1beta1.PodTemplate{
+			Metadata: corev1beta1.PodTemplateMetadata{Labels: map[string]string{"group": "e2e"}},
 			Spec: corev1.PodSpec{
 				NodeSelector: map[string]string{"kubernetes.io/os": "linux"},
 				Containers: []corev1.Container{{Name: "workspace", Env: envFrom(ptSecret),
@@ -93,7 +93,7 @@ var _ = Describe("Pod template", Ordered, Label("workspace"), func() {
 						corev1.ResourceMemory: resource.MustParse("1Gi")}}}},
 			}})
 		Expect(k8s.Create(ctx, ws)).To(Succeed())
-		waitPhase(ws, corev1alpha1.WorkspaceRunning)
+		waitPhase(ws, corev1beta1.WorkspaceRunning)
 
 		pod := &corev1.Pod{}
 		Expect(k8s.Get(ctx, client.ObjectKey{Namespace: ptNS, Name: ws.Name + "-0"}, pod)).To(Succeed())
@@ -109,7 +109,7 @@ var _ = Describe("Pod template", Ordered, Label("workspace"), func() {
 	})
 
 	It("refuses hostNetwork in the API server", func() {
-		ws := workspace("host", &corev1alpha1.PodTemplate{Spec: corev1.PodSpec{HostNetwork: true}})
+		ws := workspace("host", &corev1beta1.PodTemplate{Spec: corev1.PodSpec{HostNetwork: true}})
 		err := k8s.Create(ctx, ws)
 		Expect(apierrors.IsInvalid(err)).To(BeTrue(), "The API server accepted hostNetwork.")
 	})
@@ -120,11 +120,11 @@ var _ = Describe("Pod template", Ordered, Label("workspace"), func() {
 		owned := client.ObjectKey{Namespace: ptNS, Name: "merged-ssh-host"}
 		Eventually(func() error { return k8s.Get(ctx, owned, &corev1.Secret{}) }, time.Minute, time.Second).
 			Should(Succeed(), "The first spec makes the Workspace that owns the Secret.")
-		ws := workspace("refused", &corev1alpha1.PodTemplate{Spec: corev1.PodSpec{
+		ws := workspace("refused", &corev1beta1.PodTemplate{Spec: corev1.PodSpec{
 			Containers: []corev1.Container{{Name: "workspace", Env: envFrom("merged-ssh-host")}},
 		}})
 		Expect(k8s.Create(ctx, ws)).To(Succeed())
-		waitPhase(ws, corev1alpha1.WorkspaceFailed)
+		waitPhase(ws, corev1beta1.WorkspaceFailed)
 		c := meta.FindStatusCondition(ws.Status.Conditions, "Ready")
 		Expect(c).NotTo(BeNil())
 		Expect(c.Reason).To(Equal("InvalidPodTemplate"))

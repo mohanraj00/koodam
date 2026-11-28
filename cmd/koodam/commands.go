@@ -40,7 +40,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/yaml"
 
-	corev1alpha1 "github.com/mohanraj00/koodam/api/v1alpha1"
+	corev1beta1 "github.com/mohanraj00/koodam/api/v1beta1"
 )
 
 const (
@@ -98,12 +98,12 @@ func runCmd(conn connect) *cobra.Command {
 	return cmd
 }
 
-func readAgent(file, namespace string) (*corev1alpha1.Agent, error) {
+func readAgent(file, namespace string) (*corev1beta1.Agent, error) {
 	data, err := os.ReadFile(file)
 	if err != nil {
 		return nil, err
 	}
-	a := &corev1alpha1.Agent{}
+	a := &corev1beta1.Agent{}
 	if err := yaml.UnmarshalStrict(data, a); err != nil {
 		// The decode error can hold a value from the file, and the file can hold a credential.
 		// Thus give only the line number.
@@ -113,9 +113,12 @@ func readAgent(file, namespace string) (*corev1alpha1.Agent, error) {
 		}
 		return nil, errors.New(msg)
 	}
-	if a.Kind != "Agent" || a.APIVersion != corev1alpha1.GroupVersion.String() {
-		return nil, fmt.Errorf("%s is not an %s Agent", file, corev1alpha1.GroupVersion)
+	current := corev1beta1.GroupVersion.String()
+	legacy := corev1beta1.GroupVersion.Group + "/v1alpha1"
+	if a.Kind != "Agent" || (a.APIVersion != current && a.APIVersion != legacy) {
+		return nil, fmt.Errorf("%s must contain a %s Agent", file, corev1beta1.GroupVersion)
 	}
+	a.APIVersion = current
 	if a.Namespace == "" {
 		a.Namespace = namespace
 	}
@@ -179,7 +182,7 @@ func (e *env) follow(ctx context.Context, timeout time.Duration, out io.Writer, 
 	}
 	revokeCtx, cancelRevoke := context.WithTimeout(ctx, timeout)
 	defer cancelRevoke()
-	var a *corev1alpha1.Agent
+	var a *corev1beta1.Agent
 	err = wait.PollUntilContextCancel(revokeCtx, e.poll, true, func(ctx context.Context) (bool, error) {
 		var err error
 		a, err = e.agent(ctx, name)
@@ -202,7 +205,7 @@ func (e *env) follow(ctx context.Context, timeout time.Duration, out io.Writer, 
 	if noGatewaySpend(a) {
 		_, _ = fmt.Fprintln(out, gatewayNote)
 	}
-	if a.Status.Phase == corev1alpha1.AgentFailed {
+	if a.Status.Phase == corev1beta1.AgentFailed {
 		return errors.New("the run failed")
 	}
 	return nil
@@ -214,17 +217,17 @@ const gatewayNote = "note: a run ended with no gateway spend. The gateway model 
 
 // noGatewaySpend is true when the run ended and the status has no gateway usage.
 // The API cannot yet tell a subscription run from a gateway run, so this rule uses the usage only.
-func noGatewaySpend(a *corev1alpha1.Agent) bool {
+func noGatewaySpend(a *corev1beta1.Agent) bool {
 	return ended(a) && a.Status.Usage == nil
 }
 
 // ended is true when the controller revoked the run. Then the usage is final.
-func ended(a *corev1alpha1.Agent) bool {
+func ended(a *corev1beta1.Agent) bool {
 	return meta.IsStatusConditionTrue(a.Status.Conditions, condRevoked)
 }
 
-func (e *env) agent(ctx context.Context, name string) (*corev1alpha1.Agent, error) {
-	a := &corev1alpha1.Agent{}
+func (e *env) agent(ctx context.Context, name string) (*corev1beta1.Agent, error) {
+	a := &corev1beta1.Agent{}
 	err := e.kube.Get(ctx, types.NamespacedName{Namespace: e.namespace, Name: name}, a)
 	return a, apiError("get the Agent", err)
 }
@@ -237,7 +240,7 @@ var errNotStarted = errors.New("the pod did not start")
 
 // pod finds the newest pod of the Agent's current Job. The Job must be controlled by the Agent,
 // and the pod must be controlled by the Job, so a pod with a copied label does not match.
-func (e *env) pod(ctx context.Context, a *corev1alpha1.Agent) (*corev1.Pod, error) {
+func (e *env) pod(ctx context.Context, a *corev1beta1.Agent) (*corev1.Pod, error) {
 	if a.Status.Job == "" {
 		return nil, errNoPod
 	}
@@ -269,7 +272,7 @@ func (e *env) pod(ctx context.Context, a *corev1alpha1.Agent) (*corev1.Pod, erro
 
 // openLog opens the log of the Agent's pod. It reads the pod with ctx and streams the log with
 // streamCtx. The error text has no pod name.
-func (e *env) openLog(ctx, streamCtx context.Context, a *corev1alpha1.Agent, follow bool) (io.ReadCloser, error) {
+func (e *env) openLog(ctx, streamCtx context.Context, a *corev1beta1.Agent, follow bool) (io.ReadCloser, error) {
 	pod, err := e.pod(ctx, a)
 	if err != nil {
 		return nil, err
@@ -363,7 +366,7 @@ func getCmd(conn connect, spend bool) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			list := &corev1alpha1.AgentList{}
+			list := &corev1beta1.AgentList{}
 			if len(args) == 1 {
 				a, err := e.agent(cmd.Context(), args[0])
 				if err != nil {
@@ -399,14 +402,14 @@ func timeText(t *metav1.Time) string {
 	return t.UTC().Format(time.RFC3339)
 }
 
-func harnessText(h *corev1alpha1.HarnessSpec) string {
+func harnessText(h *corev1beta1.HarnessSpec) string {
 	if h == nil {
 		return "-"
 	}
 	return h.Name
 }
 
-func printAgents(out io.Writer, agents []corev1alpha1.Agent, spend bool) {
+func printAgents(out io.Writer, agents []corev1beta1.Agent, spend bool) {
 	w := tabwriter.NewWriter(out, 0, 4, 2, ' ', 0)
 	if spend {
 		_, _ = fmt.Fprintln(w, "NAME\tPHASE\tBUDGET\tSPEND\tCALLS\tFAILED\tINPUT\tOUTPUT")
@@ -416,7 +419,7 @@ func printAgents(out io.Writer, agents []corev1alpha1.Agent, spend bool) {
 	for _, a := range agents {
 		u := a.Status.Usage
 		if u == nil {
-			u = &corev1alpha1.AgentUsage{Spend: "-"}
+			u = &corev1beta1.AgentUsage{Spend: "-"}
 		}
 		if spend {
 			_, _ = fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%d\t%d\t%d\t%d\n", a.Name, a.Status.Phase,
@@ -450,7 +453,7 @@ func logsCmd(conn connect) *cobra.Command {
 				defer cancel()
 				rc, err = e.waitLog(podCtx, cmd.Context(), args[0], true)
 			} else {
-				var a *corev1alpha1.Agent
+				var a *corev1beta1.Agent
 				if a, err = e.agent(cmd.Context(), args[0]); err == nil {
 					rc, err = e.openLog(cmd.Context(), cmd.Context(), a, false)
 				}
@@ -483,7 +486,7 @@ func deleteCmd(conn connect) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			a := &corev1alpha1.Agent{}
+			a := &corev1beta1.Agent{}
 			a.Name, a.Namespace = args[0], e.namespace
 			if err := e.kube.Delete(cmd.Context(), a); err != nil {
 				return apiError("delete the Agent", err)

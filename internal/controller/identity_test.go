@@ -26,7 +26,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
-	corev1alpha1 "github.com/mohanraj00/koodam/api/v1alpha1"
+	corev1beta1 "github.com/mohanraj00/koodam/api/v1beta1"
 )
 
 var _ = Describe("addIdentity", func() {
@@ -61,8 +61,8 @@ var _ = Describe("boundProfile", func() {
 		ctx := context.Background()
 		const name, team = "identity-bound", "identity-team"
 		ns := &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: name,
-			Labels: map[string]string{corev1alpha1.ProfileLabel: team}}}
-		p := &corev1alpha1.Profile{ObjectMeta: metav1.ObjectMeta{Name: team}}
+			Labels: map[string]string{corev1beta1.ProfileLabel: team}}}
+		p := &corev1beta1.Profile{ObjectMeta: metav1.ObjectMeta{Name: team}}
 		Expect(k8sClient.Create(ctx, ns)).To(Succeed())
 		Expect(k8sClient.Create(ctx, p)).To(Succeed())
 		DeferCleanup(func() {
