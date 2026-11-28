@@ -506,6 +506,38 @@ wire_api = "responses"
 		Expect(gw.blocked).To(HaveLen(1))
 	})
 
+	It("returns fixed text for a gateway error", func() {
+		const secret = "sk-gateway-secret-text"
+		r := newReconciler()
+		expectFixed := func(err error, want string) {
+			Expect(errors.Is(err, errAgentGateway)).To(BeTrue())
+			// Use a boolean: a matcher with the text would show it in the failure message.
+			Expect(strings.Contains(err.Error(), secret)).To(BeFalse(), "the error has text of the gateway")
+			Expect(err.Error()).To(Equal(want))
+		}
+		gw.createErr = &gateway.HTTPError{Path: "/key/generate", Status: 500, Body: secret}
+		_, err := r.Reconcile(ctx, reconcile.Request{NamespacedName: key()})
+		expectFixed(err, "a call to the gateway failed: CreateKey: HTTP 500")
+
+		By("returning fixed text for a Usage error, and settling the run at the next reconcile")
+		gw.createErr = nil
+		reconcileOnce(r)
+		endJob(batchv1.JobComplete)
+		gw.usageErr = errors.New("dial tcp: " + secret)
+		_, err = r.Reconcile(ctx, reconcile.Request{NamespacedName: key()})
+		expectFixed(err, "a call to the gateway failed: Usage")
+		gw.usageErr = nil
+		reconcileOnce(r)
+		Expect(agent().Status.Phase).To(Equal(corev1alpha1.AgentSucceeded))
+
+		By("returning fixed text for an error of each call")
+		for _, op := range []string{"BlockKey", "Usage", "CreateKey"} {
+			expectFixed(agentGatewayError(op, &gateway.HTTPError{Path: "/key/block", Status: 403, Body: secret}),
+				"a call to the gateway failed: "+op+": HTTP 403")
+			expectFixed(agentGatewayError(op, errors.New(secret)), "a call to the gateway failed: "+op)
+		}
+	})
+
 	const outVolume, outDir, outFile = "out", "/out", "/out/report.txt"
 	// setOutput gives the Agent an output path and a volume at /out.
 	setOutput := func(path string) {

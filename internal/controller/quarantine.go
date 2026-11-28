@@ -200,7 +200,7 @@ func (r *AgentReconciler) quarantine(ctx context.Context, a *corev1alpha1.Agent,
 	}
 	if !done && a.Status.KeyHash != "" {
 		if err := r.Gateway.BlockKey(ctx, a.Status.KeyHash); err != nil {
-			return err
+			return agentGatewayError("BlockKey", err)
 		}
 	}
 	// A new pod of the Job can come after the start of the quarantine. Thus each reconcile adds
