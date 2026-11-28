@@ -22,7 +22,6 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"regexp"
 	"slices"
 	"strings"
 	"testing"
@@ -34,8 +33,7 @@ import (
 
 const logPath = testPath + "/" + logPart
 
-// fakeLogs records the options of the last call and gives a fixed log. As the API server does, it
-// gives only the last TailLines lines.
+// fakeLogs records the options of the last call. It applies TailLines and then LimitBytes.
 type fakeLogs struct {
 	data    string
 	err     error
@@ -51,6 +49,9 @@ func (l *fakeLogs) open(_ context.Context, namespace, pod string, o *corev1.PodL
 	data := l.data
 	if lines := strings.SplitAfter(data, "\n"); o.TailLines != nil && int64(len(lines)-1) > *o.TailLines {
 		data = strings.Join(lines[len(lines)-1-int(*o.TailLines):], "")
+	}
+	if o.LimitBytes != nil && int64(len(data)) > *o.LimitBytes {
+		data = data[:*o.LimitBytes]
 	}
 	return io.NopCloser(strings.NewReader(data)), l.err
 }
@@ -147,28 +148,27 @@ func TestLogLimitsAndReviews(t *testing.T) {
 	f.call(t, http.MethodGet, testPath, f.reader, http.StatusOK)
 }
 
-var wholeLine = regexp.MustCompile(`^line-\d{7}-x{20}$`)
-
-func TestLogByteLimitKeepsWholeLines(t *testing.T) {
-	var b strings.Builder
-	for i := 0; b.Len() < 2*maxLogRead; i++ {
-		fmt.Fprintf(&b, "line-%07d-%s\n", i, strings.Repeat("x", 20))
+func TestLogReadLimitRefusesOversizedWindow(t *testing.T) {
+	line := strings.Repeat("x", (4<<10)-1) + "\n"
+	data := strings.Repeat(line, defaultLogLines+keyContext) + "newest line\n"
+	f, _ := newLogFixture(t, data)
+	w := f.call(t, http.MethodGet, logPath, f.reader, http.StatusUnprocessableEntity)
+	if got := decode[problem](t, w); got.Error != "The log window is larger than the read limit. Ask for fewer lines." {
+		t.Fatalf("want a log read limit error, got %+v", got)
 	}
-	// The kubelet cut is one byte after maxLogRead. A stream that starts in a line is the third case.
-	front := b.String()[3 : maxLogBytes+50]
-	front = front[:strings.LastIndexByte(front, '\n')+1]
-	for _, data := range []string{b.String(), b.String()[:maxLogRead+1], front} {
-		got, truncated := tailLines([]byte(data), maxLogLines, maxLogLines+keyContext+1)
-		size := 0
-		for _, line := range got {
-			size += len(line) + 1
-			if !wholeLine.MatchString(line) {
-				t.Fatalf("the result has a part of a line: %q", line)
-			}
-		}
-		if !truncated || size > maxLogBytes || len(got) == 0 {
-			t.Fatalf("want a truncated tail of whole lines: %d lines, %d bytes", len(got), size)
-		}
+}
+
+func TestLogByteLimitKeepsNewestWholeLines(t *testing.T) {
+	const lineBytes = 4 << 10
+	padding := strings.Repeat("x", lineBytes-len("line-000-\n"))
+	lines := make([]string, maxLogRead/lineBytes)
+	for i := range lines {
+		lines[i] = fmt.Sprintf("line-%03d-%s", i, padding)
+	}
+	f, _ := newLogFixture(t, strings.Join(lines, "\n")+"\n")
+	l := decode[runLog](t, f.call(t, http.MethodGet, logPath, f.reader, http.StatusOK))
+	if want := lines[len(lines)-maxLogBytes/lineBytes:]; !l.Truncated || !slices.Equal(l.Lines, want) {
+		t.Fatal("want the newest whole lines that fit in the response")
 	}
 	if got, truncated := tailLines([]byte(strings.Repeat("x", maxLogBytes+1)), 10, 20); len(got) != 0 || !truncated {
 		t.Fatal("a long line with no end is not whole")

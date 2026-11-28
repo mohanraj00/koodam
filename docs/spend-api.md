@@ -225,16 +225,18 @@ SubjectAccessReviews in the namespace of the path: `list` on `agents.core.koodam
 The limits of the log path are the constants in `internal/spendapi/log.go`:
 
 - `maxLogLines`: the maximum of `lines`.
-- `maxLogRead`: the most bytes that the server reads from the API server for one request.
+- `maxLogRead`: the maximum size of the log window, including the lines used for redaction. The
+  server reads at most one byte more to detect a window that is too large.
 - `maxLogBytes`: the most log bytes in a response, before the redaction. The server keeps the newest
   lines.
 - `keyContext`: the count of the lines that the server reads before the tail, for the redaction.
 - The request time limit of `-request-timeout` applies to the read of the log.
 
-At each cut of a limit, the server drops the part of the line at the cut. Thus a response has no part
-of a line. The server reads one more line than the tail and the `keyContext` lines, so `truncated`
-is true only if the log has more lines than the response. If the log has more lines than the response, `truncated` is true. If the container did not
-start, the response has status 409. If the run has no pod, the response has status 404.
+If the log window is larger than `maxLogRead`, the response has status 422. Ask for fewer `lines`.
+A successful response contains whole lines. The server reads one more line than the tail and the
+`keyContext` lines. If the log has more lines than the response, `truncated` is true.
+If the container did not start, the response has status 409. If the run has no pod, the response
+has status 404.
 
 The server redacts each line before the bytes leave the server, as [Redaction](#redaction) says. A
 limit can cut a PEM private key, so the server redacts the `keyContext` lines before the tail too.
