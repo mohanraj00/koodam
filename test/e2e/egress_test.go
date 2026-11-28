@@ -326,14 +326,17 @@ var _ = Describe("Traced egress", Ordered, Label("egress"), func() {
 			Expect(reach(control, a.addr)).To(BeTrue(), "The control pod cannot make "+a.what+": "+a.addr)
 		}
 		// The runner network can lose one UDP packet, so the positive check tries again and also
-		// tries a second server (#510). The negative checks below make one attempt, because one
-		// answer from a blocked pod must fail the test.
+		// tries a second server (#510). The negative checks below use the server that answered the
+		// control pod, so a failure shows the policy and not a server that is not available. They
+		// make one attempt, because one answer from a blocked pod must fail the test.
 		var udpResults []string
+		udpServer := ""
 		Eventually(func() bool {
 			for _, server := range []string{"1.1.1.1", "8.8.8.8"} {
 				ok := dnsUDP(control, server)
 				udpResults = append(udpResults, fmt.Sprintf("%s: %t", server, ok))
 				if ok {
+					udpServer = server
 					return true
 				}
 			}
@@ -346,7 +349,7 @@ var _ = Describe("Traced egress", Ordered, Label("egress"), func() {
 			for _, a := range attempts {
 				Expect(reach(pod, a.addr)).To(BeFalse(), pod+" can make "+a.what+": "+a.addr)
 			}
-			Expect(dnsUDP(pod, "1.1.1.1")).To(BeFalse(), pod+" can make a direct UDP DNS query.")
+			Expect(dnsUDP(pod, udpServer)).To(BeFalse(), pod+" can make a direct UDP DNS query to "+udpServer+".")
 		}
 
 		By("checking that the proxy refuses a CONNECT to port 22")
