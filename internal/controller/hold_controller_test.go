@@ -224,6 +224,26 @@ var _ = Describe("Hold stop", func() {
 			Expect(c.Message).To(ContainSubstring(admin))
 		})
 
+		It("deletes a Job of the run that has no controller, after the key is blocked", func() {
+			newAgent()
+			reconcileAgent()
+			jobKey := types.NamespacedName{Namespace: ns, Name: "kd-" + name}
+			job := &batchv1.Job{}
+			Expect(k8sClient.Get(ctx, jobKey, job)).To(Succeed())
+			job.OwnerReferences = nil
+			Expect(k8sClient.Update(ctx, job)).To(Succeed())
+			hold := newHold(corev1alpha1.HoldTarget{Kind: corev1alpha1.HoldTargetAgent, Namespace: ns, Name: name},
+				corev1alpha1.HoldStop)
+			held(hold)
+
+			reconcileAgent()
+			expectStopped()
+			Expect(gw.accessAtBlock).To(BeTrue(), "the key must be blocked before the access is deleted")
+			Expect(gw.blocked).To(Equal([]string{gateway.HashKey(gw.created[0].Value)}))
+			err := k8sClient.Get(ctx, jobKey, job)
+			Expect(apierrors.IsNotFound(err) || !job.DeletionTimestamp.IsZero()).To(BeTrue(), "the Job stays: %v", err)
+		})
+
 		It("stops a run that did not start, with no key", func() {
 			hold := newHold(corev1alpha1.HoldTarget{Kind: corev1alpha1.HoldTargetAgent, Namespace: ns, Name: name},
 				corev1alpha1.HoldStop)
@@ -807,6 +827,31 @@ var _ = Describe("Hold stop", func() {
 			h := &corev1alpha1.Hold{}
 			Expect(k8sClient.Get(ctx, client.ObjectKey{Name: hold}, h)).To(Succeed())
 			Expect(meta.FindStatusCondition(h.Status.Conditions, corev1alpha1.HoldHeld).Reason).To(Equal(reasonAppsDisabled))
+		})
+
+		It("deletes a Deployment of the version that has no controller, after the key is blocked", func() {
+			reconcileVersion()
+			d := &appsv1.Deployment{}
+			Expect(k8sClient.Get(ctx, nn("kd-"+name), d)).To(Succeed())
+			d.OwnerReferences = nil
+			Expect(k8sClient.Update(ctx, d)).To(Succeed())
+			atBlock := 0
+			gw.atBlock = func() {
+				if k8sClient.Get(ctx, nn("kd-"+name), &appsv1.Deployment{}) == nil {
+					atBlock++
+				}
+			}
+			newHold(corev1alpha1.HoldTarget{Kind: corev1alpha1.HoldTargetAppVersion, Namespace: ns, Name: name},
+				corev1alpha1.HoldStop)
+
+			reconcileVersion()
+			Expect(atBlock).To(Equal(1), "the key must be blocked before the Deployment is deleted")
+			Expect(gw.order).To(Equal([]string{opCreate, opBlock}))
+			v := &corev1alpha1.AppVersion{}
+			Expect(k8sClient.Get(ctx, nn(name), v)).To(Succeed())
+			Expect(meta.IsStatusConditionTrue(v.Status.Conditions, corev1alpha1.AppVersionRevoked)).To(BeTrue())
+			err := k8sClient.Get(ctx, nn("kd-"+name), d)
+			Expect(apierrors.IsNotFound(err) || !d.DeletionTimestamp.IsZero()).To(BeTrue(), "the Deployment stays: %v", err)
 		})
 	})
 

@@ -27,6 +27,7 @@ import (
 	"strings"
 	"time"
 
+	appsv1 "k8s.io/api/apps/v1"
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
 	rbacv1 "k8s.io/api/rbac/v1"
@@ -942,10 +943,59 @@ func (r *AgentReconciler) revoke(ctx context.Context, a *corev1alpha1.Agent) err
 	return nil
 }
 
-// deleteOwned deletes the run object of this kind. It keeps an object that is not from this Agent.
-// The UID precondition stops the delete if the object changed after the read.
+// orphanWorkload is true if o is a workload with no controller and with each label of want. A
+// user can remove the owner reference of a workload, or delete its owner with the propagation
+// Orphan. A stop then deletes the workload of the run, so that no pod of the run stays. A workload
+// that a different object controls stays.
+func orphanWorkload(o client.Object, want map[string]string) bool {
+	switch o.(type) {
+	case *batchv1.Job, *appsv1.Deployment:
+	default:
+		return false
+	}
+	if metav1.GetControllerOf(o) != nil {
+		return false
+	}
+	for k, v := range want {
+		if o.GetLabels()[k] != v {
+			return false
+		}
+	}
+	return true
+}
+
+// jobOfRun is true if o is a Job whose agent container has the run ID of a. The pod template of a
+// Job is immutable, so only a Job that was made for this run has it. The last value of the
+// variable applies, as in the kubelet.
+func jobOfRun(o client.Object, a *corev1alpha1.Agent) bool {
+	job, ok := o.(*batchv1.Job)
+	if !ok {
+		return false
+	}
+	runID := ""
+	for _, c := range job.Spec.Template.Spec.Containers {
+		if c.Name != agentContainer {
+			continue
+		}
+		for _, e := range c.Env {
+			if e.Name == runIDEnv {
+				runID = e.Value
+			}
+		}
+	}
+	return runID != "" && runID == string(a.UID)
+}
+
+// deleteOwned deletes the run object of this kind. It keeps an object that is not from this Agent,
+// but it deletes a Job of the run that lost its owner reference. The Job must have the label and
+// the run ID of this run. The UID precondition stops the
+// delete if the object changed after the read.
 func (r *AgentReconciler) deleteOwned(ctx context.Context, a *corev1alpha1.Agent, o client.Object) error {
 	found, err := r.getOwned(ctx, a, o)
+	if errors.Is(err, errNotOwned) && orphanWorkload(o, map[string]string{agentLabel: a.Name}) && jobOfRun(o, a) {
+		logf.FromContext(ctx).Info("Deletes a Job of the run that has no controller")
+		err = nil
+	}
 	if errors.Is(err, errNotOwned) {
 		logf.FromContext(ctx).Info("Kept an object with the run name that is not from this Agent",
 			"kind", fmt.Sprintf("%T", o))

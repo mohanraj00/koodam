@@ -929,7 +929,10 @@ wire_api = "responses"
 		reconcileOnce(r)
 		Expect(k8sClient.Delete(ctx, &batchv1.Job{ObjectMeta: metav1.ObjectMeta{Name: "kd-" + name, Namespace: ns}},
 			client.PropagationPolicy(metav1.DeletePropagationBackground))).To(Succeed())
-		other := runJob(agent(), "", "", "")
+		// The other Job has the run name and the labels, but not the run ID of this Agent.
+		otherRun := agent()
+		otherRun.UID = "a-different-run"
+		other := runJob(otherRun, "", "", "")
 		other.OwnerReferences = nil
 		Expect(k8sClient.Create(ctx, other)).To(Succeed())
 		reconcileOnce(r)
