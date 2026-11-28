@@ -372,6 +372,16 @@ var _ = Describe("Agent approval", Ordered, func() {
 			Expect(checkRecord(rec, trust, subject, decided.Add(2*time.Hour)).reason).To(Equal(corev1alpha1.ApprovalExpired))
 			Expect(checkRecord(rec, trust, other, decided.Add(time.Minute)).reason).To(Equal(corev1alpha1.ApprovalSubjectMismatch))
 		}
+		// A signed activation in place of the decision keeps the run paused, also with a valid
+		// signature and a chain that binds the subject.
+		rec := &corev1alpha1.ApprovalRecord{ObjectMeta: metav1.ObjectMeta{Name: "activation"},
+			Spec: corev1alpha1.ApprovalRecordSpec{SignedRecord: read("activation.signed.json"),
+				SnapshotRecord: read("snapshot-accept.record"), Manifest: read("manifest-accept.json")}}
+		s := checkRecord(rec, trust, subject, decided.Add(time.Minute))
+		Expect(s.status).To(Equal(metav1.ConditionUnknown))
+		Expect(s.reason).To(Equal(corev1alpha1.ApprovalNotVerified))
+		Expect(s.message).To(ContainSubstring("not_a_decision"))
+		Expect(s.evidence).To(BeNil())
 	})
 
 	// A record after the bound can be a reject. Thus only a reject is final in an incomplete check.
