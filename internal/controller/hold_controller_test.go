@@ -356,6 +356,48 @@ var _ = Describe("Hold stop", func() {
 			expectBudget(agent(), "agent", nil, false)
 		})
 
+		It("labels the pods of the run when a different object with the budget name has a finalizer", func() {
+			const keep = "test.koodam.io/keep"
+			other := &policyv1.PodDisruptionBudget{ObjectMeta: metav1.ObjectMeta{Namespace: ns,
+				Name: "kd-quarantine-agent-" + name, Finalizers: []string{keep}}, Spec: policyv1.PodDisruptionBudgetSpec{
+				MinAvailable: new(intstr.FromInt32(0)),
+				Selector:     &metav1.LabelSelector{MatchLabels: map[string]string{agentLabel: name}}}}
+			Expect(k8sClient.Create(ctx, other)).To(Succeed())
+			removeKeep := func() {
+				pdb := &policyv1.PodDisruptionBudget{}
+				if k8sClient.Get(ctx, client.ObjectKeyFromObject(other), pdb) == nil &&
+					controllerutil.RemoveFinalizer(pdb, keep) {
+					Expect(k8sClient.Update(ctx, pdb)).To(Succeed())
+				}
+			}
+			DeferCleanup(func() {
+				removeKeep()
+				Expect(client.IgnoreNotFound(k8sClient.Delete(ctx, other))).To(Succeed())
+			})
+			newAgent()
+			reconcileAgent()
+			runPod = newPod(ns, "kd-"+name+"-pod", map[string]string{agentLabel: name})
+			hold := newHold(corev1alpha1.HoldTarget{Kind: corev1alpha1.HoldTargetAgent, Namespace: ns, Name: name},
+				corev1alpha1.HoldQuarantine)
+			held(hold)
+
+			// The delete leaves the other object with its finalizer, so the create of the budget fails.
+			// The key is blocked and the pod has the label before the budget step.
+			_, err := agents().Reconcile(ctx, reconcile.Request{NamespacedName: key()})
+			Expect(apierrors.IsAlreadyExists(err)).To(BeTrue(), "the budget step fails: %v", err)
+			Expect(gw.blocked).To(Equal([]string{gateway.HashKey(gw.created[0].Value)}))
+			Expect(marked(runPod)).To(BeTrue(), "the pod has the label")
+			Expect(quarantined(agent().Status.Conditions)).To(BeFalse())
+
+			removeKeep()
+			reconcileAgent()
+			Expect(quarantined(agent().Status.Conditions)).To(BeTrue())
+			expectBudget(agent(), "agent", map[string]string{agentLabel: name}, true)
+			release(hold)
+			reconcileAgent()
+			expectBudget(agent(), "agent", nil, false)
+		})
+
 		It("keeps a deleted Agent and its Job until the release", func() {
 			hold := quarantineRun()
 			Expect(k8sClient.Delete(ctx, agent())).To(Succeed())

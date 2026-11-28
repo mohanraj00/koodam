@@ -299,10 +299,13 @@ func (r *AgentReconciler) markChildren(ctx context.Context, a *corev1alpha1.Agen
 		}
 	}
 	sel := map[string]string{agentLabel: a.Name}
-	if err := markBudget(ctx, r.Client, r.APIReader, r.Scheme, a, "agent", sel, on); err != nil {
+	// The pods get the label before the budget step. Thus a budget step that fails, for example
+	// because a different object with the name of the budget has a finalizer, does not stop the
+	// label. The admission policy refuses the delete of a pod with the label.
+	if err := markPods(ctx, r.Client, r.APIReader, a.Namespace, sel, on); err != nil {
 		return err
 	}
-	return markPods(ctx, r.Client, r.APIReader, a.Namespace, sel, on)
+	return markBudget(ctx, r.Client, r.APIReader, r.Scheme, a, "agent", sel, on)
 }
 
 // applyQuarantine sets the condition Held from the Quarantine Holds. While a quarantine is
@@ -623,8 +626,9 @@ func (r *AppVersionReconciler) markChildren(ctx context.Context, av *corev1alpha
 		}
 	}
 	sel := appVersionLabels(av)
-	if err := markBudget(ctx, r.Client, r.APIReader, r.Scheme, av, "appversion", sel, on); err != nil {
+	// The pods get the label before the budget step, as for an Agent.
+	if err := markPods(ctx, r.Client, r.APIReader, av.Namespace, sel, on); err != nil {
 		return err
 	}
-	return markPods(ctx, r.Client, r.APIReader, av.Namespace, sel, on)
+	return markBudget(ctx, r.Client, r.APIReader, r.Scheme, av, "appversion", sel, on)
 }
