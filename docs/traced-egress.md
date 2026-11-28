@@ -1,5 +1,7 @@
 # Traced egress
 
+Release: v0.6.0.
+
 With traced egress, each call from an Agent run pod or a Workspace pod to the internet or to the gateway goes through the Koodam egress proxy. The proxy writes a span for each call. The span has the namespace, the pod and the run of the source pod. Thus you can see which run called which host, and when.
 
 Traced egress is off by default. This page tells how it operates, how to turn it on, and its limits.
