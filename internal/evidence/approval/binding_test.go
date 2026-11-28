@@ -29,6 +29,7 @@ const (
 	fileDecisionAccept = "decision-accept.signed.json"
 	fileDecisionReject = "decision-reject.signed.json"
 	fileKeySet         = "keyset.json"
+	fileActivation     = "activation.signed.json"
 )
 
 var fixtureDigests = map[string]string{
@@ -40,6 +41,7 @@ var fixtureDigests = map[string]string{
 	fileDecisionAccept: "66d9ec4a9db994ca745370a6a05185d0f67c1b07d48f244720d243616d1cab79",
 	fileDecisionReject: "44fe1c7b124f8521d95d6df9b7f05a9f40143c9de9e75ce2e72220351c2bf49a",
 	fileKeySet:         "b91f9c554afdd2820e923e87968416222300ff28769792051cfe698a2621a61b",
+	fileActivation:     "a1f3f85dc2e139d9e4ebda4ca8851a034efdf2bd197ded9211de18d06edde11b",
 }
 
 // fixtureTime is 1 hour after the decisions of the fixture set.
@@ -110,6 +112,20 @@ func TestFixtureChains(t *testing.T) {
 		if _, err := Verify(signed, keys, Expected{fixtureScope, fixtureFunction, ref}, fixtureTime); err != (Refusal{codeSubjectMismatch, ""}) {
 			t.Fatalf("%s with %s: got %v", c.decision, other.snapshot, err)
 		}
+	}
+}
+
+// TestVerifyRefuseActivation gives Verify a signed activation of the pinned release in place of
+// the decision of the accept chain. The activation has a valid signature from the fixture key, so
+// the refusal does not depend on the signature check.
+func TestVerifyRefuseActivation(t *testing.T) {
+	ref, err := Binding(fixture(t, fileSnapshotAccept), fixture(t, fileManifestAccept), fixtureScope, fixtureRequest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := Verify(fixture(t, fileActivation), fixture(t, fileKeySet), Expected{fixtureScope, fixtureFunction, ref}, fixtureTime)
+	if err != (Refusal{codeNotDecision, ""}) || result != (Result{}) {
+		t.Fatalf("got %+v, %v, want %s", result, err, codeNotDecision)
 	}
 }
 
