@@ -215,10 +215,9 @@ The seam test proves that Koodam reads the Nookku format of the pinned release.
 - **envtest.** An AppVersion with `spec.gate`: the Job spec (no token, read-only mounts, fixed argv), each state of the table from a fake pod status, and the weight 0 in effect until `Passed`.
 - **kind.** `test/e2e/gate_test.go` builds a gate image from the pinned release, with one gate that passes and one that fails. The test checks the condition, the record, the weights in effect and the weights of the HTTPRoute. The gate image is in `test/e2e/testdata/gate`.
 
-The approval seam uses the signed record protocol of Entelos tag `v0.7.0` (commit
-`935059139a3e47237f0703c30c8aab8407a29aee`). `internal/evidence/approval/entelos.pin` pins the
-tag, the commit and the SHA-256 of the signed record vectors, which have the same bytes as at the
-tag `v0.5.0`. The CI job `seam` checks out the tag, fails if the tag is not on the pinned commit
+The approval seam uses the signed record protocol of Entelos tag `v1.0.0` (commit
+`90bc414b38bd9ccb8251dcfc1c1bfab3d7e5dc98`). `internal/evidence/approval/entelos.pin` pins the
+tag, the commit and the SHA-256 of the signed record vectors. The CI job `seam` checks out the tag, fails if the tag is not on the pinned commit
 or the vectors file has a different SHA-256, and then runs the tests of the package. `TestSeam`
 checks that the copy of the vectors is the source file with no `keys` object.
 `internal/evidence/approval/testdata/README.md` has the pins of a static fixture set with an
