@@ -72,4 +72,4 @@ The CLI uses your kubeconfig. The flags `-n`, `--context` and `--kubeconfig` wor
 
 ## 3. Run 1 Agent
 
-Do step 4 of the [README quickstart](../README.md#quickstart), with `koodam` in place of `bin/koodam`. Then read [agents.md](agents.md).
+Do step 4 of the [README quickstart](../README.md#quickstart), with `koodam` in place of `bin/koodam`. Then read [agent-runs.md](agent-runs.md).

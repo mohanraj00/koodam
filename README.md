@@ -89,7 +89,7 @@ This runs one Agent on a local kind cluster, from a clean checkout. The bundled 
 | Page | Operation |
 |---|---|
 | [Install a release](docs/quickstart.md) | The chart and the CLI on a real cluster |
-| [Agents](docs/agents.md) | `Agent`: one run with a key, a Role and a budget |
+| [Agents](docs/agent-runs.md) | `Agent`: one run with a key, a Role and a budget |
 | [Workspaces](docs/workspaces.md) | `Workspace`: a pod with a PVC home over SSH |
 | [Profiles](docs/profiles.md) | `Profile`: the namespace binding, the login and the global files |
 | [Test keys](docs/test-keys.md) | `TestKey`: a short-lived key for one Nookku test |
