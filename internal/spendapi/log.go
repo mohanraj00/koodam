@@ -17,7 +17,6 @@ limitations under the License.
 package spendapi
 
 import (
-	"bytes"
 	"context"
 	"errors"
 	"io"
@@ -40,7 +39,7 @@ const (
 	maxLogLines     = 1000
 	// maxLogBytes limits the log bytes of a response, before the redaction.
 	maxLogBytes = 256 << 10
-	// maxLogRead limits the bytes that the server reads from the API server for one request.
+	// maxLogRead limits the accepted log window. The server reads one more byte to detect overflow.
 	maxLogRead = 4 * maxLogBytes
 	// keyContext is the count of the lines that the server reads before the tail. The redaction
 	// reads them too, so that it can find the BEGIN line of a private key before the tail. A PEM
@@ -49,6 +48,7 @@ const (
 )
 
 var errNoPod = errors.New("the run has no pod")
+var errLogReadLimit = errors.New("the log window exceeds the read limit")
 
 // LogSource opens the log of one container of a pod. The server gives the line limit and the
 // byte limit in the options, and it reads no more than the byte limit.
@@ -87,6 +87,8 @@ func (a *api) serveLog(ctx context.Context, w http.ResponseWriter, r *http.Reque
 		reply(w, r, http.StatusNotFound, problem{"The run has no pod."})
 	case apierrors.IsBadRequest(err):
 		reply(w, r, http.StatusConflict, problem{"The container has no log yet."})
+	case errors.Is(err, errLogReadLimit):
+		reply(w, r, http.StatusUnprocessableEntity, problem{"The log window exceeds 1 MiB, including up to 256 lines of key context. Long lines at the end of the log can cause this error at any value of the lines parameter."})
 	case err != nil:
 		reply(w, r, http.StatusBadGateway, problem{"The log is not available."})
 	default:
@@ -133,31 +135,27 @@ func (a *api) runLog(ctx context.Context, ref runRef, lines int) (runLog, error)
 	if err != nil {
 		return runLog{}, err
 	}
+	if len(data) > maxLogRead {
+		return runLog{}, errLogReadLimit
+	}
 	result.Lines, result.Truncated = tailLines(data, lines, window)
 	return result, nil
 }
 
-// tailLines redacts the lines of data, and then gives the last of them, with no more than count
-// lines and maxLogBytes log bytes before the redaction. The cuts occur only between lines, so no
-// line in the result is a part of a line. Thus a cut cannot leave a part of a credential that a
-// pattern does not match. If the log can have lines before data, which is true when data has the
-// window count of lines or the read limit cuts it, the window can start in a private key. Then the
-// server also redacts the lines at the start that can be the body of a key.
+// tailLines redacts the lines of data and returns the newest whole lines, up to count lines and
+// maxLogBytes before redaction. If data has the window count of lines, it can start in a private
+// key. Then the server also redacts the lines at the start that can be the body of a key.
 func tailLines(data []byte, count, window int) ([]string, bool) {
-	cut := false
-	if len(data) > maxLogRead {
-		data, cut = data[:bytes.LastIndexByte(data[:maxLogRead], '\n')+1], true
-	}
 	text := strings.TrimSuffix(string(data), "\n")
 	if text == "" {
-		return []string{}, cut
+		return []string{}, false
 	}
 	lines := strings.Split(text, "\n")
 	sizes := make([]int, len(lines))
 	for i, line := range lines {
 		sizes[i] = len(line) + 1
 	}
-	if cut || len(lines) >= window {
+	if len(lines) >= window {
 		for i := 0; i < len(lines) && keyBodyLine.MatchString(cleanLine(lines[i])); i++ {
 			lines[i] = redacted
 		}
@@ -168,5 +166,5 @@ func tailLines(data []byte, count, window int) ([]string, bool) {
 		start--
 		size += sizes[start]
 	}
-	return lines[start:], cut || start > 0
+	return lines[start:], start > 0
 }
