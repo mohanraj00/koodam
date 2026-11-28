@@ -122,6 +122,15 @@ rules:
   - create
   - patch
 - apiGroups:
+  - policy
+  resources:
+  - poddisruptionbudgets
+  verbs:
+  - create
+  - delete
+  - get
+  - patch
+- apiGroups:
   - rbac.authorization.k8s.io
   resources:
   - rolebindings

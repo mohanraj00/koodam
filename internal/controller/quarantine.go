@@ -20,15 +20,20 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"math"
 	"time"
 
 	appsv1 "k8s.io/api/apps/v1"
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
+	policyv1 "k8s.io/api/policy/v1"
+	"k8s.io/apimachinery/pkg/api/equality"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/apimachinery/pkg/util/intstr"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
@@ -106,6 +111,62 @@ func markPods(ctx context.Context, c client.Client, reader client.Reader, ns str
 		}
 	}
 	return nil
+}
+
+// quarantineBudget is the PodDisruptionBudget of a quarantine. Its minAvailable is larger than
+// each number of pods, so the API server refuses each eviction of a running pod with the labels
+// sel, also at a node drain. A percentage or maxUnavailable needs a controller with a scale, and a
+// Job has none. The admission policy of the chart keeps the budget and its spec until the release.
+func quarantineBudget(owner client.Object, kind string, sel map[string]string) *policyv1.PodDisruptionBudget {
+	policy := policyv1.IfHealthyBudget
+	return &policyv1.PodDisruptionBudget{
+		ObjectMeta: metav1.ObjectMeta{Namespace: owner.GetNamespace(),
+			Name:   "kd-quarantine-" + kind + "-" + owner.GetName(),
+			Labels: map[string]string{quarantineLabel: quarantineOn}},
+		Spec: policyv1.PodDisruptionBudgetSpec{MinAvailable: new(intstr.FromInt32(math.MaxInt32)),
+			Selector: &metav1.LabelSelector{MatchLabels: sel}, UnhealthyPodEvictionPolicy: &policy},
+	}
+}
+
+// markBudget makes or removes the PodDisruptionBudget of a quarantine. Before it makes the budget,
+// it deletes a different object with the same name. At the release, it removes the label and then
+// deletes the budget, because the admission policy refuses the delete of an object with the label.
+// It keeps a budget that is not from the owner.
+func markBudget(ctx context.Context, c client.Client, reader client.Reader, scheme *runtime.Scheme,
+	owner client.Object, kind string, sel map[string]string, on bool) error {
+	want := quarantineBudget(owner, kind, sel)
+	have := &policyv1.PodDisruptionBudget{}
+	err := reader.Get(ctx, client.ObjectKeyFromObject(want), have)
+	if client.IgnoreNotFound(err) != nil {
+		return err
+	}
+	found := err == nil
+	fromOwner := found && metav1.IsControlledBy(have, owner) && quarantineMarked(have)
+	if !on {
+		if !fromOwner {
+			return nil
+		}
+		if err := c.Patch(ctx, have, quarantinePatch(false)); err != nil {
+			return client.IgnoreNotFound(err)
+		}
+		uid := have.UID
+		return client.IgnoreNotFound(c.Delete(ctx, have, client.Preconditions{UID: &uid}))
+	}
+	if fromOwner && equality.Semantic.DeepEqual(have.Spec, want.Spec) {
+		return nil
+	}
+	if found {
+		logf.FromContext(ctx).Info("Deletes a different object with the name of the quarantine budget",
+			"name", have.Name)
+		uid := have.UID
+		if err := c.Delete(ctx, have, client.Preconditions{UID: &uid}); client.IgnoreNotFound(err) != nil {
+			return err
+		}
+	}
+	if err := controllerutil.SetControllerReference(owner, want, scheme); err != nil {
+		return err
+	}
+	return c.Create(ctx, want)
 }
 
 // quarantined is true if the status of the workload records a complete quarantine.
@@ -216,7 +277,8 @@ func (r *AgentReconciler) quarantine(ctx context.Context, a *corev1alpha1.Agent,
 
 // markChildren adds or removes the quarantine label on the Job of the run and on its pods. With
 // the label, it also removes the deadline of the Job. It removes the label also from a Job that
-// lost its owner reference, because only the manager can remove it.
+// lost its owner reference, because only the manager can remove it. It also makes or removes the
+// budget of the quarantine.
 func (r *AgentReconciler) markChildren(ctx context.Context, a *corev1alpha1.Agent, on bool) error {
 	job := &batchv1.Job{}
 	err := r.APIReader.Get(ctx, types.NamespacedName{Namespace: a.Namespace, Name: runName(a)}, job)
@@ -236,7 +298,14 @@ func (r *AgentReconciler) markChildren(ctx context.Context, a *corev1alpha1.Agen
 			}
 		}
 	}
-	return markPods(ctx, r.Client, r.APIReader, a.Namespace, client.MatchingLabels{agentLabel: a.Name}, on)
+	sel := map[string]string{agentLabel: a.Name}
+	// The pods get the label before the budget step. Thus a budget step that fails, for example
+	// because a different object with the name of the budget has a finalizer, does not stop the
+	// label. The admission policy refuses the delete of a pod with the label.
+	if err := markPods(ctx, r.Client, r.APIReader, a.Namespace, sel, on); err != nil {
+		return err
+	}
+	return markBudget(ctx, r.Client, r.APIReader, r.Scheme, a, "agent", sel, on)
 }
 
 // applyQuarantine sets the condition Held from the Quarantine Holds. While a quarantine is
@@ -334,6 +403,12 @@ func (r *WorkspaceReconciler) quarantineHeld(ctx context.Context, ws *corev1alph
 	if err := r.revokeKey(ctx, ws, secret); err != nil {
 		return "", "", "", err
 	}
+	// The budget step can delete a different object with the name of the budget. Thus it occurs
+	// after the block of the key.
+	if err := markBudget(ctx, r.Client, r.APIReader, r.Scheme, ws, "workspace", workspaceBudgetSelector(ws),
+		true); err != nil {
+		return "", "", "", err
+	}
 	switch err := r.waitTestKeyBlocks(ctx, ws); {
 	case errors.Is(err, errTestKeysUnblocked):
 		return corev1alpha1.WorkspacePending, reasonTestKeysBlocking, "The quarantine waits for the block of each test key.",
@@ -408,8 +483,15 @@ func (r *WorkspaceReconciler) releaseDeleted(ctx context.Context, ws *corev1alph
 	return nil
 }
 
+// workspaceBudgetSelector selects the pods of the Workspace for the budget of the quarantine.
+func workspaceBudgetSelector(ws *corev1alpha1.Workspace) map[string]string {
+	return map[string]string{WorkspaceLabel: ws.Name}
+}
+
 // markChildren adds or removes the quarantine label on the StatefulSet, the pod and the home PVC
-// of the Workspace. The controller has no read access to the PVCs, so it always sends the patch.
+// of the Workspace. At the release, it also removes the budget of the quarantine. quarantineHeld
+// makes the budget after the block of the key. The controller has no read access to the PVCs, so
+// it always sends the patch.
 func (r *WorkspaceReconciler) markChildren(ctx context.Context, ws *corev1alpha1.Workspace, on bool) error {
 	sts := &appsv1.StatefulSet{}
 	err := r.APIReader.Get(ctx, client.ObjectKeyFromObject(ws), sts)
@@ -421,8 +503,13 @@ func (r *WorkspaceReconciler) markChildren(ctx context.Context, ws *corev1alpha1
 			return err
 		}
 	}
-	if err := markPods(ctx, r.Client, r.APIReader, ws.Namespace, client.MatchingLabels{WorkspaceLabel: ws.Name},
-		on); err != nil {
+	sel := workspaceBudgetSelector(ws)
+	if !on {
+		if err := markBudget(ctx, r.Client, r.APIReader, r.Scheme, ws, "workspace", sel, false); err != nil {
+			return err
+		}
+	}
+	if err := markPods(ctx, r.Client, r.APIReader, ws.Namespace, sel, on); err != nil {
 		return err
 	}
 	pvc := &corev1.PersistentVolumeClaim{ObjectMeta: metav1.ObjectMeta{Namespace: ws.Namespace,
@@ -526,7 +613,7 @@ func (r *AppVersionReconciler) quarantine(ctx context.Context, av *corev1alpha1.
 }
 
 // markChildren adds or removes the quarantine label on the Deployment of the version and on its
-// pods.
+// pods, and makes or removes the budget of the quarantine.
 func (r *AppVersionReconciler) markChildren(ctx context.Context, av *corev1alpha1.AppVersion, on bool) error {
 	d := &appsv1.Deployment{}
 	found, err := r.getOwned(ctx, av, d)
@@ -538,5 +625,10 @@ func (r *AppVersionReconciler) markChildren(ctx context.Context, av *corev1alpha
 			return err
 		}
 	}
-	return markPods(ctx, r.Client, r.APIReader, av.Namespace, client.MatchingLabels(appVersionLabels(av)), on)
+	sel := appVersionLabels(av)
+	// The pods get the label before the budget step, as for an Agent.
+	if err := markPods(ctx, r.Client, r.APIReader, av.Namespace, sel, on); err != nil {
+		return err
+	}
+	return markBudget(ctx, r.Client, r.APIReader, r.Scheme, av, "appversion", sel, on)
 }

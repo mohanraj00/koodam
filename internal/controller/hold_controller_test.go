@@ -19,6 +19,7 @@ package controller
 import (
 	"context"
 	"fmt"
+	"math"
 	"strings"
 	"time"
 
@@ -28,6 +29,7 @@ import (
 	authenticationv1 "k8s.io/api/authentication/v1"
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
+	policyv1 "k8s.io/api/policy/v1"
 	rbacv1 "k8s.io/api/rbac/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
@@ -98,6 +100,24 @@ var _ = Describe("Hold stop", func() {
 		GinkgoHelper()
 		Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(o), o)).To(Succeed())
 		return o.GetLabels()[quarantineLabel] == quarantineOn
+	}
+	// expectBudget checks the PodDisruptionBudget of the quarantine of owner. With on, the budget
+	// has the label, the owner, the selector sel and a minAvailable larger than each number of pods.
+	expectBudget := func(owner client.Object, kind string, sel map[string]string, on bool) {
+		GinkgoHelper()
+		pdb := &policyv1.PodDisruptionBudget{}
+		err := k8sClient.Get(ctx, types.NamespacedName{Namespace: owner.GetNamespace(),
+			Name: "kd-quarantine-" + kind + "-" + owner.GetName()}, pdb)
+		if !on {
+			Expect(apierrors.IsNotFound(err)).To(BeTrue(), "the budget stays: %v", err)
+			return
+		}
+		Expect(err).NotTo(HaveOccurred())
+		Expect(pdb.Labels).To(HaveKeyWithValue(quarantineLabel, quarantineOn))
+		Expect(metav1.IsControlledBy(pdb, owner)).To(BeTrue())
+		Expect(pdb.Spec.MinAvailable.IntValue()).To(Equal(math.MaxInt32))
+		Expect(pdb.Spec.MaxUnavailable).To(BeNil())
+		Expect(pdb.Spec.Selector.MatchLabels).To(Equal(sel))
 	}
 	// newPod makes a pod with the labels of a workload, because envtest has no controller that
 	// makes the pods.
@@ -303,6 +323,7 @@ var _ = Describe("Hold stop", func() {
 			Expect(j.DeletionTimestamp.IsZero()).To(BeTrue())
 			Expect(j.Spec.ActiveDeadlineSeconds).To(BeNil())
 			Expect(marked(a) && marked(j) && marked(runPod)).To(BeTrue(), "the run, its Job and its pod have the label")
+			expectBudget(a, "agent", map[string]string{agentLabel: name}, true)
 			var e string
 			Eventually(rec.Events).Should(Receive(&e))
 			Expect(e).To(HavePrefix("Warning Quarantined "))
@@ -331,11 +352,70 @@ var _ = Describe("Hold stop", func() {
 			a := agent()
 			Expect(a.Finalizers).NotTo(ContainElement(quarantineFinalizer))
 			Expect(marked(a) || marked(runPod) || marked(latePod)).To(BeFalse(), "the release removes the label")
+			expectBudget(a, "agent", nil, false)
 			Expect(meta.FindStatusCondition(a.Status.Conditions, corev1alpha1.HoldHeld)).To(BeNil())
 			j := &batchv1.Job{}
 			err := k8sClient.Get(ctx, types.NamespacedName{Namespace: ns, Name: "kd-" + name}, j)
 			Expect(apierrors.IsNotFound(err) || !j.DeletionTimestamp.IsZero()).To(BeTrue(), "the Job stays: %v", err)
 			Expect(gw.created).To(HaveLen(1), "the run does not start again")
+		})
+
+		It("replaces a different object with the name of the quarantine budget", func() {
+			other := &policyv1.PodDisruptionBudget{ObjectMeta: metav1.ObjectMeta{Namespace: ns,
+				Name: "kd-quarantine-agent-" + name}, Spec: policyv1.PodDisruptionBudgetSpec{
+				MinAvailable: new(intstr.FromInt32(0)),
+				Selector:     &metav1.LabelSelector{MatchLabels: map[string]string{agentLabel: name}}}}
+			Expect(k8sClient.Create(ctx, other)).To(Succeed())
+			DeferCleanup(func() { Expect(client.IgnoreNotFound(k8sClient.Delete(ctx, other))).To(Succeed()) })
+			hold := quarantineRun()
+			pdb := &policyv1.PodDisruptionBudget{}
+			Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(other), pdb)).To(Succeed())
+			Expect(pdb.UID).NotTo(Equal(other.UID))
+			release(hold)
+			reconcileAgent()
+			expectBudget(agent(), "agent", nil, false)
+		})
+
+		It("labels the pods of the run when a different object with the budget name has a finalizer", func() {
+			const keep = "test.koodam.io/keep"
+			other := &policyv1.PodDisruptionBudget{ObjectMeta: metav1.ObjectMeta{Namespace: ns,
+				Name: "kd-quarantine-agent-" + name, Finalizers: []string{keep}}, Spec: policyv1.PodDisruptionBudgetSpec{
+				MinAvailable: new(intstr.FromInt32(0)),
+				Selector:     &metav1.LabelSelector{MatchLabels: map[string]string{agentLabel: name}}}}
+			Expect(k8sClient.Create(ctx, other)).To(Succeed())
+			removeKeep := func() {
+				pdb := &policyv1.PodDisruptionBudget{}
+				if k8sClient.Get(ctx, client.ObjectKeyFromObject(other), pdb) == nil &&
+					controllerutil.RemoveFinalizer(pdb, keep) {
+					Expect(k8sClient.Update(ctx, pdb)).To(Succeed())
+				}
+			}
+			DeferCleanup(func() {
+				removeKeep()
+				Expect(client.IgnoreNotFound(k8sClient.Delete(ctx, other))).To(Succeed())
+			})
+			newAgent()
+			reconcileAgent()
+			runPod = newPod(ns, "kd-"+name+"-pod", map[string]string{agentLabel: name})
+			hold := newHold(corev1alpha1.HoldTarget{Kind: corev1alpha1.HoldTargetAgent, Namespace: ns, Name: name},
+				corev1alpha1.HoldQuarantine)
+			held(hold)
+
+			// The delete leaves the other object with its finalizer, so the create of the budget fails.
+			// The key is blocked and the pod has the label before the budget step.
+			_, err := agents().Reconcile(ctx, reconcile.Request{NamespacedName: key()})
+			Expect(apierrors.IsAlreadyExists(err)).To(BeTrue(), "the budget step fails: %v", err)
+			Expect(gw.blocked).To(Equal([]string{gateway.HashKey(gw.created[0].Value)}))
+			Expect(marked(runPod)).To(BeTrue(), "the pod has the label")
+			Expect(quarantined(agent().Status.Conditions)).To(BeFalse())
+
+			removeKeep()
+			reconcileAgent()
+			Expect(quarantined(agent().Status.Conditions)).To(BeTrue())
+			expectBudget(agent(), "agent", map[string]string{agentLabel: name}, true)
+			release(hold)
+			reconcileAgent()
+			expectBudget(agent(), "agent", nil, false)
 		})
 
 		It("keeps a deleted Agent and its Job until the release", func() {
@@ -512,6 +592,34 @@ var _ = Describe("Hold stop", func() {
 			Expect(meta.FindStatusCondition(w.Status.Conditions, corev1alpha1.HoldHeld)).To(BeNil())
 		})
 
+		It("blocks the key before it replaces a different object with the name of the Workspace budget", func() {
+			reconcileWorkspace()
+			other := &policyv1.PodDisruptionBudget{ObjectMeta: metav1.ObjectMeta{Namespace: ns,
+				Name: "kd-quarantine-workspace-" + name}, Spec: policyv1.PodDisruptionBudgetSpec{
+				MinAvailable: new(intstr.FromInt32(0)),
+				Selector:     &metav1.LabelSelector{MatchLabels: map[string]string{WorkspaceLabel: name}}}}
+			Expect(k8sClient.Create(ctx, other)).To(Succeed())
+			DeferCleanup(func() { Expect(client.IgnoreNotFound(k8sClient.Delete(ctx, other))).To(Succeed()) })
+			var uidAtBlock types.UID
+			gw.atBlock = func() {
+				pdb := &policyv1.PodDisruptionBudget{}
+				if k8sClient.Get(ctx, client.ObjectKeyFromObject(other), pdb) == nil {
+					uidAtBlock = pdb.UID
+				}
+			}
+			hold := newHold(corev1alpha1.HoldTarget{Kind: corev1alpha1.HoldTargetWorkspace, Namespace: ns, Name: name},
+				corev1alpha1.HoldQuarantine)
+			reconcileWorkspace()
+			Expect(uidAtBlock).To(Equal(other.UID), "the controller deleted the object before the block of the key")
+			pdb := &policyv1.PodDisruptionBudget{}
+			Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(other), pdb)).To(Succeed())
+			Expect(pdb.UID).NotTo(Equal(other.UID))
+			expectBudget(workspace(), "workspace", map[string]string{WorkspaceLabel: name}, true)
+			release(hold)
+			reconcileWorkspace()
+			expectBudget(workspace(), "workspace", nil, false)
+		})
+
 		It("quarantines the Workspace: blocks the key and keeps the pod, then stops and starts again", func() {
 			reconcileWorkspace()
 			Expect(replicas()).To(Equal(int32(1)))
@@ -525,6 +633,7 @@ var _ = Describe("Hold stop", func() {
 			w := workspace()
 			Expect(w.Finalizers).To(ContainElement(quarantineFinalizer))
 			Expect(marked(w) && marked(sts)).To(BeTrue(), "the Workspace and its StatefulSet have the label")
+			expectBudget(w, "workspace", map[string]string{WorkspaceLabel: name}, true)
 			Expect(w.Status.KeyHash).To(BeEmpty())
 			Expect(workspaceQuarantined(w)).To(BeTrue())
 			var e string
@@ -543,6 +652,7 @@ var _ = Describe("Hold stop", func() {
 			reconcileWorkspace()
 			Expect(apierrors.IsNotFound(k8sClient.Get(ctx, nn(name), &corev1alpha1.Workspace{}))).To(BeTrue())
 			Expect(old).NotTo(BeEmpty())
+			expectBudget(w, "workspace", nil, false)
 		})
 
 		It("keeps a Workspace that is deleted before the reconcile of its quarantine", func() {
@@ -773,6 +883,7 @@ var _ = Describe("Hold stop", func() {
 			Expect(k8sClient.Get(ctx, nn(name), v)).To(Succeed())
 			Expect(marked(v) && marked(d) && marked(pod) && marked(late)).To(BeTrue(),
 				"the version, its Deployment and its pods have the label")
+			expectBudget(v, "appversion", labels, true)
 			Expect(v.Finalizers).To(ContainElement(quarantineFinalizer))
 			Expect(appVersionQuarantined(v)).To(BeTrue())
 			Expect(meta.FindStatusCondition(v.Status.Conditions, corev1alpha1.AppVersionRevoking)).To(BeNil())
@@ -786,6 +897,7 @@ var _ = Describe("Hold stop", func() {
 			Expect(k8sClient.Get(ctx, nn(name), v)).To(Succeed())
 			Expect(v.Finalizers).To(BeEmpty())
 			Expect(marked(v) || marked(pod) || marked(late)).To(BeFalse(), "the release removes the label")
+			expectBudget(v, "appversion", nil, false)
 			Expect(meta.FindStatusCondition(v.Status.Conditions, corev1alpha1.AppVersionRevoking).Reason).
 				To(Equal(reasonStopped))
 			Expect(meta.IsStatusConditionTrue(v.Status.Conditions, corev1alpha1.AppVersionRevoked)).To(BeTrue())

@@ -142,6 +142,7 @@ type AgentReconciler struct {
 // +kubebuilder:rbac:groups=batch,resources=jobs,verbs=get;list;watch;create;update;delete
 // +kubebuilder:rbac:groups="",resources=secrets,verbs=get;create;delete
 // +kubebuilder:rbac:groups="",resources=pods,verbs=list;patch
+// +kubebuilder:rbac:groups=policy,resources=poddisruptionbudgets,verbs=get;create;patch;delete
 // +kubebuilder:rbac:groups="",resources=serviceaccounts,verbs=get;create;delete
 // +kubebuilder:rbac:groups=rbac.authorization.k8s.io,resources=roles;rolebindings,verbs=get;create;delete
 
