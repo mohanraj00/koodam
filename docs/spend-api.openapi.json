@@ -190,6 +190,7 @@
           "400": {"$ref": "#/components/responses/BadRequest"},
           "404": {"$ref": "#/components/responses/NotFound"},
           "409": {"$ref": "#/components/responses/NoLogYet"},
+          "422": {"description": "The log window exceeds 1 MiB, including up to 256 lines of key context. Long lines at the end of the log can cause this error at any value of the lines parameter. For the planned change to the log read, see [issue #535](https://github.com/mohanraj00/koodam/issues/535).", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Problem"}}}},
           "502": {"$ref": "#/components/responses/UpstreamFailure"},
           "504": {"$ref": "#/components/responses/Timeout"}
         }
@@ -204,6 +205,7 @@
           "400": {"description": "The query is not valid."},
           "404": {"description": "The run or its pod does not exist."},
           "409": {"description": "The container has no log yet."},
+          "422": {"description": "The log window exceeds 1 MiB, including up to 256 lines of key context. Long lines at the end of the log can cause this error at any value of the lines parameter. For the planned change to the log read, see [issue #535](https://github.com/mohanraj00/koodam/issues/535)."},
           "502": {"description": "An upstream read failed."},
           "504": {"description": "The request time limit expired."}
         }
@@ -387,7 +389,7 @@
         "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Problem"}}}
       },
       "TooManyWatches": {
-        "description": "Too many watches are open on the server. The Retry-After header gives the wait in seconds.",
+        "description": "Too many watches are open on the server or for the caller. The Retry-After header gives the wait in seconds.",
         "headers": {"Retry-After": {"schema": {"type": "integer"}}},
         "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Problem"}}}
       },
@@ -570,7 +572,7 @@
       "WatchEnd": {
         "type": "object",
         "required": ["reason"],
-        "properties": {"reason": {"type": "string", "enum": ["timeLimit", "watchEnded"]}}
+        "properties": {"reason": {"type": "string", "enum": ["timeLimit", "watchEnded", "accessEnded", "accessCheckFailed"]}}
       },
       "Problem": {
         "type": "object",

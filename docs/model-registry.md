@@ -1,5 +1,7 @@
 # Model registry and response cache: design
 
+Release: v0.6.0.
+
 Status: decided design, not built. The decision is on [#249](https://github.com/mohanraj00/koodam/issues/249). The follow-up issues build it.
 
 ## Problem

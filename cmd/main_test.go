@@ -34,10 +34,13 @@ import (
 	"github.com/mohanraj00/koodam/internal/controller"
 )
 
+// apiServerProxy is the egress proxy for the tests of the API server rules.
+var apiServerProxy = controller.EgressProxy{
+	IP: "10.96.0.50", Namespace: "proxy-system", PodLabels: map[string]string{"app": "proxy"},
+}
+
 func TestLoadAppAPIServerEgress(t *testing.T) {
-	proxy := controller.EgressProxy{
-		IP: "10.96.0.50", Namespace: "proxy-system", PodLabels: map[string]string{"app": "proxy"},
-	}
+	proxy := apiServerProxy
 	const raw = `[{"to":[{"ipBlock":{"cidr":"192.0.2.1/32"}}],"ports":[{"port":6443}]}]`
 	for _, value := range []string{
 		raw,
@@ -77,6 +80,34 @@ func TestLoadAppAPIServerEgress(t *testing.T) {
 	} {
 		if _, err := loadAppAPIServerEgress(value, proxy); err == nil {
 			t.Errorf("accepted %q, want an error", value)
+		}
+	}
+}
+
+// TestAPIServerSpecialAddress checks that a rule to a special address fails with an error that
+// names the address and its class, and that a normal endpoint address passes (#501).
+func TestAPIServerSpecialAddress(t *testing.T) {
+	proxy := apiServerProxy
+	rule := func(cidr string) string {
+		return `[{"to":[{"ipBlock":{"cidr":"` + cidr + `"}}],"ports":[{"port":6443}]}]`
+	}
+	for class, cidrs := range map[string][]string{
+		"loopback":       {"127.0.0.1/32", "127.1.2.3/32", "::1/128", "::ffff:127.0.0.1/128"},
+		"link-local":     {"169.254.169.254/32", "169.254.0.1/32", "fe80::1/128"},
+		"unspecified":    {"0.0.0.0/32", "::/128"},
+		"multicast":      {"224.0.0.1/32", "ff02::1/128"},
+		"cloud metadata": {"fd00:ec2::254/128", "100.100.100.200/32"},
+	} {
+		for _, cidr := range cidrs {
+			_, err := loadAppAPIServerEgress(rule(cidr), proxy)
+			if err == nil || !strings.Contains(err.Error(), `"`+cidr+`"`) || !strings.Contains(err.Error(), class) {
+				t.Errorf("%s: got %v, want a %s error with the address", cidr, err, class)
+			}
+		}
+	}
+	for _, cidr := range []string{"10.0.0.1/32", "172.18.0.2/32", "fd00::10/128", "2001:db8::1/128"} {
+		if rules, err := loadAppAPIServerEgress(rule(cidr), proxy); err != nil || len(rules) != 1 {
+			t.Errorf("%s: got %v rules and %v, want one rule", cidr, rules, err)
 		}
 	}
 }

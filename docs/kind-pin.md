@@ -1,5 +1,7 @@
 # Pin of kind in CI
 
+Release: v0.6.0.
+
 The e2e job `E2E on kind` in `.github/workflows/ci.yml` uses one pinned `kind` version and one pinned node image. The job `samples` in `.github/workflows/release.yml` uses the same pins. Each job sets both in its `env` block:
 
 - `KIND_VERSION`: the `kind` release tag, for example `v0.33.0`.

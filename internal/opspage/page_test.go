@@ -229,3 +229,23 @@ func TestPageHasTheRunView(t *testing.T) {
 		}
 	}
 }
+
+// TestPageReadsTheLogAgainAfterALogError is the check of #505. While the watch is open, the refresh does not read
+// the run detail. A log error, for example a 404 or a 409 before the container is ready, marks the view. Then each
+// refresh reads the log again, and a successful read stops the reads until the next error.
+func TestPageReadsTheLogAgainAfterALogError(t *testing.T) {
+	js := pageFile(t, "static/page.js")
+	for _, want := range []string{
+		"logFailed: false,", "v.logFailed = Boolean(error);", "else if (!view.open) readView(view);\n  else if (view.logFailed) readLog(view);",
+		"The page reads the log again in ${seconds(POLL_MS)} s.",
+	} {
+		if !strings.Contains(js, want) {
+			t.Errorf("page.js does not have %q", want)
+		}
+	}
+	// The mark comes after the check of the view and of the read number, so an old read cannot change it.
+	stale := strings.Index(js, "if (v !== view || read !== v.logReads || !(log || error)) return;")
+	if mark := strings.Index(js, "v.logFailed = Boolean(error);"); stale < 0 || mark < stale {
+		t.Error("page.js marks the log error before the check of the view and of the read number")
+	}
+}

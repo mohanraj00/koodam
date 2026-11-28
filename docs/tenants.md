@@ -1,5 +1,7 @@
 # Tenants
 
+Release: v0.6.0.
+
 A tenant is a client group of an App. The tenant label comes from the signed claim that the claim check of the App verifies ([apps.md](apps.md#the-signed-claim-check)). It does not come from a ServiceAccount. A `TenantQuota` gives one tenant label a quota for each period and a rate limit. Koodam uses the tenant label only for the quota, the rate limit and the spend group. The application isolates the data of its tenants.
 
 ## What is active
@@ -205,7 +207,7 @@ If the token is not valid, the app gets the status `403` from the proxy. The hea
   - The scan of one call has 2 limits, so a call with much text cannot use much memory or time of the proxy. One limit is for the number of key texts. The other limit is for the total length of the headers, the query and the path. A call of a client has one short key. The proxy refuses a call over a limit (`KeyScanLimit`), because a key can be in the part that it did not examine. It also refuses a call with a query value that has an escape that is not valid.
 - The gateway does not get the token, and no span has the token or the tenant label.
 
-This is a change from v0.4.0 for an install with a tenant claim: the app must send the header `Koodam-Tenant-Token` with each model call. With `apps.claimCheck.tenantToken=false`, the install has the behavior of v0.4.0.
+With a tenant claim, the app must send the header `Koodam-Tenant-Token` with each model call. To turn this off, set `apps.claimCheck.tenantToken=false`.
 
 The tenant token has these limits:
 
@@ -218,3 +220,15 @@ The tenant token has these limits:
   - The check finds a key in the locations and the forms that the gateway version of the chart reads. A different gateway version or a different gateway configuration can read a key from a different location.
   - An app can make a model call for a different pod. Such a call needs a tenant token, so the gateway counts it for a tenant that sent a request in the life of the token.
 - After the loss of the Secret of the seed, the version gets a new key and new pods. The proxy refuses the model calls of the old pods with `TenantTokenInvalid` until they stop.
+
+## Errors
+
+| Condition and reason | Meaning |
+|---|---|
+| `Ready=False`, `DuplicateTenant` | A different `TenantQuota` has the same tenant. |
+| `Ready=False`, `ReservedTenant` | The tenant is `koodam-no-tenant`. |
+| `Ready=False`, `GatewayError` | A call to the gateway failed. The controller tries again. |
+| `QuotaExceeded=True`, `TenantQuotaExceeded` | The tenant is at a limit of the current period. |
+| `QuotaExceeded=Unknown`, `RequestCountCapped` | The gateway stopped the count below the limit. |
+
+The claim check refuses a request with status 401 if the claim is missing or not valid, 403 for an unknown or a reserved tenant, and 429 for `TenantRateLimited` or `TenantQuotaExceeded`. [The refusals of the claim check](#the-refusals-of-the-claim-check) has each reason.

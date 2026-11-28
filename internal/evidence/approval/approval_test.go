@@ -142,6 +142,26 @@ func TestVerifyRefuseOtherKind(t *testing.T) {
 	}
 }
 
+// TestVerifyWindowOnlyForHuman checks that a decision that is not a valid human decision gets the
+// refusal for its kind or its disposition, also outside its window. Thus an expiry is final only
+// for a valid human decision.
+func TestVerifyWindowOnlyForHuman(t *testing.T) {
+	const accept = "accept"
+	s := newTestSigner()
+	for _, c := range []struct{ kind, disposition, code string }{
+		{"model", accept, codeNotHuman}, {"policy", accept, codeNotHuman}, {"", accept, codeNotHuman},
+		{"Human", "reject", codeNotHuman}, {"human", "maybe", "invalid_disposition"}, {"human", "", "invalid_disposition"},
+	} {
+		signed, _, _ := s.sign(c.kind, c.disposition, windowFrom, windowUntil)
+		for _, now := range []time.Time{time.Date(2027, 1, 1, 0, 0, 0, 0, time.UTC),
+			time.Date(2026, 10, 31, 0, 0, 0, 0, time.UTC), inWindow} {
+			if result, err := Verify(signed, s.keys, s.gate, now); err != (Refusal{c.code, ""}) || result != (Result{}) {
+				t.Fatalf("kind %q, disposition %q, at %s: got %v, want %s", c.kind, c.disposition, now, err, c.code)
+			}
+		}
+	}
+}
+
 func TestVerifyRejectAndKeepBytesPrivate(t *testing.T) {
 	s := newTestSigner()
 	signed, ref, signature := s.sign("human", "reject", windowFrom, windowUntil)

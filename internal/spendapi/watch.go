@@ -25,6 +25,7 @@ import (
 	"net/http"
 	"time"
 
+	authorizationv1 "k8s.io/api/authorization/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/fields"
@@ -41,6 +42,11 @@ const (
 	maxWatchTime = 5 * time.Minute
 	// maxOpenWatches limits the open watches of the server.
 	maxOpenWatches = 100
+	// maxCallerWatches limits the open watches of one caller, so one caller cannot use all the
+	// watches of the server.
+	maxCallerWatches = 10
+	// watchRecheck is the interval of the token review and the access review during a watch.
+	watchRecheck = time.Minute
 	// watchPing is the interval of a comment line that keeps the connection open.
 	watchPing = 15 * time.Second
 	// watchWriteTime limits each write, so a client that does not read cannot keep a watch.
@@ -80,17 +86,52 @@ func statusOf(agent *corev1alpha1.Agent) runStatus {
 	return s
 }
 
-func (a *api) openWatch() bool {
-	if a.watches.Add(1) > maxOpenWatches {
-		a.watches.Add(-1)
-		return false
+// openWatch counts a new watch of the caller, or gives the problem of the refusal.
+func (a *api) openWatch(caller string) (problem, bool) {
+	a.watchMu.Lock()
+	defer a.watchMu.Unlock()
+	switch {
+	case a.watches.Load() >= maxOpenWatches:
+		return problem{"Too many watches are open. Try again later."}, false
+	case a.callerWatches[caller] >= maxCallerWatches:
+		return problem{"The caller has too many open watches. Try again later."}, false
 	}
-	return true
+	if a.callerWatches == nil {
+		a.callerWatches = map[string]int{}
+	}
+	a.watches.Add(1)
+	a.callerWatches[caller]++
+	return problem{}, true
+}
+
+func (a *api) closeWatch(caller string) {
+	a.watchMu.Lock()
+	defer a.watchMu.Unlock()
+	a.watches.Add(-1)
+	if a.callerWatches[caller]--; a.callerWatches[caller] <= 0 {
+		delete(a.callerWatches, caller)
+	}
+}
+
+// checkAccess does the token review and the access review of the watch path again. It gives the
+// reason of the end event, or "" if the caller can continue.
+func (a *api) checkAccess(ctx context.Context, r *http.Request, ref runRef) string {
+	ctx, cancel := context.WithTimeout(ctx, a.timeout)
+	defer cancel()
+	_, _, status, _ := a.scope(ctx, r, []string{ref.namespace}, []authorizationv1.ResourceAttributes{listAgents})
+	switch status {
+	case http.StatusOK:
+		return ""
+	case http.StatusUnauthorized, http.StatusForbidden:
+		return "accessEnded"
+	default:
+		return "accessCheckFailed"
+	}
 }
 
 // serveWatch sends a status event when the watch starts and after each change of the status, as
 // server-sent events. It ends with an end event or a deleted event.
-func (a *api) serveWatch(ctx context.Context, w http.ResponseWriter, r *http.Request, ref runRef) {
+func (a *api) serveWatch(ctx context.Context, w http.ResponseWriter, r *http.Request, ref runRef, caller string) {
 	if a.watcher == nil {
 		reply(w, r, http.StatusNotFound, problem{msgNoPath})
 		return
@@ -99,12 +140,12 @@ func (a *api) serveWatch(ctx context.Context, w http.ResponseWriter, r *http.Req
 		reply(w, r, http.StatusBadRequest, problem{msgNoQuery})
 		return
 	}
-	if !a.openWatch() {
+	if refusal, ok := a.openWatch(caller); !ok {
 		w.Header().Set("Retry-After", "5")
-		reply(w, r, http.StatusTooManyRequests, problem{"Too many watches are open. Try again later."})
+		reply(w, r, http.StatusTooManyRequests, refusal)
 		return
 	}
-	defer a.watches.Add(-1)
+	defer a.closeWatch(caller)
 	agent := &corev1alpha1.Agent{}
 	err := a.kube.Get(ctx, client.ObjectKey{Namespace: ref.namespace, Name: ref.name}, agent)
 	var stream watch.Interface
@@ -138,10 +179,14 @@ func (a *api) serveWatch(ctx context.Context, w http.ResponseWriter, r *http.Req
 	if stream == nil {
 		return
 	}
-	sendEvents(watchCtx, w, http.NewResponseController(w), stream, agent)
+	sendEvents(watchCtx, w, http.NewResponseController(w), stream, agent, a.recheck,
+		func(ctx context.Context) string { return a.checkAccess(ctx, r, ref) })
 }
 
-func sendEvents(ctx context.Context, w io.Writer, rc *http.ResponseController, stream watch.Interface, agent *corev1alpha1.Agent) {
+// sendEvents writes the events of stream. Every recheck interval, it calls check, and it ends the
+// watch if check gives a reason.
+func sendEvents(ctx context.Context, w io.Writer, rc *http.ResponseController, stream watch.Interface,
+	agent *corev1alpha1.Agent, recheck time.Duration, check func(context.Context) string) {
 	write := func(text string) bool {
 		_ = rc.SetWriteDeadline(time.Now().Add(watchWriteTime))
 		if _, err := io.WriteString(w, text); err != nil {
@@ -161,8 +206,11 @@ func sendEvents(ctx context.Context, w io.Writer, rc *http.ResponseController, s
 		last = b
 		return write("event: " + name + "\ndata: " + string(b) + "\n\n")
 	}
+	sendEnd := func(reason string) { send("end", map[string]string{"reason": reason}) }
 	ping := time.NewTicker(watchPing)
 	defer ping.Stop()
+	access := time.NewTicker(recheck)
+	defer access.Stop()
 	if !write("retry: "+watchRetry+"\n\n") || !send(eventStatus, statusOf(agent)) {
 		return
 	}
@@ -171,18 +219,24 @@ func sendEvents(ctx context.Context, w io.Writer, rc *http.ResponseController, s
 		case <-ctx.Done():
 			// If the client closed the connection, there is no client to tell.
 			if errors.Is(ctx.Err(), context.DeadlineExceeded) {
-				send("end", map[string]string{"reason": "timeLimit"})
+				sendEnd("timeLimit")
 			}
 			return
 		case <-ping.C:
 			if !write(": ping\n\n") {
 				return
 			}
+		case <-access.C:
+			// If the watch time ends during the check, the next loop sends the reason timeLimit.
+			if reason := check(ctx); reason != "" && ctx.Err() == nil {
+				sendEnd(reason)
+				return
+			}
 		case event, ok := <-stream.ResultChan():
 			next, isAgent := event.Object.(*corev1alpha1.Agent)
 			switch {
 			case !ok || event.Type == watch.Error:
-				send("end", map[string]string{"reason": "watchEnded"})
+				sendEnd("watchEnded")
 				return
 			case !isAgent || next.Name != agent.Name || next.Namespace != agent.Namespace:
 			case event.Type == watch.Deleted:

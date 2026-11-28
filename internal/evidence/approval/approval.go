@@ -58,7 +58,8 @@ func DecidedAt(signed []byte) (time.Time, bool) {
 // have the expected scope, function and subject, and the UTC date of now must be in its
 // half-open window from "from" to "until". Only a decision with the kind "human" gives evidence:
 // a model or policy verdict, or a verdict without kind, never counts as a human verdict (Entelos
-// KINDS.md, rule 3).
+// KINDS.md, rule 3). A refusal for the window occurs only for a human decision with the
+// disposition accept or reject.
 func Verify(signed, keySet []byte, want Expected, now time.Time) (Result, error) {
 	record, err := verifySigned(signed, keySet)
 	if err != nil {
@@ -74,18 +75,8 @@ func Verify(signed, keySet []byte, want Expected, now time.Time) (Result, error)
 	if !refPattern.MatchString(subject) || subject != want.Subject {
 		return Result{}, Refusal{codeSubjectMismatch, ""}
 	}
-	from, okFrom := parseDate(record.Body.text("from"))
-	until, okUntil := parseDate(record.Body.text("until"))
-	if !okFrom || !okUntil || !from.Before(until) {
-		return Result{}, Refusal{codeInvalidWindow, ""}
-	}
-	today, _ := parseDate(now.UTC().Format(dateLayout))
-	if today.Before(from) {
-		return Result{}, Refusal{codeNotYetValid, ""}
-	}
-	if !today.Before(until) {
-		return Result{}, Refusal{codeExpired, ""}
-	}
+	// The kind and the disposition come before the window. Thus the codes of the window, for
+	// example CodeExpired, occur only for a valid human decision.
 	if record.Body.text("kind") != "human" {
 		return Result{}, Refusal{codeNotHuman, ""}
 	}
@@ -97,6 +88,18 @@ func Verify(signed, keySet []byte, want Expected, now time.Time) (Result, error)
 		verdict = "fail"
 	default:
 		return Result{}, Refusal{"invalid_disposition", ""}
+	}
+	from, okFrom := parseDate(record.Body.text("from"))
+	until, okUntil := parseDate(record.Body.text("until"))
+	if !okFrom || !okUntil || !from.Before(until) {
+		return Result{}, Refusal{codeInvalidWindow, ""}
+	}
+	today, _ := parseDate(now.UTC().Format(dateLayout))
+	if today.Before(from) {
+		return Result{}, Refusal{codeNotYetValid, ""}
+	}
+	if !today.Before(until) {
+		return Result{}, Refusal{codeExpired, ""}
 	}
 	return Result{
 		Record: Record{Source: "approval", Integrity: "signature", Subject: subject,

@@ -1,14 +1,8 @@
 # Workspaces
 
+Release: v0.6.0.
+
 A Workspace is a long-lived pod for 1 developer. You connect to it with SSH, and you run the harnesses in `tmux`. A session stays after a disconnect.
-
-The maintainer checked the apps on 2026-10-21 (#15):
-
-- The Claude desktop app connects over SSH, and a task runs.
-- The Claude desktop app needs no login in the pod.
-- After a cut of the tunnel, the app connected again, and the task continued.
-- After `koodam profile push`, the shared skills and `CLAUDE.md` show in the app.
-- For the Codex app, add `codex` to `spec.harnesses` and sign in to Codex in the pod.
 
 For each Workspace, the controller makes these objects:
 
@@ -226,18 +220,7 @@ spec:
       expression: "has(object.metadata.labels) && ('koodam.dev/workspace' in object.metadata.labels || 'koodam.dev/agent' in object.metadata.labels)"
 ```
 
-### What works under gVisor
-
-A complete Workspace run under gVisor is not checked yet. The [Codex sandbox check](codex-sandbox.md) uses isolated pods with the Workspace image and security settings. The table keeps the limits of that check.
-
-| Feature | Under gVisor |
-| --- | --- |
-| sshd and `koodam ssh` | Not checked |
-| tmux | Not checked |
-| The harness installers | Not checked |
-| Claude Code | Not checked |
-| Codex | The version command passes in an isolated test pod; model calls are not checked |
-| The Codex bubblewrap sandbox (#72) | Fails at loopback setup with the tested versions. See [the sandbox check](codex-sandbox.md) |
+A complete Workspace run under gVisor is not checked yet. The Codex bubblewrap sandbox fails under gVisor with the tested versions. [codex-sandbox.md](codex-sandbox.md) has the check.
 
 ## Secrets in the pod template
 
@@ -323,3 +306,18 @@ To use more sessions, run `tmux` commands in the pod. sshd permits 10 sessions o
 - **Suspend.** Set `spec.suspend` to `true`. The controller blocks the gateway key first, then it stops the pod. The PVC stays. To start the pod again, set `spec.suspend` to `false`.
 - **Delete.** Run `kubectl delete workspace main -n dev-sample`. If the Workspace has a gateway key, a finalizer keeps the Workspace until the controller blocks the key. The home PVC stays. If you do not need the files, delete the PVC yourself.
 - **Remove the SSH entry.** `koodam ssh remove main -n dev-sample` removes the host entry and the host key. With `--key`, it also removes your public key from the Workspace. It does not remove the `Include` line or the key files.
+
+## Errors
+
+| Condition and reason | Meaning |
+|---|---|
+| `Ready=False`, `NamespaceNotBound` | No Profile binds the namespace. The phase is `Pending`. |
+| `Ready=False`, `Invalid` | The name has more than 52 characters. The phase is `Failed`. |
+| `Ready=False`, `InvalidPodTemplate` | The pod template has a field that Koodam owns, or a Secret of Koodam. |
+| `Ready=False`, `NameConflict` | An object with the name of a Workspace object exists. |
+| `Ready=False`, `PodNotReady` | The pod did not start yet. Read `kubectl describe pod NAME-0`. |
+| `Ready=False`, `Held` or `Quarantined` | A [Hold](holds.md) stopped or quarantined the Workspace. |
+| `GatewayKey=False`, `RenewFailed` | The controller cannot renew the gateway key. |
+| `Harnesses=False`, `NoInstallerImage` | The controller has no installer image. The pod has no harness. |
+
+The API server refuses an image in `spec.image` and in the pod template together, and `model` with `models`. `koodam ssh` stops with `no SSH entry for Workspace NS/NAME` before `koodam ssh setup`.

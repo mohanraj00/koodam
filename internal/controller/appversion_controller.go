@@ -1048,9 +1048,14 @@ func (r *AppVersionReconciler) setRevoke(av *corev1alpha1.AppVersion, reason str
 }
 
 // deleteOwned deletes the object of this kind with the version name. It keeps an object that is
-// not from av. The UID precondition stops the delete if the object changed after the read.
+// not from av, but it deletes a Deployment of the version that lost its owner reference. The UID
+// precondition stops the delete if the object changed after the read.
 func (r *AppVersionReconciler) deleteOwned(ctx context.Context, av *corev1alpha1.AppVersion, o client.Object) error {
 	found, err := r.getOwned(ctx, av, o)
+	if errors.Is(err, errNotOwned) && orphanWorkload(o, appVersionLabels(av)) {
+		logf.FromContext(ctx).Info("Deletes a Deployment of the version that has no controller")
+		err = nil
+	}
 	if errors.Is(err, errNotOwned) {
 		logf.FromContext(ctx).Info("Kept an object with the version name that is not from this AppVersion",
 			"kind", fmt.Sprintf("%T", o))
