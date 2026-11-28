@@ -1,5 +1,7 @@
 # The gateway guard for instructions in untrusted content
 
+Release: v0.6.0.
+
 An agent reads text from documents, web pages and tools. This text can hold instructions for the model. The gateway guard is an optional hook of the bundled gateway. It examines this text in each model request and records, marks or blocks a match. This page is the design and the log line contract (v1) for the programs that read the decisions, for example Nookku.
 
 > Status: [#248](https://github.com/mohanraj00/koodam/issues/248). The hook and the chart values are in the chart. The [image check](#check-the-pinned-gateway-image) and the kind test prove the hook in the pinned gateway image. The guard is off by default.

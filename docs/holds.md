@@ -1,5 +1,7 @@
 # Holds
 
+Release: v0.6.0.
+
 A `Hold` is an incident control on a workload. It has 2 actions:
 
 - `Stop`: the kill switch. The controller blocks the gateway key of each workload of the target, and then it stops the pods.
@@ -184,3 +186,18 @@ The 2 policies apply to each user, also to a member of `system:masters`. With `z
 - `hold-viewer-role`, and `<release>-hold-viewer` in the chart, give `get`, `list` and `watch`. Bind them with a ClusterRoleBinding.
 
 The chart has no write role for Holds, and no role of the chart has an aggregate label.
+
+## Errors
+
+The condition `Held` gives the state.
+
+| Reason of `Held` | Meaning |
+|---|---|
+| `Stopping`, then `Stopped` | The stop is in progress, then no workload of the target is left. |
+| `Quarantining`, then `Quarantined` | The quarantine is in progress, then it is in effect. |
+| `NoEgressProxy` | A quarantine needs the egress proxy. |
+| `AppsDisabled` | The App controllers do not run, and the target is an App, an AppVersion, or a Profile with AppVersions. |
+| `Unsupported` | This controller version does not know the action. |
+| `Released` | `spec.release` is set. |
+
+The API server refuses a change of `spec.target`, `spec.action` or a set `spec.release`, and a target with no namespace for a kind other than `Profile`.

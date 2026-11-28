@@ -1,15 +1,17 @@
-# Quick start
+# Install a release
 
-This guide installs the chart and the `koodam` CLI. Then it runs 1 Agent against the mock model of the bundled gateway. The mock model needs no upstream key.
+Release: v0.6.0.
 
-You need a Kubernetes cluster, `kubectl`, `helm` and `openssl`. A local cluster, for example kind, is enough.
+This page installs the release chart and the release `koodam` CLI on your cluster. The [README quickstart](../README.md#quickstart) does the same on kind from a clean checkout, and builds the CLI from the source.
+
+You need a Kubernetes cluster, `kubectl`, `helm` and `openssl`.
 
 ## 1. Install the chart
 
 1. Set `VERSION` to the release tag, without the `v`:
 
    ```sh
-   VERSION=<version>
+   VERSION=0.6.0
    ```
 
 2. Make the namespace of the controller:
@@ -70,55 +72,4 @@ The CLI uses your kubeconfig. The flags `-n`, `--context` and `--kubeconfig` wor
 
 ## 3. Run 1 Agent
 
-1. Make a namespace for the run:
-
-   ```sh
-   kubectl create namespace dev-sample
-   ```
-
-2. Write the Agent to `agent.yaml`. The script calls the model `mock-1` 1 time through the gateway. It uses the env variables `OPENAI_BASE_URL` and `OPENAI_API_KEY`, which the controller gives to the pod. It does not write the key value:
-
-   ```yaml
-   apiVersion: core.koodam.dev/v1alpha1
-   kind: Agent
-   metadata:
-     name: hello
-     namespace: dev-sample
-   spec:
-     image: docker.io/curlimages/curl:8.11.1
-     command:
-     - sh
-     - -c
-     - >-
-       curl -s -o /dev/null -w '%{http_code}\n'
-       -H "Authorization: Bearer $OPENAI_API_KEY"
-       -H 'Content-Type: application/json'
-       "$OPENAI_BASE_URL/chat/completions"
-       -d '{"model":"mock-1","messages":[{"role":"user","content":"hi"}]}'
-     model: mock-1
-     budget: "2"
-   ```
-
-3. Run the Agent:
-
-   ```sh
-   koodam run -f agent.yaml --wait
-   ```
-
-   The command creates the Agent. It waits for the pod, then shows the pod log. Then it waits for the revoke. At the end, it shows the spend. The pod log shows `200`, the HTTP status of the call.
-
-4. Look at the result:
-
-   ```sh
-   koodam get -n dev-sample hello
-   koodam spend -n dev-sample hello
-   ```
-
-After the run, the controller blocks the gateway key. Then it deletes the ServiceAccount, the Role and the RoleBinding of the run. The Agent keeps the status and the spend.
-
-## Next steps
-
-- [workspaces.md](workspaces.md): a long-lived pod that you connect to with SSH.
-- [profiles.md](profiles.md): the namespace binding, the shared login and the global files.
-- [cli.md](cli.md): each command of the CLI.
-- [gateway.md](gateway.md): real models, the budget and the spend.
+Do step 4 of the [README quickstart](../README.md#quickstart), with `koodam` in place of `bin/koodam`. Then read [agents.md](agents.md).

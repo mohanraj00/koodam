@@ -1,5 +1,7 @@
 # Apps
 
+Release: v0.6.0.
+
 An `App` is an application that serves clients. Each `AppVersion` of the App is a Deployment and a Service, with its own gateway key. The API is `v1alpha1`, and the App parts are off by default.
 
 ## Install
@@ -302,3 +304,18 @@ With the egress proxy of the chart, name each namespace of the Apps in `workspac
 With the egress proxy, each AppVersion gets a NetworkPolicy and the condition `TracedEgress` is `True`. The policy permits egress to the proxy. It permits no ingress by default. Set `apps.ingressNamespaces` to the namespace of the Gateway data plane. Pods of that namespace can then send traffic to the ports of the `app` container.
 
 Set `apps.apiServerEgress` to egress rules for the API server endpoint addresses to permit Kubernetes API calls from an App pod. This value needs `egressProxy.enabled` and `apps.sharedResources`. The chart gives the rules to the manager with `--app-api-server-egress` and permits `template.rules` in its watched namespaces. The manager adds the egress rules only to versions with `template.rules`. For such a version, the condition `TracedEgress` is `True` with the reason `ProxyAndAPIServer`, because the calls to the API server have no span. Each rule needs a port, and each peer must be an `ipBlock` with one address (`/32` or `/128`). The manager refuses other rules. With an empty list, the admission policy refuses new templates with rules, and the NetworkPolicy permits egress only to the proxy. For a non-Helm install, set the flag and configure the `apiServerEgress` variable of the admission policy for the same namespaces.
+
+## Errors
+
+| Object | Condition and reason | Meaning |
+|---|---|---|
+| App | `routeState: NoGatewayAPI` | The cluster has no HTTPRoute CRD. |
+| App | `routeState: NotAccepted` or `Pending` | A Gateway refused the route, or no Gateway accepted it yet. |
+| App | `routeState: NameConflict` | An HTTPRoute of that name belongs to a different owner. |
+| AppVersion | `Provisioned=False`, `AppNotFound` | The App of `spec.appRef` does not exist. |
+| AppVersion | `Provisioned=False`, `LiveVersionsFull` | The App has `maxLiveVersions` live versions. |
+| AppVersion | `GatewayKey=False`, `CostGroupNotAllowed` | The Profile does not permit the cost group. |
+| AppVersion | `Evidence=False`, `Failed`, `NotVerified`, `SubjectMismatch` or `ImageNotPinned` | The gate did not pass. The weight stays 0. |
+| AppVersion | `TracedEgress=False`, `NoEgressPolicy` | No egress policy selects the pods. |
+
+The API server refuses `replicas` with `scale`, a change of `spec.appRef`, a change from `Retiring` back to `Active`, and a pod template with no container `app`.

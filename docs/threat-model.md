@@ -1,5 +1,7 @@
 # Threat model
 
+Release: v0.6.0.
+
 This document gives the threats that Koodam controls. For each threat, it gives the control, the test that proves the control, and the risk that stays. [SECURITY.md](../SECURITY.md) tells you how to report a problem.
 
 | Item | Value |

@@ -1,5 +1,7 @@
 # Profiles, the login, the globals and the memory
 
+Release: v0.6.0.
+
 A Profile binds namespaces. In a bound namespace, each Workspace gets 3 shared layers:
 
 - the login of a harness, from `koodam login`;
@@ -182,7 +184,7 @@ The [Codex refresh source](https://github.com/openai/codex/blob/22db5847c8342669
 
 Each Workspace has an independent copy. Koodam does not send refreshed tokens back to the Secret or coordinate refreshes between pods. From the source behavior, the stored login in the Secret can become stale after the first refresh in a Workspace or on the source machine. New Workspaces can then get a stale login and fail when the access token expires. Do not keep the imported login in use on the source machine. Run `koodam login codex --stdin` again with a new login when the stored login becomes stale. Use a separate login for each Workspace if concurrent refresh must be reliable. This result is from source inspection and synthetic tests. No real login or provider call was used. Concurrent provider refresh was not tested.
 
-In v0.2, only Workspaces use the login. An Agent run uses a gateway key.
+Only Workspaces use the login. An Agent run uses a gateway key.
 
 ## The global files
 
@@ -242,6 +244,17 @@ It never replaces a file and never fails. In a Workspace, the script runs at eac
 
 ## The memory
 
-In v0.2, each Workspace keeps its memory on its home PVC. The harnesses write their memory in the home, for example in `~/.claude` and `~/.codex`. The PVC stays when the pod restarts, and when you suspend or delete the Workspace. So the memory also stays.
+Each Workspace keeps its memory on its home PVC. The harnesses write their memory in the home, for example in `~/.claude` and `~/.codex`. The PVC stays when the pod restarts, and when you suspend or delete the Workspace. So the memory also stays.
 
 The Workspaces of a namespace do not share their memory. The shared memory is issue #91, for v0.3.
+
+## Errors
+
+A Profile has the condition `Ready=True`, `Reconciled`, with the message `N of M namespaces are bound`. If a namespace is not bound, the error shows on the objects in it:
+
+| Object | Condition and reason |
+|---|---|
+| Workspace | `Ready=False`, `NamespaceNotBound` |
+| TestKey | `Active=False`, `ProfileNotBound` |
+| Agent | `Provisioned=False`, `CostGroupNotAllowed` |
+| Agent with `spec.approval` | `Approval=False`, `NoKeySet` |

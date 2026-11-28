@@ -7,244 +7,123 @@
 
 # Koodam
 
-Koodam (short for தொழிற்கூடம், "workspace") is where your agents live on Kubernetes. [CONSTITUTION.md](CONSTITUTION.md) has the purpose, the boundaries and the rules of the project.
+Koodam (short for தொழிற்கூடம், "workspace") is where your agents live on Kubernetes.
 
-## The problem
+I run coding agents every day. On a laptop, each run needs a model key, a login and skills by hand. The key stays valid after the run, and nothing records the spend. Koodam makes agent work a set of Kubernetes resources:
 
-Developers and teams now run coding agents (Claude Code, Codex) and their own agents every day. A team that already runs on Kubernetes has no standard way to run them on the cluster:
+- **Agent.** One run as a Job. It gets a model key with a budget and a TTL, and a Role with only the access it asks for. At the end, Koodam blocks the key and writes the spend to the status.
+- **Workspace.** A pod with a home on a PVC. You connect over SSH and run the harnesses in tmux. The session stays when the laptop closes.
+- **Profile.** One login, one set of global files and skills for each Workspace in your namespaces.
+- **App.** An application with versions, a traffic split, budgets and tenants.
 
-- Each run needs a model key, a Role, a login, skills and config. People wire these by hand for each run.
-- The credentials stay valid after the run stops.
-- A run has no model budget, and nothing records what it spent.
-- A coding session lives on a laptop. It stops when the laptop closes, or it keeps the laptop awake, hot and on the charger. The login, the skills and the memory stay on that laptop.
+Koodam is for developers and platform teams that already run Kubernetes. A platform team controls the resources with RBAC, NetworkPolicy and GitOps. [CONSTITUTION.md](CONSTITUTION.md) has the purpose and the rules.
 
-## The solution
+The current release is v0.6.0. The API is `v1alpha1` and can change between tags. Status: pre-alpha.
 
-Koodam adds Kubernetes resources for agent work, and an operator that reconciles them:
+## Quickstart
 
-- **Agent.** One `Agent` gets a model key with a budget and a TTL, a ServiceAccount with only the access it asks for, and a Job. When the run ends, Koodam revokes all of it and writes the spend to the status.
-- **Workspace.** A pod with a home on a PVC. You connect over SSH and run the harnesses in tmux, so the session keeps running when you close the laptop.
-- **Profile.** It binds namespaces, so each Workspace in them gets the same login, global files and skills.
-- **TestKey.** One short-lived gateway key for one Nookku test in a Workspace. The key has its own budget and TTL.
+This runs one Agent on a local kind cluster, from a clean checkout. The bundled gateway answers the mock model `mock-1`, so you need no model key. You need `git`, `go`, `docker`, `kind`, `kubectl`, `helm` and `openssl`.
 
-## Status and compatibility
+1. Get the code, make a cluster and build the CLI:
 
-The current release is v0.6.0. The API is `v1alpha1`. [CHANGELOG.md](CHANGELOG.md) lists the changes.
+   ```sh
+   git clone https://github.com/mohanraj00/koodam.git && cd koodam
+   kind create cluster --name koodam
+   go build -o bin/koodam ./cmd/koodam
+   ```
 
-The resources are `Agent`, `Workspace`, `Profile`, `TestKey`, `SpendBudget` and `Hold`. `main` also has `App`, `AppVersion` and `TenantQuota`. They are off by default: set `apps.enabled=true` in the chart. [docs/apps.md](docs/apps.md) has the use.
+2. Make the gateway master key. The key goes to `kubectl` on stdin, not to your shell history:
 
-The v0.5 parts, and what proves each part:
+   ```sh
+   kubectl create namespace koodam-system
+   printf 'sk-%s' "$(openssl rand -hex 32)" | kubectl -n koodam-system \
+     create secret generic koodam-gateway --from-file=master-key=/dev/stdin
+   ```
 
-- **Period budgets.** A `SpendBudget` gives the Agent runs of a namespace a spend limit for each UTC day or month. A run that does not fit stays `Pending` until the budget has room. The envtest suite proves the ledger. [docs/spend-budgets.md](docs/spend-budgets.md) has the API.
-- **Spend API and operations page.** The binary `spend-api` serves the runs, the spend and the budgets over HTTP, and a read-only page. Each release publishes its image. The chart does not deploy it. The unit tests and [examples/operations-page](examples/operations-page/README.md) prove it.
-- **Metrics.** The controller exports Prometheus metrics, and the chart has an optional `ServiceMonitor`. A unit test compares [docs/metrics.md](docs/metrics.md) with the code.
-- **Tenants and zones.** With `apps.enabled`, a `TenantQuota` gives each tenant of an App a quota and a rate limit. An install with a zone refuses a call of a different zone with a typed reason. The kind test with 2 installs in one cluster proves this. [docs/tenants.md](docs/tenants.md) and [docs/zones.md](docs/zones.md) have the design.
-- **Key rotation.** A new App version rotates the gateway key with a drain time. A kind test shows no failed model call in a rotation of a 2-replica version.
-- **Incident controls.** A `Hold` with the action `Stop` blocks the gateway key of a workload first, and then it stops the pods. With the action `Quarantine`, the controller blocks the key and keeps the pods, and the egress proxy refuses each call of the pods. The owner of the workload cannot clear a Hold. The envtest suite, the proxy unit tests and a kind test of `Stop` prove this. [docs/holds.md](docs/holds.md) has the design.
-- **Gateway guard.** An optional hook of the bundled gateway records, marks or blocks known forms of instructions in untrusted content. It is off by default. It is a tripwire for known forms, not a defense.
+3. Install the release chart with the bundled gateway, and wait for it:
 
-The v0.4 parts, and what proves each part:
+   ```sh
+   VERSION=0.6.0
+   helm install koodam oci://ghcr.io/mohanraj00/charts/koodam --version "$VERSION" \
+     -n koodam-system -f charts/koodam/values-bundled.yaml --wait --timeout 10m
+   ```
 
-- **Evidence gate.** `spec.gate` of an AppVersion runs a gate Job with a pinned Nookku release. The version has the traffic weight 0 until the gate verdict is `pass`. The seam test and the kind test prove this. [docs/evidence-gate.md](docs/evidence-gate.md) has the design.
-- **Signed approval verifier.** The offline check of an `entelos.record/1` record, with the `human` kind rule, is a Go package with unit tests. No controller calls it yet, so no resource uses an approval record.
-- **App ingress spans.** The claim check container writes one span for each request. [docs/app-ingress-spans.md](docs/app-ingress-spans.md) is the contract. The sample comes from the thin App test on kind.
-- **Egress spans and gateway log samples.** Each release has them as assets. [docs/egress-spans.md](docs/egress-spans.md) names the files.
+4. Run one Agent. It calls `mock-1` one time through the gateway:
 
-These limits are open:
+   ```sh
+   kubectl create namespace dev-sample
+   cat > agent.yaml <<'EOF'
+   apiVersion: core.koodam.dev/v1alpha1
+   kind: Agent
+   metadata:
+     name: hello
+     namespace: dev-sample
+   spec:
+     image: docker.io/curlimages/curl:8.11.1
+     command:
+     - sh
+     - -c
+     - >-
+       curl -s -o /dev/null -w '%{http_code}\n'
+       -H "Authorization: Bearer $OPENAI_API_KEY"
+       -H 'Content-Type: application/json'
+       "$OPENAI_BASE_URL/chat/completions"
+       -d '{"model":"mock-1","messages":[{"role":"user","content":"hi"}]}'
+     model: mock-1
+     budget: "2"
+   EOF
+   bin/koodam run -f agent.yaml --wait
+   ```
 
-- The controller has no watch on NetworkPolicy, so it restores a deleted policy at the next reconcile ([#359](https://github.com/mohanraj00/koodam/issues/359)).
-- A valid signed approval record is not proof of the current selection ([#364](https://github.com/mohanraj00/koodam/issues/364)).
-- In some cases a signed record that is not a human decision, or an accept after the wait, can stop or start a paused run ([#503](https://github.com/mohanraj00/koodam/issues/503), [#502](https://github.com/mohanraj00/koodam/issues/502), [#495](https://github.com/mohanraj00/koodam/issues/495)).
-- The gate and the signed claim check do not work together ([#354](https://github.com/mohanraj00/koodam/issues/354)).
-- An eviction of a quarantined pod, or a change of its spec, can still stop the quarantined processes ([#459](https://github.com/mohanraj00/koodam/issues/459)). A stop does not delete a Job or a Deployment with no owner reference ([#479](https://github.com/mohanraj00/koodam/issues/479)).
-- A Workspace with no gateway that is deleted before the controller reconciles its quarantine can lose its pod ([#470](https://github.com/mohanraj00/koodam/issues/470)).
-- Each pod of an App has its own token bucket, and the request limit of a tenant comes from a read of the gateway count at an interval. Thus a tenant can get more than its rate or its request limit for a short time ([#428](https://github.com/mohanraj00/koodam/issues/428), [#429](https://github.com/mohanraj00/koodam/issues/429)).
-- The zone placement policy refuses a list of placements. It is not a full control of the node of a pod ([#433](https://github.com/mohanraj00/koodam/issues/433)).
-- One caller of the spend API can open all the watches of a server, and a watch does not check the access again before it ends ([#490](https://github.com/mohanraj00/koodam/issues/490)).
+   The pod log shows `200`. Then the command waits for the revoke and shows the spend.
 
-The `nookku` plugin field gives the pod a Nookku test folder: `/koodam/nookku-tests` in an Agent pod and `/home/dev/nookku-tests` in a Workspace pod. Each release publishes the Nookku data image with the pinned Nookku 0.6.0 files, and the chart value `nookku.image` gives its digest to the controller. Koodam does not load the plugin in a harness. [docs/nookku-preset.md](docs/nookku-preset.md) has the rules.
+5. Read the result, then delete the cluster:
 
-The API version is `v1alpha1`. It can change between tags, and a change can break your manifests. Read the changelog before you upgrade.
+   ```sh
+   bin/koodam get hello -n dev-sample
+   kind delete cluster --name koodam
+   ```
 
-Status: pre-alpha.
+## Next docs
 
-## Docs
+| Page | Operation |
+|---|---|
+| [Install a release](docs/quickstart.md) | The chart and the CLI on a real cluster |
+| [Agents](docs/agents.md) | `Agent`: one run with a key, a Role and a budget |
+| [Workspaces](docs/workspaces.md) | `Workspace`: a pod with a PVC home over SSH |
+| [Profiles](docs/profiles.md) | `Profile`: the namespace binding, the login and the global files |
+| [Test keys](docs/test-keys.md) | `TestKey`: a short-lived key for one Nookku test |
+| [Apps](docs/apps.md) | `App` and `AppVersion`: versions, weights, the gate and key rotation |
+| [Holds](docs/holds.md) | `Hold`: stop or quarantine a workload |
+| [Spend budgets](docs/spend-budgets.md) | `SpendBudget`: a spend limit for each day or month |
+| [Tenants](docs/tenants.md) | `TenantQuota`: a quota and a rate limit for each tenant of an App |
+| [The CLI](docs/cli.md) | Each `koodam` command |
+| [Spend API](docs/spend-api.md) | The runs, the spend and the budgets over HTTP |
+| [Operations page](docs/operations-page.md) | The read-only page of the spend API |
 
-A Workspace is a pod with a home on a PVC. I connect to it over SSH and run the harnesses in tmux. A Profile binds my namespaces, so each Workspace in them gets my Claude Code login, my global files and my skills.
-
-- [Quick start](docs/quickstart.md): install the chart and the CLI, then run 1 Agent.
-- [Workspaces](docs/workspaces.md): make a Workspace and connect with `koodam ssh`.
-- [Profiles](docs/profiles.md): the namespace binding, the shared login, the global files, the project files and the memory.
-- [The CLI](docs/cli.md): each command, and the spend and the projected cost.
-- [The gateway](docs/gateway.md): the budget, the revoke and the spend.
-- [The spend API](docs/spend-api.md): the run spend, the period spend by label and the budgets over HTTP.
-- [Prometheus metrics](docs/metrics.md): Agent counts, run time, spend and budgets.
-- [Test keys](docs/test-keys.md): the TestKey resource, the key slot in the Workspace pod and the revoke.
-- [Nookku](docs/nookku.md): the Workspace setup for Nookku, the span contract and the test folder.
-- [Nookku preset](docs/nookku-preset.md): the `nookku` plugin field and the Nookku test folder.
-- [Evidence gate](docs/evidence-gate.md): the gate of an AppVersion on a sealed Nookku result, and the limits of a signed approval record.
-- [Apps](docs/apps.md): the `App` and `AppVersion` resources, the traffic split and the gate.
-- [Spend budgets](docs/spend-budgets.md): the `SpendBudget` resource, with a spend limit for each period for the Agent runs of a namespace.
-- [Holds](docs/holds.md): the `Hold` resource, the kill switch and the quarantine of a workload in an incident.
-- [Tenants](docs/tenants.md): the `TenantQuota` resource, with a quota and a rate limit for each tenant of an App.
-- [Zones](docs/zones.md): one install for each zone, and 2 installs in one cluster.
-- [Gateway guard](docs/gateway-guard.md): the design of an optional guard for instructions in untrusted content, its log line and what it cannot detect.
-- [App ingress spans](docs/app-ingress-spans.md): the contract of the spans at the App ingress.
-- [Release checklist](docs/release-checklist.md): the steps before a tag.
-- [Security](SECURITY.md): how to report a security problem, the supported versions and the response goal.
-- [Threat model](docs/threat-model.md): the threats, the control and the test for each threat, and the risks that stay.
-- [Traced egress](docs/traced-egress.md): the egress proxy, the spans and `koodam trace`.
-- [One trace for a run](docs/tracing.md): the design of the trace IDs and the OTLP export (v0.6).
-- [Architecture](docs/architecture.md): the controller, the gateway, the Workspace pod, the PVC home and the tunnel.
-- [Bring your Claude Code to Kubernetes, not a new agent platform](https://mohanraj00.github.io/tech/introducing-koodam/): the blog post. Why I built Koodam, and a day with a Workspace.
-
-## What one Agent gets
-
-```yaml
-apiVersion: core.koodam.dev/v1alpha1
-kind: Agent
-metadata:
-  name: fix-tests
-spec:
-  image: ghcr.io/example/coding-agent:latest
-  command: ["sh", "/opt/tasks/run.sh"]
-  model: local-agent
-  budget: "2"
-  rules:
-  - apiGroups: [""]
-    resources: ["pods"]
-    verbs: ["list"]
-```
-
-- A gateway key (LiteLLM today) that permits one model, stops at the budget and expires after the deadline.
-- A ServiceAccount, a Role and a RoleBinding in the Agent's namespace, with the rules above and nothing more.
-- A Job that gets the key and the token. Nothing else is mounted.
-- After the run: the key is blocked, the credentials are deleted, and `kubectl get agents` shows the spend.
-
-To run Claude Code or Codex, add a harness. The image does not need to contain it:
-
-```yaml
-spec:
-  harness:
-    name: codex        # or claude-code
-    version: 0.163.0   # optional. With no version, the pod gets the latest version
-    libc: glibc        # optional, glibc or musl. Claude Code only
-```
-
-An init container downloads the binary from the vendor when the pod starts and checks its sha256. The binary is in `/koodam/bin`, first on the `PATH`. If the Agent `env` has a `PATH`, Koodam does not change it, so put `/koodam/bin` in it. Koodam does not keep or redistribute the binary. The pod needs egress to `downloads.claude.ai` (Claude Code) or to `github.com`, `release-assets.githubusercontent.com` and `rekor.sigstore.dev` (Codex).
-
-Put the instructions and the skills in the repo that the run works on. Then both harnesses read the same files:
-
-- **Instructions:** write `AGENTS.md`. Codex reads it. Claude Code reads it if the repo has no `CLAUDE.md`. If the repo has a `CLAUDE.md`, put `@AGENTS.md` in it.
-- **Skills:** put them in `.agents/skills/<name>/SKILL.md`. Codex reads this folder. Claude Code reads `.claude/skills`, so link it: `mkdir -p .claude && ln -s ../.agents/skills .claude/skills`.
-
-Skills and config for each user, outside the repo, come from the Profile.
-
-The gateway gives each run a budget, a revoke and the real spend. [docs/gateway.md](docs/gateway.md) tells how to configure it.
-
-A run has one harness or none. If a run has a harness, `kubectl get agents` and `koodam get` show it, and the gateway key has it in the metadata (`harness`). Thus you can group the gateway spend by harness.
-
-## One run, one command
-
-```sh
-koodam run -f agent.yaml --wait
-```
-
-This creates the Agent, shows the pod log, waits for the revoke and shows the spend. The other commands:
-
-```sh
-koodam get [NAME]        # phase, model, budget, spend, start and end time
-koodam spend [NAME]      # budget, spend, calls and tokens
-koodam logs NAME         # the pod log of the run
-koodam delete NAME       # the controller revokes the key first
-```
-
-Get it from the GitHub release (see [Install](#install)), or build it with `go build -o bin/koodam ./cmd/koodam`. It uses your kubeconfig, and `-n`, `--context` and `--kubeconfig` work as in kubectl.
-
-For `koodam logs` and `run --wait`, the CLI user needs `get` on jobs, `list` on pods and `get` on pods/log in the namespace. The Agent viewer and editor ClusterRoles do not give them.
-
-For `koodam tunnel NAMESPACE/WORKSPACE` (an OpenSSH `ProxyCommand`), the CLI user needs `get` on pods and `create` on pods/portforward in the namespace.
-
-For SSH to a Workspace, `koodam ssh setup` makes the key `~/.ssh/koodam_ed25519`, adds the public key to the Workspace, and writes the host entry. It needs `get` and `patch` on workspaces in the namespace, plus the tunnel verbs.
-
-```sh
-koodam ssh setup main     # asks before it adds 1 Include line to ~/.ssh/config
-koodam ssh test main      # tmux, git and harness versions in the pod
-koodam ssh doctor         # kube context, RBAC, Workspace phase, Include line, file modes
-koodam ssh main           # ssh, then the tmux session main
-koodam ssh remove main    # --key also removes the public key from the Workspace
-```
-
-`koodam usage main` shows the tokens and the projected API cost of the Claude Code and Codex sessions in a Workspace with a subscription login. It runs a fixed script over the SSH entry of `koodam ssh setup`. The script reads `~/.claude/projects` and `~/.codex/sessions` in the pod and prints only the model names and the token counts, not the text. The CLI multiplies the counts by a pinned subset of the LiteLLM price file ([internal/usage/prices](internal/usage/prices/README.md)). Each line says `projected` and `source: subscription`, because a plan does not bill this cost. A model with no price shows its tokens and `no price`.
-
-`koodam profile push` copies `~/.claude/CLAUDE.md`, `~/.codex/AGENTS.md` and the folders in `~/.claude/skills` to the ConfigMap `koodam-globals`. Each Workspace pod mounts it read-only at `/etc/koodam/globals`. The key of a path has `_u` for each `_`, then `_s` for each `/` (`skills/my_skill/SKILL.md` becomes `skills_smy_uskill_sSKILL.md`), and `manifest.json` lists each key and its path. It refuses credential files (for example `auth.json`, `*.key`, `*.pem`, `id_*`, `.env`, or a file with a private key) and more than 900 KiB in total, and then pushes nothing. It skips a skill with a binary file or a file above 900 KiB, and pushes the other skills. It skips dot folders, dot files and symlinks, so it skips a symlinked skill folder. [docs/profiles.md](docs/profiles.md) has the rules. It does not replace a `koodam-globals` that it did not make, except with `--force`. `--dry-run` does the same checks, shows the keys, the sizes and the skips, and does not connect to the cluster. It needs `get`, `create` and `update` on configmaps in the namespace.
-
-`koodam login claude-code` reads a token from `claude setup-token` with no echo (or 1 line with `--stdin`) and stores it in the key `claude-code` of the Secret `koodam-login`. It never shows the token. It checks only the prefix `sk-ant-oat` and the length. It does not change a `koodam-login` that it did not make. `koodam login codex` stores nothing: run `codex login --device-auth` in the Workspace after `koodam ssh`. `koodam login --remove claude-code` deletes the key, and deletes the Secret when no key is left. Also revoke the token in your Anthropic account. It needs `get`, `create`, `update` and `delete` on secrets in the namespace.
-
-The controller deletes a finished Job and its pod 24 h after the end (the chart value `jobTTLSeconds`). After that, `koodam logs` has no log. The Agent keeps the status and the spend. The controller records the result before it deletes the Job, so a controller restart does not lose the result. If the controller is down, finished Jobs stay until it starts again.
-
-## Install
-
-Each release tag `vX.Y.Z` publishes these things: the controller image `ghcr.io/mohanraj00/koodam`, the Workspace image `ghcr.io/mohanraj00/koodam-workspace`, the Nookku data image `ghcr.io/mohanraj00/koodam-nookku`, the spend-api image `ghcr.io/mohanraj00/koodam-spend-api`, the Helm chart `oci://ghcr.io/mohanraj00/charts/koodam` and the `koodam` CLI on the [GitHub release](https://github.com/mohanraj00/koodam/releases). The chart version, the image tags and the CLI version are the same.
-
-The chart installs the controller and the `Agent` CRD. It uses an existing LiteLLM gateway, or it installs its own:
-
-```sh
-VERSION=0.6.0
-kubectl create namespace koodam-system
-kubectl -n koodam-system create secret generic koodam-gateway --from-file=master-key=./master-key
-helm install koodam oci://ghcr.io/mohanraj00/charts/koodam --version "$VERSION" -n koodam-system \
-  -f "https://raw.githubusercontent.com/mohanraj00/koodam/v$VERSION/charts/koodam/values-bundled.yaml"
-```
-
-With an existing gateway, do not use `values-bundled.yaml`. Pass `--set gateway.url=<address>`. It has no default, and the install stops without it. [charts/koodam/README.md](charts/koodam/README.md) has the steps.
-
-The CLI is for linux and darwin, on amd64 and arm64. Check the archive against `checksums.txt` before you install it:
-
-```sh
-VERSION=0.6.0
-OS=linux     # or darwin
-ARCH=amd64   # or arm64
-FILE="koodam_${VERSION}_${OS}_${ARCH}.tar.gz"
-curl -fsSLO "https://github.com/mohanraj00/koodam/releases/download/v$VERSION/$FILE"
-curl -fsSLO "https://github.com/mohanraj00/koodam/releases/download/v$VERSION/checksums.txt"
-grep " $FILE\$" checksums.txt | shasum -a 256 -c -
-tar -xzf "$FILE" koodam
-sudo install koodam /usr/local/bin/koodam
-```
-
-If `shasum -c` does not show `OK`, do not install the file.
+Background: [architecture](docs/architecture.md), [gateway](docs/gateway.md), [traced egress](docs/traced-egress.md), [threat model](docs/threat-model.md) and [metrics](docs/metrics.md). [CHANGELOG.md](CHANGELOG.md) has the changes and the known limits of each release. [SECURITY.md](SECURITY.md) tells how to report a problem.
 
 ## Plan
 
 | Version | Adds |
 |---|---|
 | v0.1 | `Agent` runs as a Job, key and Role for each run, spend in the status, `koodam` CLI, Helm chart |
-| v0.2 | profiles and workspaces: log in once, and every harness in your namespaces shares the login, skills, config and memory. A workspace is a pod that you connect to over SSH from the Claude or Codex app or a terminal |
+| v0.2 | profiles and workspaces: log in once, and every harness in your namespaces shares the login, skills, config and memory |
 | v0.3 | traced egress: every call out of an agent goes through a proxy and gets a span. In the spike, 360 of 360 planted calls got a span with the correct run, and 0 of 23 bypass attempts got through |
-| v0.4 | apps and Nookku: an `App` resource with versions and a traffic split, traced ingress with an authenticated caller, and a rollout that waits for the Nookku tests to pass |
-| v0.5 | controls for an app in production: a budget for each period, metrics, one trace, key rotation, a kill switch and a quarantine |
+| v0.4 | apps and Nookku: an `App` resource with versions and a traffic split, traced ingress, and a rollout that waits for the Nookku tests to pass |
+| v0.5 | controls for an app in production: a budget for each period, metrics, key rotation, a kill switch and a quarantine |
 | v0.6 | agentic apps at scale: workload identity, MCP tools, approvals, durable runs, autoscaling, and a test on a public cloud |
-| later | shared memory across the pods of a namespace |
+| v0.7 | the beta API (`v1beta1`) |
 
 [CONSTITUTION.md](CONSTITUTION.md#evidence) has the evidence rules for each claim here.
 
-## Build
+## Build and contribute
 
 ```sh
-make manifests generate
-make test
-make run    # against the cluster in your current kubeconfig
+make check   # the Go tests and the Python tests of tools/
+make run     # the controller, against the cluster of your kubeconfig
 ```
 
-Koodam is built with [Kubebuilder](https://book.kubebuilder.io). [docs/kubebuilder-guide.md](docs/kubebuilder-guide.md) is the generated guide for the layout.
+[docs/kubebuilder-guide.md](docs/kubebuilder-guide.md) has the layout. Open an issue first. [CONTRIBUTING.md](CONTRIBUTING.md) has the rules. The license is Apache-2.0. [docs/brand.md](docs/brand.md) has the rules for the mark in [`assets/brand/`](assets/brand/).
 
-## Contributing
-
-Open an issue first. [CONTRIBUTING.md](CONTRIBUTING.md) has the rules.
-
-## License
-
-Apache-2.0.
-
-The Koodam mark is in [`assets/brand/`](assets/brand/). [docs/brand.md](docs/brand.md) has the rules for its use.
+[Bring your Claude Code to Kubernetes, not a new agent platform](https://mohanraj00.github.io/tech/introducing-koodam/) is the blog post: why I built Koodam, and a day with a Workspace.
