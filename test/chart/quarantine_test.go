@@ -27,12 +27,14 @@ import (
 	appsv1 "k8s.io/api/apps/v1"
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
+	policyv1 "k8s.io/api/policy/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/apimachinery/pkg/util/intstr"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
 	"k8s.io/client-go/rest"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -165,6 +167,13 @@ func TestQuarantinePolicyRules(t *testing.T) {
 	always := template.DeepCopy()
 	always.Spec.RestartPolicy = corev1.RestartPolicyAlways
 	pod := &corev1.Pod{ObjectMeta: meta("run", map[string]string{"koodam.dev/agent": "run", "other": "a"}), Spec: podSpec}
+	// sized has resources, so a resize keeps its QoS class and the API server validates it.
+	sized := &corev1.Pod{ObjectMeta: meta("sized", nil), Spec: *podSpec.DeepCopy()}
+	sized.Spec.Containers[0].Resources = corev1.ResourceRequirements{
+		Requests: corev1.ResourceList{corev1.ResourceCPU: resource.MustParse("100m")},
+		Limits:   corev1.ResourceList{corev1.ResourceCPU: resource.MustParse("200m")}}
+	budget := &policyv1.PodDisruptionBudget{ObjectMeta: meta("kd-quarantine-agent-run", nil),
+		Spec: policyv1.PodDisruptionBudgetSpec{MinAvailable: new(intstr.FromInt32(1000)), Selector: selector}}
 	plain := &corev1.Pod{ObjectMeta: meta("plain", nil), Spec: podSpec}
 	agent := &corev1alpha1.Agent{ObjectMeta: meta("run", nil), Spec: corev1alpha1.AgentSpec{
 		Image: "example.com/quarantine:test", Command: []string{"/run"}, Model: "m", Budget: resource.MustParse("1"),
@@ -172,7 +181,7 @@ func TestQuarantinePolicyRules(t *testing.T) {
 	// The koodam finalizer keeps the Agent after a permitted delete.
 	agent.Finalizers = []string{"example.com/other", "koodam.dev/revoke"}
 	children := []client.Object{
-		pod,
+		pod, sized, budget,
 		&batchv1.Job{ObjectMeta: meta("kd-run", nil), Spec: batchv1.JobSpec{Template: corev1.PodTemplateSpec{Spec: podSpec}}},
 		&appsv1.StatefulSet{ObjectMeta: meta("ws", nil), Spec: appsv1.StatefulSetSpec{Selector: selector, Template: *always}},
 		&appsv1.Deployment{ObjectMeta: meta("kd-v1", nil),
@@ -263,6 +272,24 @@ func TestQuarantinePolicyRules(t *testing.T) {
 	}
 	refused("a delete of each pod", admin.DeleteAllOf(ctx, &corev1.Pod{}, client.InNamespace(ns),
 		client.MatchingLabels{"koodam.dev/agent": "run"}))
+
+	// The spec of a pod and of a budget does not change, also for the manager and through a resize.
+	spec := func(c client.Client, o client.Object, patch string, sub ...string) error {
+		p := client.RawPatch(types.StrategicMergePatchType, []byte(`{"spec":`+patch+`}`))
+		if len(sub) > 0 {
+			return c.SubResource(sub[0]).Patch(ctx, o, p)
+		}
+		return c.Patch(ctx, o, p)
+	}
+	const deadline1 = `{"activeDeadlineSeconds":1}`
+	refused("a deadline on a pod", spec(admin, pod, deadline1))
+	refused("a deadline on a pod by the manager", spec(manager, pod, deadline1))
+	refused("a new image of a pod", spec(admin, pod, `{"containers":[{"name":"c","image":"example.com/other:test"}]}`))
+	refused("a resize of a pod", spec(admin, sized,
+		`{"containers":[{"name":"c","resources":{"limits":{"cpu":"300m"}}}]}`, "resize"))
+	refused("a new minAvailable of the budget", spec(admin, budget, `{"minAvailable":0}`))
+	refused("a new minAvailable of the budget by the manager", spec(manager, budget, `{"minAvailable":0}`))
+	permitted("a deadline on a pod with no label", spec(admin, plain, deadline1))
 
 	// The workload: no label change, no removal of a koodam finalizer, no Foreground delete. A
 	// normal delete is permitted.
@@ -356,6 +383,8 @@ func typeName(o client.Object) string {
 		return "statefulset"
 	case *appsv1.Deployment:
 		return "deployment"
+	case *policyv1.PodDisruptionBudget:
+		return "poddisruptionbudget"
 	default:
 		return "pvc"
 	}

@@ -86,7 +86,8 @@ The proxy sees only the calls that go through it. A call in a path with no proxy
 - A Workspace with no gateway has no finalizer before the quarantine. If a user deletes it before the controller reconciles the Hold, Kubernetes removes it at once ([#470](https://github.com/mohanraj00/koodam/issues/470)).
 - Only the chart installs [the policies of a quarantine](#the-policies-of-a-quarantine). In an install with kustomize, a user who can delete the pods, the Job or the StatefulSet, or who can patch the labels of a pod, can end a quarantine. Limit these rights in the namespace during an investigation.
 - A pod that starts during a quarantine gets the label at the next reconcile of its workload. Before that, the policy does not refuse its delete. The proxy refuses its calls from the start.
-- The policies refuse a delete. They do not refuse the eviction of a pod, for example at a node drain, or a change of the pod spec that stops a container ([#459](https://github.com/mohanraj00/koodam/issues/459)). Limit the right to evict and to patch pods in the namespace during an investigation, and do not drain the node.
+- The budget of a quarantine refuses the eviction of a running pod. Kubernetes does not use a budget for a pod in the phase `Pending`, `Succeeded` or `Failed`, so an eviction can remove such a pod. A node drain does not end while a quarantined pod is on the node. Release the Hold, or move the investigation to a different node.
+- A pod that stops because of a fault, for example a node failure or an out-of-memory kill, is not an eviction. The policies cannot keep its process.
 - The delete of a namespace with a quarantined workload waits for the release, because the API server refuses the delete of the pods.
 
 ### The status of the Hold
@@ -161,15 +162,18 @@ The chart installs 2 more policies from [charts/koodam/templates/quarantine.yaml
 
 | Target | Objects with the label |
 |---|---|
-| Agent | The Agent, its Job and the pods of the run. |
-| Workspace | The Workspace, its StatefulSet, its pod and the home PVC. |
-| AppVersion | The AppVersion, its Deployment and its pods. |
+| Agent | The Agent, its Job, the pods of the run and the budget of the quarantine. |
+| Workspace | The Workspace, its StatefulSet, its pod, the home PVC and the budget of the quarantine. |
+| AppVersion | The AppVersion, its Deployment, its pods and the budget of the quarantine. |
+
+The budget of the quarantine is a PodDisruptionBudget with the name `kd-quarantine-<kind>-<name>`, for example `kd-quarantine-agent-run-1`. The controller makes it when the quarantine starts, and deletes it after the release. It selects the pods of the workload, and its `minAvailable` is larger than each number of pods. Thus the API server refuses each eviction of a running pod of the workload, also at a node drain. If a different object has this name, the controller deletes it before it makes the budget.
 
 The policy `<release>-quarantine` does these checks on an object with the label:
 
 - The API server refuses the delete of a pod, a Job, a StatefulSet, a Deployment or a PVC. This rule also applies to the garbage collector and to the controllers of Kubernetes. Thus a scale to 0, a Job deadline or the delete of an owner does not remove a quarantined pod.
 - The API server refuses the delete of an Agent, a Workspace or an AppVersion with `propagationPolicy: Foreground`. A normal delete is permitted, and the finalizer keeps the workload until the release.
 - Only the manager service account of the install can add, change or remove the label.
+- The API server refuses a change of the spec of a pod or of the budget, also through the `resize` subresource of a pod. Thus a user cannot set a deadline, change an image or change the resources of a quarantined pod.
 - Only the manager can remove a finalizer of koodam (`koodam.dev/...`) from an Agent, a Workspace or an AppVersion. Thus a user cannot remove the workload and leave its children with the label.
 
 The manager has no exception for a delete, so it cannot delete a child that has the label.
