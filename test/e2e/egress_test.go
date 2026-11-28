@@ -325,14 +325,31 @@ var _ = Describe("Traced egress", Ordered, Label("egress"), func() {
 		for _, a := range attempts {
 			Expect(reach(control, a.addr)).To(BeTrue(), "The control pod cannot make "+a.what+": "+a.addr)
 		}
-		Expect(dnsUDP(control, "1.1.1.1")).To(BeTrue(), "The control pod cannot make a UDP DNS query.")
+		// The runner network can lose one UDP packet, so the positive check tries again and also
+		// tries a second server (#510). The negative checks below use the server that answered the
+		// control pod, so a failure shows the policy and not a server that is not available. They
+		// make one attempt, because one answer from a blocked pod must fail the test.
+		var udpResults []string
+		udpServer := ""
+		Eventually(func() bool {
+			for _, server := range []string{"1.1.1.1", "8.8.8.8"} {
+				ok := dnsUDP(control, server)
+				udpResults = append(udpResults, fmt.Sprintf("%s: %t", server, ok))
+				if ok {
+					udpServer = server
+					return true
+				}
+			}
+			return false
+		}, 45*time.Second, 3*time.Second).Should(BeTrue(),
+			func() string { return "The control pod cannot make a UDP DNS query: " + strings.Join(udpResults, ", ") })
 
 		for _, pod := range []string{wsPod, agentPod} {
 			By("checking that each attempt fails from " + pod)
 			for _, a := range attempts {
 				Expect(reach(pod, a.addr)).To(BeFalse(), pod+" can make "+a.what+": "+a.addr)
 			}
-			Expect(dnsUDP(pod, "1.1.1.1")).To(BeFalse(), pod+" can make a direct UDP DNS query.")
+			Expect(dnsUDP(pod, udpServer)).To(BeFalse(), pod+" can make a direct UDP DNS query to "+udpServer+".")
 		}
 
 		By("checking that the proxy refuses a CONNECT to port 22")
@@ -475,7 +492,12 @@ var _ = Describe("Traced egress", Ordered, Label("egress"), func() {
 			out, _ := kexec(pod, "sh", `curl -sS -o /dev/null -w '%{http_code}' --max-time 10 http://example.net/`)
 			return out
 		}
-		Expect(call()).To(Equal("200"), "The call before the quarantine did not work.")
+		// The first query of the pod is a name of a search domain, and the proxy sends it to the
+		// cluster DNS. One lost packet there gives a failed lookup after the DNS timeout of 5 s
+		// (#500). The call before the quarantine is only a precondition, so it tries again.
+		var before string
+		Eventually(func() string { before = call(); return before }, time.Minute, 2*time.Second).Should(Equal("200"),
+			func() string { return "The call before the quarantine did not work: " + before })
 
 		By("quarantining the Agent")
 		h := makeHoldFor("e2e-agent-quarantine", corev1alpha1.HoldQuarantine,

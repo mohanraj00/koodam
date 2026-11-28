@@ -11,6 +11,10 @@ workload and to its children. The first policy keeps these objects for the inves
    removes a koodam finalizer of a workload with the label. Thus a user cannot remove the workload
    and leave its children with the label. The manager has no exception for a delete, so it
    removes the label before it stops the pods.
+ - It refuses a change of the spec of a pod with the label, also through the resize subresource,
+   because a new deadline or a new image stops the process. It also refuses a change of the spec
+   of the PodDisruptionBudget of the quarantine. The budget refuses each eviction of a running pod
+   of the workload (#459).
 
 The egress proxy finds the pods of a quarantined workload by the koodam labels of the pod. The
 second policy makes these labels immutable on a pod that has one of them. It has no exception.
@@ -41,7 +45,7 @@ spec:
     - apiGroups: [""]
       apiVersions: ["*"]
       operations: ["CREATE", "UPDATE", "DELETE"]
-      resources: ["pods", "pods/status", "persistentvolumeclaims", "persistentvolumeclaims/status"]
+      resources: ["pods", "pods/status", "pods/resize", "persistentvolumeclaims", "persistentvolumeclaims/status"]
     - apiGroups: ["batch"]
       apiVersions: ["*"]
       operations: ["CREATE", "UPDATE", "DELETE"]
@@ -50,6 +54,10 @@ spec:
       apiVersions: ["*"]
       operations: ["CREATE", "UPDATE", "DELETE"]
       resources: ["statefulsets", "statefulsets/status", "deployments", "deployments/status"]
+    - apiGroups: ["policy"]
+      apiVersions: ["*"]
+      operations: ["CREATE", "UPDATE", "DELETE"]
+      resources: ["poddisruptionbudgets", "poddisruptionbudgets/status"]
     # The API server compares the selector with the old object and with the new object.
     objectSelector:
       matchExpressions:
@@ -88,6 +96,11 @@ spec:
       oldObject.metadata.finalizers.filter(f, f.startsWith('koodam.dev/')).all(f,
       has(object.metadata.finalizers) && f in object.metadata.finalizers)
     message: "A Hold quarantines this workload. Only the koodam manager removes a koodam finalizer before the release."
+    reason: Forbidden
+  - expression: >-
+      request.operation != 'UPDATE' || !(request.resource.resource in ['pods', 'poddisruptionbudgets']) ||
+      (has(request.subResource) && !(request.subResource in ['', 'resize'])) || object.spec == oldObject.spec
+    message: "A Hold quarantines this object. Its spec does not change before the release."
     reason: Forbidden
 ---
 apiVersion: admissionregistration.k8s.io/v1

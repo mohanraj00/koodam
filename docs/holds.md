@@ -1,5 +1,7 @@
 # Holds
 
+Release: v0.6.0.
+
 A `Hold` is an incident control on a workload. It has 2 actions:
 
 - `Stop`: the kill switch. The controller blocks the gateway key of each workload of the target, and then it stops the pods.
@@ -44,6 +46,8 @@ The reconciler of each kind reads the Holds and uses the revoke path that it alr
 
 The owner of a workload cannot clear a stop. Only the controller writes the `Held` condition of a Workspace, and a Workspace with this condition gets no gateway key and no test key.
 
+The owner of a workload can remove the owner reference from the Job of an Agent or from the Deployment of an AppVersion. The controller also deletes such an object, but only if it has no controller and it has the labels of the run or of the version. A Job must also have the run ID of the Agent in its pod template. The controller deletes it after it blocks the key, and the garbage collector then deletes its pods. If the owner reference of a pod is also removed, the pod stays, but its gateway key is blocked.
+
 An App and an AppVersion stop only if the App controllers run. If they do not run, the Hold shows the reason `AppsDisabled`. A Profile Hold also shows `AppsDisabled` if a namespace that the Profile binds has an AppVersion.
 
 With two installs in one cluster (see [zones](zones.md)), each manager stops the workloads of its own namespaces only. A Profile can bind namespaces of the two installs. Then each manager counts the workloads of all the bound namespaces, so the two managers write the same status. The status of a Hold on one workload or on one App comes from the install of its namespace.
@@ -86,7 +90,8 @@ The proxy sees only the calls that go through it. A call in a path with no proxy
 - A Workspace with no gateway has no finalizer before the quarantine. If a user deletes it before the controller reconciles the Hold, Kubernetes removes it at once ([#470](https://github.com/mohanraj00/koodam/issues/470)).
 - Only the chart installs [the policies of a quarantine](#the-policies-of-a-quarantine). In an install with kustomize, a user who can delete the pods, the Job or the StatefulSet, or who can patch the labels of a pod, can end a quarantine. Limit these rights in the namespace during an investigation.
 - A pod that starts during a quarantine gets the label at the next reconcile of its workload. Before that, the policy does not refuse its delete. The proxy refuses its calls from the start.
-- The policies refuse a delete. They do not refuse the eviction of a pod, for example at a node drain, or a change of the pod spec that stops a container ([#459](https://github.com/mohanraj00/koodam/issues/459)). Limit the right to evict and to patch pods in the namespace during an investigation, and do not drain the node.
+- The budget of a quarantine refuses the eviction of a running pod. Kubernetes does not use a budget for a pod in the phase `Pending`, `Succeeded` or `Failed`, so an eviction can remove such a pod. A node drain does not end while a quarantined pod is on the node. Release the Hold, or move the investigation to a different node.
+- A pod that stops because of a fault, for example a node failure or an out-of-memory kill, is not an eviction. The policies cannot keep its process.
 - The delete of a namespace with a quarantined workload waits for the release, because the API server refuses the delete of the pods.
 
 ### The status of the Hold
@@ -161,15 +166,18 @@ The chart installs 2 more policies from [charts/koodam/templates/quarantine.yaml
 
 | Target | Objects with the label |
 |---|---|
-| Agent | The Agent, its Job and the pods of the run. |
-| Workspace | The Workspace, its StatefulSet, its pod and the home PVC. |
-| AppVersion | The AppVersion, its Deployment and its pods. |
+| Agent | The Agent, its Job, the pods of the run and the budget of the quarantine. |
+| Workspace | The Workspace, its StatefulSet, its pod, the home PVC and the budget of the quarantine. |
+| AppVersion | The AppVersion, its Deployment, its pods and the budget of the quarantine. |
+
+The budget of the quarantine is a PodDisruptionBudget with the name `kd-quarantine-<kind>-<name>`, for example `kd-quarantine-agent-run-1`. The controller makes it when the quarantine starts, and deletes it after the release. It selects the pods of the workload, and its `minAvailable` is larger than each number of pods. Thus the API server refuses each eviction of a running pod of the workload, also at a node drain. If a different object has this name, the controller deletes it before it makes the budget.
 
 The policy `<release>-quarantine` does these checks on an object with the label:
 
 - The API server refuses the delete of a pod, a Job, a StatefulSet, a Deployment or a PVC. This rule also applies to the garbage collector and to the controllers of Kubernetes. Thus a scale to 0, a Job deadline or the delete of an owner does not remove a quarantined pod.
 - The API server refuses the delete of an Agent, a Workspace or an AppVersion with `propagationPolicy: Foreground`. A normal delete is permitted, and the finalizer keeps the workload until the release.
 - Only the manager service account of the install can add, change or remove the label.
+- The API server refuses a change of the spec of a pod or of the budget, also through the `resize` subresource of a pod. Thus a user cannot set a deadline, change an image or change the resources of a quarantined pod.
 - Only the manager can remove a finalizer of koodam (`koodam.dev/...`) from an Agent, a Workspace or an AppVersion. Thus a user cannot remove the workload and leave its children with the label.
 
 The manager has no exception for a delete, so it cannot delete a child that has the label.
@@ -184,3 +192,18 @@ The 2 policies apply to each user, also to a member of `system:masters`. With `z
 - `hold-viewer-role`, and `<release>-hold-viewer` in the chart, give `get`, `list` and `watch`. Bind them with a ClusterRoleBinding.
 
 The chart has no write role for Holds, and no role of the chart has an aggregate label.
+
+## Errors
+
+The condition `Held` gives the state.
+
+| Reason of `Held` | Meaning |
+|---|---|
+| `Stopping`, then `Stopped` | The stop is in progress, then no workload of the target is left. |
+| `Quarantining`, then `Quarantined` | The quarantine is in progress, then it is in effect. |
+| `NoEgressProxy` | A quarantine needs the egress proxy. |
+| `AppsDisabled` | The App controllers do not run, and the target is an App, an AppVersion, or a Profile with AppVersions. |
+| `Unsupported` | This controller version does not know the action. |
+| `Released` | `spec.release` is set. |
+
+The API server refuses a change of `spec.target`, `spec.action` or a set `spec.release`, and a target with no namespace for a kind other than `Profile`.

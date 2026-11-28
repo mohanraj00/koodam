@@ -143,7 +143,8 @@ function showRuns(items) {
 const runPath = (run) => `v1/runs/${encodeURIComponent(run.namespace)}/${encodeURIComponent(run.name)}`;
 
 // showDetail shows the run that the viewer selected. A new run starts a new view. If the live watch is not open,
-// each refresh reads the run and its log again.
+// each refresh reads the run and its log again. If the watch is open, a refresh reads the log again only after a
+// log error, for example when the pod or the container of a new run is not ready.
 function showDetail() {
   const run = runs.find((r) => r.id === byId('run').value);
   if (!run) {
@@ -153,6 +154,7 @@ function showDetail() {
   }
   if (view?.id !== run.id) openView(run);
   else if (!view.open) readView(view);
+  else if (view.logFailed) readLog(view);
   showCard();
 }
 
@@ -179,7 +181,7 @@ function showCard() {
 function openView(run) {
   closeView();
   view = {
-    id: run.id, path: runPath(run), status: null, job: null, events: 0, detailReads: 0, logReads: 0,
+    id: run.id, path: runPath(run), status: null, job: null, events: 0, detailReads: 0, logReads: 0, logFailed: false,
     retry: WATCH_RETRY_MS, open: false, connection: null, timer: null, idle: null,
   };
   byId('run-view').hidden = false;
@@ -306,9 +308,10 @@ async function readLog(v) {
   const read = ++v.logReads;
   const [log, error] = await readJSON(v, `${v.path}/log?lines=${LOG_LINES}`);
   if (v !== view || read !== v.logReads || !(log || error)) return;
+  v.logFailed = Boolean(error);
   if (error) {
     byId('log').textContent = '';
-    setStatus(logState, 'failed', error);
+    setStatus(logState, 'failed', `${error} The page reads the log again in ${seconds(POLL_MS)} s.`);
     return;
   }
   const lines = Array.isArray(log.lines) ? log.lines : [];

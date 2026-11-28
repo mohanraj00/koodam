@@ -1,5 +1,7 @@
 # The Codex sandbox in a Workspace
 
+Release: v0.6.0.
+
 The Codex bubblewrap sandbox did not start with the tested restricted pod settings, under either runc or gVisor. Codex itself started and printed its version. Do not treat a running Codex process as proof that its tool sandbox works.
 
 The [result file](results/codex-sandbox-72.json) records the commands, exit codes, output, binary hashes and test versions. The test used Linux arm64, Codex 0.163.0 and gVisor release-20261019.0 with the systrap platform on kind.

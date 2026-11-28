@@ -231,3 +231,101 @@ func TestWatchStartHasTheRequestTimeLimit(t *testing.T) {
 		t.Fatal("the count of open watches is not 0 after the time limit")
 	}
 }
+
+// waitWatches waits until the server has want open watches.
+func waitWatches(t *testing.T, f *viewerFixture, want int32) {
+	t.Helper()
+	for deadline := time.Now().Add(latencyTarget); f.watches.Load() != want; time.Sleep(10 * time.Millisecond) {
+		if time.Now().After(deadline) {
+			t.Fatalf("the server has %d open watches, want %d", f.watches.Load(), want)
+		}
+	}
+}
+
+func TestWatchCallerLimit(t *testing.T) {
+	f, _, server := newWatchFixture(t)
+	streams := make([]*watchStream, maxCallerWatches)
+	for i := range streams {
+		streams[i] = openWatch(t, server, f.reader)
+		if name, _ := streams[i].next(t); name != eventStatus {
+			t.Fatalf("the first event is %s", name)
+		}
+	}
+	w := f.call(t, http.MethodGet, watchPath, f.reader, http.StatusTooManyRequests)
+	if w.Header().Get("Retry-After") == "" || !strings.Contains(w.Body.String(), "The caller has too many") {
+		t.Fatalf("a caller at its limit gets %s", w.Body.String())
+	}
+	// A different caller can open a watch, because the server is not full.
+	f.call(t, http.MethodHead, watchPath, f.admin, http.StatusOK)
+	waitWatches(t, f, maxCallerWatches)
+	_ = streams[0].resp.Body.Close()
+	waitWatches(t, f, maxCallerWatches-1)
+	f.call(t, http.MethodHead, watchPath, f.reader, http.StatusOK)
+}
+
+func TestOpenWatchCounts(t *testing.T) {
+	a := &api{}
+	for range maxCallerWatches {
+		if _, ok := a.openWatch("a"); !ok {
+			t.Fatal("a caller under its limit is refused")
+		}
+	}
+	if _, ok := a.openWatch("a"); ok {
+		t.Fatal("a caller at its limit can open a watch")
+	}
+	a.watches.Store(maxOpenWatches)
+	if _, ok := a.openWatch("b"); ok {
+		t.Fatal("a full server accepts a watch")
+	}
+	a.watches.Store(maxCallerWatches)
+	for range maxCallerWatches {
+		a.closeWatch("a")
+	}
+	if a.watches.Load() != 0 || len(a.callerWatches) != 0 {
+		t.Fatalf("the counts are %d and %v after each close", a.watches.Load(), a.callerWatches)
+	}
+	if _, ok := a.openWatch("b"); !ok {
+		t.Fatal("a new caller is refused")
+	}
+}
+
+// TestWatchAccessRecheck shows that a watch continues while the access stays, and that it ends
+// at the next check after the token or the access ends.
+func TestWatchAccessRecheck(t *testing.T) {
+	for _, c := range []struct {
+		name, reason string
+		change       func(f *viewerFixture)
+	}{
+		{"the token ends", "accessEnded", func(f *viewerFixture) { f.expired = true }},
+		{"RBAC removes the access", "accessEnded", func(f *viewerFixture) { f.revoked = true }},
+		{"the review is not available", "accessCheckFailed", func(f *viewerFixture) {
+			f.accessErr = errors.New("the API server is not available")
+		}},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			f, kube, server := newWatchFixture(t)
+			f.recheck = 50 * time.Millisecond
+			s := openWatch(t, server, f.reader)
+			if name, _ := s.next(t); name != eventStatus {
+				t.Fatalf("the first event is %s", name)
+			}
+			time.Sleep(4 * f.recheck)
+			setPhase(t, kube, corev1alpha1.AgentSucceeded)
+			if name, status := s.next(t); name != eventStatus || status.Phase != string(corev1alpha1.AgentSucceeded) {
+				t.Fatalf("the watch did not continue after the checks: %s %+v", name, status)
+			}
+			f.mu.Lock()
+			c.change(f)
+			f.mu.Unlock()
+			select {
+			case e := <-s.events:
+				if e.name != "end" || e.data != `{"reason":"`+c.reason+`"}` {
+					t.Fatalf("want an end event with the reason %s, got %+v", c.reason, e)
+				}
+			case <-time.After(latencyTarget):
+				t.Fatal("the watch did not end at the next check")
+			}
+			waitWatches(t, f, 0)
+		})
+	}
+}

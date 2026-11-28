@@ -49,6 +49,8 @@ type viewerFixture struct {
 	accessErr               error
 	// denyLog refuses get on pods/log to each user.
 	denyLog bool
+	// revoked refuses each access review, and expired refuses each token review.
+	revoked, expired bool
 }
 
 func newViewerFixture(t *testing.T, audiences ...string) *viewerFixture {
@@ -60,7 +62,10 @@ func newViewerFixture(t *testing.T, audiences ...string) *viewerFixture {
 	clients := fake.NewClientset()
 	clients.PrependReactor("create", "tokenreviews", func(a k8stesting.Action) (bool, runtime.Object, error) {
 		review := a.(k8stesting.CreateAction).GetObject().(*authenticationv1.TokenReview)
-		if name, ok := users[review.Spec.Token]; ok {
+		f.mu.Lock()
+		expired := f.expired
+		f.mu.Unlock()
+		if name, ok := users[review.Spec.Token]; ok && !expired {
 			review.Status = authenticationv1.TokenReviewStatus{
 				Authenticated: true, Audiences: []string{testAudience},
 				User: authenticationv1.UserInfo{
@@ -83,7 +88,7 @@ func newViewerFixture(t *testing.T, audiences ...string) *viewerFixture {
 		}
 		f.reviews = append(f.reviews, review.Spec)
 		ns := review.Spec.ResourceAttributes.Namespace
-		review.Status.Allowed = (review.Spec.User == "admin" || (review.Spec.User == readerName && ns == testNamespace)) &&
+		review.Status.Allowed = !f.revoked && (review.Spec.User == "admin" || (review.Spec.User == readerName && ns == testNamespace)) &&
 			(!f.denyLog || review.Spec.ResourceAttributes.Subresource != "log")
 		return true, review, nil
 	})

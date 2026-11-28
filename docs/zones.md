@@ -1,6 +1,6 @@
 # Zones
 
-Status: this file is the design of #247. The table in "The parts" shows which parts are in `main`.
+Release: v0.6.0.
 
 Some operators must keep the data of a tenant in one geographic zone. A zone in Koodam is a name that the operator gives to one install, for example `zone-a`. Koodam does not find the zone of a node or of a provider. The operator declares the zone of each thing, and Koodam refuses a thing with a different zone.
 

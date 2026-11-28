@@ -1,5 +1,7 @@
 # The koodam CLI
 
+Release: v0.6.0.
+
 `koodam` uses your kubeconfig and your RBAC. These flags apply to each command, as in `kubectl`:
 
 | Flag | Description |
@@ -91,40 +93,18 @@ For `koodam logs` and `run --wait`, you need `get` on jobs, `list` on pods and `
 
 Koodam shows 2 types of cost. They are not the same.
 
-**The gateway spend is the real spend.** An Agent, or a Workspace with `spec.gateway`, gets a gateway key. The gateway counts the spend of the key. For an Agent, the controller writes the spend to the status after the revoke:
+**The gateway spend is the real spend.** The gateway counts the spend of each key. For an Agent, the controller writes it to the status after the revoke.
 
 ```sh
-koodam spend fix-tests -n dev-sample
-kubectl get agents -n dev-sample
-```
-
-To show the Agent gateway usage for each cost group:
-
-```sh
-koodam usage --by cost-group -n dev-sample
-```
-
-With `--by`, give no WORKSPACE argument. The permitted values of `--by` are `cost-group` and `tenant`. With `cost-group`, the command lists Agents with your kubeconfig and needs `list` on Agents in the namespace. It uses `-n`, or the namespace of the current context, and uses no SSH.
-
-The columns are `COST-GROUP`, `RUNS`, `CALLS`, `FAILED`, `INPUT`, `OUTPUT`, `SPEND` and `SOURCE`. Groups are in name order, with `(none)` last, then a total line. Each row says `source: gateway`. `SPEND` is the sum of the spend of each key, in USD with four decimal places. It is not the sum of the model entries.
-
-The group comes from `status.costGroup`, which the controller saved when it made the key. A later change of the Agent label does not move the spend. An empty group shows as `(none)`. An Agent with no `status.usage`, or with a spend that is not a number, is not in the table. A note on stderr gives each count. If no Agent has valid usage, the command shows `No gateway usage in the Agents of namespace <namespace>.`
-
-The table has only Agent usage. It has no AppVersion, TestKey or Workspace spend.
-
-To show the gateway usage of each tenant of the Apps:
-
-```sh
-koodam usage --by tenant -n shop
-```
-
-The command lists the `TenantQuota` objects with your kubeconfig and needs `list` on `tenantquotas` in the namespace. It uses no SSH. The columns are `TENANT`, `APP`, `REQUESTS`, `SPEND`, `EXCEEDED`, `PERIOD-END` and `SOURCE`. The rows are in the order of the tenant label, then a total line. `APP` is `(all)` for a `TenantQuota` with no `appRef`. `REQUESTS` and `SPEND` are the use of the current period in the status of the `TenantQuota`. `EXCEEDED` is `yes`, `no` or `unknown`, from the condition `QuotaExceeded`. It is `unknown` when the gateway stopped the request count below the limit of the spec (the reason `RequestCountCapped`), and `REQUESTS` is then a minimum. A note on stderr gives the count of these rows. A `TenantQuota` that is not `Ready`, or with a spend that is not a number, is not in the table. A note on stderr gives each count. A tenant label with a character that is not printable is in quotes with escapes. [tenants.md](tenants.md) has the rules of the use.
-
-For a Workspace with a gateway key, read the gateway usage in the status:
-
-```sh
+koodam spend fix-tests -n dev-sample          # one run
+koodam usage --by cost-group -n dev-sample    # the Agent runs, by status.costGroup
+koodam usage --by tenant -n shop              # the tenants of the Apps, from each TenantQuota
 kubectl get workspace main -n dev-sample -o jsonpath='{.status.usage}'
 ```
+
+- `--by cost-group` needs `list` on Agents. The columns are `COST-GROUP`, `RUNS`, `CALLS`, `FAILED`, `INPUT`, `OUTPUT`, `SPEND` and `SOURCE`. An empty group shows as `(none)`. The table has only Agent usage.
+- `--by tenant` needs `list` on `tenantquotas`. The columns are `TENANT`, `APP`, `REQUESTS`, `SPEND`, `EXCEEDED`, `PERIOD-END` and `SOURCE`. `EXCEEDED` is `unknown` for the reason `RequestCountCapped`, and then `REQUESTS` is a minimum. [tenants.md](tenants.md) has the rules.
+- A row with no valid usage is not in the table. A note on stderr gives the count. With `--by`, give no WORKSPACE argument.
 
 **The projected cost is not a bill.** A Workspace with a subscription login has no gateway spend. `koodam usage WORKSPACE` shows the API price of the tokens of its sessions:
 
@@ -132,8 +112,17 @@ kubectl get workspace main -n dev-sample -o jsonpath='{.status.usage}'
 koodam usage main -n dev-sample
 ```
 
-The command connects with SSH, as `koodam ssh test` does, and runs a fixed script in the pod. The script reads `~/.claude/projects` and `~/.codex/sessions`. It prints only the model names and the token counts, not the text. The CLI multiplies the counts by a pinned subset of the LiteLLM price file ([internal/usage/prices](../internal/usage/prices/README.md)).
+The command runs a fixed script in the pod over the SSH entry of `koodam ssh setup`. The script reads `~/.claude/projects` and `~/.codex/sessions`, and prints only the model names and the token counts, not the text. The CLI multiplies the counts by a pinned subset of the LiteLLM price file ([internal/usage/prices](../internal/usage/prices/README.md)). Each line says `source: subscription`. A model with no price shows `no price`. The projected cost gives no budget and no revoke.
 
-The output has 1 line for each harness and model, and a total. The columns are `HARNESS`, `MODEL`, `INPUT`, `OUTPUT`, `CACHE-READ`, `CACHE-WRITE`, `COST` and `SOURCE`. Each line says `source: subscription`, because the plan does not bill this cost. A model with no price shows its tokens and `no price`.
+## Errors
 
-The projected cost gives no budget and no revoke. [gateway.md](gateway.md) tells why to use the gateway, its limits for the projected cost, and how to configure it.
+| Message | Cause |
+|---|---|
+| `agent/NAME exists in namespace NS: delete it or use a new name` | `koodam run` with a name in use. |
+| `the namespace in FILE (NS) does not agree with -n NS` | `-n` and the file disagree. |
+| `the run failed` | `koodam run --wait` ended with the phase `Failed`. |
+| `no SSH entry for Workspace NS/NAME: run koodam ssh setup NAME` | `koodam ssh` before the setup. |
+| `pod NS/POD is PHASE, not Running` | `koodam tunnel` to a Workspace with no running pod. |
+| `the API server denied the port-forward (HTTP 403)` | Your account has no `create` on pods/portforward. |
+| `no egress proxy pod in the namespace NS; set --proxy-namespace` | `koodam trace` found no proxy. |
+| `found no global files: use --claude-md, --agents-md or --skills` | `koodam profile push` found nothing to push. |

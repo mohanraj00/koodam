@@ -1,5 +1,7 @@
 # Run identity and durable output
 
+Release: v0.6.0.
+
 An external system, for example a workflow engine, can bind one Agent run to the file that the run wrote. The Agent status gives two values for this: the run identity and the digest of one output file.
 
 ## Run identity
