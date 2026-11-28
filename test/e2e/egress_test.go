@@ -492,7 +492,12 @@ var _ = Describe("Traced egress", Ordered, Label("egress"), func() {
 			out, _ := kexec(pod, "sh", `curl -sS -o /dev/null -w '%{http_code}' --max-time 10 http://example.net/`)
 			return out
 		}
-		Expect(call()).To(Equal("200"), "The call before the quarantine did not work.")
+		// The first query of the pod is a name of a search domain, and the proxy sends it to the
+		// cluster DNS. One lost packet there gives a failed lookup after the DNS timeout of 5 s
+		// (#500). The call before the quarantine is only a precondition, so it tries again.
+		var before string
+		Eventually(func() string { before = call(); return before }, time.Minute, 2*time.Second).Should(Equal("200"),
+			func() string { return "The call before the quarantine did not work: " + before })
 
 		By("quarantining the Agent")
 		h := makeHoldFor("e2e-agent-quarantine", corev1alpha1.HoldQuarantine,

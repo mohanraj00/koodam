@@ -588,6 +588,8 @@ var _ = Describe("Thin App", Ordered, Label("app"), func() {
 			// afterRevoke counts the answers of the old version after its key is blocked.
 			afterRevoke, total int
 			revoked            bool
+			// step is the step of the test at the time of each call, for the record of a failure.
+			step = "the calls to the old version only"
 		)
 		stop, done := make(chan struct{}), make(chan struct{})
 		start := time.Now()
@@ -609,7 +611,9 @@ var _ = Describe("Thin App", Ordered, Label("app"), func() {
 						afterRevoke++
 					}
 				} else {
-					failures = append(failures, got+": "+out)
+					failures = append(failures, fmt.Sprintf("%s after %s, in %s: version %q, %s",
+						time.Now().UTC().Format(time.RFC3339Nano), time.Since(start).Round(time.Millisecond), step,
+						got, out))
 				}
 				mu.Unlock()
 				time.Sleep(100 * time.Millisecond)
@@ -629,9 +633,16 @@ var _ = Describe("Thin App", Ordered, Label("app"), func() {
 			defer mu.Unlock()
 			return answers[name]
 		}
+		// stepBy starts a step of the test and records its name for the failures.
+		stepBy := func(text string) {
+			By(text)
+			mu.Lock()
+			step = text
+			mu.Unlock()
+		}
 		Eventually(func() int { return count(v2) }, time.Minute, time.Second).Should(BeNumerically(">=", 20))
 
-		By("making the new version with the same template and a new key")
+		stepBy("making the new version with the same template and a new key")
 		next := version(v3)
 		next.Spec.Template = getVersion(v2).Spec.Template
 		next.Spec.Replicas = new(replicas)
@@ -644,11 +655,11 @@ var _ = Describe("Thin App", Ordered, Label("app"), func() {
 		Expect(newAlias).NotTo(BeEmpty())
 		Expect(newAlias).NotTo(Equal(oldAlias), "The new version has the key of the old version.")
 
-		By("moving the traffic to the new version")
+		stepBy("moving the traffic to the new version")
 		setWeights(weight(v2, 1), weight(v3, 1), weight(static, 0))
 		Eventually(func() int { return count(v3) }, 2*time.Minute, time.Second).Should(BeNumerically(">=", 20))
 
-		By("retiring the old version")
+		stepBy("retiring the old version")
 		Eventually(func() error {
 			av := getVersion(v2)
 			av.Spec.Lifecycle = corev1alpha1.AppVersionRetiring
@@ -657,12 +668,12 @@ var _ = Describe("Thin App", Ordered, Label("app"), func() {
 		Eventually(func() []corev1alpha1.AppEndpointVersion { return endpoint().Weights }, time.Minute, time.Second).
 			Should(Equal([]corev1alpha1.AppEndpointVersion{weight(v2, 0), weight(v3, 1), weight(static, 0)}))
 
-		By("blocking the old key after the drain time")
+		stepBy("blocking the old key after the drain time")
 		Eventually(func() bool {
 			return meta.IsStatusConditionTrue(getVersion(v2).Status.Conditions, corev1alpha1.AppVersionRevoked)
 		}, drainSeconds*time.Second+3*time.Minute, 2*time.Second).Should(BeTrue())
 		mu.Lock()
-		revoked = true
+		revoked, step = true, "the time after the revoke"
 		mu.Unlock()
 		Eventually(func() int32 { return ready(v2) }, time.Minute, time.Second).Should(Equal(int32(-1)))
 		before := count(v3)
