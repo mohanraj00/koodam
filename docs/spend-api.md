@@ -1,5 +1,7 @@
 # Spend API
 
+Release: v0.6.0.
+
 The spend API joins Agent data from Kubernetes with spend from LiteLLM. Its public contract is under
 `/v1`. Send GET or HEAD. Other methods get status 405. HEAD gives the same status and no body.
 Send an `Authorization: Bearer` header on each GET or HEAD, including the OpenAPI request.
@@ -117,28 +119,7 @@ spend data.
 
 ## Operations page
 
-The server also serves a read-only operations page at `/`. Open the address of the server in a browser
-and give a bearer token. The page shows the runs, the detail of one run, the spend in a period by a
-label and by namespace, and the period budget of each namespace. It reads the API again at the `POLL_MS` interval in
-`internal/opspage/static/page.js`. Use the viewer review mode, so that each
-person sees only the namespaces where that person can list Agents.
-
-The detail of one run shows the Job, the pods and the status conditions from [Read one run](#read-one-run),
-and the last 200 lines from [Read the log of a run](#read-the-log-of-a-run). The page shows the lines as
-text, as the server redacted them. The status above the log shows an error of the API, for example the time
-limit. The page reads [Watch a run](#watch-a-run) and shows a new phase with no reload. If the watch is not
-available, the page reads the run again at the `POLL_MS` interval. `internal/opspage/README.md` tells how the
-page connects again and when it stops the watch.
-
-- The page keeps the token in memory only. A reload or a close of the page forgets it. The page does not
-  write the token to storage, to the URL or to the console. The watch sends the token in the
-  `Authorization` header too, not in the URL.
-- The page and the mugham kit files are in the binary. The server sends a `Content-Security-Policy`
-  that permits no inline script and no other origin. `internal/opspage/README.md` tells how to update
-  the kit.
-- The page sends GET requests to `/v1/` only. It has no action that changes the cluster.
-- Each table shows the items of the first `MAX_PAGES` pages in `page.js`. If the server has more items,
-  the status tells you.
+The server also serves a read-only page at `/`. [operations-page.md](operations-page.md) has its use.
 
 ## List runs
 
@@ -236,10 +217,10 @@ If the log window exceeds 1 MiB, the server returns status 422. Long lines at th
 can cause this error at any value of `lines`. For the planned change to the log read, see
 [issue #535](https://github.com/mohanraj00/koodam/issues/535).
 
-A successful response contains whole lines. The server reads one more line than the tail and the
-`keyContext` lines. If the log has more lines than the response, `truncated` is true.
-If the container did not start, the response has status 409. If the run has no pod, the response
-has status 404.
+A successful response has no part of a line. The server reads one more line than the tail and the
+`keyContext` lines, so `truncated` is true only if the log has more lines than the response. If the
+container did not start, the response has status 409. If the run has no pod, the response has
+status 404.
 
 The server redacts each line before the bytes leave the server, as [Redaction](#redaction) says. A
 limit can cut a PEM private key, so the server redacts the `keyContext` lines before the tail too.
@@ -315,3 +296,20 @@ The group list reads the current Agent labels on each page. A label change can m
 groups while a client reads the report.
 
 Get the [OpenAPI document](spend-api.openapi.json) from `GET /v1/openapi.json`.
+
+## Errors
+
+Each error body is `{"error":"<text>"}`.
+
+| Status | Text |
+|---|---|
+| 400 | `Use a valid query and a limit from 1 to 100.`, `The page cursor is not valid.` or `This path has no query.` |
+| 401 | `A valid bearer token is necessary.` |
+| 403 | `The caller cannot list Agents in a namespace of this server.` |
+| 404 | `The run does not exist.` or `The run has no pod.` |
+| 405 | `Use GET or HEAD.` |
+| 409 | `The container has no log yet.` |
+| 410 | `The page cursor expired. Start again with no cursor.` |
+| 429 | `Too many watches are open. Try again later.` |
+| 502 | `The spend data is not available.` or `The Kubernetes access review is not available.` |
+| 504 | `The request time limit expired.` |

@@ -1,5 +1,7 @@
 # Architecture
 
+Release: v0.6.0.
+
 Koodam has 5 parts: the controller, the gateway, the Agent Job, the Workspace pod with its PVC home, and the CLI with the tunnel.
 
 ## The controller

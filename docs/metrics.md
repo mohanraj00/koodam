@@ -1,5 +1,7 @@
 # Prometheus metrics
 
+Release: v0.6.0.
+
 The controller serves metrics at `/metrics`. Use the HTTPS endpoint with authentication and authorization for these
 metrics. Set `--metrics-bind-address=:8443` to enable it. The default bind address is `0`, which disables the endpoint.
 

@@ -1,5 +1,7 @@
 # The ingress span contract (v1)
 
+Release: v0.6.0.
+
 The ingress proxy (#147) writes 1 JSON line to its stdout for each completed handler call. This line is an ingress span. This page is the contract for the programs that read ingress spans. It is separate from the [egress span contract](egress-spans.md). Ingress spans do not change a field, a meaning or a reader of egress v2.
 
 > Status: v0.4, in build. The record, the mapping, the encoder and the stdout writer are in `internal/ingress` (`span.go`, `span_writer.go`). No ingress handler, Deployment, Service or wiring uses them yet. Thus no proxy writes ingress spans yet, and no runtime test proves this page. Unit tests cover the helpers only.

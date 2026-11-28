@@ -1,5 +1,7 @@
 # One trace for a run (design)
 
+Release: v0.6.0.
+
 > Status: design for v0.6. No code uses these rules yet. The build is [#446](https://github.com/mohanraj00/koodam/issues/446). The decision is in [#188](https://github.com/mohanraj00/koodam/issues/188).
 
 This page gives the rules that join the spans of 1 run, or of 1 request, in 1 trace. The spans come from the ingress proxy, the gateway, the tools of a harness and the egress proxy. The [egress span contract](egress-spans.md) and the [ingress span contract](ingress-spans.md) stay the contracts of the JSON spans. This page adds 2 optional fields to the egress span and an optional OTLP export.
