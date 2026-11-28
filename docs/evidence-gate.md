@@ -180,7 +180,7 @@ An Agent with `spec.approval` uses the approval source. It waits before its Job 
 
   The controller does steps 1 to 4 before the checks of the dates and of the disposition. Thus a signed decision of a different run never stops a run. A failure of a step gives `SubjectMismatch` or `NotVerified`, and the run stays paused. The verifier checks the `kind` and the disposition before the dates. Thus only a valid human decision gives `Expired` or `NotYetValid` (#503).
 - **Trust.** The key set, the scope, the function and the maximum age are in `spec.approval` of the Profile of the namespace. The Agent owner cannot select them.
-- **Result.** An accept starts the run, and the controller writes it to `status.evidence`. A signed reject, a decision that is older than `maxAgeSeconds`, a check at or after the `until` date, a Profile with no `spec.approval` or the end of `waitSeconds` stops the run. Each other refusal keeps the run paused. If the records give more than one state, a reject comes before an accept.
+- **Result.** An accept starts the run, and the controller writes it to `status.evidence`. A signed reject, a decision that is older than `maxAgeSeconds`, a check at or after the `until` date, a Profile with no `spec.approval` or the end of `waitSeconds` stops the run. An accept that was decided after the end of `waitSeconds` also stops a run that has no key (#502). Each other refusal keeps the run paused. If the records give more than one state, a reject comes before an accept.
 - **Start.** The controller does the check again at each start attempt, until the Job exists. If a start attempt made a key and the next check gives no approval, the run stops and the controller blocks the key. After that, a later reject does not stop the run (#364). To stop it, use a Hold.
 
 The condition `Approval` of the Agent has these states:
@@ -195,7 +195,7 @@ The condition `Approval` of the Agent has these states:
 | `Unknown` | `SubjectMismatch` | A record that does not bind the subject, for example after a change of the spec. | stays paused |
 | `Unknown` | `NotVerified` | A refusal of the signature, the key, the format, the purpose, the `kind`, the disposition, the binding or the `decided_at`. The message has the code. | stays paused |
 | `False` | `NoKeySet` | A Profile with no `spec.approval`, or no bound Profile. | stops |
-| `False` | `ApprovalTimeout` | No end state before `waitSeconds`. | stops |
+| `False` | `ApprovalTimeout` | No end state before `waitSeconds`, or an accept that was decided after it, before the run has a key. | stops |
 
 The `from` and `until` dates of a decision are the date range of the approved revision, and not an expiry. A signature has no trusted time. Thus the admin sets the expiry: `maxAgeSeconds` of the Profile, from the `decided_at` of the decision.
 
