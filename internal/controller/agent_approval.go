@@ -24,9 +24,12 @@ import (
 	"fmt"
 	"time"
 
+	batchv1 "k8s.io/api/batch/v1"
 	"k8s.io/apimachinery/pkg/api/equality"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
@@ -208,12 +211,25 @@ func (w approvalWait) Error() string { return "the run waits for an approval" }
 
 // awaitApproval holds the run of an Agent with spec.approval until the condition Approval is
 // True. admit calls it before the finalizer, the budget reservation and the key, so a paused run
-// has no key and no pod. Each provision attempt does the check again, until the Job starts: a change of
+// has no key and no pod. Each provision attempt does the check again, until the Job exists: a change of
 // the spec, a later reject or a decision that is too old then keeps or stops a run that did not
 // start. It is true if the run stopped. A paused run gives an approvalWait error.
 func (r *AgentReconciler) awaitApproval(ctx context.Context, a *corev1alpha1.Agent) (bool, error) {
 	if a.Spec.Approval == nil {
 		return false, nil
+	}
+	// The controller makes the Job only after the key hash, so only a run with a key hash can have
+	// a Job. If the status update after the create of the Job failed, the run is Pending while its
+	// Job runs. The check does not apply again to that run, so provision continues the recovery.
+	if a.Status.KeyHash != "" {
+		job := &batchv1.Job{}
+		err := r.APIReader.Get(ctx, types.NamespacedName{Namespace: a.Namespace, Name: runName(a)}, job)
+		if err == nil && metav1.IsControlledBy(job, a) {
+			return false, nil
+		}
+		if err != nil && !apierrors.IsNotFound(err) {
+			return false, err
+		}
 	}
 	doc, err := approvalDocument(a)
 	if err != nil {

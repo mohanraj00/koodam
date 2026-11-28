@@ -321,6 +321,30 @@ var _ = Describe("Agent approval", Ordered, func() {
 			To(Equal(corev1alpha1.ApprovalSubjectMismatch))
 	})
 
+	It("does not apply the check again to a Pending run whose Job exists", func() {
+		a, gw, _ := start(bound, one(accept), now)
+		Expect(a.Status.Phase).To(Equal(corev1alpha1.AgentRunning))
+		key := client.ObjectKey{Namespace: a.Namespace, Name: runName(a)}
+		job := &batchv1.Job{}
+		Expect(k8sClient.Get(ctx, key, job)).To(Succeed())
+		// The status update after the create of the Job failed, so the run is Pending.
+		a.Status.Phase = corev1alpha1.AgentPending
+		Expect(k8sClient.Status().Update(ctx, a)).To(Succeed())
+		// At the next reconcile, the decision is older than the maximum age, and a reject is there.
+		carry(a, decide(signer, subjectOf(a), "reject"))
+		r := &AgentReconciler{Client: k8sClient, Scheme: k8sClient.Scheme(), APIReader: k8sClient, Gateway: gw,
+			GatewayURL: testGatewayURL, Grace: time.Minute, Now: func() time.Time { return now.Add(2 * time.Hour) }}
+		_, err := r.Reconcile(ctx, reconcile.Request{NamespacedName: client.ObjectKeyFromObject(a)})
+		Expect(err).NotTo(HaveOccurred())
+		Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(a), a)).To(Succeed())
+		Expect(a.Status.Phase).To(Equal(corev1alpha1.AgentRunning))
+		Expect(gw.blocked).To(BeEmpty())
+		after := &batchv1.Job{}
+		Expect(k8sClient.Get(ctx, key, after)).To(Succeed())
+		Expect(after.UID).To(Equal(job.UID))
+		Expect(after.DeletionTimestamp).To(BeNil())
+	})
+
 	It("reads a bounded count of records in one check", func() {
 		a, _, _ := start(bound, func(string) []approvalChain {
 			return slices.Repeat([]approvalChain{junk}, approvalMaxRecords+approvalPageSize)
