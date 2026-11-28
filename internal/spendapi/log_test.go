@@ -151,10 +151,23 @@ func TestLogLimitsAndReviews(t *testing.T) {
 func TestLogReadLimitRefusesOversizedWindow(t *testing.T) {
 	line := strings.Repeat("x", (4<<10)-1) + "\n"
 	data := strings.Repeat(line, defaultLogLines+keyContext) + "newest line\n"
-	f, _ := newLogFixture(t, data)
-	w := f.call(t, http.MethodGet, logPath, f.reader, http.StatusUnprocessableEntity)
-	if got := decode[problem](t, w); got.Error != "The log window is larger than the read limit. Ask for fewer lines." {
-		t.Fatalf("want a log read limit error, got %+v", got)
+	for _, tc := range []struct {
+		name  string
+		query string
+		data  string
+	}{
+		{name: "default lines", data: data},
+		{name: "one line", query: "?lines=1", data: data},
+		{name: "one byte over the limit", data: strings.Repeat("x", maxLogRead) + "\n"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f, _ := newLogFixture(t, tc.data)
+			w := f.call(t, http.MethodGet, logPath+tc.query, f.reader, http.StatusUnprocessableEntity)
+			const want = "The log window exceeds 1 MiB, including up to 256 lines of key context. Long lines at the end of the log can cause this error at any value of the lines parameter."
+			if got := decode[problem](t, w); got.Error != want {
+				t.Fatalf("log read limit error = %q, want %q", got.Error, want)
+			}
+		})
 	}
 }
 
@@ -175,6 +188,32 @@ func TestLogByteLimitKeepsNewestWholeLines(t *testing.T) {
 	}
 	if got, _ := tailLines(nil, 10, 20); got == nil || len(got) != 0 {
 		t.Fatal("want an empty list for an empty log")
+	}
+}
+
+func TestTailLinesByteLimitKeepsNewestShortLines(t *testing.T) {
+	const lineBytes = len("line-00000-xxxxxxxxxxxxxxxxxxxx\n")
+	lines := make([]string, 2*maxLogRead/lineBytes)
+	for i := range lines {
+		lines[i] = fmt.Sprintf("line-%05d-xxxxxxxxxxxxxxxxxxxx", i)
+	}
+	data := []byte(strings.Join(lines, "\n") + "\n")
+	fit := maxLogBytes / lineBytes
+	// Use a line count above the API limit to test the byte limit with short lines.
+	count := fit + 1
+	got, truncated := tailLines(data, count, count+keyContext+1)
+	if !truncated || !slices.Equal(got, lines[len(lines)-fit:]) {
+		t.Fatalf("want the newest %d whole lines and truncation, got %d lines and truncated=%t", fit, len(got), truncated)
+	}
+}
+
+func TestTailLinesStartsInsideALine(t *testing.T) {
+	// The API server can start inside a line if the container runtime splits the line.
+	data := []byte("end of the first line\n" + strings.Repeat("context line\n", keyContext) + "second to last line\nlast line\n")
+	want := []string{"second to last line", "last line"}
+	got, truncated := tailLines(data, len(want), len(want)+keyContext+1)
+	if !truncated || !slices.Equal(got, want) {
+		t.Fatalf("want whole lines %q and truncation, got %q and truncated=%t", want, got, truncated)
 	}
 }
 

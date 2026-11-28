@@ -88,7 +88,7 @@ func (a *api) serveLog(ctx context.Context, w http.ResponseWriter, r *http.Reque
 	case apierrors.IsBadRequest(err):
 		reply(w, r, http.StatusConflict, problem{"The container has no log yet."})
 	case errors.Is(err, errLogReadLimit):
-		reply(w, r, http.StatusUnprocessableEntity, problem{"The log window is larger than the read limit. Ask for fewer lines."})
+		reply(w, r, http.StatusUnprocessableEntity, problem{"The log window exceeds 1 MiB, including up to 256 lines of key context. Long lines at the end of the log can cause this error at any value of the lines parameter."})
 	case err != nil:
 		reply(w, r, http.StatusBadGateway, problem{"The log is not available."})
 	default:
