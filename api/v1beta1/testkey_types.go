@@ -114,6 +114,7 @@ type TestKeyStatus struct {
 }
 
 // +kubebuilder:object:root=true
+// +kubebuilder:storageversion
 // +kubebuilder:subresource:status
 // +kubebuilder:printcolumn:name="Workspace",type=string,JSONPath=`.spec.workspaceRef.name`
 // +kubebuilder:printcolumn:name="Test",type=string,JSONPath=`.spec.testRunID`

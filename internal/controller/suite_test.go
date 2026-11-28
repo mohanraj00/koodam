@@ -33,6 +33,8 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
 
 	corev1alpha1 "github.com/mohanraj00/koodam/api/v1alpha1"
+	corev1beta1 "github.com/mohanraj00/koodam/api/v1beta1"
+	"github.com/mohanraj00/koodam/internal/conversion"
 	// +kubebuilder:scaffold:imports
 )
 
@@ -61,6 +63,9 @@ var _ = BeforeSuite(func() {
 	var err error
 	err = corev1alpha1.AddToScheme(scheme.Scheme)
 	Expect(err).NotTo(HaveOccurred())
+	// With the two versions in the scheme, envtest gives each CRD the conversion webhook of the suite.
+	err = corev1beta1.AddToScheme(scheme.Scheme)
+	Expect(err).NotTo(HaveOccurred())
 
 	// +kubebuilder:scaffold:scheme
 
@@ -81,6 +86,16 @@ var _ = BeforeSuite(func() {
 	cfg, err = testEnv.Start()
 	Expect(err).NotTo(HaveOccurred())
 	Expect(cfg).NotTo(BeNil())
+
+	// The API server stores v1beta1, and the controllers use v1alpha1. Thus each read and each write
+	// of the suite goes through the conversion handler.
+	hook := testEnv.WebhookInstallOptions
+	server := conversion.NewServer(hook.LocalServingHost, hook.LocalServingPort, hook.LocalServingCertDir, func(string) {})
+	go func() {
+		defer GinkgoRecover()
+		Expect(server.Start(ctx)).To(Succeed())
+	}()
+	Eventually(func() error { return server.StartedChecker()(nil) }).Should(Succeed())
 
 	k8sClient, err = client.New(cfg, client.Options{Scheme: scheme.Scheme})
 	Expect(err).NotTo(HaveOccurred())

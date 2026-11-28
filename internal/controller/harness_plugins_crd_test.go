@@ -101,11 +101,14 @@ var _ = Describe("Harness plugins CRD", func() {
 		Expect(k8sClient.Get(ctx, types.NamespacedName{Name: "agents.core.koodam.dev"}, crd)).To(Succeed())
 		versions, _, err := unstructured.NestedSlice(crd.Object, "spec", "versions")
 		Expect(err).NotTo(HaveOccurred())
-		Expect(versions).To(HaveLen(1))
-		rules, _, err := unstructured.NestedSlice(versions[0].(map[string]any),
-			"schema", "openAPIV3Schema", "properties", "spec", "x-kubernetes-validations")
-		Expect(err).NotTo(HaveOccurred())
-		Expect(rules).To(ContainElement(HaveKeyWithValue("message", pvcMessage)))
+		// The CRD has v1alpha1 and v1beta1. Each version has the rule.
+		Expect(versions).To(HaveLen(2))
+		for _, version := range versions {
+			rules, _, err := unstructured.NestedSlice(version.(map[string]any),
+				"schema", "openAPIV3Schema", "properties", "spec", "x-kubernetes-validations")
+			Expect(err).NotTo(HaveOccurred())
+			Expect(rules).To(ContainElement(HaveKeyWithValue("message", pvcMessage)))
+		}
 	})
 
 	It("accepts a legacy Agent with no plugins and no PVC, and an empty plugins list", func() {

@@ -16,9 +16,9 @@ limitations under the License.
 
 // Command agent-ingress-crd makes the two variants of the Agent CRD for #147. The make target
 // manifests runs it after controller-gen and crd-optional. The default variant stays in its
-// place. It gets the annotation koodam.dev/agent-ingress-mode=disabled and one more AgentSpec
-// rule that refuses spec.ingressPort. The enabled variant gets the annotation enabled and does
-// not have that rule. All other parts of the two variants are the same.
+// place. It gets the annotation koodam.dev/agent-ingress-mode=disabled and, in each version, one
+// more AgentSpec rule that refuses spec.ingressPort. The enabled variant gets the annotation
+// enabled and does not have that rule. All other parts of the two variants are the same.
 //
 // The enabled variant is only an input for a future protected installer. It is not an install,
 // and no command installs it yet.
@@ -47,7 +47,7 @@ const (
 	enabled     = "enabled"
 	gateRule    = "!has(self.ingressPort)"
 	gateMessage = "spec.ingressPort is disabled. The traced ingress feature is not installed in this cluster."
-	// immutableRule must be the same as the AgentSpec marker in api/v1alpha1/agent_types.go.
+	// immutableRule must be the same as the AgentSpec marker in agent_types.go of each API version.
 	immutableRule = "has(self.ingressPort) == has(oldSelf.ingressPort) && " +
 		"(!has(self.ingressPort) || self.ingressPort == oldSelf.ingressPort)"
 	docStart  = "---\n"
@@ -56,6 +56,10 @@ const (
 )
 
 var gate = apiextensionsv1.ValidationRule{Rule: gateRule, Message: gateMessage}
+
+// versions are the versions of the Agent CRD, in the order of controller-gen. The API server serves
+// the two versions. The first one is deprecated, and the last one is the storage version (#511).
+var versions = []string{"v1alpha1", "v1beta1"}
 
 // agentCRD is a CustomResourceDefinition in the form that controller-gen writes. It has no status
 // and no creationTimestamp, and its metadata has only the name and the annotations.
@@ -114,9 +118,11 @@ func variants(in []byte) (def, en []byte, err error) {
 		return nil, nil, err
 	}
 	crd.Metadata.Annotations[modeKey] = disabled
-	spec := props(crd)[specField]
-	spec.XValidations = append(spec.XValidations, gate)
-	props(crd)[specField] = spec
+	for i := range crd.Spec.Versions {
+		spec := props(crd, i)[specField]
+		spec.XValidations = append(spec.XValidations, gate)
+		props(crd, i)[specField] = spec
+	}
 	if def, err = marshal(crd); err != nil {
 		return nil, nil, err
 	}
@@ -146,13 +152,14 @@ func marshal(crd *agentCRD) ([]byte, error) {
 	return append([]byte(docStart), b...), nil
 }
 
-// props returns the properties of the root schema. checkAgent makes sure that the root schema exists.
-func props(crd *agentCRD) map[string]apiextensionsv1.JSONSchemaProps {
-	return crd.Spec.Versions[0].Schema.OpenAPIV3Schema.Properties
+// props returns the properties of the root schema of version i. checkAgent makes sure that the
+// root schema exists.
+func props(crd *agentCRD, i int) map[string]apiextensionsv1.JSONSchemaProps {
+	return crd.Spec.Versions[i].Schema.OpenAPIV3Schema.Properties
 }
 
-// base checks that crd is the Agent CRD, and removes the mode annotation and the disabled gate.
-// The errors have fixed text.
+// base checks that crd is the Agent CRD, and removes the mode annotation and the disabled gate of
+// each version. All the versions must be in the same state. The errors have fixed text.
 func base(crd *agentCRD) error {
 	ann := crd.Metadata.Annotations
 	mode, hasMode := ann[modeKey]
@@ -160,21 +167,23 @@ func base(crd *agentCRD) error {
 	if err := checkAgent(crd); err != nil {
 		return err
 	}
-	spec := props(crd)[specField]
-	if err := checkPort(spec); err != nil {
-		return err
+	for i := range crd.Spec.Versions {
+		spec := props(crd, i)[specField]
+		if err := checkPort(spec); err != nil {
+			return err
+		}
+		gates, err := countGates(spec.XValidations)
+		if err != nil {
+			return err
+		}
+		fresh := gates == 0 && !hasMode
+		earlier := gates == 1 && mode == disabled
+		if !fresh && !earlier {
+			return errors.New("want the controller-gen output or the default variant")
+		}
+		spec.XValidations = spec.XValidations[:len(spec.XValidations)-gates]
+		props(crd, i)[specField] = spec
 	}
-	gates, err := countGates(spec.XValidations)
-	if err != nil {
-		return err
-	}
-	fresh := gates == 0 && !hasMode
-	earlier := gates == 1 && mode == disabled
-	if !fresh && !earlier {
-		return errors.New("want the controller-gen output or the default variant")
-	}
-	spec.XValidations = spec.XValidations[:len(spec.XValidations)-gates]
-	props(crd)[specField] = spec
 	return nil
 }
 
@@ -189,10 +198,15 @@ func checkAgent(crd *agentCRD) error {
 	}
 	s := crd.Spec
 	if s.Group != "core.koodam.dev" || s.Scope != apiextensionsv1.NamespaceScoped || s.Names.Kind != "Agent" ||
-		s.Names.Plural != "agents" || len(s.Versions) != 1 || s.Versions[0].Name != "v1alpha1" ||
-		!s.Versions[0].Served || !s.Versions[0].Storage || s.Versions[0].Schema == nil ||
-		s.Versions[0].Schema.OpenAPIV3Schema == nil {
-		return errors.New("want only the served and stored v1alpha1 version of the namespaced Agent")
+		s.Names.Plural != "agents" || len(s.Versions) != len(versions) {
+		return errors.New("want the versions v1alpha1 and v1beta1 of the namespaced Agent")
+	}
+	for i, v := range s.Versions {
+		last := i == len(versions)-1
+		if v.Name != versions[i] || !v.Served || v.Storage != last || v.Deprecated == last || v.Schema == nil ||
+			v.Schema.OpenAPIV3Schema == nil {
+			return errors.New("want the served and deprecated v1alpha1 version, then the served and stored v1beta1 version")
+		}
 	}
 	return nil
 }

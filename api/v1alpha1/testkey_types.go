@@ -114,6 +114,7 @@ type TestKeyStatus struct {
 }
 
 // +kubebuilder:object:root=true
+// +kubebuilder:deprecatedversion:warning="core.koodam.dev/v1alpha1 is deprecated. Use core.koodam.dev/v1beta1."
 // +kubebuilder:subresource:status
 // +kubebuilder:printcolumn:name="Workspace",type=string,JSONPath=`.spec.workspaceRef.name`
 // +kubebuilder:printcolumn:name="Test",type=string,JSONPath=`.spec.testID`

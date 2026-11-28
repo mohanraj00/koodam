@@ -24,7 +24,8 @@ import (
 	"sigs.k8s.io/yaml"
 )
 
-// policies returns the rendered Workspace NetworkPolicies.
+// policies returns the rendered NetworkPolicies of the Workspaces and of the egress proxy. It does
+// not return the policy of the conversion webhook, which each default install has.
 func policies(t *testing.T, out string) []networkingv1.NetworkPolicy {
 	t.Helper()
 	docs := objects(t, out, "NetworkPolicy")
@@ -33,6 +34,9 @@ func policies(t *testing.T, out string) []networkingv1.NetworkPolicy {
 		var np networkingv1.NetworkPolicy
 		if err := yaml.Unmarshal([]byte(doc), &np); err != nil {
 			t.Fatal(err)
+		}
+		if np.Name == conversionName {
+			continue
 		}
 		nps = append(nps, np)
 	}

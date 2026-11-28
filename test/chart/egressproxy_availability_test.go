@@ -135,7 +135,7 @@ egressProxy:
 	if pod, _ := podSpec(t, out, proxyName); len(pod.TopologySpreadConstraints) != 0 {
 		t.Fatalf("got the spread %+v, want none for an empty list", pod.TopologySpreadConstraints)
 	}
-	if len(objects(t, out, "PodDisruptionBudget")) != 0 {
+	if len(decode[policyv1.PodDisruptionBudget](t, out, "PodDisruptionBudget", proxyName)) != 0 {
 		t.Fatal("the chart renders a PodDisruptionBudget, but podDisruptionBudget.enabled is false")
 	}
 }
@@ -172,7 +172,8 @@ func TestEgressProxyAvailabilityReleases(t *testing.T) {
 
 func TestEgressProxyAvailabilityOff(t *testing.T) {
 	out := render(t, "egressProxy: {podDisruptionBudget: {enabled: true}}")
-	if len(objects(t, out, "PodDisruptionBudget")) != 0 || strings.Contains(out, "egress-proxy") {
+	pdbs := decode[policyv1.PodDisruptionBudget](t, out, "PodDisruptionBudget", proxyName)
+	if len(pdbs) != 0 || strings.Contains(out, "egress-proxy") {
 		t.Fatal("the chart renders a proxy object, but the proxy is off")
 	}
 	if pod, _ := podSpec(t, out, "koodam-controller-manager"); len(pod.TopologySpreadConstraints) != 0 {

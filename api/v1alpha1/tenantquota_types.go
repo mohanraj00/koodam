@@ -144,6 +144,7 @@ type TenantQuotaStatus struct {
 }
 
 // +kubebuilder:object:root=true
+// +kubebuilder:deprecatedversion:warning="core.koodam.dev/v1alpha1 is deprecated. Use core.koodam.dev/v1beta1."
 // +kubebuilder:subresource:status
 // +kubebuilder:printcolumn:name="Tenant",type=string,JSONPath=`.spec.tenant`
 // +kubebuilder:printcolumn:name="App",type=string,JSONPath=`.spec.appRef.name`

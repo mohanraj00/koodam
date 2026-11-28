@@ -128,6 +128,7 @@ type SpendBudgetStatus struct {
 }
 
 // +kubebuilder:object:root=true
+// +kubebuilder:deprecatedversion:warning="core.koodam.dev/v1alpha1 is deprecated. Use core.koodam.dev/v1beta1."
 // +kubebuilder:subresource:status
 // +kubebuilder:validation:XValidation:rule="self.metadata.name == 'default'",message="the name of a SpendBudget must be default, so that a namespace has only one."
 // +kubebuilder:printcolumn:name="Period",type=string,JSONPath=`.spec.period`

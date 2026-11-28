@@ -57,6 +57,7 @@ manifests: controller-gen ## Generate ClusterRole and CustomResourceDefinition o
 	go run ./hack/crd-route "$$crd_out"
 	go run ./hack/rbac-route "$(CONTROLLER_GEN)"
 	go run ./hack/crd-optional config/crd/bases/core.koodam.dev_agents.yaml config/crd/bases/core.koodam.dev_workspaces.yaml
+	go run ./hack/crd-descriptions config/crd/bases/core.koodam.dev_agents.yaml config/crd/bases/core.koodam.dev_workspaces.yaml config/apps/crd/bases/core.koodam.dev_appversions.yaml
 	go run ./hack/agent-ingress-crd config/crd/bases/core.koodam.dev_agents.yaml config/agent-ingress/crd/bases/core.koodam.dev_agents.yaml
 
 .PHONY: generate
@@ -210,8 +211,8 @@ CHART ?= charts/koodam
 LONG_RELEASE ?= koodam-production-controller-eu-west-1-aaaaaaaaaaaaa
 
 helm-sync: manifests ## Copy the CRD and the RBAC rules from config/ into the Helm chart.
-	rm -f $(CHART)/crds/*.yaml $(CHART)/files/*.yaml
-	cp config/crd/bases/*.yaml $(CHART)/crds/
+	rm -f $(CHART)/files/*.yaml
+	cp config/crd/bases/*.yaml $(CHART)/files/
 	cp config/rbac/role.yaml $(CHART)/files/manager-role.yaml
 	cp config/rbac/agent_ceiling_role.yaml $(CHART)/files/agent-ceiling-role.yaml
 	cp config/rbac/leader_election_role.yaml $(CHART)/files/leader-election-role.yaml

@@ -147,6 +147,7 @@ type HoldStatus struct {
 }
 
 // +kubebuilder:object:root=true
+// +kubebuilder:storageversion
 // +kubebuilder:resource:scope=Cluster
 // +kubebuilder:subresource:status
 // +kubebuilder:printcolumn:name="Kind",type=string,JSONPath=`.spec.target.kind`

@@ -392,6 +392,7 @@ type AgentStatus struct {
 }
 
 // +kubebuilder:object:root=true
+// +kubebuilder:deprecatedversion:warning="core.koodam.dev/v1alpha1 is deprecated. Use core.koodam.dev/v1beta1."
 // +kubebuilder:subresource:status
 // +kubebuilder:printcolumn:name="Phase",type=string,JSONPath=`.status.phase`
 // +kubebuilder:printcolumn:name="Model",type=string,JSONPath=`.spec.model`

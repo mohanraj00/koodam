@@ -1,0 +1,139 @@
+# The conversion webhook of the CRDs (#511). The API server calls it to convert an Agent, a
+# Workspace or a TestKey between v1alpha1 and v1beta1. The process has no API token.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: conversion
+  namespace: system
+  labels:
+    app.kubernetes.io/name: koodam
+    app.kubernetes.io/managed-by: kustomize
+automountServiceAccountToken: false
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: conversion
+  namespace: system
+  labels:
+    control-plane: conversion
+    app.kubernetes.io/name: koodam
+    app.kubernetes.io/managed-by: kustomize
+spec:
+  selector:
+    matchLabels:
+      control-plane: conversion
+      app.kubernetes.io/name: koodam
+  replicas: 2
+  template:
+    metadata:
+      labels:
+        control-plane: conversion
+        app.kubernetes.io/name: koodam
+    spec:
+      serviceAccountName: conversion
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+      - command:
+        - /conversion
+        image: controller:latest
+        name: conversion
+        ports:
+        - containerPort: 9443
+          name: convert
+          protocol: TCP
+        securityContext:
+          readOnlyRootFilesystem: true
+          allowPrivilegeEscalation: false
+          capabilities:
+            drop:
+            - "ALL"
+        livenessProbe:
+          httpGet:
+            path: /readyz
+            port: convert
+            scheme: HTTPS
+          initialDelaySeconds: 15
+          periodSeconds: 20
+        readinessProbe:
+          httpGet:
+            path: /readyz
+            port: convert
+            scheme: HTTPS
+          initialDelaySeconds: 2
+          periodSeconds: 5
+        resources:
+          limits:
+            cpu: 500m
+            memory: 512Mi
+          requests:
+            cpu: 10m
+            memory: 64Mi
+        volumeMounts:
+        - name: cert
+          mountPath: /etc/koodam/conversion
+          readOnly: true
+      volumes:
+      - name: cert
+        secret:
+          secretName: conversion-server-cert
+      terminationGracePeriodSeconds: 10
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: conversion-service
+  namespace: system
+  labels:
+    app.kubernetes.io/name: koodam
+    app.kubernetes.io/managed-by: kustomize
+spec:
+  ports:
+  - port: 443
+    protocol: TCP
+    targetPort: convert
+  selector:
+    control-plane: conversion
+    app.kubernetes.io/name: koodam
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: conversion
+  namespace: system
+  labels:
+    app.kubernetes.io/name: koodam
+    app.kubernetes.io/managed-by: kustomize
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      control-plane: conversion
+      app.kubernetes.io/name: koodam
+---
+# The API server has no pod label, so the rule permits each source on the webhook port only. The
+# process starts no connection, so the policy permits no egress.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: conversion
+  namespace: system
+  labels:
+    app.kubernetes.io/name: koodam
+    app.kubernetes.io/managed-by: kustomize
+spec:
+  podSelector:
+    matchLabels:
+      control-plane: conversion
+      app.kubernetes.io/name: koodam
+  policyTypes:
+  - Ingress
+  - Egress
+  ingress:
+  - ports:
+    - port: 9443
+      protocol: TCP

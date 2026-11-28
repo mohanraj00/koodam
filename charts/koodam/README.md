@@ -1,13 +1,13 @@
 # Koodam Helm chart
 
-This chart installs the Koodam controller and the Agent CRD. The controller uses a LiteLLM gateway. The chart has 2 gateway modes:
+This chart installs the Koodam controller, the CRDs and the conversion webhook of the CRDs. The controller uses a LiteLLM gateway. The chart has 2 gateway modes:
 
 - `existing`: the controller uses a LiteLLM gateway that you install.
 - `bundled`: the chart also installs LiteLLM and PostgreSQL.
 
 ## What the chart installs
 
-- The Agent CRD (from `crds/`).
+- If `conversion.enabled` is true: the 7 core CRDs, and the conversion webhook (a Deployment with 2 replicas, a Service, a ServiceAccount with no token, a PodDisruptionBudget and a NetworkPolicy). If you give no certificate, the chart also makes the Secret `<fullname>-conversion-tls`.
 - The controller Deployment and its ServiceAccount.
 - The `manager-role` ClusterRole: the rules that the reconciler needs.
 - The `agent-ceiling` ClusterRole: the most that a run Role can grant.
@@ -132,15 +132,22 @@ The PostgreSQL data is in an `emptyDir` by default. If the pod stops, the keys a
 
 Licenses: LiteLLM uses the MIT License. PostgreSQL uses the PostgreSQL License.
 
-## Upgrade the CRDs
+## The CRDs and the conversion webhook
 
-Helm installs the CRDs in `crds/` only at the first install. `helm upgrade` does not change them. Before you upgrade the chart, apply the CRDs of the new version:
+The CRDs have 2 versions: `v1beta1` is the storage version, and `v1alpha1` is deprecated. The API server calls the conversion webhook to convert an Agent, a Workspace or a TestKey between the 2 versions. The 4 other core kinds and the 3 App kinds have the same schema in the 2 versions, so the API server converts them with no webhook.
 
-```sh
-kubectl apply --server-side --force-conflicts -f charts/koodam/crds/
-```
+- The CRDs are chart templates. `helm upgrade` changes them, and `helm uninstall` keeps them.
+- **Upgrade from a release before v0.7.0:** do the CRD adoption step of [docs/upgrade.md](../../docs/upgrade.md) before `helm upgrade`. If you do not, the chart refuses the upgrade.
+- **Second install in a cluster:** set `conversion.enabled` to `false`. A cluster has the CRDs and the webhook one time.
+- **Before `helm uninstall`:** the CRDs stay and they name the webhook Service. If the webhook is not there, the API server fails each request that needs a conversion. Delete the 7 core CRDs after the uninstall, or install a release again.
 
-Use `--server-side`. The Agent and Workspace CRDs have the full Kubernetes pod spec in `spec.podTemplate`, so they are too large for the annotation of a client-side apply.
+The webhook has no API token and no RBAC rule. If it is not ready, a request for an Agent, a Workspace or a TestKey in a version that is not the stored version fails, and no object changes.
+
+### The webhook certificate
+
+- **Default:** the chart makes a CA and a certificate for 10 years, and keeps them in the Secret `<fullname>-conversion-tls`. To make a new certificate, delete the Secret and run `helm upgrade`.
+- **`conversion.tls.existingSecret`:** you give a Secret with `tls.crt` and `tls.key`, and the CA in `conversion.tls.caBundle`. Use this or cert-manager with a tool that renders the chart with no cluster access, because such a render makes a new certificate each time.
+- **`conversion.tls.certManager.enabled`:** cert-manager makes the certificate and puts its CA in the CRDs.
 
 ## The controller image
 
@@ -246,6 +253,14 @@ connects in the pod network namespace. These connections work with an empty `ssh
 | `keyGrace` | `1m` | The time that the controller adds to `deadlineSeconds` for the key TTL. |
 | `jobTTLSeconds` | `86400` | The time in seconds that Kubernetes keeps a run Job and its pods (and the log) after the Job ends. The value must be from `60` to `2147483647`. |
 | `leaderElection` | `true` | Use leader election. |
+| `conversion.enabled` | `true` | Install the 7 core CRDs and their conversion webhook. Set `false` in the second install of a cluster. |
+| `conversion.replicas` | `2` | The replicas of the webhook. With 2 or more, the chart adds a PodDisruptionBudget. |
+| `conversion.resources` | see `values.yaml` | The resources of the webhook container. |
+| `conversion.networkPolicy.enabled` | `true` | Add a NetworkPolicy that permits ingress only on the webhook port and permits no egress. |
+| `conversion.tls.existingSecret` | empty | A Secret with `tls.crt` and `tls.key` for the webhook. It needs `conversion.tls.caBundle`. |
+| `conversion.tls.caBundle` | empty | The CA certificate of the existing Secret, in PEM, with base64 encoding. |
+| `conversion.tls.certManager.enabled` | `false` | Use cert-manager for the certificate and for the CA in the CRDs. |
+| `conversion.tls.certManager.issuerRef` | empty name | The issuer of the certificate. With no name, the chart makes a self-signed Issuer. |
 | `metrics.enabled` | `false` | Add the HTTPS metrics endpoint and its RBAC. |
 | `metrics.serviceMonitor.enabled` | `false` | Add a `ServiceMonitor` for the metrics Service. It needs `metrics.enabled`. [docs/metrics.md](../../docs/metrics.md#servicemonitor) has the RBAC for Prometheus. |
 | `metrics.serviceMonitor.labels` | empty | More labels for the `ServiceMonitor`, for the selector of your Prometheus. |
@@ -254,7 +269,7 @@ connects in the pod network namespace. These connections work with an empty `ssh
 
 ## Keep the chart in sync
 
-Do not edit `crds/` or `files/` by hand. These are copies of the generated files in `config/`. After you change the API or an RBAC marker, run:
+Do not edit `files/` by hand. These are copies of the generated files in `config/`. After you change the API or an RBAC marker, run:
 
 ```sh
 make helm-sync

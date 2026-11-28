@@ -193,6 +193,9 @@ var _ = Describe("Tenants and zones", Ordered, Label("zones"), func() {
 		text := egressProxyValuesFor(z.proxyIP) + fmt.Sprintf(`zone:
   name: %[1]s
   namespaces: [%[2]s]
+# The release of the suite has the core CRDs and their conversion webhook.
+conversion:
+  enabled: false
 apps:
   enabled: true
   sharedResources: false

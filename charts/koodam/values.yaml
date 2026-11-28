@@ -350,6 +350,46 @@ tenants:
   # The time between 2 reads of the use of a tenant from the gateway. It is 1s or more.
   usageInterval: 30s
 
+# The 7 core CRDs and their conversion webhook. The API server calls the webhook to convert an
+# Agent, a Workspace or a TestKey between v1alpha1 and v1beta1. The webhook is a separate
+# Deployment with no API token. It uses the controller image.
+conversion:
+  # A cluster has the CRDs and the webhook one time, because each CRD names one webhook Service.
+  # Set false in the second install of a cluster.
+  enabled: true
+  # With 2 or more replicas, the chart adds a PodDisruptionBudget with minAvailable 1.
+  replicas: 2
+  resources:
+    limits:
+      cpu: 500m
+      memory: 512Mi
+    requests:
+      cpu: 10m
+      memory: 64Mi
+  # The policy permits ingress only on the webhook port and permits no egress. It has an effect
+  # only if the CNI enforces it.
+  networkPolicy:
+    enabled: true
+  # The serving certificate of the webhook. With no value here, the chart makes a CA and a
+  # certificate for 10 years at the first install and keeps them in the Secret
+  # <release>-conversion-tls. To make a new certificate, delete the Secret and run "helm upgrade".
+  # The chart reads the Secret from the cluster. A tool that renders the chart with no cluster
+  # access makes a new certificate at each render: use one of the two options below with it.
+  tls:
+    # A Secret in the release namespace with tls.crt and tls.key. The certificate must be valid
+    # for <release>-conversion.<namespace>.svc. caBundle is then necessary: the CA certificate
+    # of the Secret, in PEM, with base64 encoding.
+    existingSecret: ""
+    caBundle: ""
+    # cert-manager makes the certificate and puts its CA in the CRDs. With no issuerRef.name, the
+    # chart makes a self-signed Issuer.
+    certManager:
+      enabled: false
+      issuerRef:
+        name: ""
+        kind: Issuer
+        group: cert-manager.io
+
 # The metrics endpoint (HTTPS). If true, the chart adds the metrics Service and the
 # metrics-auth ClusterRole (tokenreviews and subjectaccessreviews, verb create).
 metrics:

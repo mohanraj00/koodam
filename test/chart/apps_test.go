@@ -50,7 +50,8 @@ func TestAppsOnlyIfEnabled(t *testing.T) {
 		}
 	}
 
-	on, err := helmTemplate(t, "", setApps)
+	// With no conversion webhook, the templates have only the App CRDs.
+	on, err := helmTemplate(t, "", setApps, "conversion.enabled=false")
 	if err != nil {
 		t.Fatalf("helm template failed: %v\n%s", err, on)
 	}

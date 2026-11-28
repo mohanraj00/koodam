@@ -146,7 +146,7 @@ The rules:
 
 - Use a different release name and a different namespace for each install. The names of the cluster roles come from the release name.
 - Give each install its namespaces in `zone.namespaces`. A namespace must be in one install only. With this value, the manager reads the namespaced objects of these namespaces and of the release namespace only. Thus an Agent, a Workspace, an App or a `TenantQuota` belongs to one install.
-- Set `apps.sharedResources: false` in the second install. The first install has the App CRDs and the admission policy of the AppVersion. Helm installs the other CRDs one time.
+- Set `apps.sharedResources: false` and `conversion.enabled: false` in the second install. The first install has the CRDs, the conversion webhook of the CRDs and the admission policy of the AppVersion.
 - Give each install its own gateway and its own egress proxy address (`egressProxy.clusterIP`).
 - A Profile is for the full cluster. The 2 managers read each Profile, and they write the same status.
 
@@ -167,7 +167,7 @@ The steps:
    helm install zone-b charts/koodam --namespace zone-b-system --create-namespace \
      -f zone-b-values.yaml \
      --set zone.name=zone-b --set 'zone.namespaces={zone-b-apps}' \
-     --set apps.enabled=true --set apps.sharedResources=false
+     --set apps.enabled=true --set apps.sharedResources=false --set conversion.enabled=false
    ```
 
 3. Make sure that each manager has its zone and its namespaces.
@@ -179,7 +179,8 @@ The steps:
 Remove the installs in the reverse order: the second install first. If you remove the first install while the second install stays, these things occur:
 
 - The admission policy of the AppVersion goes away with the first install.
-- The App CRDs stay, because Helm keeps them. They keep the ownership annotations of the first release. Helm then refuses `apps.sharedResources=true` in a different release until you change the annotations `meta.helm.sh/release-name` and `meta.helm.sh/release-namespace` of the App CRDs.
+- The CRDs stay, because Helm keeps them. They keep the ownership annotations of the first release. Helm then refuses `apps.sharedResources=true` and `conversion.enabled=true` in a different release until you change the annotations `meta.helm.sh/release-name` and `meta.helm.sh/release-namespace` of the CRDs.
+- The conversion webhook goes away with the first install, but the CRDs of the Agent, the Workspace and the TestKey still name it. The API server then fails each request that needs a conversion. Set `conversion.enabled=true` in the install that stays, after you change the annotations of the CRDs.
 
 ## The test
 

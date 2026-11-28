@@ -144,6 +144,7 @@ type TenantQuotaStatus struct {
 }
 
 // +kubebuilder:object:root=true
+// +kubebuilder:storageversion
 // +kubebuilder:subresource:status
 // +kubebuilder:printcolumn:name="Tenant",type=string,JSONPath=`.spec.tenant`
 // +kubebuilder:printcolumn:name="App",type=string,JSONPath=`.spec.appRef.name`

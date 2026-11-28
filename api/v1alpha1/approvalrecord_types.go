@@ -62,6 +62,7 @@ type ApprovalRecordSpec struct {
 }
 
 // +kubebuilder:object:root=true
+// +kubebuilder:deprecatedversion:warning="core.koodam.dev/v1alpha1 is deprecated. Use core.koodam.dev/v1beta1."
 // +kubebuilder:selectablefield:JSONPath=`.spec.target`
 // +kubebuilder:printcolumn:name="Target",type=string,JSONPath=`.spec.target`
 // +kubebuilder:printcolumn:name="Age",type=date,JSONPath=`.metadata.creationTimestamp`

@@ -76,8 +76,10 @@ var _ = Describe("App admission: full PodTemplate immutability and the deletion-
 		Expect(err).NotTo(HaveOccurred())
 		workspace := &apiextensionsv1.CustomResourceDefinition{}
 		Expect(yaml.Unmarshal(raw, workspace)).To(Succeed())
-		Expect(workspace.Spec.Versions).To(HaveLen(1))
+		// The CRD has v1alpha1 and v1beta1. The pod template schema is the same in the two versions.
+		Expect(workspace.Spec.Versions).To(HaveLen(2))
 		generated := workspace.Spec.Versions[0].Schema.OpenAPIV3Schema.Properties[specField].Properties["podTemplate"]
+		Expect(workspace.Spec.Versions[1].Schema.OpenAPIV3Schema.Properties[specField].Properties["podTemplate"]).To(Equal(generated))
 		template := generated.DeepCopy()
 
 		// The copy has each json field of corev1.PodSpec. The test removes no field.
