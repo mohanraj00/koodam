@@ -47,7 +47,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/handler"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
 
-	corev1alpha1 "github.com/mohanraj00/koodam/api/v1alpha1"
+	corev1beta1 "github.com/mohanraj00/koodam/api/v1beta1"
 	"github.com/mohanraj00/koodam/internal/agentingress"
 	"github.com/mohanraj00/koodam/internal/gateway"
 	"github.com/mohanraj00/koodam/internal/harness"
@@ -111,9 +111,8 @@ type AgentReconciler struct {
 	// InstallerImage has /harness-install. The run pod uses it as an init container if the Agent
 	// has a harness. If it is empty, an Agent with a harness fails.
 	InstallerImage string
-	// NookkuImage is the Nookku data image with the pinned Nookku files (#83). If it is empty, an
-	// Agent with the nookku plugin fails.
-	NookkuImage string
+	// PresetImages gives the data images by flag name.
+	PresetImages map[string]string
 	// JobTTL is the time in seconds that the controller keeps a run Job and its pods after the Job
 	// ends. If it is 0 or less, the controller uses DefaultJobTTLSeconds.
 	JobTTL int32
@@ -154,23 +153,23 @@ func (r *AgentReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl
 	if r.APIReader == nil {
 		return ctrl.Result{}, errNoAPIReader
 	}
-	a := &corev1alpha1.Agent{}
+	a := &corev1beta1.Agent{}
 	if err := r.APIReader.Get(ctx, req.NamespacedName, a); err != nil {
 		return ctrl.Result{}, client.IgnoreNotFound(err)
 	}
 	if handled, err := r.applyQuarantine(ctx, a); handled {
 		return ctrl.Result{}, err
 	}
-	ended := a.Status.Phase == corev1alpha1.AgentSucceeded || a.Status.Phase == corev1alpha1.AgentFailed
+	ended := a.Status.Phase == corev1beta1.AgentSucceeded || a.Status.Phase == corev1beta1.AgentFailed
 	if (ended || !a.DeletionTimestamp.IsZero()) && !controllerutil.ContainsFinalizer(a, finalizer) {
 		if ended && a.DeletionTimestamp.IsZero() {
 			return r.deleteEndedJob(ctx, a)
 		}
 		return ctrl.Result{}, nil
 	}
-	var hold *corev1alpha1.Hold
+	var hold *corev1beta1.Hold
 	if !ended && a.DeletionTimestamp.IsZero() {
-		h, err := stopHold(ctx, r.Client, corev1alpha1.HoldTargetAgent, a.Namespace, a.Name, "")
+		h, err := stopHold(ctx, r.Client, corev1beta1.HoldTargetAgent, a.Namespace, a.Name, "")
 		if err != nil {
 			return ctrl.Result{}, err
 		}
@@ -178,7 +177,7 @@ func (r *AgentReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl
 	}
 	switch {
 	case !a.DeletionTimestamp.IsZero():
-		return ctrl.Result{}, r.fail(ctx, a, corev1alpha1.AgentFailed, "AgentDeleted")
+		return ctrl.Result{}, r.fail(ctx, a, corev1beta1.AgentFailed, "AgentDeleted")
 	case ended:
 		// A revoke started before and did not complete.
 		return ctrl.Result{}, r.revoke(ctx, a)
@@ -186,7 +185,7 @@ func (r *AgentReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl
 		// A Hold stops the run, also a run that waits. The revoke blocks the key before it deletes
 		// the Job. The run does not start again after the release.
 		holdEvent(r.Recorder, a, hold)
-		return ctrl.Result{}, r.fail(ctx, a, corev1alpha1.AgentFailed, reasonStopped)
+		return ctrl.Result{}, r.fail(ctx, a, corev1beta1.AgentFailed, reasonStopped)
 	case r.ingressPaused(a):
 		// The pause comes before the Running case, because a Running phase with no key hash is not an
 		// enrolled run attempt. The controller makes no finalizer, Secret, key or Job, and it keeps the
@@ -194,20 +193,20 @@ func (r *AgentReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl
 		// ingress enabled.
 		logf.FromContext(ctx).Info("The Agent ingress is disabled, so the run waits")
 		return ctrl.Result{}, nil
-	case a.Status.Phase == corev1alpha1.AgentRunning:
+	case a.Status.Phase == corev1beta1.AgentRunning:
 		// Read the Job from the API server, as the Agent. A Job that is not in the cache yet must not
 		// fail the run.
 		job := &batchv1.Job{}
 		err := r.APIReader.Get(ctx, types.NamespacedName{Namespace: a.Namespace, Name: runName(a)}, job)
 		if apierrors.IsNotFound(err) {
-			return ctrl.Result{}, r.fail(ctx, a, corev1alpha1.AgentFailed, "JobMissing")
+			return ctrl.Result{}, r.fail(ctx, a, corev1beta1.AgentFailed, "JobMissing")
 		}
 		if err != nil {
 			return ctrl.Result{}, err
 		}
 		if !metav1.IsControlledBy(job, a) {
 			// A different Job has the run name. Its result is not the result of this run.
-			return ctrl.Result{}, r.fail(ctx, a, corev1alpha1.AgentFailed, reasonNameConflict)
+			return ctrl.Result{}, r.fail(ctx, a, corev1beta1.AgentFailed, reasonNameConflict)
 		}
 		phase, reason, done := jobEnd(job)
 		changed := setJobTimes(a, job)
@@ -235,22 +234,22 @@ func (r *AgentReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl
 // no key hash. The controller writes the hash before each CreateKey, so the hash enrolls a run
 // attempt. It does not show that the key or the Job exists. A finalizer, a Secret with the run name
 // or a Running phase alone does not enroll a run.
-func (r *AgentReconciler) ingressPaused(a *corev1alpha1.Agent) bool {
+func (r *AgentReconciler) ingressPaused(a *corev1beta1.Agent) bool {
 	return !r.IngressEnabled && a.Spec.IngressPort != nil && a.Status.KeyHash == ""
 }
 
-func runName(a *corev1alpha1.Agent) string { return "kd-" + a.Name }
+func runName(a *corev1beta1.Agent) string { return "kd-" + a.Name }
 
-func jobEnd(job *batchv1.Job) (corev1alpha1.AgentPhase, string, bool) {
+func jobEnd(job *batchv1.Job) (corev1beta1.AgentPhase, string, bool) {
 	for _, c := range job.Status.Conditions {
 		if c.Status != corev1.ConditionTrue {
 			continue
 		}
 		switch c.Type {
 		case batchv1.JobComplete:
-			return corev1alpha1.AgentSucceeded, "JobComplete", true
+			return corev1beta1.AgentSucceeded, "JobComplete", true
 		case batchv1.JobFailed:
-			return corev1alpha1.AgentFailed, "JobFailed", true
+			return corev1beta1.AgentFailed, "JobFailed", true
 		}
 	}
 	return "", "", false
@@ -258,7 +257,7 @@ func jobEnd(job *batchv1.Job) (corev1alpha1.AgentPhase, string, bool) {
 
 // setJobTimes copies the start time and the end time of the Job to the Agent status. It sets
 // each time one time only. It returns true if it changed the status.
-func setJobTimes(a *corev1alpha1.Agent, job *batchv1.Job) bool {
+func setJobTimes(a *corev1beta1.Agent, job *batchv1.Job) bool {
 	changed := false
 	if a.Status.StartedAt == nil && job.Status.StartTime != nil {
 		a.Status.StartedAt = job.Status.StartTime.DeepCopy()
@@ -288,12 +287,15 @@ func jobEndTime(job *batchv1.Job) *metav1.Time {
 }
 
 // invalid returns a message if the controller cannot make the run. It does no API call.
-func invalid(a *corev1alpha1.Agent) string {
+func invalid(a *corev1beta1.Agent) string {
+	if h := a.Spec.Harness; h != nil && unknownPreset(*h) {
+		return msgUnknownPreset
+	}
 	if len(runName(a)) > validation.DNS1123LabelMaxLength {
 		return "The Agent name is too long for the run Job. Use 60 characters or fewer."
 	}
 	// The admission webhook does this check first. The error has fixed text with no Agent value.
-	if err := agentingress.Check(a.Spec); err != nil {
+	if err := agentingress.CheckSpec(a.Spec); err != nil {
 		return err.Error()
 	}
 	if !inCeiling(a.Spec.Rules) {
@@ -307,8 +309,12 @@ func invalid(a *corev1alpha1.Agent) string {
 	if (a.Spec.Model == "") == (len(a.Spec.Models) == 0) || slices.Contains(a.Spec.Models, "") {
 		return "Set spec.model or spec.models, and not the two."
 	}
-	if _, set := a.Spec.Env[nookkuTestsEnv]; set && hasNookku(a.Spec.Harness) {
-		return "spec.env cannot set " + nookkuTestsEnv + " if the harness has the nookku plugin. Koodam sets it."
+	if h := a.Spec.Harness; h != nil {
+		for _, name := range h.Plugins {
+			if msg := harnessPresets[name].agentError(a); msg != "" {
+				return msg
+			}
+		}
 	}
 	return ""
 }
@@ -325,18 +331,18 @@ func permanent(err error) bool {
 		code != http.StatusRequestTimeout && code != http.StatusTooManyRequests
 }
 
-func runMeta(a *corev1alpha1.Agent) metav1.ObjectMeta {
+func runMeta(a *corev1beta1.Agent) metav1.ObjectMeta {
 	return metav1.ObjectMeta{
 		Name: runName(a), Namespace: a.Namespace,
 		Labels: map[string]string{agentLabel: a.Name},
 		OwnerReferences: []metav1.OwnerReference{*metav1.NewControllerRef(a,
-			corev1alpha1.GroupVersion.WithKind("Agent"))},
+			corev1beta1.GroupVersion.WithKind("Agent"))},
 	}
 }
 
 // getOwned reads the run object of this kind into o. It returns false if there is no object.
 // It returns errNotOwned if the object is not controlled by this Agent.
-func (r *AgentReconciler) getOwned(ctx context.Context, a *corev1alpha1.Agent, o client.Object) (bool, error) {
+func (r *AgentReconciler) getOwned(ctx context.Context, a *corev1beta1.Agent, o client.Object) (bool, error) {
 	err := r.APIReader.Get(ctx, types.NamespacedName{Namespace: a.Namespace, Name: runName(a)}, o)
 	if apierrors.IsNotFound(err) {
 		return false, nil
@@ -351,7 +357,7 @@ func (r *AgentReconciler) getOwned(ctx context.Context, a *corev1alpha1.Agent, o
 }
 
 // runKey reads the key value from the run Secret. It returns "" if there is no Secret.
-func (r *AgentReconciler) runKey(ctx context.Context, a *corev1alpha1.Agent) (string, error) {
+func (r *AgentReconciler) runKey(ctx context.Context, a *corev1beta1.Agent) (string, error) {
 	s := &corev1.Secret{}
 	found, err := r.getOwned(ctx, a, s)
 	if !found || err != nil {
@@ -365,7 +371,7 @@ func (r *AgentReconciler) runKey(ctx context.Context, a *corev1alpha1.Agent) (st
 
 // sameRun is true if have, an object that exists with the run name, is the object that the
 // controller makes for this Agent.
-func (r *AgentReconciler) sameRun(ctx context.Context, a *corev1alpha1.Agent, want client.Object) (bool, error) {
+func (r *AgentReconciler) sameRun(ctx context.Context, a *corev1beta1.Agent, want client.Object) (bool, error) {
 	have := reflect.New(reflect.TypeOf(want).Elem()).Interface().(client.Object)
 	if _, err := r.getOwned(ctx, a, have); errors.Is(err, errNotOwned) {
 		return false, nil
@@ -384,7 +390,7 @@ func (r *AgentReconciler) sameRun(ctx context.Context, a *corev1alpha1.Agent, wa
 
 // costGroupCheck checks the cost group one time, before the key exists. It gives the message and
 // the reason of a value that is not allowed, or an empty message.
-func (r *AgentReconciler) costGroupCheck(ctx context.Context, a *corev1alpha1.Agent, value, reason string) (
+func (r *AgentReconciler) costGroupCheck(ctx context.Context, a *corev1beta1.Agent, value, reason string) (
 	string, string, error) {
 	if a.Status.KeyHash != "" {
 		return "", reason, nil
@@ -400,7 +406,7 @@ func (r *AgentReconciler) costGroupCheck(ctx context.Context, a *corev1alpha1.Ag
 // run budget in the period budget of the namespace. The reservation comes after the finalizer, so
 // that a delete releases it, and before the key. If the run must wait, admit gives an approvalWait
 // or a budgetWait error. It is true if it ended the run.
-func (r *AgentReconciler) admit(ctx context.Context, a *corev1alpha1.Agent) (bool, error) {
+func (r *AgentReconciler) admit(ctx context.Context, a *corev1beta1.Agent) (bool, error) {
 	if stop, err := r.awaitApproval(ctx, a); err != nil || stop {
 		return stop, err
 	}
@@ -422,15 +428,16 @@ func (r *AgentReconciler) admit(ctx context.Context, a *corev1alpha1.Agent) (boo
 	return false, r.waitForBudget(ctx, a, after, msg)
 }
 
-func (r *AgentReconciler) provision(ctx context.Context, a *corev1alpha1.Agent) error {
+func (r *AgentReconciler) provision(ctx context.Context, a *corev1beta1.Agent) error {
 	log := logf.FromContext(ctx)
 	msg, reason := invalid(a), reasonInvalid
 	if msg == "" {
 		msg = r.noInstaller(a)
 	}
 	// The merge comes before the key, so that a template that is not valid makes no key.
-	job := runJob(a, r.InstallerImage, r.NookkuImage, r.GatewayURL)
+	var job *batchv1.Job
 	if msg == "" {
+		job = runJob(a, r.InstallerImage, r.PresetImages, r.GatewayURL)
 		var err error
 		if job.Spec.Template, err = withPodTemplate(ctx, r.APIReader, a.Namespace, job.Spec.Template,
 			a.Spec.PodTemplate, agentContainer); err != nil {
@@ -444,7 +451,7 @@ func (r *AgentReconciler) provision(ctx context.Context, a *corev1alpha1.Agent) 
 			msg = msgOutputMount
 		}
 	}
-	costGroup := a.Labels[corev1alpha1.CostGroupLabel]
+	costGroup := a.Labels[corev1beta1.CostGroupLabel]
 	if msg == "" {
 		var err error
 		if msg, reason, err = r.costGroupCheck(ctx, a, costGroup, reason); err != nil {
@@ -457,7 +464,7 @@ func (r *AgentReconciler) provision(ctx context.Context, a *corev1alpha1.Agent) 
 			Type: condProvisioned, Status: metav1.ConditionFalse, Reason: reason, Message: msg,
 			ObservedGeneration: a.Generation,
 		})
-		return r.fail(ctx, a, corev1alpha1.AgentFailed, reason)
+		return r.fail(ctx, a, corev1beta1.AgentFailed, reason)
 	}
 	if done, err := r.admit(ctx, a); err != nil || done {
 		return err
@@ -466,12 +473,12 @@ func (r *AgentReconciler) provision(ctx context.Context, a *corev1alpha1.Agent) 
 	key, err := r.runKey(ctx, a)
 	switch {
 	case errors.Is(err, errNotOwned):
-		return r.fail(ctx, a, corev1alpha1.AgentFailed, reasonNameConflict)
+		return r.fail(ctx, a, corev1beta1.AgentFailed, reasonNameConflict)
 	case err != nil:
 		return err
 	case a.Status.KeyHash != "" && gateway.HashKey(key) != a.Status.KeyHash:
 		// The Secret is gone or changed. The revoke uses the hash in the status.
-		return r.fail(ctx, a, corev1alpha1.AgentFailed, "SecretLost")
+		return r.fail(ctx, a, corev1beta1.AgentFailed, "SecretLost")
 	case key == "":
 		if key, err = gateway.NewKeyValue(); err != nil {
 			return err
@@ -483,7 +490,7 @@ func (r *AgentReconciler) provision(ctx context.Context, a *corev1alpha1.Agent) 
 	alias := "kd-" + string(a.UID)
 	if a.Status.KeyHash == "" {
 		// Write the hash before the key exists, so that a revoke can always find the key.
-		a.Status.Phase = corev1alpha1.AgentPending
+		a.Status.Phase = corev1beta1.AgentPending
 		a.Status.RunID = string(a.UID)
 		a.Status.KeyAlias = alias
 		a.Status.KeyHash = gateway.HashKey(key)
@@ -528,16 +535,16 @@ func (r *AgentReconciler) provision(ctx context.Context, a *corev1alpha1.Agent) 
 			}
 			if !same {
 				log.Info("An object with the run name is not from this Agent", "kind", fmt.Sprintf("%T", o))
-				return r.fail(ctx, a, corev1alpha1.AgentFailed, reasonNameConflict)
+				return r.fail(ctx, a, corev1beta1.AgentFailed, reasonNameConflict)
 			}
 		case permanent(err):
 			log.Info("The API server refused the run", "kind", fmt.Sprintf("%T", o), "reason", err.Error())
-			return r.fail(ctx, a, corev1alpha1.AgentFailed, reasonRefused)
+			return r.fail(ctx, a, corev1beta1.AgentFailed, reasonRefused)
 		case err != nil:
 			return err
 		}
 	}
-	a.Status.Phase = corev1alpha1.AgentRunning
+	a.Status.Phase = corev1beta1.AgentRunning
 	a.Status.Job = name
 	meta.SetStatusCondition(&a.Status.Conditions, metav1.Condition{
 		Type: condProvisioned, Status: metav1.ConditionTrue, Reason: "Provisioned",
@@ -565,7 +572,7 @@ func agentGatewayError(op string, err error) error {
 
 // keyMetadata is the metadata of the gateway key of a run. The gateway can then group the spend
 // by harness and by cost group.
-func keyMetadata(a *corev1alpha1.Agent) map[string]string {
+func keyMetadata(a *corev1beta1.Agent) map[string]string {
 	md := map[string]string{metaUID: string(a.UID), metaNamespace: a.Namespace, "agent": a.Name, "user": a.Spec.User}
 	if a.Status.CostGroup != "" {
 		md["costGroup"] = a.Status.CostGroup
@@ -577,7 +584,7 @@ func keyMetadata(a *corev1alpha1.Agent) map[string]string {
 }
 
 // secret has the env for the harnesses.
-func (r *AgentReconciler) secret(a *corev1alpha1.Agent, key string) *corev1.Secret {
+func (r *AgentReconciler) secret(a *corev1beta1.Agent, key string) *corev1.Secret {
 	return &corev1.Secret{ObjectMeta: runMeta(a), Immutable: new(true),
 		StringData: gatewayEnv(r.GatewayURL, a.Spec.ModelList()[0], key)}
 }
@@ -598,7 +605,7 @@ func gatewayEnv(url, m, key string) map[string]string {
 
 // runJob makes the run Job. The Job has no ttlSecondsAfterFinished. If Kubernetes deletes the Job
 // while the controller is down, the result of the run is lost. Thus deleteEndedJob deletes it.
-func runJob(a *corev1alpha1.Agent, installerImage, nookkuImage, gatewayURL string) *batchv1.Job {
+func runJob(a *corev1beta1.Agent, installerImage string, presetImages map[string]string, gatewayURL string) *batchv1.Job {
 	name := runName(a)
 	env := make([]corev1.EnvVar, 0, len(a.Spec.Env)+2)
 	for k, v := range a.Spec.Env {
@@ -624,8 +631,10 @@ func runJob(a *corev1alpha1.Agent, installerImage, nookkuImage, gatewayURL strin
 	tmpl := metav1.ObjectMeta{Labels: map[string]string{agentLabel: a.Name}}
 	if h := a.Spec.Harness; h != nil {
 		addHarness(&pod, h, installerImage)
-		if hasNookku(h) {
-			addAgentNookku(&pod, h, nookkuImage)
+		for _, name := range h.Plugins {
+			if p, ok := harnessPresets[name]; ok {
+				p.addAgent(&pod, h.Name, presetImages[p.imageFlag])
+			}
 		}
 		if h.Name == harness.Codex {
 			tmpl.Annotations = map[string]string{codexConfigAnnotation: codexConfig(gatewayURL, a.Spec.ModelList()[0])}
@@ -694,7 +703,7 @@ const harnessPath = harnessDir + ":/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr
 
 // addHarness adds an init container that downloads the harness binary into an emptyDir. The
 // agent container mounts the emptyDir read-only. The init container has no credential env.
-func addHarness(pod *corev1.PodSpec, h *corev1alpha1.HarnessSpec, image string) {
+func addHarness(pod *corev1.PodSpec, h *corev1beta1.HarnessSpec, image string) {
 	const vol = "harness"
 	limit := resource.MustParse("1Gi")
 	pod.Volumes = append(pod.Volumes, corev1.Volume{Name: vol, VolumeSource: corev1.VolumeSource{
@@ -709,12 +718,17 @@ func addHarness(pod *corev1.PodSpec, h *corev1alpha1.HarnessSpec, image string) 
 
 // noInstaller gives back the reason why the controller cannot make the helper containers of the
 // run, or "".
-func (r *AgentReconciler) noInstaller(a *corev1alpha1.Agent) string {
+func (r *AgentReconciler) noInstaller(a *corev1beta1.Agent) string {
 	switch {
-	case r.InstallerImage != "" && hasNookku(a.Spec.Harness) && r.NookkuImage == "":
-		return msgNoNookkuImage
 	case r.InstallerImage != "":
-		return ""
+		if h := a.Spec.Harness; h != nil {
+			for _, name := range h.Plugins {
+				p := harnessPresets[name]
+				if p.imageFlag != "" && r.PresetImages[p.imageFlag] == "" {
+					return "The controller has no --" + p.imageFlag + ", so it cannot install the " + string(name) + " plugin."
+				}
+			}
+		}
 	case a.Spec.Harness != nil:
 		return "The controller has no installer image, so it cannot install a harness."
 	case a.Spec.Output != nil:
@@ -814,7 +828,7 @@ func outputSidecar(cs []corev1.Container) *corev1.Container {
 // readOutput reads the digest of the output file from the termination message of the sidecar of
 // the newest pod of the run. It sets the status in memory one time. The message comes from a pod, so
 // outputdigest.Parse accepts only a digest of the correct form.
-func (r *AgentReconciler) readOutput(ctx context.Context, a *corev1alpha1.Agent) error {
+func (r *AgentReconciler) readOutput(ctx context.Context, a *corev1beta1.Agent) error {
 	if a.Status.Output != nil {
 		return nil
 	}
@@ -841,7 +855,7 @@ func (r *AgentReconciler) readOutput(ctx context.Context, a *corev1alpha1.Agent)
 	}
 	// The sidecar of the Job template says if the run has an output, and gives its path. A change
 	// of spec.output after the start of the run has no effect.
-	out := &corev1alpha1.AgentOutputStatus{Reason: reasonNoResult}
+	out := &corev1beta1.AgentOutputStatus{Reason: reasonNoResult}
 	var side *corev1.Container
 	if owned {
 		side = outputSidecar(job.Spec.Template.Spec.InitContainers)
@@ -883,9 +897,9 @@ func (r *AgentReconciler) readOutput(ctx context.Context, a *corev1alpha1.Agent)
 
 // fail writes the end phase and the reason before the revoke. A retry then continues the revoke
 // and does not provision again.
-func (r *AgentReconciler) fail(ctx context.Context, a *corev1alpha1.Agent, phase corev1alpha1.AgentPhase,
+func (r *AgentReconciler) fail(ctx context.Context, a *corev1beta1.Agent, phase corev1beta1.AgentPhase,
 	reason string) error {
-	if a.Status.Phase != corev1alpha1.AgentSucceeded && a.Status.Phase != corev1alpha1.AgentFailed {
+	if a.Status.Phase != corev1beta1.AgentSucceeded && a.Status.Phase != corev1beta1.AgentFailed {
 		a.Status.Phase = phase
 		meta.SetStatusCondition(&a.Status.Conditions, metav1.Condition{
 			Type: condRevoked, Status: metav1.ConditionFalse, Reason: reason,
@@ -900,7 +914,7 @@ func (r *AgentReconciler) fail(ctx context.Context, a *corev1alpha1.Agent, phase
 
 // revoke blocks the key first, by the hash in the status. Then it deletes the access, reads the
 // usage, writes the status, deletes the Secret and removes the finalizer. Each step can run again.
-func (r *AgentReconciler) revoke(ctx context.Context, a *corev1alpha1.Agent) error {
+func (r *AgentReconciler) revoke(ctx context.Context, a *corev1beta1.Agent) error {
 	if a.Status.KeyHash != "" {
 		if err := r.Gateway.BlockKey(ctx, a.Status.KeyHash); err != nil {
 			return agentGatewayError("BlockKey", err)
@@ -968,7 +982,7 @@ func orphanWorkload(o client.Object, want map[string]string) bool {
 // jobOfRun is true if o is a Job whose agent container has the run ID of a. The pod template of a
 // Job is immutable, so only a Job that was made for this run has it. The last value of the
 // variable applies, as in the kubelet.
-func jobOfRun(o client.Object, a *corev1alpha1.Agent) bool {
+func jobOfRun(o client.Object, a *corev1beta1.Agent) bool {
 	job, ok := o.(*batchv1.Job)
 	if !ok {
 		return false
@@ -991,7 +1005,7 @@ func jobOfRun(o client.Object, a *corev1alpha1.Agent) bool {
 // but it deletes a Job of the run that lost its owner reference. The Job must have the label and
 // the run ID of this run. The UID precondition stops the
 // delete if the object changed after the read.
-func (r *AgentReconciler) deleteOwned(ctx context.Context, a *corev1alpha1.Agent, o client.Object) error {
+func (r *AgentReconciler) deleteOwned(ctx context.Context, a *corev1beta1.Agent, o client.Object) error {
 	found, err := r.getOwned(ctx, a, o)
 	if errors.Is(err, errNotOwned) && orphanWorkload(o, map[string]string{agentLabel: a.Name}) && jobOfRun(o, a) {
 		logf.FromContext(ctx).Info("Deletes a Job of the run that has no controller")
@@ -1011,7 +1025,7 @@ func (r *AgentReconciler) deleteOwned(ctx context.Context, a *corev1alpha1.Agent
 	return client.IgnoreNotFound(err)
 }
 
-func (r *AgentReconciler) writeUsage(ctx context.Context, a *corev1alpha1.Agent, reason string) error {
+func (r *AgentReconciler) writeUsage(ctx context.Context, a *corev1beta1.Agent, reason string) error {
 	msg := "The key is blocked and the credentials are deleted."
 	if a.Status.KeyHash == "" {
 		msg = "There was no key to revoke."
@@ -1039,7 +1053,7 @@ func (r *AgentReconciler) writeUsage(ctx context.Context, a *corev1alpha1.Agent,
 
 // deleteEndedJob deletes the Job of a revoked run JobTTL seconds after the Job ends. The controller
 // deletes the Job only after it recorded the result. If the end time is in the future, it requeues.
-func (r *AgentReconciler) deleteEndedJob(ctx context.Context, a *corev1alpha1.Agent) (ctrl.Result, error) {
+func (r *AgentReconciler) deleteEndedJob(ctx context.Context, a *corev1beta1.Agent) (ctrl.Result, error) {
 	// The cache has the run Jobs. Read the API server only if the cache has a Job of this Agent.
 	job := &batchv1.Job{}
 	err := r.Get(ctx, types.NamespacedName{Namespace: a.Namespace, Name: runName(a)}, job)
@@ -1073,17 +1087,17 @@ func (r *AgentReconciler) deleteEndedJob(ctx context.Context, a *corev1alpha1.Ag
 // SetupWithManager sets up the controller with the Manager.
 func (r *AgentReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	return ctrl.NewControllerManagedBy(mgr).
-		For(&corev1alpha1.Agent{}).
+		For(&corev1beta1.Agent{}).
 		Owns(&batchv1.Job{}).
-		Watches(&corev1alpha1.SpendBudget{}, handler.EnqueueRequestsFromMapFunc(r.waitingFor)).
+		Watches(&corev1beta1.SpendBudget{}, handler.EnqueueRequestsFromMapFunc(r.waitingFor)).
 		// Only the metadata of an ApprovalRecord goes into the cache. A record can have 1,000,000 bytes.
-		Watches(&corev1alpha1.ApprovalRecord{}, handler.EnqueueRequestsFromMapFunc(r.approvalWaiters), builder.OnlyMetadata).
-		Watches(&corev1alpha1.Hold{},
-			handler.EnqueueRequestsFromMapFunc(holdMapper(r.Client, corev1alpha1.HoldTargetAgent, r.Namespaces))).
+		Watches(&corev1beta1.ApprovalRecord{}, handler.EnqueueRequestsFromMapFunc(r.approvalWaiters), builder.OnlyMetadata).
+		Watches(&corev1beta1.Hold{},
+			handler.EnqueueRequestsFromMapFunc(holdMapper(r.Client, corev1beta1.HoldTargetAgent, r.Namespaces))).
 		Watches(&corev1.Namespace{},
-			handler.EnqueueRequestsFromMapFunc(profileHoldMapper(r.Client, corev1alpha1.HoldTargetAgent, r.Namespaces))).
-		Watches(&corev1alpha1.Profile{},
-			handler.EnqueueRequestsFromMapFunc(profileHoldMapper(r.Client, corev1alpha1.HoldTargetAgent, r.Namespaces))).
+			handler.EnqueueRequestsFromMapFunc(profileHoldMapper(r.Client, corev1beta1.HoldTargetAgent, r.Namespaces))).
+		Watches(&corev1beta1.Profile{},
+			handler.EnqueueRequestsFromMapFunc(profileHoldMapper(r.Client, corev1beta1.HoldTargetAgent, r.Namespaces))).
 		Named("agent").
 		Complete(r)
 }

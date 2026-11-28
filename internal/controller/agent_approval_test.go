@@ -41,7 +41,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
-	corev1alpha1 "github.com/mohanraj00/koodam/api/v1alpha1"
+	corev1beta1 "github.com/mohanraj00/koodam/api/v1beta1"
 )
 
 // approvalSigner signs decisions for the scope "gate" and the function "pause" with a test key
@@ -102,24 +102,24 @@ var _ = Describe("Agent approval", Ordered, func() {
 			*name = ns.Name
 		}
 		// The Profile of the namespace "bare" has no spec.approval.
-		for name, trust := range map[string]*corev1alpha1.ProfileApproval{
+		for name, trust := range map[string]*corev1beta1.ProfileApproval{
 			bound: {KeySet: signer.keySet, Scope: "gate", Function: "pause", MaxAgeSeconds: 3600}, bare: nil} {
-			Expect(k8sClient.Create(ctx, &corev1alpha1.Profile{ObjectMeta: metav1.ObjectMeta{Name: name},
-				Spec: corev1alpha1.ProfileSpec{Namespaces: []string{name}, Approval: trust}})).To(Succeed())
+			Expect(k8sClient.Create(ctx, &corev1beta1.Profile{ObjectMeta: metav1.ObjectMeta{Name: name},
+				Spec: corev1beta1.ProfileSpec{Namespaces: []string{name}, Approval: trust}})).To(Succeed())
 			ns := &corev1.Namespace{}
 			Expect(k8sClient.Get(ctx, client.ObjectKey{Name: name}, ns)).To(Succeed())
-			ns.Labels = map[string]string{corev1alpha1.ProfileLabel: name}
+			ns.Labels = map[string]string{corev1beta1.ProfileLabel: name}
 			Expect(k8sClient.Update(ctx, ns)).To(Succeed())
 		}
 	})
 
-	carry := func(a *corev1alpha1.Agent, c approvalChain) {
-		Expect(k8sClient.Create(ctx, &corev1alpha1.ApprovalRecord{
+	carry := func(a *corev1beta1.Agent, c approvalChain) {
+		Expect(k8sClient.Create(ctx, &corev1beta1.ApprovalRecord{
 			ObjectMeta: metav1.ObjectMeta{GenerateName: a.Name + "-", Namespace: a.Namespace},
-			Spec: corev1alpha1.ApprovalRecordSpec{Target: a.Name, SignedRecord: c.signed,
+			Spec: corev1beta1.ApprovalRecordSpec{Target: a.Name, SignedRecord: c.signed,
 				SnapshotRecord: c.snapshot, Manifest: c.manifest}})).To(Succeed())
 	}
-	subjectOf := func(a *corev1alpha1.Agent) string {
+	subjectOf := func(a *corev1beta1.Agent) string {
 		doc, err := approvalDocument(a)
 		Expect(err).NotTo(HaveOccurred())
 		return approvalSubject(doc)
@@ -127,11 +127,11 @@ var _ = Describe("Agent approval", Ordered, func() {
 	// start makes an Agent that waits 1 hour, with the records that the function gives for its
 	// subject. Then it runs one reconcile at the time "at".
 	start := func(namespace string, records func(subject string) []approvalChain, at time.Time) (
-		*corev1alpha1.Agent, *fakeGateway, reconcile.Result) {
+		*corev1beta1.Agent, *fakeGateway, reconcile.Result) {
 		count++
-		a := &corev1alpha1.Agent{ObjectMeta: metav1.ObjectMeta{Name: fmt.Sprintf("wait-%d", count), Namespace: namespace},
-			Spec: corev1alpha1.AgentSpec{Image: testAgentImage, Command: []string{jobIngRunCommand}, Model: "m",
-				Budget: resource.MustParse("1"), Approval: &corev1alpha1.AgentApprovalSpec{WaitSeconds: 3600}}}
+		a := &corev1beta1.Agent{ObjectMeta: metav1.ObjectMeta{Name: fmt.Sprintf("wait-%d", count), Namespace: namespace},
+			Spec: corev1beta1.AgentSpec{Image: testAgentImage, Command: []string{jobIngRunCommand}, Model: "m",
+				Budget: resource.MustParse("1"), Approval: &corev1beta1.AgentApprovalSpec{WaitSeconds: 3600}}}
 		Expect(k8sClient.Create(ctx, a)).To(Succeed())
 		if records != nil {
 			for _, c := range records(subjectOf(a)) {
@@ -179,7 +179,7 @@ var _ = Describe("Agent approval", Ordered, func() {
 			namespace = bare
 		}
 		a, gw, result := start(namespace, records, now.Add(late))
-		cond := meta.FindStatusCondition(a.Status.Conditions, corev1alpha1.AgentApproval)
+		cond := meta.FindStatusCondition(a.Status.Conditions, corev1beta1.AgentApproval)
 		Expect(cond).NotTo(BeNil())
 		Expect(cond.Status).To(Equal(status), cond.Message)
 		Expect(cond.Reason).To(Equal(reason), cond.Message)
@@ -191,17 +191,17 @@ var _ = Describe("Agent approval", Ordered, func() {
 		switch status {
 		case metav1.ConditionTrue:
 			Expect(err).NotTo(HaveOccurred())
-			Expect(a.Status.Phase).To(Equal(corev1alpha1.AgentRunning))
+			Expect(a.Status.Phase).To(Equal(corev1beta1.AgentRunning))
 			Expect(gw.created).To(HaveLen(1))
 			Expect(a.Status.Evidence).To(HaveField("Subject", subjectOf(a)))
-			Expect(a.Status.Evidence).To(HaveField("Verdict", corev1alpha1.EvidencePass))
-			Expect(a.Status.Evidence).To(HaveField("Integrity", corev1alpha1.EvidenceSignature))
+			Expect(a.Status.Evidence).To(HaveField("Verdict", corev1beta1.EvidencePass))
+			Expect(a.Status.Evidence).To(HaveField("Integrity", corev1beta1.EvidenceSignature))
 		case metav1.ConditionFalse:
-			Expect(a.Status.Phase).To(Equal(corev1alpha1.AgentFailed))
+			Expect(a.Status.Phase).To(Equal(corev1beta1.AgentFailed))
 			Expect(meta.FindStatusCondition(a.Status.Conditions, condRevoked).Reason).To(Equal(reason))
 		default:
 			// A paused run has no finalizer, and it gets a new check in 1 minute or less.
-			Expect(a.Status.Phase).To(Equal(corev1alpha1.AgentPending))
+			Expect(a.Status.Phase).To(Equal(corev1beta1.AgentPending))
 			Expect(controllerutil.ContainsFinalizer(a, finalizer)).To(BeFalse())
 			Expect(result.RequeueAfter).To(And(BeNumerically(">", 0), BeNumerically("<=", approvalRecheck)))
 		}
@@ -210,72 +210,72 @@ var _ = Describe("Agent approval", Ordered, func() {
 			Expect(apierrors.IsNotFound(err)).To(BeTrue())
 			Expect(gw.created).To(BeEmpty())
 			Expect(a.Status.KeyHash).To(BeEmpty())
-			Expect(a.Status.Evidence != nil).To(Equal(reason == corev1alpha1.ApprovalDenied))
+			Expect(a.Status.Evidence != nil).To(Equal(reason == corev1beta1.ApprovalDenied))
 		}
 	},
-		Entry("Waiting: no record", false, nil, time.Duration(0), metav1.ConditionUnknown, corev1alpha1.ApprovalWaiting, "sha256:"),
+		Entry("Waiting: no record", false, nil, time.Duration(0), metav1.ConditionUnknown, corev1beta1.ApprovalWaiting, "sha256:"),
 		Entry("Approved: a signed accept, also with records that the verifier refuses", false,
 			func(s string) []approvalChain { return []approvalChain{junk, decide(stranger, s, "reject"), accept(s)} },
-			time.Duration(0), metav1.ConditionTrue, corev1alpha1.ApprovalApproved, "valid accept"),
+			time.Duration(0), metav1.ConditionTrue, corev1beta1.ApprovalApproved, "valid accept"),
 		Entry("Denied: a signed reject, also with a signed accept", false,
 			func(s string) []approvalChain { return []approvalChain{accept(s), decide(signer, s, "reject")} },
-			time.Duration(0), metav1.ConditionFalse, corev1alpha1.ApprovalDenied, "valid reject"),
+			time.Duration(0), metav1.ConditionFalse, corev1beta1.ApprovalDenied, "valid reject"),
 		Entry("Expired: a decision that is older than the maximum age", false,
 			one(func(s string) approvalChain { return old(s, "accept") }),
-			time.Duration(0), metav1.ConditionFalse, corev1alpha1.ApprovalExpired, "maximum age of 3600 seconds"),
+			time.Duration(0), metav1.ConditionFalse, corev1beta1.ApprovalExpired, "maximum age of 3600 seconds"),
 		Entry("Expired: an until date in the past", false,
 			one(func(s string) approvalChain { return expiredBy(signer, s, "accept") }),
-			time.Duration(0), metav1.ConditionFalse, corev1alpha1.ApprovalExpired, "until date"),
+			time.Duration(0), metav1.ConditionFalse, corev1beta1.ApprovalExpired, "until date"),
 		Entry("NotVerified: a model accept with an until date in the past does not stop the run", false,
 			one(func(s string) approvalChain { return expiredBy(machine, s, "accept") }),
-			time.Duration(0), metav1.ConditionUnknown, corev1alpha1.ApprovalNotVerified, "not_human_verdict"),
+			time.Duration(0), metav1.ConditionUnknown, corev1beta1.ApprovalNotVerified, "not_human_verdict"),
 		Entry("NotVerified: a policy reject with an until date in the past does not stop the run", false,
 			one(func(s string) approvalChain { return expiredBy(policy, s, "reject") }),
-			time.Duration(0), metav1.ConditionUnknown, corev1alpha1.ApprovalNotVerified, "not_human_verdict"),
+			time.Duration(0), metav1.ConditionUnknown, corev1beta1.ApprovalNotVerified, "not_human_verdict"),
 		Entry("NotVerified: an invalid disposition with an until date in the past does not stop the run", false,
 			one(func(s string) approvalChain { return expiredBy(signer, s, "maybe") }),
-			time.Duration(0), metav1.ConditionUnknown, corev1alpha1.ApprovalNotVerified, "invalid_disposition"),
+			time.Duration(0), metav1.ConditionUnknown, corev1beta1.ApprovalNotVerified, "invalid_disposition"),
 		Entry("Timeout: an accept that was decided after the wait deadline", false,
 			one(func(s string) approvalChain { return decidedAt(s, now.Add(2*time.Hour)) }),
-			2*time.Hour+time.Minute, metav1.ConditionFalse, corev1alpha1.ApprovalTimeout, "no approval in 3600 seconds"),
+			2*time.Hour+time.Minute, metav1.ConditionFalse, corev1beta1.ApprovalTimeout, "no approval in 3600 seconds"),
 		Entry("Approved: an accept before the wait deadline, also with an accept after it", false,
 			func(s string) []approvalChain {
 				return []approvalChain{decidedAt(s, now.Add(65*time.Minute)), decidedAt(s, now.Add(55*time.Minute))}
-			}, 70*time.Minute, metav1.ConditionTrue, corev1alpha1.ApprovalApproved, "valid accept"),
+			}, 70*time.Minute, metav1.ConditionTrue, corev1beta1.ApprovalApproved, "valid accept"),
 		Entry("NotYetValid: a from date in the future", false,
 			one(func(s string) approvalChain {
 				return signer.chain(s, "accept", now.Add(-time.Minute), now.Add(2*day), now.Add(4*day))
-			}), time.Duration(0), metav1.ConditionUnknown, corev1alpha1.ApprovalNotYetValid, "from date"),
+			}), time.Duration(0), metav1.ConditionUnknown, corev1beta1.ApprovalNotYetValid, "from date"),
 		Entry("SubjectMismatch: a signed accept of a different run", false,
 			one(func(string) approvalChain { return accept(other) }),
-			time.Duration(0), metav1.ConditionUnknown, corev1alpha1.ApprovalSubjectMismatch, "does not bind the subject"),
+			time.Duration(0), metav1.ConditionUnknown, corev1beta1.ApprovalSubjectMismatch, "does not bind the subject"),
 		Entry("SubjectMismatch: an old signed reject of a different run does not stop the run", false,
 			one(func(string) approvalChain { return old(other, "reject") }),
-			time.Duration(0), metav1.ConditionUnknown, corev1alpha1.ApprovalSubjectMismatch, "does not bind the subject"),
+			time.Duration(0), metav1.ConditionUnknown, corev1beta1.ApprovalSubjectMismatch, "does not bind the subject"),
 		Entry("SubjectMismatch: a snapshot record with one more byte", false,
 			one(func(s string) approvalChain {
 				c := accept(s)
 				c.snapshot = append(c.snapshot, ' ')
 				return c
-			}), time.Duration(0), metav1.ConditionUnknown, corev1alpha1.ApprovalSubjectMismatch, "does not bind the subject"),
+			}), time.Duration(0), metav1.ConditionUnknown, corev1beta1.ApprovalSubjectMismatch, "does not bind the subject"),
 		Entry("NotVerified: a manifest with one more byte", false,
 			one(func(s string) approvalChain {
 				c := accept(s)
 				c.manifest = append(c.manifest, ' ')
 				return c
-			}), time.Duration(0), metav1.ConditionUnknown, corev1alpha1.ApprovalNotVerified, "manifest_ref: binding_mismatch"),
+			}), time.Duration(0), metav1.ConditionUnknown, corev1beta1.ApprovalNotVerified, "manifest_ref: binding_mismatch"),
 		Entry("NotVerified: a reject from a key that the key set does not have", false,
 			one(func(s string) approvalChain { return decide(stranger, s, "reject") }),
-			time.Duration(0), metav1.ConditionUnknown, corev1alpha1.ApprovalNotVerified, "unknown_key"),
+			time.Duration(0), metav1.ConditionUnknown, corev1beta1.ApprovalNotVerified, "unknown_key"),
 		Entry("NotVerified: a decision time in the future", false,
 			one(func(s string) approvalChain {
 				return signer.chain(s, "reject", now.Add(time.Hour), now.Add(-2*day), now.Add(2*day))
-			}), time.Duration(0), metav1.ConditionUnknown, corev1alpha1.ApprovalNotVerified, "invalid_decided_at"),
+			}), time.Duration(0), metav1.ConditionUnknown, corev1beta1.ApprovalNotVerified, "invalid_decided_at"),
 		Entry("NoKeySet: a Profile with no spec.approval", true, one(accept),
-			time.Duration(0), metav1.ConditionFalse, corev1alpha1.ApprovalNoKeySet, "spec.approval"),
+			time.Duration(0), metav1.ConditionFalse, corev1beta1.ApprovalNoKeySet, "spec.approval"),
 		Entry("ApprovalTimeout: no accept before the wait ends", false,
 			func(string) []approvalChain { return []approvalChain{junk} },
-			2*time.Hour, metav1.ConditionFalse, corev1alpha1.ApprovalTimeout, "3600 seconds"),
+			2*time.Hour, metav1.ConditionFalse, corev1beta1.ApprovalTimeout, "3600 seconds"),
 	)
 
 	It("pauses the run again when the spec changes before the Job starts", func() {
@@ -292,9 +292,9 @@ var _ = Describe("Agent approval", Ordered, func() {
 		_, err := r.Reconcile(ctx, reconcile.Request{NamespacedName: client.ObjectKeyFromObject(a)})
 		Expect(err).NotTo(HaveOccurred())
 		Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(a), a)).To(Succeed())
-		Expect(meta.FindStatusCondition(a.Status.Conditions, corev1alpha1.AgentApproval).Reason).
-			To(Equal(corev1alpha1.ApprovalSubjectMismatch))
-		Expect(a.Status.Phase).To(Equal(corev1alpha1.AgentPending))
+		Expect(meta.FindStatusCondition(a.Status.Conditions, corev1beta1.AgentApproval).Reason).
+			To(Equal(corev1beta1.ApprovalSubjectMismatch))
+		Expect(a.Status.Phase).To(Equal(corev1beta1.AgentPending))
 	})
 
 	It("stops a run that has a key when the approval is not there at the next start attempt", func() {
@@ -314,21 +314,21 @@ var _ = Describe("Agent approval", Ordered, func() {
 		_, err = r.Reconcile(ctx, req)
 		Expect(err).NotTo(HaveOccurred())
 		Expect(k8sClient.Get(ctx, req.NamespacedName, a)).To(Succeed())
-		Expect(a.Status.Phase).To(Equal(corev1alpha1.AgentFailed))
+		Expect(a.Status.Phase).To(Equal(corev1beta1.AgentFailed))
 		Expect(gw.blocked).To(Equal([]string{hash}))
 		Expect(gw.created).To(BeEmpty())
-		Expect(meta.FindStatusCondition(a.Status.Conditions, corev1alpha1.AgentApproval).Reason).
-			To(Equal(corev1alpha1.ApprovalSubjectMismatch))
+		Expect(meta.FindStatusCondition(a.Status.Conditions, corev1beta1.AgentApproval).Reason).
+			To(Equal(corev1beta1.ApprovalSubjectMismatch))
 	})
 
 	It("does not apply the check again to a Pending run whose Job exists", func() {
 		a, gw, _ := start(bound, one(accept), now)
-		Expect(a.Status.Phase).To(Equal(corev1alpha1.AgentRunning))
+		Expect(a.Status.Phase).To(Equal(corev1beta1.AgentRunning))
 		key := client.ObjectKey{Namespace: a.Namespace, Name: runName(a)}
 		job := &batchv1.Job{}
 		Expect(k8sClient.Get(ctx, key, job)).To(Succeed())
 		// The status update after the create of the Job failed, so the run is Pending.
-		a.Status.Phase = corev1alpha1.AgentPending
+		a.Status.Phase = corev1beta1.AgentPending
 		Expect(k8sClient.Status().Update(ctx, a)).To(Succeed())
 		// At the next reconcile, the decision is older than the maximum age, and a reject is there.
 		carry(a, decide(signer, subjectOf(a), "reject"))
@@ -337,7 +337,7 @@ var _ = Describe("Agent approval", Ordered, func() {
 		_, err := r.Reconcile(ctx, reconcile.Request{NamespacedName: client.ObjectKeyFromObject(a)})
 		Expect(err).NotTo(HaveOccurred())
 		Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(a), a)).To(Succeed())
-		Expect(a.Status.Phase).To(Equal(corev1alpha1.AgentRunning))
+		Expect(a.Status.Phase).To(Equal(corev1beta1.AgentRunning))
 		Expect(gw.blocked).To(BeEmpty())
 		after := &batchv1.Job{}
 		Expect(k8sClient.Get(ctx, key, after)).To(Succeed())
@@ -349,7 +349,7 @@ var _ = Describe("Agent approval", Ordered, func() {
 		a, _, _ := start(bound, func(string) []approvalChain {
 			return slices.Repeat([]approvalChain{junk}, approvalMaxRecords+approvalPageSize)
 		}, now)
-		Expect(meta.FindStatusCondition(a.Status.Conditions, corev1alpha1.AgentApproval).Message).
+		Expect(meta.FindStatusCondition(a.Status.Conditions, corev1beta1.AgentApproval).Message).
 			To(ContainSubstring(fmt.Sprintf("read only %d records", approvalMaxRecords)))
 	})
 
@@ -359,48 +359,48 @@ var _ = Describe("Agent approval", Ordered, func() {
 			Expect(err).NotTo(HaveOccurred())
 			return raw
 		}
-		trust := &corev1alpha1.ProfileApproval{KeySet: string(read("keyset.json")), Scope: "fixture",
+		trust := &corev1beta1.ProfileApproval{KeySet: string(read("keyset.json")), Scope: "fixture",
 			Function: "content:agent-approvals/egress-grant", MaxAgeSeconds: 3600}
 		subject := approvalSubject(read("request.json"))
 		decided := time.Date(2026, 11, 27, 12, 0, 0, 0, time.UTC)
-		for name, reason := range map[string]string{"accept": corev1alpha1.ApprovalApproved, "reject": corev1alpha1.ApprovalDenied} {
-			rec := &corev1alpha1.ApprovalRecord{Spec: corev1alpha1.ApprovalRecordSpec{SignedRecord: read("decision-" + name + ".signed.json"),
+		for name, reason := range map[string]string{"accept": corev1beta1.ApprovalApproved, "reject": corev1beta1.ApprovalDenied} {
+			rec := &corev1beta1.ApprovalRecord{Spec: corev1beta1.ApprovalRecordSpec{SignedRecord: read("decision-" + name + ".signed.json"),
 				SnapshotRecord: read("snapshot-" + name + ".record"), Manifest: read("manifest-" + name + ".json")}}
 			s := checkRecord(rec, trust, subject, decided.Add(time.Minute))
 			Expect(s.reason).To(Equal(reason), s.message)
 			Expect(s.evidence).To(HaveField("Subject", subject))
-			Expect(checkRecord(rec, trust, subject, decided.Add(2*time.Hour)).reason).To(Equal(corev1alpha1.ApprovalExpired))
-			Expect(checkRecord(rec, trust, other, decided.Add(time.Minute)).reason).To(Equal(corev1alpha1.ApprovalSubjectMismatch))
+			Expect(checkRecord(rec, trust, subject, decided.Add(2*time.Hour)).reason).To(Equal(corev1beta1.ApprovalExpired))
+			Expect(checkRecord(rec, trust, other, decided.Add(time.Minute)).reason).To(Equal(corev1beta1.ApprovalSubjectMismatch))
 		}
 		// A signed activation in place of the decision keeps the run paused, also with a valid
 		// signature and a chain that binds the subject.
-		rec := &corev1alpha1.ApprovalRecord{ObjectMeta: metav1.ObjectMeta{Name: "activation"},
-			Spec: corev1alpha1.ApprovalRecordSpec{SignedRecord: read("activation.signed.json"),
+		rec := &corev1beta1.ApprovalRecord{ObjectMeta: metav1.ObjectMeta{Name: "activation"},
+			Spec: corev1beta1.ApprovalRecordSpec{SignedRecord: read("activation.signed.json"),
 				SnapshotRecord: read("snapshot-accept.record"), Manifest: read("manifest-accept.json")}}
 		s := checkRecord(rec, trust, subject, decided.Add(time.Minute))
 		Expect(s.status).To(Equal(metav1.ConditionUnknown))
-		Expect(s.reason).To(Equal(corev1alpha1.ApprovalNotVerified))
+		Expect(s.reason).To(Equal(corev1beta1.ApprovalNotVerified))
 		Expect(s.message).To(ContainSubstring("not_a_decision"))
 		Expect(s.evidence).To(BeNil())
 	})
 
 	// A record after the bound can be a reject. Thus only a reject is final in an incomplete check.
 	DescribeTable("gives no accept from an incomplete check", func(disposition string, reason string,
-		phase corev1alpha1.AgentPhase) {
+		phase corev1beta1.AgentPhase) {
 		a, gw, _ := start(bound, func(s string) []approvalChain {
 			return slices.Repeat([]approvalChain{decide(signer, s, disposition)}, approvalMaxRecords+approvalPageSize)
 		}, now)
-		Expect(meta.FindStatusCondition(a.Status.Conditions, corev1alpha1.AgentApproval).Reason).To(Equal(reason))
+		Expect(meta.FindStatusCondition(a.Status.Conditions, corev1beta1.AgentApproval).Reason).To(Equal(reason))
 		Expect(a.Status.Phase).To(Equal(phase))
 		Expect(gw.created).To(BeEmpty())
 	},
-		Entry("many accepts wait", "accept", corev1alpha1.ApprovalWaiting, corev1alpha1.AgentPending),
-		Entry("many rejects stop the run", "reject", corev1alpha1.ApprovalDenied, corev1alpha1.AgentFailed),
+		Entry("many accepts wait", "accept", corev1beta1.ApprovalWaiting, corev1beta1.AgentPending),
+		Entry("many rejects stop the run", "reject", corev1beta1.ApprovalDenied, corev1beta1.AgentFailed),
 	)
 
 	It("makes the request document with a fixed form", func() {
-		a := &corev1alpha1.Agent{ObjectMeta: metav1.ObjectMeta{Namespace: "ns-1", Name: "job-7", UID: "uid-1"},
-			Spec: corev1alpha1.AgentSpec{Image: testAgentImage, Model: "m"}}
+		a := &corev1beta1.Agent{ObjectMeta: metav1.ObjectMeta{Namespace: "ns-1", Name: "job-7", UID: "uid-1"},
+			Spec: corev1beta1.AgentSpec{Image: testAgentImage, Model: "m"}}
 		spec := `{"image":"img","command":null,"model":"m","budget":"0"}`
 		Expect(approvalDocument(a)).To(BeEquivalentTo(fmt.Sprintf(`{"format":"koodam.dev/approval-request/v1",`+
 			`"namespace":"ns-1","agent":"job-7","uid":"uid-1","specSHA256":"%x","grant":{}}`, sha256.Sum256([]byte(spec)))))

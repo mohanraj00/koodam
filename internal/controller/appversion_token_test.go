@@ -34,7 +34,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
-	corev1alpha1 "github.com/mohanraj00/koodam/api/v1alpha1"
+	corev1beta1 "github.com/mohanraj00/koodam/api/v1beta1"
 	"github.com/mohanraj00/koodam/internal/gateway"
 	"github.com/mohanraj00/koodam/internal/tenanttoken"
 )
@@ -51,19 +51,19 @@ func (*tokenGateway) CreateKey(context.Context, gateway.KeySpec) error { return 
 func (*tokenGateway) RenewKey(context.Context, gateway.KeySpec) error { return nil }
 
 // tokenWorld gives back a fake API with the objects of one AppVersion, and a reconciler for it.
-func tokenWorld(t *testing.T, claim AppClaimCheck) (client.WithWatch, *AppVersionReconciler, *corev1alpha1.AppVersion) {
+func tokenWorld(t *testing.T, claim AppClaimCheck) (client.WithWatch, *AppVersionReconciler, *corev1beta1.AppVersion) {
 	t.Helper()
 	app, av, p := versionCostGroupObjects(testTeam, nil)
 	av.UID, app.UID = "token-version-uid", "token-app-uid"
 	ns := &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: testTeam,
-		Labels: map[string]string{corev1alpha1.ProfileLabel: p.Name}}}
+		Labels: map[string]string{corev1beta1.ProfileLabel: p.Name}}}
 	c := fake.NewClientBuilder().WithScheme(ingWorld(t).Scheme()).WithObjects(ns, app, av, p).
-		WithStatusSubresource(&corev1alpha1.AppVersion{}).Build()
+		WithStatusSubresource(&corev1beta1.AppVersion{}).Build()
 	return c, &AppVersionReconciler{Client: c, Scheme: c.Scheme(), APIReader: c, Gateway: &tokenGateway{},
 		GatewayURL: testGatewayURL, Claim: claim}, av
 }
 
-func tokenSecret(t *testing.T, c client.Client, av *corev1alpha1.AppVersion) *corev1.Secret {
+func tokenSecret(t *testing.T, c client.Client, av *corev1beta1.AppVersion) *corev1.Secret {
 	t.Helper()
 	s := &corev1.Secret{}
 	err := c.Get(t.Context(), types.NamespacedName{Namespace: av.Namespace, Name: tenantTokenName(av)}, s)
@@ -151,12 +151,12 @@ func TestTenantTokenOff(t *testing.T) {
 
 func TestTenantTokenSecretConflict(t *testing.T) {
 	ctx := t.Context()
-	for name, secret := range map[string]func(av *corev1alpha1.AppVersion) *corev1.Secret{
-		"a Secret of a different owner": func(av *corev1alpha1.AppVersion) *corev1.Secret {
+	for name, secret := range map[string]func(av *corev1beta1.AppVersion) *corev1.Secret{
+		"a Secret of a different owner": func(av *corev1beta1.AppVersion) *corev1.Secret {
 			return &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Namespace: av.Namespace, Name: tenantTokenName(av)},
 				Data: map[string][]byte{tokenSeedField: make([]byte, tenanttoken.SeedSize)}}
 		},
-		"a seed that is not valid": func(av *corev1alpha1.AppVersion) *corev1.Secret {
+		"a seed that is not valid": func(av *corev1beta1.AppVersion) *corev1.Secret {
 			m := appVersionMeta(av)
 			m.Name = tenantTokenName(av)
 			return &corev1.Secret{ObjectMeta: m, Data: map[string][]byte{tokenSeedField: []byte("short")}}
@@ -175,7 +175,7 @@ func TestTenantTokenSecretConflict(t *testing.T) {
 			if _, err := r.Reconcile(ctx, reconcile.Request{NamespacedName: key}); err != nil {
 				t.Fatal(err)
 			}
-			got := &corev1alpha1.AppVersion{}
+			got := &corev1beta1.AppVersion{}
 			if err := c.Get(ctx, key, got); err != nil {
 				t.Fatal(err)
 			}
@@ -255,7 +255,7 @@ func TestTenantTokenKeyIsInTheStatusBeforeThePods(t *testing.T) {
 	key := client.ObjectKeyFromObject(av)
 	var atDeployment []string
 	record := func(ctx context.Context, w client.WithWatch) {
-		got := &corev1alpha1.AppVersion{}
+		got := &corev1beta1.AppVersion{}
 		if w.Get(ctx, key, got) == nil {
 			atDeployment = append(atDeployment, got.Status.TenantTokenKey)
 		}
@@ -290,7 +290,7 @@ func TestTenantTokenKeyIsInTheStatusBeforeThePods(t *testing.T) {
 			}
 		}
 	}
-	got := &corev1alpha1.AppVersion{}
+	got := &corev1beta1.AppVersion{}
 	if err := c.Get(ctx, key, got); err != nil || got.Status.TenantTokenKey == "" {
 		t.Fatalf("The status must have the key: %v", err)
 	}

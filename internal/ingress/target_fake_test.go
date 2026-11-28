@@ -38,7 +38,7 @@ import (
 	"k8s.io/apimachinery/pkg/util/intstr"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
-	corev1alpha1 "github.com/mohanraj00/koodam/api/v1alpha1"
+	corev1beta1 "github.com/mohanraj00/koodam/api/v1beta1"
 	"github.com/mohanraj00/koodam/internal/agentingress"
 )
 
@@ -135,7 +135,7 @@ func newTargetWorld(ctx context.Context) *targetReader {
 
 func objKind(o runtime.Object) string {
 	switch o.(type) {
-	case *corev1alpha1.Agent:
+	case *corev1beta1.Agent:
 		return agentKind
 	case *batchv1.Job:
 		return jobKind
@@ -159,8 +159,8 @@ func (f *targetReader) remove(kind, namespace, name string) {
 	delete(f.objs, storeKey(kind, namespace, name))
 }
 
-func (f *targetReader) agent() *corev1alpha1.Agent {
-	return f.objs[storeKey(agentKind, tgNamespace, tgAgentName)].(*corev1alpha1.Agent)
+func (f *targetReader) agent() *corev1beta1.Agent {
+	return f.objs[storeKey(agentKind, tgNamespace, tgAgentName)].(*corev1beta1.Agent)
 }
 
 func (f *targetReader) job() *batchv1.Job {
@@ -249,12 +249,12 @@ func tgController(apiVersion, kind, name string, uid types.UID) metav1.OwnerRefe
 
 func tgDeleting() *metav1.Time { return new(metav1.Unix(1, 0)) }
 
-func tgAgent() *corev1alpha1.Agent {
-	return &corev1alpha1.Agent{
+func tgAgent() *corev1beta1.Agent {
+	return &corev1beta1.Agent{
 		ObjectMeta: metav1.ObjectMeta{Name: tgAgentName, Namespace: tgNamespace, UID: tgAgentUID},
-		Spec: corev1alpha1.AgentSpec{Image: "example.test/agent:1", Command: []string{"serve"},
+		Spec: corev1beta1.AgentSpec{Image: "example.test/agent:1", Command: []string{"serve"},
 			Model: "test-model", Budget: resource.MustParse("1"), IngressPort: new(tgPort)},
-		Status: corev1alpha1.AgentStatus{Phase: corev1alpha1.AgentRunning, Job: tgJobName},
+		Status: corev1beta1.AgentStatus{Phase: corev1beta1.AgentRunning, Job: tgJobName},
 	}
 }
 
@@ -263,7 +263,7 @@ func tgJob() *batchv1.Job {
 		ObjectMeta: metav1.ObjectMeta{Name: tgJobName, Namespace: tgNamespace, UID: tgJobUID,
 			Labels: map[string]string{targetAgentLabel: tgAgentName},
 			OwnerReferences: []metav1.OwnerReference{
-				tgController("core.koodam.dev/v1alpha1", agentKind, tgAgentName, tgAgentUID)}},
+				tgController(corev1beta1.GroupVersion.String(), agentKind, tgAgentName, tgAgentUID)}},
 		Status: batchv1.JobStatus{Active: 1},
 	}
 }

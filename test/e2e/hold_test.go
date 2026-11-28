@@ -37,7 +37,7 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
-	corev1alpha1 "github.com/mohanraj00/koodam/api/v1alpha1"
+	corev1beta1 "github.com/mohanraj00/koodam/api/v1beta1"
 )
 
 // The Hold tests stop a workload during a live run. The admission policy permits a Hold only with
@@ -54,14 +54,14 @@ var _ = Describe("Holds", Ordered, Label("hold"), func() {
 
 		By("holding the Agent during the run")
 		end := time.Now()
-		h := makeHold("e2e-agent-stop", corev1alpha1.HoldTarget{Kind: corev1alpha1.HoldTargetAgent,
+		h := makeHold("e2e-agent-stop", corev1beta1.HoldTarget{Kind: corev1beta1.HoldTargetAgent,
 			Namespace: runNS, Name: a.Name})
 		expectNoAccess(a, r, end)
 
 		By("checking the phase, the Revoked condition and the key")
 		Eventually(func(g Gomega) {
 			g.Expect(k8s.Get(ctx, client.ObjectKeyFromObject(a), a)).To(Succeed())
-			g.Expect(a.Status.Phase).To(Equal(corev1alpha1.AgentFailed))
+			g.Expect(a.Status.Phase).To(Equal(corev1beta1.AgentFailed))
 			c := meta.FindStatusCondition(a.Status.Conditions, "Revoked")
 			g.Expect(c).NotTo(BeNil())
 			g.Expect(c.Status).To(Equal(metav1.ConditionTrue))
@@ -73,10 +73,10 @@ var _ = Describe("Holds", Ordered, Label("hold"), func() {
 
 		By("releasing the Hold and checking that the run stays ended")
 		releaseHold(h)
-		Consistently(func() corev1alpha1.AgentPhase {
+		Consistently(func() corev1beta1.AgentPhase {
 			_ = k8s.Get(ctx, client.ObjectKeyFromObject(a), a)
 			return a.Status.Phase
-		}, 10*time.Second, time.Second).Should(Equal(corev1alpha1.AgentFailed))
+		}, 10*time.Second, time.Second).Should(Equal(corev1beta1.AgentFailed))
 	})
 })
 
@@ -91,17 +91,17 @@ func holdUser() string {
 }
 
 // makeHold makes a Hold with the action Stop.
-func makeHold(name string, t corev1alpha1.HoldTarget) *corev1alpha1.Hold {
+func makeHold(name string, t corev1beta1.HoldTarget) *corev1beta1.Hold {
 	GinkgoHelper()
-	return makeHoldFor(name, corev1alpha1.HoldStop, t)
+	return makeHoldFor(name, corev1beta1.HoldStop, t)
 }
 
 // makeHoldFor makes a Hold with the action. The cleanup releases the Hold and then deletes it,
 // because the admission policy refuses the delete of a Hold with no release.
-func makeHoldFor(name string, action corev1alpha1.HoldAction, t corev1alpha1.HoldTarget) *corev1alpha1.Hold {
+func makeHoldFor(name string, action corev1beta1.HoldAction, t corev1beta1.HoldTarget) *corev1beta1.Hold {
 	GinkgoHelper()
-	h := &corev1alpha1.Hold{ObjectMeta: metav1.ObjectMeta{Name: name},
-		Spec: corev1alpha1.HoldSpec{Target: t, Action: action,
+	h := &corev1beta1.Hold{ObjectMeta: metav1.ObjectMeta{Name: name},
+		Spec: corev1beta1.HoldSpec{Target: t, Action: action,
 			Reason: "The e2e test holds the workload.", User: holdUser()}}
 	Expect(k8s.Create(ctx, h)).To(Succeed())
 	DeferCleanup(func() {
@@ -112,7 +112,7 @@ func makeHoldFor(name string, action corev1alpha1.HoldAction, t corev1alpha1.Hol
 }
 
 // releaseHold writes spec.release if the Hold has none.
-func releaseHold(h *corev1alpha1.Hold) {
+func releaseHold(h *corev1beta1.Hold) {
 	GinkgoHelper()
 	err := k8s.Get(ctx, client.ObjectKeyFromObject(h), h)
 	if apierrors.IsNotFound(err) {
@@ -123,22 +123,22 @@ func releaseHold(h *corev1alpha1.Hold) {
 		return
 	}
 	patch := client.MergeFrom(h.DeepCopy())
-	h.Spec.Release = &corev1alpha1.HoldRelease{User: holdUser(), Reason: "The e2e test is complete."}
+	h.Spec.Release = &corev1beta1.HoldRelease{User: holdUser(), Reason: "The e2e test is complete."}
 	Expect(k8s.Patch(ctx, h, patch)).To(Succeed())
 }
 
 // expectHeld waits until the Held condition of the Hold is true with the reason Stopped.
-func expectHeld(h *corev1alpha1.Hold) {
+func expectHeld(h *corev1beta1.Hold) {
 	GinkgoHelper()
 	expectHeldWith(h, "Stopped")
 }
 
 // expectHeldWith waits until the Held condition of the Hold is true with the reason.
-func expectHeldWith(h *corev1alpha1.Hold, reason string) {
+func expectHeldWith(h *corev1beta1.Hold, reason string) {
 	GinkgoHelper()
 	Eventually(func(g Gomega) {
 		g.Expect(k8s.Get(ctx, client.ObjectKeyFromObject(h), h)).To(Succeed())
-		c := meta.FindStatusCondition(h.Status.Conditions, corev1alpha1.HoldHeld)
+		c := meta.FindStatusCondition(h.Status.Conditions, corev1beta1.HoldHeld)
 		g.Expect(c).NotTo(BeNil())
 		g.Expect(c.Status).To(Equal(metav1.ConditionTrue), c.Message)
 		g.Expect(c.Reason).To(Equal(reason))
@@ -149,7 +149,7 @@ func expectHeldWith(h *corev1alpha1.Hold, reason string) {
 // Job and its pod. The test client is a cluster admin. The policies have no exception for an
 // admin, so each namespace user gets the same refusals. The budget of the quarantine refuses the
 // eviction of the pod, as at a node drain.
-func expectQuarantinePolicy(a *corev1alpha1.Agent, pod string) {
+func expectQuarantinePolicy(a *corev1beta1.Agent, pod string) {
 	GinkgoHelper()
 	const label = "koodam.dev/quarantine"
 	p := &corev1.Pod{ObjectMeta: metav1.ObjectMeta{Namespace: a.Namespace, Name: pod}}
@@ -215,7 +215,7 @@ func stopEvent(e eventsv1.Event, name, hold string) bool {
 }
 
 // holdKey reads the gateway key of the Workspace and checks that it works.
-func holdKey(ws *corev1alpha1.Workspace) (key, hash string) {
+func holdKey(ws *corev1beta1.Workspace) (key, hash string) {
 	GinkgoHelper()
 	Eventually(func() bool {
 		_ = k8s.Get(ctx, client.ObjectKeyFromObject(ws), ws)

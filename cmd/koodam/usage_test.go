@@ -31,7 +31,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
 
-	corev1alpha1 "github.com/mohanraj00/koodam/api/v1alpha1"
+	corev1beta1 "github.com/mohanraj00/koodam/api/v1beta1"
 	"github.com/mohanraj00/koodam/internal/usage"
 )
 
@@ -80,7 +80,7 @@ func fakeUsage(t *testing.T, out string, err error) *[][]string {
 
 // setupUsage makes the SSH entry for ws and gives a run function with a separate stdout and
 // stderr.
-func setupUsage(t *testing.T, ws *corev1alpha1.Workspace) (*[][]string, func(...string) (string, string, error)) {
+func setupUsage(t *testing.T, ws *corev1beta1.Workspace) (*[][]string, func(...string) (string, string, error)) {
 	t.Helper()
 	_, _ = sshHome(t)
 	kube := newKube(t, nil, ws)
@@ -107,7 +107,7 @@ func setupUsage(t *testing.T, ws *corev1alpha1.Workspace) (*[][]string, func(...
 }
 
 func TestUsageShowsTheProjectedCost(t *testing.T) {
-	calls, run := setupUsage(t, testWorkspace(hostKey, corev1alpha1.WorkspaceRunning))
+	calls, run := setupUsage(t, testWorkspace(hostKey, corev1beta1.WorkspaceRunning))
 	out, errOut, err := run("usage", wsName)
 	if err != nil {
 		t.Fatalf("usage: %v\n%s", err, out)
@@ -141,7 +141,7 @@ func TestUsageShowsTheProjectedCost(t *testing.T) {
 func projected(c float64) string { return fmt.Sprintf("projected %.4f USD", c) }
 
 func TestUsageUsesTheNamespace(t *testing.T) {
-	ws := testWorkspace(hostKey, corev1alpha1.WorkspaceRunning)
+	ws := testWorkspace(hostKey, corev1beta1.WorkspaceRunning)
 	ws.Namespace = testTeam
 	calls, run := setupUsage(t, ws)
 	if out, _, err := run("usage", wsName); err != nil {
@@ -158,8 +158,8 @@ func TestUsageUsesTheNamespace(t *testing.T) {
 }
 
 func TestUsageNotesTheGatewayKeyOnStderr(t *testing.T) {
-	ws := testWorkspace(hostKey, corev1alpha1.WorkspaceRunning)
-	ws.Spec.Gateway = &corev1alpha1.WorkspaceGateway{Model: "m", BudgetPerDay: resource.MustParse("1")}
+	ws := testWorkspace(hostKey, corev1beta1.WorkspaceRunning)
+	ws.Spec.Gateway = &corev1beta1.WorkspaceGateway{Model: "m", BudgetPerDay: resource.MustParse("1")}
 	_, run := setupUsage(t, ws)
 	out, errOut, err := run("usage", wsName)
 	if err != nil {
@@ -174,7 +174,7 @@ func TestUsageNotesTheGatewayKeyOnStderr(t *testing.T) {
 }
 
 func TestUsageWhenNoModelHasAPrice(t *testing.T) {
-	_, run := setupUsage(t, testWorkspace(hostKey, corev1alpha1.WorkspaceRunning))
+	_, run := setupUsage(t, testWorkspace(hostKey, corev1beta1.WorkspaceRunning))
 	fakeUsage(t, "codex \"koodam_line\":1\ncodex \"model\":\"fixture-a\"\ncodex \"input_tokens\":5\n"+
 		"codex \"koodam_line\":1\ncodex \"model\":\"fixture-a\"\ncodex \"input_tokens\":6\n", nil)
 	out, _, err := run("usage", wsName)
@@ -189,7 +189,7 @@ func TestUsageWhenNoModelHasAPrice(t *testing.T) {
 }
 
 func TestUsageWithNoSessionFiles(t *testing.T) {
-	_, run := setupUsage(t, testWorkspace(hostKey, corev1alpha1.WorkspaceRunning))
+	_, run := setupUsage(t, testWorkspace(hostKey, corev1beta1.WorkspaceRunning))
 	fakeUsage(t, "", nil)
 	out, _, err := run("usage", wsName)
 	if err != nil {
@@ -199,7 +199,7 @@ func TestUsageWithNoSessionFiles(t *testing.T) {
 }
 
 func TestUsageErrors(t *testing.T) {
-	_, run := setupUsage(t, testWorkspace(hostKey, corev1alpha1.WorkspaceRunning))
+	_, run := setupUsage(t, testWorkspace(hostKey, corev1beta1.WorkspaceRunning))
 	fakeUsage(t, "", errors.New("exit status 255"))
 	if _, _, err := run("usage", wsName); err == nil || !strings.Contains(err.Error(), "koodam ssh test -n "+testNS) {
 		t.Errorf("ssh failure: got %v", err)
@@ -214,7 +214,7 @@ func TestUsageErrors(t *testing.T) {
 }
 
 func TestUsageRefusesAWorkspaceThatIsNotRunning(t *testing.T) {
-	calls, run := setupUsage(t, testWorkspace(hostKey, corev1alpha1.WorkspaceSuspended))
+	calls, run := setupUsage(t, testWorkspace(hostKey, corev1beta1.WorkspaceSuspended))
 	if _, _, err := run("usage", wsName); err == nil || !strings.Contains(err.Error(), "not Running") {
 		t.Errorf("got %v", err)
 	}
@@ -226,7 +226,7 @@ func TestUsageRefusesAWorkspaceThatIsNotRunning(t *testing.T) {
 func TestUsageNeedsTheSSHEntry(t *testing.T) {
 	_, _ = sshHome(t)
 	fakeUsage(t, remoteUsage, nil)
-	kube := newKube(t, nil, testWorkspace(hostKey, corev1alpha1.WorkspaceRunning))
+	kube := newKube(t, nil, testWorkspace(hostKey, corev1beta1.WorkspaceRunning))
 	_, err := runSSH(kube, "", "usage", wsName)
 	if err == nil || !strings.Contains(err.Error(), "koodam ssh setup "+wsName) {
 		t.Errorf("got %v", err)
@@ -245,8 +245,8 @@ func TestOutputProgramDropsTheStderr(t *testing.T) {
 	}
 }
 
-func costGroupAgent(name, group string, u *corev1alpha1.AgentUsage) *corev1alpha1.Agent {
-	a := testAgent(corev1alpha1.AgentSucceeded, u)
+func costGroupAgent(name, group string, u *corev1beta1.AgentUsage) *corev1beta1.Agent {
+	a := testAgent(corev1beta1.AgentSucceeded, u)
 	a.Name = name
 	a.Status.CostGroup = group
 	return a
@@ -264,13 +264,13 @@ func runUsageBy(conn connect, args ...string) (string, string, error) {
 }
 
 func TestUsageByCostGroup(t *testing.T) {
-	u := func(spend string, calls, failed, input, output int64) *corev1alpha1.AgentUsage {
-		return &corev1alpha1.AgentUsage{Spend: spend, Calls: calls, FailedCalls: failed,
+	u := func(spend string, calls, failed, input, output int64) *corev1beta1.AgentUsage {
+		return &corev1beta1.AgentUsage{Spend: spend, Calls: calls, FailedCalls: failed,
 			InputTokens: input, OutputTokens: output,
-			Models: []corev1alpha1.ModelUsage{{Model: "fixture-model", Spend: "99"}}}
+			Models: []corev1beta1.ModelUsage{{Model: "fixture-model", Spend: "99"}}}
 	}
 	first := costGroupAgent("first", "project-a", u("0.0200", 4, 1, 2400, 400))
-	first.Labels = map[string]string{corev1alpha1.CostGroupLabel: "changed"}
+	first.Labels = map[string]string{corev1beta1.CostGroupLabel: "changed"}
 	other := costGroupAgent("other-namespace", otherName, u("1", 100, 100, 100, 100))
 	other.Namespace = otherName
 	kube := newKube(t, nil, first,
@@ -315,7 +315,7 @@ func TestUsageByCostGroup(t *testing.T) {
 func TestUsageByCostGroupWithNoValidSpend(t *testing.T) {
 	for _, spend := range []string{"not-a-number", "", "NaN", "+Inf", "1e999"} {
 		t.Run(spend, func(t *testing.T) {
-			kube := newKube(t, nil, costGroupAgent("bad-spend", "ops", &corev1alpha1.AgentUsage{Spend: spend}))
+			kube := newKube(t, nil, costGroupAgent("bad-spend", "ops", &corev1beta1.AgentUsage{Spend: spend}))
 			out, errOut, err := runUsageBy(func() (*env, error) {
 				return &env{kube: kube, namespace: testNS}, nil
 			}, "--by", "cost-group")
@@ -333,9 +333,9 @@ func TestUsageByCostGroupWithNoValidSpend(t *testing.T) {
 }
 
 func TestUsageByCostGroupUsesTheNamespace(t *testing.T) {
-	a := costGroupAgent("team-run", "ops", &corev1alpha1.AgentUsage{Spend: "0"})
+	a := costGroupAgent("team-run", "ops", &corev1beta1.AgentUsage{Spend: "0"})
 	a.Namespace = testTeam
-	kube := newKube(t, nil, a, costGroupAgent("other-run", otherName, &corev1alpha1.AgentUsage{Spend: "1"}))
+	kube := newKube(t, nil, a, costGroupAgent("other-run", otherName, &corev1beta1.AgentUsage{Spend: "1"}))
 	out, errOut, err := runUsageBy(func() (*env, error) {
 		return &env{kube: kube, namespace: testTeam}, nil
 	}, "--by", "cost-group", "-n", testTeam)

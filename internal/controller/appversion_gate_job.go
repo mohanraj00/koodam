@@ -27,7 +27,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/validation"
 
-	corev1alpha1 "github.com/mohanraj00/koodam/api/v1alpha1"
+	corev1beta1 "github.com/mohanraj00/koodam/api/v1beta1"
 	"github.com/mohanraj00/koodam/internal/evidence"
 )
 
@@ -60,7 +60,7 @@ const (
 
 // gateName is the name of the gate Job. The pods of a Job have its name as a label value, so the
 // name has 63 characters or fewer. A long version name gets a short form with a hash of the name.
-func gateName(av *corev1alpha1.AppVersion) string {
+func gateName(av *corev1beta1.AppVersion) string {
 	const suffix, hashLen = "-gate", 8
 	name := appVersionName(av)
 	if len(name)+len(suffix) <= validation.DNS1123LabelMaxLength {
@@ -72,7 +72,7 @@ func gateName(av *corev1alpha1.AppVersion) string {
 }
 
 // gateTarget is the address of the Service of the version for the entries of the gate project.
-func gateTarget(av *corev1alpha1.AppVersion, deploy *appsv1.Deployment) string {
+func gateTarget(av *corev1beta1.AppVersion, deploy *appsv1.Deployment) string {
 	port := appContainer(&deploy.Spec.Template.Spec).Ports[0].ContainerPort
 	return fmt.Sprintf("%s.%s.svc:%d", appVersionName(av), av.Namespace, port)
 }
@@ -80,7 +80,7 @@ func gateTarget(av *corev1alpha1.AppVersion, deploy *appsv1.Deployment) string {
 // gatePod is the pod of the gate Job. It has no ServiceAccount token, no gateway key and no
 // Secret. The two containers have a fixed argv: no value of the spec goes through a shell. The
 // verify container mounts the two volumes read-only.
-func gatePod(av *corev1alpha1.AppVersion, target, subject string) corev1.PodSpec {
+func gatePod(av *corev1beta1.AppVersion, target, subject string) corev1.PodSpec {
 	const work, home = "gate-work", "nookku-home"
 	g, project := av.Spec.Gate.Nookku, gateWorkDir+"/project"
 	container := func(name string, readOnly bool, env []corev1.EnvVar, argv ...string) corev1.Container {
@@ -105,7 +105,7 @@ func gatePod(av *corev1alpha1.AppVersion, target, subject string) corev1.PodSpec
 	}
 }
 
-func gateJob(av *corev1alpha1.AppVersion, target, subject string) *batchv1.Job {
+func gateJob(av *corev1beta1.AppVersion, target, subject string) *batchv1.Job {
 	labels := map[string]string{gateLabel: av.Name}
 	m := appVersionMeta(av)
 	m.Name, m.Labels = gateName(av), labels
@@ -124,7 +124,7 @@ func gateJob(av *corev1alpha1.AppVersion, target, subject string) *batchv1.Job {
 // isGatePod is true if the pod has the two containers of the gate Job of this version: the same
 // names, images, argv and env. The subject in the argv of the pod is not a part of the compare,
 // because the check compares the subject of the report with the subject of the version.
-func isGatePod(got *corev1.PodSpec, av *corev1alpha1.AppVersion, target string) bool {
+func isGatePod(got *corev1.PodSpec, av *corev1beta1.AppVersion, target string) bool {
 	if len(got.InitContainers) != 1 || len(got.Containers) != 1 || len(got.EphemeralContainers) != 0 ||
 		len(got.InitContainers[0].Command) == 0 {
 		return false

@@ -28,11 +28,11 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
-	corev1alpha1 "github.com/mohanraj00/koodam/api/v1alpha1"
+	corev1beta1 "github.com/mohanraj00/koodam/api/v1beta1"
 )
 
-// testKeyTestID is the Nookku test ID in the TestKey tests.
-const testKeyTestID = "login-smoke"
+// testKeyTestRunID is the Nookku test ID in the TestKey tests.
+const testKeyTestRunID = "login-smoke"
 
 // testKeyNamePrefix is the GenerateName of the TestKeys in the policy tests.
 const testKeyNamePrefix = "testkey-request-"
@@ -45,23 +45,23 @@ const otherModel = "other-model"
 
 var _ = Describe("TestKey controller", func() {
 	DescribeTable("refuses a key before it reaches the gateway",
-		func(change func(*corev1alpha1.Workspace, *corev1alpha1.TestKey), reason string) {
+		func(change func(*corev1beta1.Workspace, *corev1beta1.TestKey), reason string) {
 			ctx := context.Background()
-			workspace := &corev1alpha1.Workspace{
+			workspace := &corev1beta1.Workspace{
 				ObjectMeta: metav1.ObjectMeta{GenerateName: "testkey-workspace-", Namespace: metav1.NamespaceDefault},
-				Spec: corev1alpha1.WorkspaceSpec{
-					Gateway: &corev1alpha1.WorkspaceGateway{
+				Spec: corev1beta1.WorkspaceSpec{
+					Gateway: &corev1beta1.WorkspaceGateway{
 						Model: testGatewayModel, BudgetPerDay: resource.MustParse("5"),
 					},
-					TestKeys: &corev1alpha1.WorkspaceTestKeys{
+					TestKeys: &corev1beta1.WorkspaceTestKeys{
 						MaxBudget: resource.MustParse("1"), MaxTTL: metav1.Duration{Duration: time.Hour},
 					},
 				},
 			}
-			testKey := &corev1alpha1.TestKey{
+			testKey := &corev1beta1.TestKey{
 				ObjectMeta: metav1.ObjectMeta{GenerateName: testKeyNamePrefix, Namespace: workspace.Namespace},
-				Spec: corev1alpha1.TestKeySpec{
-					TestID: testKeyTestID, Budget: resource.MustParse("0.5"),
+				Spec: corev1beta1.TestKeySpec{
+					TestRunID: testKeyTestRunID, Budget: resource.MustParse("0.5"),
 					TTL: metav1.Duration{Duration: 30 * time.Minute},
 				},
 			}
@@ -90,42 +90,42 @@ var _ = Describe("TestKey controller", func() {
 			Expect(testKey.Status.KeyAlias).To(BeEmpty())
 			Expect(gw.order).To(BeEmpty())
 		},
-		Entry("an earlier Workspace with the same name", func(_ *corev1alpha1.Workspace, key *corev1alpha1.TestKey) {
+		Entry("an earlier Workspace with the same name", func(_ *corev1beta1.Workspace, key *corev1beta1.TestKey) {
 			key.Spec.WorkspaceRef.UID = "earlier-workspace"
 		}, "WorkspaceUIDMismatch"),
-		Entry("a suspended Workspace", func(workspace *corev1alpha1.Workspace, _ *corev1alpha1.TestKey) {
+		Entry("a suspended Workspace", func(workspace *corev1beta1.Workspace, _ *corev1beta1.TestKey) {
 			workspace.Spec.Suspend = true
 		}, "WorkspaceSuspended"),
-		Entry("a Workspace without opt-in", func(workspace *corev1alpha1.Workspace, _ *corev1alpha1.TestKey) {
+		Entry("a Workspace without opt-in", func(workspace *corev1beta1.Workspace, _ *corev1beta1.TestKey) {
 			workspace.Spec.TestKeys = nil
 		}, "TestKeysDisabled"),
-		Entry("a budget above the Workspace limit", func(_ *corev1alpha1.Workspace, key *corev1alpha1.TestKey) {
+		Entry("a budget above the Workspace limit", func(_ *corev1beta1.Workspace, key *corev1beta1.TestKey) {
 			key.Spec.Budget = resource.MustParse("1.01")
 		}, "BudgetLimitExceeded"),
-		Entry("a TTL above the Workspace limit", func(_ *corev1alpha1.Workspace, key *corev1alpha1.TestKey) {
+		Entry("a TTL above the Workspace limit", func(_ *corev1beta1.Workspace, key *corev1beta1.TestKey) {
 			key.Spec.TTL.Duration = time.Hour + time.Second
 		}, "TTLLimitExceeded"),
 	)
 
 	It("removes an old refusal when the Workspace permits the key again", func() {
 		ctx := context.Background()
-		workspace := &corev1alpha1.Workspace{
+		workspace := &corev1beta1.Workspace{
 			ObjectMeta: metav1.ObjectMeta{GenerateName: "testkey-workspace-", Namespace: metav1.NamespaceDefault},
-			Spec: corev1alpha1.WorkspaceSpec{
+			Spec: corev1beta1.WorkspaceSpec{
 				Suspend: true,
-				Gateway: &corev1alpha1.WorkspaceGateway{Model: testGatewayModel, BudgetPerDay: resource.MustParse("5")},
-				TestKeys: &corev1alpha1.WorkspaceTestKeys{
+				Gateway: &corev1beta1.WorkspaceGateway{Model: testGatewayModel, BudgetPerDay: resource.MustParse("5")},
+				TestKeys: &corev1beta1.WorkspaceTestKeys{
 					MaxBudget: resource.MustParse("1"), MaxTTL: metav1.Duration{Duration: time.Hour},
 				},
 			},
 		}
 		createWorkspaceWithFinalizer(ctx, workspace)
 		markBound(ctx, workspace, metav1.ConditionTrue)
-		testKey := &corev1alpha1.TestKey{
+		testKey := &corev1beta1.TestKey{
 			ObjectMeta: metav1.ObjectMeta{GenerateName: testKeyNamePrefix, Namespace: workspace.Namespace},
-			Spec: corev1alpha1.TestKeySpec{
-				WorkspaceRef: corev1alpha1.TestKeyWorkspaceRef{Name: workspace.Name, UID: workspace.UID},
-				TestID:       testKeyTestID, Budget: resource.MustParse("0.5"),
+			Spec: corev1beta1.TestKeySpec{
+				WorkspaceRef: corev1beta1.TestKeyWorkspaceRef{Name: workspace.Name, UID: workspace.UID},
+				TestRunID:    testKeyTestRunID, Budget: resource.MustParse("0.5"),
 				TTL: metav1.Duration{Duration: 30 * time.Minute},
 			},
 		}
@@ -154,11 +154,11 @@ var _ = Describe("TestKey controller", func() {
 
 	It("refuses a key for a Workspace that does not exist", func() {
 		ctx := context.Background()
-		testKey := &corev1alpha1.TestKey{
+		testKey := &corev1beta1.TestKey{
 			ObjectMeta: metav1.ObjectMeta{GenerateName: testKeyNamePrefix, Namespace: metav1.NamespaceDefault},
-			Spec: corev1alpha1.TestKeySpec{
-				WorkspaceRef: corev1alpha1.TestKeyWorkspaceRef{Name: "no-such-workspace", UID: "no-such-uid"},
-				TestID:       testKeyTestID, Budget: resource.MustParse("0.5"),
+			Spec: corev1beta1.TestKeySpec{
+				WorkspaceRef: corev1beta1.TestKeyWorkspaceRef{Name: "no-such-workspace", UID: "no-such-uid"},
+				TestRunID:    testKeyTestRunID, Budget: resource.MustParse("0.5"),
 				TTL: metav1.Duration{Duration: 30 * time.Minute},
 			},
 		}
@@ -178,13 +178,13 @@ var _ = Describe("TestKey controller", func() {
 
 // createWorkspaceWithFinalizer creates ws with the finalizer of the Workspace controller, as a
 // Workspace with a gateway has it. The cleanup removes the finalizer and deletes ws.
-func createWorkspaceWithFinalizer(ctx context.Context, ws *corev1alpha1.Workspace) {
+func createWorkspaceWithFinalizer(ctx context.Context, ws *corev1beta1.Workspace) {
 	GinkgoHelper()
 	ws.Finalizers = append(ws.Finalizers, workspaceFinalizer)
 	Expect(k8sClient.Create(ctx, ws)).To(Succeed())
 	DeferCleanup(func() {
 		bg := context.Background()
-		w := &corev1alpha1.Workspace{}
+		w := &corev1beta1.Workspace{}
 		if k8sClient.Get(bg, client.ObjectKeyFromObject(ws), w) == nil {
 			w.Finalizers = nil
 			_ = k8sClient.Update(bg, w)

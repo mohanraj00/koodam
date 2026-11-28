@@ -26,7 +26,7 @@ import (
 	"k8s.io/apimachinery/pkg/util/intstr"
 	"k8s.io/apimachinery/pkg/util/validation/field"
 
-	corev1alpha1 "github.com/mohanraj00/koodam/api/v1alpha1"
+	corev1beta1 "github.com/mohanraj00/koodam/api/v1beta1"
 )
 
 const (
@@ -137,7 +137,7 @@ func (c AppClaimCheck) claimPorts(pod *corev1.PodSpec, app []corev1.ContainerPor
 // and a sidecar with a startup probe on its last port. Thus it binds all its ports before a
 // container of the user starts. The Service and the NetworkPolicy of the version use its ports. It
 // refuses a template that has a container or a volume with the name of the check container.
-func (c AppClaimCheck) add(tmpl *corev1.PodTemplateSpec, av *corev1alpha1.AppVersion, app []corev1.ContainerPort) error {
+func (c AppClaimCheck) add(tmpl *corev1.PodTemplateSpec, av *corev1beta1.AppVersion, app []corev1.ContainerPort) error {
 	if !c.enabled() {
 		return nil
 	}

@@ -32,7 +32,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
 
-	corev1alpha1 "github.com/mohanraj00/koodam/api/v1alpha1"
+	corev1beta1 "github.com/mohanraj00/koodam/api/v1beta1"
 	"github.com/mohanraj00/koodam/internal/evidence"
 )
 
@@ -40,34 +40,34 @@ import (
 // of the version is Ready, reads the report of the Job and writes the evidence record one time.
 // deploy is nil if the objects of the version are not equal to the template. A False condition
 // and a record are terminal: a later Job of the same version does not change them.
-func (r *AppVersionReconciler) applyGate(ctx context.Context, av *corev1alpha1.AppVersion,
+func (r *AppVersionReconciler) applyGate(ctx context.Context, av *corev1beta1.AppVersion,
 	deploy *appsv1.Deployment) error {
 	if av.Spec.Gate == nil {
-		meta.RemoveStatusCondition(&av.Status.Conditions, corev1alpha1.AppVersionEvidence)
+		meta.RemoveStatusCondition(&av.Status.Conditions, corev1beta1.AppVersionEvidence)
 		return nil
 	}
 	set := func(s metav1.ConditionStatus, reason, msg string) {
-		meta.SetStatusCondition(&av.Status.Conditions, metav1.Condition{Type: corev1alpha1.AppVersionEvidence,
+		meta.SetStatusCondition(&av.Status.Conditions, metav1.Condition{Type: corev1beta1.AppVersionEvidence,
 			Status: s, Reason: reason, Message: msg, ObservedGeneration: av.Generation})
 	}
 	if rec := av.Status.Evidence; rec != nil {
-		if rec.Verdict == corev1alpha1.EvidencePass {
-			set(metav1.ConditionTrue, corev1alpha1.EvidencePassed, "The controller accepted a record with the verdict pass.")
+		if rec.Verdict == corev1beta1.EvidencePass {
+			set(metav1.ConditionTrue, corev1beta1.EvidencePassed, "The controller accepted a record with the verdict pass.")
 		} else {
-			set(metav1.ConditionFalse, corev1alpha1.EvidenceFailed, "The controller accepted a record with the verdict fail.")
+			set(metav1.ConditionFalse, corev1beta1.EvidenceFailed, "The controller accepted a record with the verdict fail.")
 		}
 		return nil
 	}
-	if meta.IsStatusConditionFalse(av.Status.Conditions, corev1alpha1.AppVersionEvidence) {
+	if meta.IsStatusConditionFalse(av.Status.Conditions, corev1beta1.AppVersionEvidence) {
 		return nil
 	}
 	if deploy == nil {
-		set(metav1.ConditionUnknown, corev1alpha1.EvidenceWaiting, "The objects of the version are not ready for the gate.")
+		set(metav1.ConditionUnknown, corev1beta1.EvidenceWaiting, "The objects of the version are not ready for the gate.")
 		return nil
 	}
 	digest, pinned := evidence.ImageDigest(appContainer(&deploy.Spec.Template.Spec).Image)
 	if !pinned {
-		set(metav1.ConditionFalse, corev1alpha1.EvidenceImageNotPinned,
+		set(metav1.ConditionFalse, corev1beta1.EvidenceImageNotPinned,
 			"A gated version must name the image of the app container by a sha256 digest.")
 		return nil
 	}
@@ -82,13 +82,13 @@ func (r *AppVersionReconciler) applyGate(ctx context.Context, av *corev1alpha1.A
 	case err != nil:
 		return err
 	case !metav1.IsControlledBy(job, av):
-		set(metav1.ConditionUnknown, corev1alpha1.EvidenceWaiting, "A Job with the name of the gate Job is not from this version.")
+		set(metav1.ConditionUnknown, corev1beta1.EvidenceWaiting, "A Job with the name of the gate Job is not from this version.")
 		return nil
 	}
 	for _, c := range job.Status.Conditions {
 		switch {
 		case c.Type == batchv1.JobFailed && c.Status == corev1.ConditionTrue:
-			set(metav1.ConditionFalse, corev1alpha1.EvidenceJobFailed, "The gate Job failed after its retries, or its deadline ended.")
+			set(metav1.ConditionFalse, corev1beta1.EvidenceJobFailed, "The gate Job failed after its retries, or its deadline ended.")
 			return nil
 		case c.Type == batchv1.JobComplete && c.Status == corev1.ConditionTrue:
 			return r.checkGate(ctx, av, job, target, subject, set)
@@ -97,12 +97,12 @@ func (r *AppVersionReconciler) applyGate(ctx context.Context, av *corev1alpha1.A
 	// Each reconcile applies the policy again while the Job runs, so that a policy that a user
 	// deleted or changed comes back.
 	if err := r.applyGatePolicy(ctx, av, policy); errors.Is(err, errNotOwned) {
-		set(metav1.ConditionUnknown, corev1alpha1.EvidenceWaiting, msgGatePolicyNotOwned)
+		set(metav1.ConditionUnknown, corev1beta1.EvidenceWaiting, msgGatePolicyNotOwned)
 		return nil
 	} else if err != nil {
 		return err
 	}
-	set(metav1.ConditionUnknown, corev1alpha1.EvidenceRunning, "The gate Job runs.")
+	set(metav1.ConditionUnknown, corev1beta1.EvidenceRunning, "The gate Job runs.")
 	return nil
 }
 
@@ -111,7 +111,7 @@ const msgGatePolicyNotOwned = "A NetworkPolicy with the name of the gate policy 
 
 // startGate makes the gate Job if each pod of the version is Ready. The NetworkPolicy of the gate
 // pod is first, so that the pod does not start before its policy.
-func (r *AppVersionReconciler) startGate(ctx context.Context, av *corev1alpha1.AppVersion,
+func (r *AppVersionReconciler) startGate(ctx context.Context, av *corev1beta1.AppVersion,
 	policy *networkingv1.NetworkPolicy, job *batchv1.Job, set func(metav1.ConditionStatus, string, string)) error {
 	d := &appsv1.Deployment{}
 	found, err := r.getOwned(ctx, av, d)
@@ -120,12 +120,12 @@ func (r *AppVersionReconciler) startGate(ctx context.Context, av *corev1alpha1.A
 	}
 	if n := d.Status; !found || d.Spec.Replicas == nil || *d.Spec.Replicas == 0 || n.ObservedGeneration < d.Generation ||
 		n.Replicas != *d.Spec.Replicas || n.UpdatedReplicas != *d.Spec.Replicas || n.ReadyReplicas != *d.Spec.Replicas {
-		set(metav1.ConditionUnknown, corev1alpha1.EvidenceWaiting, "Not all pods of the version are Ready.")
+		set(metav1.ConditionUnknown, corev1beta1.EvidenceWaiting, "Not all pods of the version are Ready.")
 		return nil
 	}
 	err = r.applyGatePolicy(ctx, av, policy)
 	if errors.Is(err, errNotOwned) {
-		set(metav1.ConditionUnknown, corev1alpha1.EvidenceWaiting, msgGatePolicyNotOwned)
+		set(metav1.ConditionUnknown, corev1beta1.EvidenceWaiting, msgGatePolicyNotOwned)
 		return nil
 	}
 	if err == nil {
@@ -133,19 +133,19 @@ func (r *AppVersionReconciler) startGate(ctx context.Context, av *corev1alpha1.A
 	}
 	switch {
 	case permanent(err):
-		set(metav1.ConditionFalse, corev1alpha1.EvidenceJobFailed, "The API server refused the gate Job or its NetworkPolicy.")
+		set(metav1.ConditionFalse, corev1beta1.EvidenceJobFailed, "The API server refused the gate Job or its NetworkPolicy.")
 		return nil
 	case err != nil:
 		return err
 	}
-	set(metav1.ConditionUnknown, corev1alpha1.EvidenceRunning, "The gate Job runs.")
+	set(metav1.ConditionUnknown, corev1beta1.EvidenceRunning, "The gate Job runs.")
 	return nil
 }
 
 // stopGate deletes the gate Job of a version in the revoke, with its pods. The AppVersion can
 // stay after a revoke, so the garbage collector does not delete the Job. A gate with no end state
 // gets the state Waiting, so that the status does not say that the Job runs.
-func (r *AppVersionReconciler) stopGate(ctx context.Context, av *corev1alpha1.AppVersion) error {
+func (r *AppVersionReconciler) stopGate(ctx context.Context, av *corev1beta1.AppVersion) error {
 	if av.Spec.Gate == nil {
 		return nil
 	}
@@ -162,10 +162,10 @@ func (r *AppVersionReconciler) stopGate(ctx context.Context, av *corev1alpha1.Ap
 			return err
 		}
 	}
-	if c := meta.FindStatusCondition(av.Status.Conditions, corev1alpha1.AppVersionEvidence); c != nil &&
+	if c := meta.FindStatusCondition(av.Status.Conditions, corev1beta1.AppVersionEvidence); c != nil &&
 		c.Status == metav1.ConditionUnknown {
-		meta.SetStatusCondition(&av.Status.Conditions, metav1.Condition{Type: corev1alpha1.AppVersionEvidence,
-			Status: metav1.ConditionUnknown, Reason: corev1alpha1.EvidenceWaiting, ObservedGeneration: av.Generation,
+		meta.SetStatusCondition(&av.Status.Conditions, metav1.Condition{Type: corev1beta1.AppVersionEvidence,
+			Status: metav1.ConditionUnknown, Reason: corev1beta1.EvidenceWaiting, ObservedGeneration: av.Generation,
 			Message: "The version has no key, so its gate does not run."})
 	}
 	return nil
@@ -174,7 +174,7 @@ func (r *AppVersionReconciler) stopGate(ctx context.Context, av *corev1alpha1.Ap
 // checkGate reads the report of a gate Job that completed, and does the check of the design. It
 // writes the record only for a report that the controller accepts. The messages have fixed text
 // only, never text of the report.
-func (r *AppVersionReconciler) checkGate(ctx context.Context, av *corev1alpha1.AppVersion, job *batchv1.Job,
+func (r *AppVersionReconciler) checkGate(ctx context.Context, av *corev1beta1.AppVersion, job *batchv1.Job,
 	target, subject string, set func(metav1.ConditionStatus, string, string)) error {
 	pods := &corev1.PodList{}
 	if err := r.APIReader.List(ctx, pods, client.InNamespace(av.Namespace),
@@ -201,20 +201,20 @@ func (r *AppVersionReconciler) checkGate(ctx context.Context, av *corev1alpha1.A
 	}
 	rep, err := evidence.ParseReport(msg)
 	if err != nil {
-		set(metav1.ConditionFalse, corev1alpha1.EvidenceNotVerified, "The report of the gate Job is not valid: "+err.Error()+".")
+		set(metav1.ConditionFalse, corev1beta1.EvidenceNotVerified, "The report of the gate Job is not valid: "+err.Error()+".")
 		return nil
 	}
 	reason, verdict := rep.Check(subject)
 	logf.FromContext(ctx).Info("The evidence gate of the AppVersion ended", "reason", reason)
 	switch reason {
-	case corev1alpha1.EvidencePassed, corev1alpha1.EvidenceFailed:
-		av.Status.Evidence = &corev1alpha1.EvidenceRecord{
-			Source: corev1alpha1.EvidenceSourceNookkuGate, Subject: rep.Subject, Verdict: verdict, ID: rep.Gate,
-			Digest: "sha256:" + rep.SHA256, Integrity: corev1alpha1.EvidenceSeal, NookkuVersion: rep.Nookku,
+	case corev1beta1.EvidencePassed, corev1beta1.EvidenceFailed:
+		av.Status.Evidence = &corev1beta1.EvidenceRecord{
+			Source: corev1beta1.EvidenceSourceNookkuGate, Subject: rep.Subject, Verdict: verdict, ID: rep.Gate,
+			Digest: "sha256:" + rep.SHA256, Integrity: corev1beta1.EvidenceSeal, NookkuVersion: rep.Nookku,
 			CheckedAt: metav1.NewTime(r.now().UTC().Truncate(time.Second)),
 		}
 		return r.applyGate(ctx, av, nil)
-	case corev1alpha1.EvidenceSubjectMismatch:
+	case corev1beta1.EvidenceSubjectMismatch:
 		set(metav1.ConditionFalse, reason, "The subject of the report is not the subject of this version.")
 	default:
 		set(metav1.ConditionFalse, reason,

@@ -34,7 +34,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
-	corev1alpha1 "github.com/mohanraj00/koodam/api/v1alpha1"
+	corev1beta1 "github.com/mohanraj00/koodam/api/v1beta1"
 	"github.com/mohanraj00/koodam/internal/gateway"
 )
 
@@ -57,7 +57,7 @@ type costGroupGateway struct {
 }
 
 func (g *costGroupGateway) CreateKey(ctx context.Context, s gateway.KeySpec) error {
-	a := &corev1alpha1.Agent{}
+	a := &corev1beta1.Agent{}
 	g.saved = g.reader.Get(ctx, g.agent, a) == nil && a.Status.CostGroup == g.group &&
 		a.Status.KeyHash == gateway.HashKey(s.Value) && a.Status.KeyAlias == s.Alias
 	g.calls++
@@ -71,18 +71,18 @@ var _ = Describe("Agent cost group", func() {
 		ns := &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{GenerateName: "cost-agent-"}}
 		Expect(k8sClient.Create(ctx, ns)).To(Succeed())
 		DeferCleanup(func() { Expect(k8sClient.Delete(ctx, ns)).To(Succeed()) })
-		p := &corev1alpha1.Profile{ObjectMeta: metav1.ObjectMeta{Name: ns.Name},
-			Spec: corev1alpha1.ProfileSpec{Namespaces: []string{ns.Name}, CostGroups: []string{testCostGroupAllowed}}}
+		p := &corev1beta1.Profile{ObjectMeta: metav1.ObjectMeta{Name: ns.Name},
+			Spec: corev1beta1.ProfileSpec{Namespaces: []string{ns.Name}, CostGroups: []string{testCostGroupAllowed}}}
 		if bound {
 			Expect(k8sClient.Create(ctx, p)).To(Succeed())
 			DeferCleanup(func() { Expect(k8sClient.Delete(ctx, p)).To(Succeed()) })
-			ns.Labels = map[string]string{corev1alpha1.ProfileLabel: p.Name}
+			ns.Labels = map[string]string{corev1beta1.ProfileLabel: p.Name}
 			Expect(k8sClient.Update(ctx, ns)).To(Succeed())
 		}
 		a := ingAgent()
 		a.Namespace, a.UID = ns.Name, ""
 		if label != nil {
-			a.Labels = map[string]string{corev1alpha1.CostGroupLabel: *label}
+			a.Labels = map[string]string{corev1beta1.CostGroupLabel: *label}
 		}
 		Expect(k8sClient.Create(ctx, a)).To(Succeed())
 		key := client.ObjectKeyFromObject(a)
@@ -101,7 +101,7 @@ var _ = Describe("Agent cost group", func() {
 		Expect(err).NotTo(HaveOccurred())
 		Expect(k8sClient.Get(ctx, key, a)).To(Succeed())
 		if message != "" {
-			Expect(a.Status.Phase).To(Equal(corev1alpha1.AgentFailed))
+			Expect(a.Status.Phase).To(Equal(corev1beta1.AgentFailed))
 			c := meta.FindStatusCondition(a.Status.Conditions, condProvisioned)
 			Expect(c).NotTo(BeNil())
 			Expect(c.Status).To(Equal(metav1.ConditionFalse))
@@ -115,7 +115,7 @@ var _ = Describe("Agent cost group", func() {
 			}
 			return
 		}
-		Expect(a.Status.Phase).To(Equal(corev1alpha1.AgentRunning))
+		Expect(a.Status.Phase).To(Equal(corev1beta1.AgentRunning))
 		Expect(a.Status.CostGroup).To(Equal(gw.group))
 		Expect(gw.calls).To(Equal(1))
 		Expect(gw.saved).To(BeTrue(), "the status must have the group before CreateKey")
@@ -123,7 +123,7 @@ var _ = Describe("Agent cost group", func() {
 			Expect(gw.metadata).NotTo(HaveKey("costGroup"))
 		} else {
 			Expect(gw.metadata).To(HaveKeyWithValue("costGroup", gw.group))
-			a.Labels[corev1alpha1.CostGroupLabel] = testCostGroupDenied
+			a.Labels[corev1beta1.CostGroupLabel] = testCostGroupDenied
 			Expect(k8sClient.Update(ctx, a)).To(Succeed())
 			p.Spec.CostGroups = nil
 			Expect(k8sClient.Update(ctx, p)).To(Succeed())
@@ -131,7 +131,7 @@ var _ = Describe("Agent cost group", func() {
 			Expect(err).NotTo(HaveOccurred())
 			Expect(k8sClient.Get(ctx, key, a)).To(Succeed())
 			Expect(a.Status.CostGroup).To(Equal(gw.group))
-			Expect(a.Status.Phase).To(Equal(corev1alpha1.AgentRunning))
+			Expect(a.Status.Phase).To(Equal(corev1beta1.AgentRunning))
 			Expect(gw.calls).To(Equal(1))
 		}
 	},
@@ -149,11 +149,11 @@ func TestCostGroupRetryKeepsSavedValue(t *testing.T) {
 	for _, group := range []string{"", testCostGroupAllowed} {
 		t.Run(group, func(t *testing.T) {
 			a := ingAgent()
-			a.Labels = map[string]string{corev1alpha1.CostGroupLabel: group}
+			a.Labels = map[string]string{corev1beta1.CostGroupLabel: group}
 			ns := &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: a.Namespace,
-				Labels: map[string]string{corev1alpha1.ProfileLabel: "cost-profile"}}}
-			p := &corev1alpha1.Profile{ObjectMeta: metav1.ObjectMeta{Name: "cost-profile"},
-				Spec: corev1alpha1.ProfileSpec{Namespaces: []string{ns.Name}, CostGroups: []string{testCostGroupAllowed}}}
+				Labels: map[string]string{corev1beta1.ProfileLabel: "cost-profile"}}}
+			p := &corev1beta1.Profile{ObjectMeta: metav1.ObjectMeta{Name: "cost-profile"},
+				Spec: corev1beta1.ProfileSpec{Namespaces: []string{ns.Name}, CostGroups: []string{testCostGroupAllowed}}}
 			c := ingWorld(t, a, ns, p)
 			gw := &costGroupGateway{countGateway: &countGateway{}, reader: c, agent: ingKey,
 				group: group, err: errors.New("try again")}
@@ -164,7 +164,7 @@ func TestCostGroupRetryKeepsSavedValue(t *testing.T) {
 			if err := c.Get(t.Context(), ingKey, a); err != nil {
 				t.Fatal("the test could not read the Agent")
 			}
-			a.Labels[corev1alpha1.CostGroupLabel] = testCostGroupDenied
+			a.Labels[corev1beta1.CostGroupLabel] = testCostGroupDenied
 			if c.Update(t.Context(), a) != nil || c.Delete(t.Context(), p) != nil {
 				t.Fatal("the test could not change the label and remove the Profile")
 			}
@@ -181,7 +181,7 @@ func TestCostGroupRetryKeepsSavedValue(t *testing.T) {
 			gw.err = nil
 			ingReconcile(t, r)
 			if gw.calls != 2 || !gw.saved || gw.metadata["costGroup"] != group ||
-				ingLive(t, c).Status.CostGroup != group || ingLive(t, c).Status.Phase != corev1alpha1.AgentRunning {
+				ingLive(t, c).Status.CostGroup != group || ingLive(t, c).Status.Phase != corev1beta1.AgentRunning {
 				t.Fatal("the retry changed the saved cost group")
 			}
 			if _, present := gw.metadata["costGroup"]; present != (group != "") {

@@ -45,7 +45,7 @@ import (
 	"k8s.io/apimachinery/pkg/util/intstr"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
-	corev1alpha1 "github.com/mohanraj00/koodam/api/v1alpha1"
+	corev1beta1 "github.com/mohanraj00/koodam/api/v1beta1"
 	"github.com/mohanraj00/koodam/internal/appclaim"
 	"github.com/mohanraj00/koodam/internal/egress"
 	"github.com/mohanraj00/koodam/test/utils"
@@ -131,13 +131,13 @@ var _ = Describe("Thin App", Ordered, Label("app"), func() {
 		u.SetName(name)
 		return u
 	}
-	version := func(name string) *corev1alpha1.AppVersion {
-		return &corev1alpha1.AppVersion{ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: appNS},
-			Spec: corev1alpha1.AppVersionSpec{
-				AppRef: corev1alpha1.AppReference{Name: appName}, BudgetPerDay: new(resource.MustParse("1")),
-				Template: corev1alpha1.AppVersionTemplate{Model: "fake-responses",
-					PodTemplate: corev1alpha1.PodTemplate{Spec: corev1.PodSpec{Containers: []corev1.Container{{
-						Name: corev1alpha1.AppContainerName, Image: pythonImage,
+	version := func(name string) *corev1beta1.AppVersion {
+		return &corev1beta1.AppVersion{ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: appNS},
+			Spec: corev1beta1.AppVersionSpec{
+				AppRef: corev1beta1.AppReference{Name: appName}, BudgetPerDay: new(resource.MustParse("1")),
+				Template: corev1beta1.AppVersionTemplate{Model: "fake-responses",
+					PodTemplate: corev1beta1.PodTemplate{Spec: corev1.PodSpec{Containers: []corev1.Container{{
+						Name: corev1beta1.AppContainerName, Image: pythonImage,
 						Command: []string{"python", "-u", "-c", appServer},
 						Ports:   []corev1.ContainerPort{{Name: "http", ContainerPort: 8080}},
 						ReadinessProbe: &corev1.Probe{PeriodSeconds: 1, ProbeHandler: corev1.ProbeHandler{
@@ -145,14 +145,14 @@ var _ = Describe("Thin App", Ordered, Label("app"), func() {
 					}}}}},
 			}}
 	}
-	weight := func(name string, w int32) corev1alpha1.AppEndpointVersion {
-		return corev1alpha1.AppEndpointVersion{Name: name, Weight: &w}
+	weight := func(name string, w int32) corev1beta1.AppEndpointVersion {
+		return corev1beta1.AppEndpointVersion{Name: name, Weight: &w}
 	}
-	endpoint := func() corev1alpha1.AppEndpointStatus {
-		app := &corev1alpha1.App{}
+	endpoint := func() corev1beta1.AppEndpointStatus {
+		app := &corev1beta1.App{}
 		if err := k8s.Get(ctx, client.ObjectKey{Namespace: appNS, Name: appName}, app); err != nil ||
 			len(app.Status.Endpoints) != 1 {
-			return corev1alpha1.AppEndpointStatus{}
+			return corev1beta1.AppEndpointStatus{}
 		}
 		return app.Status.Endpoints[0]
 	}
@@ -164,7 +164,7 @@ var _ = Describe("Thin App", Ordered, Label("app"), func() {
 			req, err := http.NewRequest(http.MethodGet, localURL, nil)
 			Expect(err).NotTo(HaveOccurred())
 			if pin != "" {
-				req.Header.Set(corev1alpha1.AppVersionHeader, pin)
+				req.Header.Set(corev1beta1.AppVersionHeader, pin)
 			}
 			if token != "" {
 				req.Header.Set("Authorization", "Bearer "+token)
@@ -207,9 +207,9 @@ var _ = Describe("Thin App", Ordered, Label("app"), func() {
 			if fwd != nil && fwd.Process != nil {
 				_ = fwd.Process.Kill()
 			}
-			_ = k8s.DeleteAllOf(ctx, &corev1alpha1.AppVersion{}, client.InNamespace(appNS))
+			_ = k8s.DeleteAllOf(ctx, &corev1beta1.AppVersion{}, client.InNamespace(appNS))
 			Eventually(func() int {
-				l := &corev1alpha1.AppVersionList{}
+				l := &corev1beta1.AppVersionList{}
 				_ = k8s.List(ctx, l, client.InNamespace(appNS))
 				return len(l.Items)
 			}, 2*time.Minute, time.Second).Should(BeZero(), "The finalizer kept an AppVersion.")
@@ -234,11 +234,11 @@ var _ = Describe("Thin App", Ordered, Label("app"), func() {
 				"controllerName": "gateway.envoyproxy.io/gatewayclass-controller"}),
 			gatewayObject("Gateway", appNS, gwName, map[string]any{"gatewayClassName": "koodam-e2e",
 				"listeners": []any{map[string]any{"name": "http", "protocol": "HTTP", "port": int64(80)}}}),
-			&corev1alpha1.App{ObjectMeta: metav1.ObjectMeta{Name: appName, Namespace: appNS},
-				Spec: corev1alpha1.AppSpec{DrainSeconds: new(int32(drainSeconds)),
-					Endpoints: []corev1alpha1.AppEndpoint{{Name: "web", Port: "http",
-						Gateway:  corev1alpha1.AppGatewayReference{Name: gwName},
-						Versions: []corev1alpha1.AppEndpointVersion{weight(v1, 80), weight(v2, 20), weight(static, 0)}}}}},
+			&corev1beta1.App{ObjectMeta: metav1.ObjectMeta{Name: appName, Namespace: appNS},
+				Spec: corev1beta1.AppSpec{DrainSeconds: new(int32(drainSeconds)),
+					Endpoints: []corev1beta1.AppEndpoint{{Name: "web", Port: "http",
+						Gateway:  corev1beta1.AppGatewayReference{Name: gwName},
+						Versions: []corev1beta1.AppEndpointVersion{weight(v1, 80), weight(v2, 20), weight(static, 0)}}}}},
 			version(v1), twoModels, noModel,
 		} {
 			Expect(k8s.Create(ctx, o)).To(Succeed())
@@ -262,10 +262,10 @@ var _ = Describe("Thin App", Ordered, Label("app"), func() {
 	It("serves 2 versions with the weights of the endpoint", func() {
 		By("waiting for the route and the pods of the 2 versions")
 		Eventually(func() string { return endpoint().RouteState }, 5*time.Minute, 2*time.Second).
-			Should(Equal(corev1alpha1.AppRouteAccepted))
+			Should(Equal(corev1beta1.AppRouteAccepted))
 		// The route can be Accepted before a version has its key. Then the weight in effect is 0.
-		Eventually(func() []corev1alpha1.AppEndpointVersion { return endpoint().Weights }, 5*time.Minute, 2*time.Second).
-			Should(Equal([]corev1alpha1.AppEndpointVersion{weight(v1, 80), weight(v2, 20), weight(static, 0)}))
+		Eventually(func() []corev1beta1.AppEndpointVersion { return endpoint().Weights }, 5*time.Minute, 2*time.Second).
+			Should(Equal([]corev1beta1.AppEndpointVersion{weight(v1, 80), weight(v2, 20), weight(static, 0)}))
 		for _, v := range []string{v1, v2, static} {
 			_, err := utils.Run(exec.Command("kubectl", "-n", appNS, "rollout", "status", "deployment/kd-"+v,
 				"--timeout", "5m"))
@@ -273,14 +273,14 @@ var _ = Describe("Thin App", Ordered, Label("app"), func() {
 		}
 
 		By("refusing a template change on a version with a key")
-		live := &corev1alpha1.AppVersion{}
+		live := &corev1beta1.AppVersion{}
 		Expect(k8s.Get(ctx, client.ObjectKey{Namespace: appNS, Name: v2}, live)).To(Succeed())
 		live.Spec.Template.PodTemplate.Spec.Containers[0].Image = "registry.example.com/other:v1"
 		Expect(apierrors.IsInvalid(k8s.Update(ctx, live))).To(BeTrue(), "The admission policy refuses the change.")
 
 		By("reading the 2 models of one key, and no key for the version with no model")
 		Expect(keyInfo(live.Status.KeyHash).Models).To(ConsistOf("fake-responses", "fake-responses-b"))
-		keyless := &corev1alpha1.AppVersion{}
+		keyless := &corev1beta1.AppVersion{}
 		Expect(k8s.Get(ctx, client.ObjectKey{Namespace: appNS, Name: static}, keyless)).To(Succeed())
 		Expect(keyless.Status.KeyAlias).To(BeEmpty())
 		Expect(keyless.Status.KeyHash).To(BeEmpty())
@@ -328,7 +328,7 @@ var _ = Describe("Thin App", Ordered, Label("app"), func() {
 		token = valid
 		// The version has its NetworkPolicy, so the status says that the check protects it.
 		Eventually(func() string {
-			av := &corev1alpha1.AppVersion{}
+			av := &corev1beta1.AppVersion{}
 			if err := k8s.Get(ctx, client.ObjectKey{Namespace: appNS, Name: v1}, av); err != nil {
 				return err.Error()
 			}
@@ -347,9 +347,9 @@ var _ = Describe("Thin App", Ordered, Label("app"), func() {
 		Expect(call(10, static)).NotTo(HaveKey(static))
 
 		By("giving a weight to the version with no model")
-		app := &corev1alpha1.App{}
+		app := &corev1beta1.App{}
 		Expect(k8s.Get(ctx, client.ObjectKey{Namespace: appNS, Name: appName}, app)).To(Succeed())
-		app.Spec.Endpoints[0].Versions = []corev1alpha1.AppEndpointVersion{weight(v1, 80), weight(v2, 20), weight(static, 1)}
+		app.Spec.Endpoints[0].Versions = []corev1beta1.AppEndpointVersion{weight(v1, 80), weight(v2, 20), weight(static, 1)}
 		Expect(k8s.Update(ctx, app)).To(Succeed())
 		Eventually(func() map[string]int { return call(10, static) }, time.Minute, time.Second).
 			Should(Equal(map[string]int{static: 10}), "The version with no model serves with no gateway key.")
@@ -399,7 +399,7 @@ var _ = Describe("Thin App", Ordered, Label("app"), func() {
 		get := func(path string) string {
 			req, err := http.NewRequest(http.MethodGet, strings.TrimSuffix(localURL, "/")+path, nil)
 			Expect(err).NotTo(HaveOccurred())
-			req.Header.Set(corev1alpha1.AppVersionHeader, v1)
+			req.Header.Set(corev1beta1.AppVersionHeader, v1)
 			req.Header.Set("Authorization", "Bearer "+token)
 			resp, err := httpClient.Do(req)
 			if err != nil {
@@ -492,14 +492,14 @@ var _ = Describe("Thin App", Ordered, Label("app"), func() {
 	})
 
 	It("drains a retiring version and then revokes its key", func() {
-		av := &corev1alpha1.AppVersion{}
+		av := &corev1beta1.AppVersion{}
 		Expect(k8s.Get(ctx, client.ObjectKey{Namespace: appNS, Name: v1}, av)).To(Succeed())
-		av.Spec.Lifecycle = corev1alpha1.AppVersionRetiring
+		av.Spec.Lifecycle = corev1beta1.AppVersionRetiring
 		Expect(k8s.Update(ctx, av)).To(Succeed())
 
 		By("sending each new session to the other version")
-		Eventually(func() []corev1alpha1.AppEndpointVersion { return endpoint().Weights }, time.Minute, time.Second).
-			Should(Equal([]corev1alpha1.AppEndpointVersion{weight(v1, 0), weight(v2, 20), weight(static, 1)}))
+		Eventually(func() []corev1beta1.AppEndpointVersion { return endpoint().Weights }, time.Minute, time.Second).
+			Should(Equal([]corev1beta1.AppEndpointVersion{weight(v1, 0), weight(v2, 20), weight(static, 1)}))
 		// Each answer comes from a version that stays, so an error or a 503 fails the test.
 		rest := func() int {
 			got := call(20, "")
@@ -512,9 +512,9 @@ var _ = Describe("Thin App", Ordered, Label("app"), func() {
 			if err := k8s.Get(ctx, client.ObjectKey{Namespace: appNS, Name: v1}, av); err != nil {
 				return false
 			}
-			return meta.IsStatusConditionTrue(av.Status.Conditions, corev1alpha1.AppVersionRevoked)
+			return meta.IsStatusConditionTrue(av.Status.Conditions, corev1beta1.AppVersionRevoked)
 		}, drainSeconds*time.Second+3*time.Minute, 2*time.Second).Should(BeTrue())
-		Expect(meta.IsStatusConditionTrue(av.Status.Conditions, corev1alpha1.AppVersionSessionsEnded)).To(BeTrue())
+		Expect(meta.IsStatusConditionTrue(av.Status.Conditions, corev1beta1.AppVersionSessionsEnded)).To(BeTrue())
 		Eventually(func() bool {
 			return apierrors.IsNotFound(k8s.Get(ctx, client.ObjectKey{Namespace: appNS, Name: "kd-" + v1},
 				&appsv1.Deployment{}))
@@ -527,8 +527,8 @@ var _ = Describe("Thin App", Ordered, Label("app"), func() {
 	// (#184). Each model call of a client must work in the rotation.
 	It("rotates the gateway key of a 2-replica version with no failed call", func() {
 		const v3, replicas = "shop-v3", int32(2)
-		getVersion := func(name string) *corev1alpha1.AppVersion {
-			av := &corev1alpha1.AppVersion{}
+		getVersion := func(name string) *corev1beta1.AppVersion {
+			av := &corev1beta1.AppVersion{}
 			Expect(k8s.Get(ctx, client.ObjectKey{Namespace: appNS, Name: name}, av)).To(Succeed())
 			return av
 		}
@@ -539,9 +539,9 @@ var _ = Describe("Thin App", Ordered, Label("app"), func() {
 			}
 			return d.Status.ReadyReplicas
 		}
-		setWeights := func(w ...corev1alpha1.AppEndpointVersion) {
+		setWeights := func(w ...corev1beta1.AppEndpointVersion) {
 			Eventually(func() error {
-				app := &corev1alpha1.App{}
+				app := &corev1beta1.App{}
 				if err := k8s.Get(ctx, client.ObjectKey{Namespace: appNS, Name: appName}, app); err != nil {
 					return err
 				}
@@ -574,8 +574,8 @@ var _ = Describe("Thin App", Ordered, Label("app"), func() {
 		}, time.Minute, time.Second).Should(Succeed())
 		setWeights(weight(v2, 1), weight(static, 0))
 		Eventually(func() int32 { return ready(v2) }, 3*time.Minute, time.Second).Should(Equal(replicas))
-		Eventually(func() []corev1alpha1.AppEndpointVersion { return endpoint().Weights }, time.Minute, time.Second).
-			Should(Equal([]corev1alpha1.AppEndpointVersion{weight(v2, 1), weight(static, 0)}))
+		Eventually(func() []corev1beta1.AppEndpointVersion { return endpoint().Weights }, time.Minute, time.Second).
+			Should(Equal([]corev1beta1.AppEndpointVersion{weight(v2, 1), weight(static, 0)}))
 		Eventually(func() string { _, out := model(); return out }, 2*time.Minute, time.Second).Should(Equal("200 200"))
 		// Envoy can send a request to the version of the old route for a short time.
 		Eventually(func() string { got, _ := model(); return got }, time.Minute, time.Second).Should(Equal(v2))
@@ -662,15 +662,15 @@ var _ = Describe("Thin App", Ordered, Label("app"), func() {
 		stepBy("retiring the old version")
 		Eventually(func() error {
 			av := getVersion(v2)
-			av.Spec.Lifecycle = corev1alpha1.AppVersionRetiring
+			av.Spec.Lifecycle = corev1beta1.AppVersionRetiring
 			return k8s.Update(ctx, av)
 		}, time.Minute, time.Second).Should(Succeed())
-		Eventually(func() []corev1alpha1.AppEndpointVersion { return endpoint().Weights }, time.Minute, time.Second).
-			Should(Equal([]corev1alpha1.AppEndpointVersion{weight(v2, 0), weight(v3, 1), weight(static, 0)}))
+		Eventually(func() []corev1beta1.AppEndpointVersion { return endpoint().Weights }, time.Minute, time.Second).
+			Should(Equal([]corev1beta1.AppEndpointVersion{weight(v2, 0), weight(v3, 1), weight(static, 0)}))
 
 		stepBy("blocking the old key after the drain time")
 		Eventually(func() bool {
-			return meta.IsStatusConditionTrue(getVersion(v2).Status.Conditions, corev1alpha1.AppVersionRevoked)
+			return meta.IsStatusConditionTrue(getVersion(v2).Status.Conditions, corev1beta1.AppVersionRevoked)
 		}, drainSeconds*time.Second+3*time.Minute, 2*time.Second).Should(BeTrue())
 		mu.Lock()
 		revoked, step = true, "the time after the revoke"

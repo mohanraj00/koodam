@@ -36,7 +36,7 @@ import (
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
-	corev1alpha1 "github.com/mohanraj00/koodam/api/v1alpha1"
+	corev1beta1 "github.com/mohanraj00/koodam/api/v1beta1"
 	"github.com/mohanraj00/koodam/internal/gateway"
 	"github.com/mohanraj00/koodam/internal/podtemplate"
 )
@@ -105,8 +105,8 @@ func testKeySecretName(workspace string) string {
 }
 
 // testKeyAlias makes a bounded alias from the test ID and the TestKey UID.
-func testKeyAlias(key *corev1alpha1.TestKey) string {
-	id := key.Spec.TestID
+func testKeyAlias(key *corev1beta1.TestKey) string {
+	id := key.Spec.TestRunID
 	if len(id) > testKeyAliasIDMax {
 		id = id[:testKeyAliasIDMax]
 	}
@@ -138,7 +138,7 @@ func (r *TestKeyReconciler) revokeWait() time.Duration {
 // Reconcile issues the key of a TestKey, and revokes it at the end. The key value goes only
 // to the slot Secret: never to a log, an event, the status or an error.
 func (r *TestKeyReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
-	key := &corev1alpha1.TestKey{}
+	key := &corev1beta1.TestKey{}
 	if err := r.APIReader.Get(ctx, req.NamespacedName, key); err != nil {
 		return ctrl.Result{}, client.IgnoreNotFound(err)
 	}
@@ -171,9 +171,9 @@ func (r *TestKeyReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ct
 
 // readWorkspace reads the Workspace of key without the cache. It returns nil if the Workspace
 // does not exist.
-func (r *TestKeyReconciler) readWorkspace(ctx context.Context, key *corev1alpha1.TestKey) (
-	*corev1alpha1.Workspace, error) {
-	workspace := &corev1alpha1.Workspace{}
+func (r *TestKeyReconciler) readWorkspace(ctx context.Context, key *corev1beta1.TestKey) (
+	*corev1beta1.Workspace, error) {
+	workspace := &corev1beta1.Workspace{}
 	ref := client.ObjectKey{Namespace: key.Namespace, Name: key.Spec.WorkspaceRef.Name}
 	if err := r.APIReader.Get(ctx, ref, workspace); apierrors.IsNotFound(err) {
 		return nil, nil
@@ -184,7 +184,7 @@ func (r *TestKeyReconciler) readWorkspace(ctx context.Context, key *corev1alpha1
 }
 
 // refusal returns a reason if the TestKey must not have a key now.
-func (r *TestKeyReconciler) refusal(key *corev1alpha1.TestKey, workspace *corev1alpha1.Workspace) (string, string) {
+func (r *TestKeyReconciler) refusal(key *corev1beta1.TestKey, workspace *corev1beta1.Workspace) (string, string) {
 	switch {
 	case workspace == nil:
 		return reasonNoWorkspace, "The Workspace does not exist."
@@ -208,7 +208,7 @@ func (r *TestKeyReconciler) refusal(key *corev1alpha1.TestKey, workspace *corev1
 	return "", ""
 }
 
-func testKeyRefusal(key *corev1alpha1.TestKey, workspace *corev1alpha1.Workspace) (reason, message string) {
+func testKeyRefusal(key *corev1beta1.TestKey, workspace *corev1beta1.Workspace) (reason, message string) {
 	policy := workspace.Spec.TestKeys
 	switch {
 	case workspace.UID != key.Spec.WorkspaceRef.UID:
@@ -232,7 +232,7 @@ func testKeyRefusal(key *corev1alpha1.TestKey, workspace *corev1alpha1.Workspace
 
 // testKeyModels gives the models that the key permits. The caller makes sure that the
 // Workspace has a gateway. A TestKey with no list gets only the first model of the Workspace.
-func testKeyModels(key *corev1alpha1.TestKey, workspace *corev1alpha1.Workspace) []string {
+func testKeyModels(key *corev1beta1.TestKey, workspace *corev1beta1.Workspace) []string {
 	if len(key.Spec.Models) > 0 {
 		return key.Spec.Models
 	}
@@ -255,8 +255,8 @@ func slotModels(slot *corev1.Secret) []string {
 
 // issue follows the approved create order: the finalizer, the slot, the status hash, the
 // gateway key, then Active. A retry uses the key in the slot and the remaining TTL.
-func (r *TestKeyReconciler) issue(ctx context.Context, key *corev1alpha1.TestKey,
-	workspace *corev1alpha1.Workspace) (ctrl.Result, error) {
+func (r *TestKeyReconciler) issue(ctx context.Context, key *corev1beta1.TestKey,
+	workspace *corev1beta1.Workspace) (ctrl.Result, error) {
 	if controllerutil.AddFinalizer(key, testKeyFinalizer) {
 		if err := r.updateMeta(ctx, key); err != nil {
 			return ctrl.Result{}, err
@@ -317,7 +317,7 @@ func (r *TestKeyReconciler) issue(ctx context.Context, key *corev1alpha1.TestKey
 	err = r.Gateway.CreateKey(ctx, gateway.KeySpec{
 		Value: value, Alias: key.Status.KeyAlias, Model: models[0], Models: models[1:],
 		Budget: key.Spec.Budget.AsApproximateFloat64(), TTL: remaining,
-		Metadata: map[string]string{"koodam_test_id": key.Spec.TestID, "koodam_testkey": key.Name},
+		Metadata: map[string]string{"koodam_test_id": key.Spec.TestRunID, "koodam_testkey": key.Name},
 	})
 	if err != nil {
 		if e := r.setActive(ctx, key, metav1.ConditionFalse, reasonGatewayFailed,
@@ -335,8 +335,8 @@ func (r *TestKeyReconciler) issue(ctx context.Context, key *corev1alpha1.TestKey
 // Secret is not immutable: the kubelet stops the watch of an immutable Secret, so a running pod
 // keeps the files of a deleted slot. The status hash finds a changed value, and a changed value
 // gets a revoke.
-func (r *TestKeyReconciler) createSlot(ctx context.Context, key *corev1alpha1.TestKey,
-	workspace *corev1alpha1.Workspace) (*corev1.Secret, error) {
+func (r *TestKeyReconciler) createSlot(ctx context.Context, key *corev1beta1.TestKey,
+	workspace *corev1beta1.Workspace) (*corev1.Secret, error) {
 	value, err := gateway.NewKeyValue()
 	if err != nil {
 		return nil, err
@@ -365,7 +365,7 @@ func (r *TestKeyReconciler) createSlot(ctx context.Context, key *corev1alpha1.Te
 	return slot, err
 }
 
-func (r *TestKeyReconciler) readSlot(ctx context.Context, key *corev1alpha1.TestKey) (*corev1.Secret, error) {
+func (r *TestKeyReconciler) readSlot(ctx context.Context, key *corev1beta1.TestKey) (*corev1.Secret, error) {
 	slot := &corev1.Secret{}
 	name := types.NamespacedName{Namespace: key.Namespace, Name: testKeySecretName(key.Spec.WorkspaceRef.Name)}
 	if err := r.APIReader.Get(ctx, name, slot); err != nil {
@@ -380,7 +380,7 @@ func (r *TestKeyReconciler) readSlot(ctx context.Context, key *corev1alpha1.Test
 // revoke follows the approved end order: Revoking, the block, the wait, the spend read, the
 // slot delete, Revoked, then the finalizer. Each step can run again. The slot stays until the
 // spend read shows a blocked row, or until a late key is past its expiry.
-func (r *TestKeyReconciler) revoke(ctx context.Context, key *corev1alpha1.TestKey) (ctrl.Result, error) {
+func (r *TestKeyReconciler) revoke(ctx context.Context, key *corev1beta1.TestKey) (ctrl.Result, error) {
 	c := meta.FindStatusCondition(key.Status.Conditions, condActive)
 	if c == nil || (c.Reason != reasonTKRevoking && c.Reason != reasonTKBlocked) {
 		if err := r.setActive(ctx, key, metav1.ConditionFalse, reasonTKRevoking,
@@ -437,7 +437,7 @@ func (r *TestKeyReconciler) revoke(ctx context.Context, key *corev1alpha1.TestKe
 
 // blockAgain blocks the key and starts the revoke wait again. The wait counts from this block,
 // so a key row that a late create made gets the full wait.
-func (r *TestKeyReconciler) blockAgain(ctx context.Context, key *corev1alpha1.TestKey,
+func (r *TestKeyReconciler) blockAgain(ctx context.Context, key *corev1beta1.TestKey,
 	message string) (ctrl.Result, error) {
 	if err := r.Gateway.BlockKey(ctx, key.Status.KeyHash); err != nil {
 		return ctrl.Result{}, err
@@ -451,7 +451,7 @@ func (r *TestKeyReconciler) blockAgain(ctx context.Context, key *corev1alpha1.Te
 
 // deleteSlot deletes the slot Secret only if it is from key. The UID precondition stops the
 // delete if the Secret changed after the read.
-func (r *TestKeyReconciler) deleteSlot(ctx context.Context, key *corev1alpha1.TestKey) error {
+func (r *TestKeyReconciler) deleteSlot(ctx context.Context, key *corev1beta1.TestKey) error {
 	slot, err := r.readSlot(ctx, key)
 	if err != nil || slot == nil || !metav1.IsControlledBy(slot, key) {
 		return err
@@ -462,7 +462,7 @@ func (r *TestKeyReconciler) deleteSlot(ctx context.Context, key *corev1alpha1.Te
 
 // setActive writes the condition Active if it changed. A new reason is a new step, so it gets
 // a new transition time. The revoke wait counts from the time of the Blocked step.
-func (r *TestKeyReconciler) setActive(ctx context.Context, key *corev1alpha1.TestKey,
+func (r *TestKeyReconciler) setActive(ctx context.Context, key *corev1beta1.TestKey,
 	status metav1.ConditionStatus, reason, message string) error {
 	old := meta.FindStatusCondition(key.Status.Conditions, condActive)
 	if old != nil && old.Status == status && old.Reason == reason && old.Message == message &&
@@ -478,7 +478,7 @@ func (r *TestKeyReconciler) setActive(ctx context.Context, key *corev1alpha1.Tes
 	return r.Status().Update(ctx, key)
 }
 
-func (r *TestKeyReconciler) dropFinalizer(ctx context.Context, key *corev1alpha1.TestKey) error {
+func (r *TestKeyReconciler) dropFinalizer(ctx context.Context, key *corev1beta1.TestKey) error {
 	if controllerutil.RemoveFinalizer(key, testKeyFinalizer) {
 		return r.updateMeta(ctx, key)
 	}
@@ -486,7 +486,7 @@ func (r *TestKeyReconciler) dropFinalizer(ctx context.Context, key *corev1alpha1
 }
 
 // updateMeta writes the metadata and keeps the status in memory.
-func (r *TestKeyReconciler) updateMeta(ctx context.Context, key *corev1alpha1.TestKey) error {
+func (r *TestKeyReconciler) updateMeta(ctx context.Context, key *corev1beta1.TestKey) error {
 	st := key.Status.DeepCopy()
 	err := r.Update(ctx, key)
 	key.Status = *st
@@ -495,7 +495,7 @@ func (r *TestKeyReconciler) updateMeta(ctx context.Context, key *corev1alpha1.Te
 
 // testKeysFor maps a Workspace event to its TestKeys, so a suspend or a delete starts the revoke.
 func (r *TestKeyReconciler) testKeysFor(ctx context.Context, obj client.Object) []reconcile.Request {
-	list := &corev1alpha1.TestKeyList{}
+	list := &corev1beta1.TestKeyList{}
 	if err := r.List(ctx, list, client.InNamespace(obj.GetNamespace())); err != nil {
 		return nil
 	}
@@ -512,19 +512,19 @@ func (r *TestKeyReconciler) testKeysFor(ctx context.Context, obj client.Object) 
 // has no list or watch grant on Secrets.
 func (r *TestKeyReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	return ctrl.NewControllerManagedBy(mgr).
-		For(&corev1alpha1.TestKey{}).
-		Watches(&corev1alpha1.Workspace{}, handler.EnqueueRequestsFromMapFunc(r.testKeysFor)).
+		For(&corev1beta1.TestKey{}).
+		Watches(&corev1beta1.Workspace{}, handler.EnqueueRequestsFromMapFunc(r.testKeysFor)).
 		Named("testkey").
 		Complete(r)
 }
 
 // usageStatus makes the status form of a gateway count.
-func usageStatus(u gateway.Usage) *corev1alpha1.AgentUsage {
+func usageStatus(u gateway.Usage) *corev1beta1.AgentUsage {
 	spend := func(v float64) string { return strconv.FormatFloat(v, 'f', -1, 64) }
-	out := &corev1alpha1.AgentUsage{Spend: spend(u.Spend), Calls: u.Calls, FailedCalls: u.FailedCalls,
+	out := &corev1beta1.AgentUsage{Spend: spend(u.Spend), Calls: u.Calls, FailedCalls: u.FailedCalls,
 		InputTokens: u.InputTokens, OutputTokens: u.OutputTokens}
 	for _, m := range u.Models {
-		out.Models = append(out.Models, corev1alpha1.ModelUsage{Model: m.Model, Spend: spend(m.Spend),
+		out.Models = append(out.Models, corev1beta1.ModelUsage{Model: m.Model, Spend: spend(m.Spend),
 			Calls: m.Calls, FailedCalls: m.FailedCalls, InputTokens: m.InputTokens, OutputTokens: m.OutputTokens})
 	}
 	return out

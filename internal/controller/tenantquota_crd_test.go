@@ -27,7 +27,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
-	corev1alpha1 "github.com/mohanraj00/koodam/api/v1alpha1"
+	corev1beta1 "github.com/mohanraj00/koodam/api/v1beta1"
 	"github.com/mohanraj00/koodam/internal/tenanttoken"
 )
 
@@ -37,38 +37,38 @@ var _ = Describe("TenantQuota CRD", func() {
 	ctx := context.Background()
 	const tenant = "acme"
 
-	newQuota := func(change func(*corev1alpha1.TenantQuotaSpec)) *corev1alpha1.TenantQuota {
-		q := &corev1alpha1.TenantQuota{
+	newQuota := func(change func(*corev1beta1.TenantQuotaSpec)) *corev1beta1.TenantQuota {
+		q := &corev1beta1.TenantQuota{
 			ObjectMeta: metav1.ObjectMeta{GenerateName: "quota-crd-", Namespace: metav1.NamespaceDefault},
-			Spec:       corev1alpha1.TenantQuotaSpec{Tenant: tenant},
+			Spec:       corev1beta1.TenantQuotaSpec{Tenant: tenant},
 		}
 		if change != nil {
 			change(&q.Spec)
 		}
 		return q
 	}
-	create := func(q *corev1alpha1.TenantQuota) error {
+	create := func(q *corev1beta1.TenantQuota) error {
 		err := k8sClient.Create(ctx, q)
 		if err == nil {
 			DeferCleanup(func() { Expect(client.IgnoreNotFound(k8sClient.Delete(ctx, q))).To(Succeed()) })
 		}
 		return err
 	}
-	rate := func(perSecond string, burst *int32) *corev1alpha1.TenantRateLimit {
-		return &corev1alpha1.TenantRateLimit{RequestsPerSecond: resource.MustParse(perSecond), Burst: burst}
+	rate := func(perSecond string, burst *int32) *corev1beta1.TenantRateLimit {
+		return &corev1beta1.TenantRateLimit{RequestsPerSecond: resource.MustParse(perSecond), Burst: burst}
 	}
 
 	It("accepts a tenant label with no limit and defaults the period to a day", func() {
 		q := newQuota(nil)
 		Expect(create(q)).To(Succeed())
-		Expect(q.Spec.Period).To(Equal(corev1alpha1.TenantQuotaPeriodDay))
+		Expect(q.Spec.Period).To(Equal(corev1beta1.TenantQuotaPeriodDay))
 		Expect(q.Spec.AppRef).To(BeNil())
 	})
 
 	It("accepts each limit", func() {
-		q := newQuota(func(s *corev1alpha1.TenantQuotaSpec) {
-			s.AppRef = &corev1alpha1.AppReference{Name: "store"}
-			s.Period = corev1alpha1.TenantQuotaPeriodHour
+		q := newQuota(func(s *corev1beta1.TenantQuotaSpec) {
+			s.AppRef = &corev1beta1.AppReference{Name: "store"}
+			s.Period = corev1beta1.TenantQuotaPeriodHour
 			s.Requests = new(int64(100))
 			s.Spend = new(resource.MustParse("2500m"))
 			s.RateLimit = rate("500m", new(int32(3)))
@@ -77,34 +77,34 @@ var _ = Describe("TenantQuota CRD", func() {
 	})
 
 	It("accepts a tenant label of 253 bytes", func() {
-		Expect(create(newQuota(func(s *corev1alpha1.TenantQuotaSpec) { s.Tenant = strings.Repeat("é", 126) + "a" }))).To(Succeed())
+		Expect(create(newQuota(func(s *corev1beta1.TenantQuotaSpec) { s.Tenant = strings.Repeat("é", 126) + "a" }))).To(Succeed())
 	})
 
-	DescribeTable("refuses a spec that is not valid", func(change func(*corev1alpha1.TenantQuotaSpec), message string) {
+	DescribeTable("refuses a spec that is not valid", func(change func(*corev1beta1.TenantQuotaSpec), message string) {
 		err := create(newQuota(change))
 		Expect(apierrors.IsInvalid(err)).To(BeTrue(), "the error is not Invalid: %v", err)
 		Expect(err.Error()).To(ContainSubstring(message))
 	},
-		Entry("an empty tenant label", func(s *corev1alpha1.TenantQuotaSpec) { s.Tenant = "" }, "spec.tenant"),
-		Entry("a long tenant label", func(s *corev1alpha1.TenantQuotaSpec) { s.Tenant = strings.Repeat("a", 254) }, "spec.tenant"),
-		Entry("the reserved tenant label", func(s *corev1alpha1.TenantQuotaSpec) { s.Tenant = tenanttoken.NoTenant },
+		Entry("an empty tenant label", func(s *corev1beta1.TenantQuotaSpec) { s.Tenant = "" }, "spec.tenant"),
+		Entry("a long tenant label", func(s *corev1beta1.TenantQuotaSpec) { s.Tenant = strings.Repeat("a", 254) }, "spec.tenant"),
+		Entry("the reserved tenant label", func(s *corev1beta1.TenantQuotaSpec) { s.Tenant = tenanttoken.NoTenant },
 			"spec.tenant must not be the reserved label"),
 		// The claim check counts the bytes of a label, so 127 characters of 2 bytes are too long.
-		Entry("a tenant label of 254 bytes", func(s *corev1alpha1.TenantQuotaSpec) { s.Tenant = strings.Repeat("é", 127) },
+		Entry("a tenant label of 254 bytes", func(s *corev1beta1.TenantQuotaSpec) { s.Tenant = strings.Repeat("é", 127) },
 			"253 bytes or less"),
-		Entry("an empty App name", func(s *corev1alpha1.TenantQuotaSpec) { s.AppRef = &corev1alpha1.AppReference{} },
+		Entry("an empty App name", func(s *corev1beta1.TenantQuotaSpec) { s.AppRef = &corev1beta1.AppReference{} },
 			"spec.appRef.name"),
-		Entry("a period that is not Hour or Day", func(s *corev1alpha1.TenantQuotaSpec) { s.Period = "Year" }, "spec.period"),
-		Entry("a request limit of 0", func(s *corev1alpha1.TenantQuotaSpec) { s.Requests = new(int64(0)) }, "spec.requests"),
-		Entry("a spend limit of 0", func(s *corev1alpha1.TenantQuotaSpec) { s.Spend = new(resource.MustParse("0")) },
+		Entry("a period that is not Hour or Day", func(s *corev1beta1.TenantQuotaSpec) { s.Period = "Year" }, "spec.period"),
+		Entry("a request limit of 0", func(s *corev1beta1.TenantQuotaSpec) { s.Requests = new(int64(0)) }, "spec.requests"),
+		Entry("a spend limit of 0", func(s *corev1beta1.TenantQuotaSpec) { s.Spend = new(resource.MustParse("0")) },
 			"spend must be more than zero"),
-		Entry("a spend limit below 0", func(s *corev1alpha1.TenantQuotaSpec) { s.Spend = new(resource.MustParse("-1")) },
+		Entry("a spend limit below 0", func(s *corev1beta1.TenantQuotaSpec) { s.Spend = new(resource.MustParse("-1")) },
 			"spend must be more than zero"),
-		Entry("a rate of 0", func(s *corev1alpha1.TenantQuotaSpec) { s.RateLimit = rate("0", nil) },
+		Entry("a rate of 0", func(s *corev1beta1.TenantQuotaSpec) { s.RateLimit = rate("0", nil) },
 			"requestsPerSecond must be more than zero"),
-		Entry("a rate above the maximum", func(s *corev1alpha1.TenantQuotaSpec) { s.RateLimit = rate("1000001", nil) },
+		Entry("a rate above the maximum", func(s *corev1beta1.TenantQuotaSpec) { s.RateLimit = rate("1000001", nil) },
 			"requestsPerSecond must be 1000000 or less"),
-		Entry("a burst of 0", func(s *corev1alpha1.TenantQuotaSpec) { s.RateLimit = rate("1", new(int32(0))) },
+		Entry("a burst of 0", func(s *corev1beta1.TenantQuotaSpec) { s.RateLimit = rate("1", new(int32(0))) },
 			"spec.rateLimit.burst"),
 	)
 
@@ -124,7 +124,7 @@ var _ = Describe("TenantQuota CRD", func() {
 		Expect(create(q)).To(Succeed())
 		q.Status.Requests, q.Status.Spend = 7, "0.125"
 		Expect(k8sClient.Status().Update(ctx, q)).To(Succeed())
-		got := &corev1alpha1.TenantQuota{}
+		got := &corev1beta1.TenantQuota{}
 		Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(q), got)).To(Succeed())
 		Expect(got.Status.Requests).To(Equal(int64(7)))
 		Expect(got.Status.Spend).To(Equal(q.Status.Spend))

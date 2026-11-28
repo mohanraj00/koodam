@@ -31,7 +31,7 @@ import (
 	"k8s.io/apimachinery/pkg/util/validation"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
-	corev1alpha1 "github.com/mohanraj00/koodam/api/v1alpha1"
+	corev1beta1 "github.com/mohanraj00/koodam/api/v1beta1"
 )
 
 const costGroupLabel = "koodam.dev/cost-group"
@@ -67,8 +67,8 @@ type page[T any] struct {
 	NextCursor string `json:"nextCursor,omitempty"`
 }
 
-func (a *api) agents(ctx context.Context, namespace string, limit int, cursor string) (*corev1alpha1.AgentList, error) {
-	list := &corev1alpha1.AgentList{}
+func (a *api) agents(ctx context.Context, namespace string, limit int, cursor string) (*corev1beta1.AgentList, error) {
+	list := &corev1beta1.AgentList{}
 	err := a.kube.List(ctx, list, client.InNamespace(namespace), client.Limit(limit), client.Continue(cursor))
 	return list, err
 }
@@ -90,7 +90,7 @@ func (a *api) runs(ctx context.Context, namespaces []string, limit int, cursor s
 		}
 		position = rest
 	}
-	var agents []corev1alpha1.Agent
+	var agents []corev1beta1.Agent
 	for i := start; i < len(namespaces); i++ {
 		if len(agents) == limit {
 			next = namespaces[i] + "/"
@@ -132,7 +132,7 @@ func (a *api) runs(ctx context.Context, namespaces []string, limit int, cursor s
 	return result, err
 }
 
-func (a *api) runAmounts(ctx context.Context, agent *corev1alpha1.Agent) (amounts, error) {
+func (a *api) runAmounts(ctx context.Context, agent *corev1beta1.Agent) (amounts, error) {
 	budget := agent.Spec.Budget.AsApproximateFloat64()
 	if !finite(budget) {
 		return amounts{}, errGateway
@@ -149,7 +149,7 @@ func (a *api) runAmounts(ctx context.Context, agent *corev1alpha1.Agent) (amount
 	return result, err
 }
 
-func (a *api) runSpend(ctx context.Context, agent *corev1alpha1.Agent) (*float64, error) {
+func (a *api) runSpend(ctx context.Context, agent *corev1beta1.Agent) (*float64, error) {
 	if agent.Status.KeyHash != "" {
 		hash, err := keyHash(agent.Status.KeyHash)
 		if err != nil {

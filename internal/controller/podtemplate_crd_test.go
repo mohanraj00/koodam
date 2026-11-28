@@ -27,7 +27,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
-	corev1alpha1 "github.com/mohanraj00/koodam/api/v1alpha1"
+	corev1beta1 "github.com/mohanraj00/koodam/api/v1beta1"
 )
 
 // The CRD validation of spec.podTemplate. These tests only send objects to the API server.
@@ -42,13 +42,13 @@ var _ = Describe("Pod template CRD", func() {
 		}
 		return err
 	}
-	workspace := func(name string, t *corev1alpha1.PodTemplate) *corev1alpha1.Workspace {
-		return &corev1alpha1.Workspace{ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: metav1.NamespaceDefault},
-			Spec: corev1alpha1.WorkspaceSpec{PodTemplate: t}}
+	workspace := func(name string, t *corev1beta1.PodTemplate) *corev1beta1.Workspace {
+		return &corev1beta1.Workspace{ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: metav1.NamespaceDefault},
+			Spec: corev1beta1.WorkspaceSpec{PodTemplate: t}}
 	}
-	agent := func(name string, t *corev1alpha1.PodTemplate) *corev1alpha1.Agent {
-		return &corev1alpha1.Agent{ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: metav1.NamespaceDefault},
-			Spec: corev1alpha1.AgentSpec{Image: testAgentImage, Command: []string{"run"}, Model: "m",
+	agent := func(name string, t *corev1beta1.PodTemplate) *corev1beta1.Agent {
+		return &corev1beta1.Agent{ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: metav1.NamespaceDefault},
+			Spec: corev1beta1.AgentSpec{Image: testAgentImage, Command: []string{"run"}, Model: "m",
 				Budget: resource.MustParse("1"), PodTemplate: t}}
 	}
 	expectInvalid := func(err error, text string) {
@@ -57,14 +57,14 @@ var _ = Describe("Pod template CRD", func() {
 	}
 
 	It("accepts a template with no containers", func() {
-		t := &corev1alpha1.PodTemplate{Spec: corev1.PodSpec{RuntimeClassName: new(runtimeClass),
+		t := &corev1beta1.PodTemplate{Spec: corev1.PodSpec{RuntimeClassName: new(runtimeClass),
 			NodeSelector: map[string]string{"pool": "agents"}}}
 		Expect(create(workspace("pt-no-containers", t))).To(Succeed())
 		Expect(create(agent("pt-no-containers", t))).To(Succeed())
 	})
 
 	It("accepts resources on the main container and a label", func() {
-		t := &corev1alpha1.PodTemplate{Metadata: corev1alpha1.PodTemplateMetadata{Labels: map[string]string{testTeam: "a"}},
+		t := &corev1beta1.PodTemplate{Metadata: corev1beta1.PodTemplateMetadata{Labels: map[string]string{testTeam: "a"}},
 			Spec: corev1.PodSpec{Containers: []corev1.Container{{Name: agentMain,
 				Resources: corev1.ResourceRequirements{Limits: corev1.ResourceList{corev1.ResourceCPU: resource.MustParse("2")}}}}}}
 		Expect(create(agent("pt-resources", t))).To(Succeed())
@@ -72,7 +72,7 @@ var _ = Describe("Pod template CRD", func() {
 
 	DescribeTable("refuses a pod field that Koodam owns or refuses",
 		func(name, text string, change func(*corev1.PodSpec)) {
-			t := &corev1alpha1.PodTemplate{}
+			t := &corev1beta1.PodTemplate{}
 			change(&t.Spec)
 			expectInvalid(create(workspace(name, t)), text)
 		},
@@ -95,27 +95,27 @@ var _ = Describe("Pod template CRD", func() {
 	)
 
 	It("accepts hostUsers false", func() {
-		t := &corev1alpha1.PodTemplate{Spec: corev1.PodSpec{HostUsers: new(false)}}
+		t := &corev1beta1.PodTemplate{Spec: corev1.PodSpec{HostUsers: new(false)}}
 		Expect(create(workspace("pt-host-users-false", t))).To(Succeed())
 	})
 
 	It("refuses a label or an annotation with the prefix koodam.dev/", func() {
-		t := &corev1alpha1.PodTemplate{Metadata: corev1alpha1.PodTemplateMetadata{
+		t := &corev1beta1.PodTemplate{Metadata: corev1beta1.PodTemplateMetadata{
 			Labels: map[string]string{"koodam.dev/user": "someone"}}}
 		expectInvalid(create(workspace("pt-label", t)), "reserved")
-		t = &corev1alpha1.PodTemplate{Metadata: corev1alpha1.PodTemplateMetadata{
+		t = &corev1beta1.PodTemplate{Metadata: corev1beta1.PodTemplateMetadata{
 			Annotations: map[string]string{"koodam.dev/x": "y"}}}
 		expectInvalid(create(workspace("pt-annotation", t)), "reserved")
-		t = &corev1alpha1.PodTemplate{Metadata: corev1alpha1.PodTemplateMetadata{
+		t = &corev1beta1.PodTemplate{Metadata: corev1beta1.PodTemplateMetadata{
 			Labels: map[string]string{"core.koodam.dev/x": "y"}}}
 		expectInvalid(create(workspace("pt-label-subdomain", t)), "reserved")
-		t = &corev1alpha1.PodTemplate{Metadata: corev1alpha1.PodTemplateMetadata{
+		t = &corev1beta1.PodTemplate{Metadata: corev1beta1.PodTemplateMetadata{
 			Labels: map[string]string{"notkoodam.dev/x": "y"}}}
 		Expect(create(workspace("pt-label-other", t))).To(Succeed())
 	})
 
 	It("refuses an image in the template and in spec.image of a Workspace", func() {
-		ws := workspace("pt-ws-image", &corev1alpha1.PodTemplate{Spec: corev1.PodSpec{
+		ws := workspace("pt-ws-image", &corev1beta1.PodTemplate{Spec: corev1.PodSpec{
 			Containers: []corev1.Container{{Name: "workspace", Image: "other"}}}})
 		Expect(create(ws)).To(Succeed(), "the template alone can set the image")
 		ws = workspace("pt-ws-image-2", ws.Spec.PodTemplate)
@@ -128,10 +128,10 @@ var _ = Describe("Pod template CRD", func() {
 			"pt-agent-image":   {Name: agentMain, Image: "other"},
 			"pt-agent-command": {Name: agentMain, Command: []string{"sh"}},
 		} {
-			expectInvalid(create(agent(name, &corev1alpha1.PodTemplate{Spec: corev1.PodSpec{
+			expectInvalid(create(agent(name, &corev1beta1.PodTemplate{Spec: corev1.PodSpec{
 				Containers: []corev1.Container{c}}})), "spec.image and spec.command")
 		}
-		Expect(create(agent("pt-agent-sidecar", &corev1alpha1.PodTemplate{Spec: corev1.PodSpec{
+		Expect(create(agent("pt-agent-sidecar", &corev1beta1.PodTemplate{Spec: corev1.PodSpec{
 			Containers: []corev1.Container{{Name: "sidecar", Image: "proxy"}}}}))).To(Succeed())
 	})
 })

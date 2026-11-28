@@ -31,7 +31,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
-	corev1alpha1 "github.com/mohanraj00/koodam/api/v1alpha1"
+	corev1beta1 "github.com/mohanraj00/koodam/api/v1beta1"
 	"github.com/mohanraj00/koodam/internal/gateway"
 )
 
@@ -94,15 +94,15 @@ var _ = Describe("TenantQuota Controller", func() {
 	})
 
 	// newQuota makes a TenantQuota. The cleanup removes the finalizer, because no controller runs.
-	newQuota := func(name, tenant string, change func(*corev1alpha1.TenantQuotaSpec)) *corev1alpha1.TenantQuota {
-		q := &corev1alpha1.TenantQuota{ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: ns},
-			Spec: corev1alpha1.TenantQuotaSpec{Tenant: tenant}}
+	newQuota := func(name, tenant string, change func(*corev1beta1.TenantQuotaSpec)) *corev1beta1.TenantQuota {
+		q := &corev1beta1.TenantQuota{ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: ns},
+			Spec: corev1beta1.TenantQuotaSpec{Tenant: tenant}}
 		if change != nil {
 			change(&q.Spec)
 		}
 		Expect(k8sClient.Create(ctx, q)).To(Succeed())
 		DeferCleanup(func() {
-			cur := &corev1alpha1.TenantQuota{}
+			cur := &corev1beta1.TenantQuota{}
 			if k8sClient.Get(ctx, client.ObjectKeyFromObject(q), cur) == nil {
 				cur.Finalizers = nil
 				Expect(k8sClient.Update(ctx, cur)).To(Succeed())
@@ -113,30 +113,30 @@ var _ = Describe("TenantQuota Controller", func() {
 	}
 	// run does one reconcile of a TenantQuota and gives the object back. A new TenantQuota first
 	// gets its finalizer in a reconcile of its own.
-	run := func(q *corev1alpha1.TenantQuota) (*corev1alpha1.TenantQuota, reconcile.Result, error) {
+	run := func(q *corev1beta1.TenantQuota) (*corev1beta1.TenantQuota, reconcile.Result, error) {
 		req := reconcile.Request{NamespacedName: client.ObjectKeyFromObject(q)}
 		if len(q.Finalizers) == 0 && q.DeletionTimestamp.IsZero() {
 			_, err := r.Reconcile(ctx, req)
 			Expect(err).NotTo(HaveOccurred())
 		}
 		res, err := r.Reconcile(ctx, req)
-		got := &corev1alpha1.TenantQuota{}
+		got := &corev1beta1.TenantQuota{}
 		if gerr := k8sClient.Get(ctx, req.NamespacedName, got); gerr != nil {
 			return nil, res, err
 		}
 		return got, res, err
 	}
-	cond := func(q *corev1alpha1.TenantQuota, t string) *metav1.Condition {
+	cond := func(q *corev1beta1.TenantQuota, t string) *metav1.Condition {
 		return meta.FindStatusCondition(q.Status.Conditions, t)
 	}
 
 	It("makes the gateway customer and writes the use", func() {
 		const tenant = "tq-sync"
-		q := newQuota("sync", tenant, func(s *corev1alpha1.TenantQuotaSpec) {
-			s.Period = corev1alpha1.TenantQuotaPeriodHour
+		q := newQuota("sync", tenant, func(s *corev1beta1.TenantQuotaSpec) {
+			s.Period = corev1beta1.TenantQuotaPeriodHour
 			s.Requests = new(int64(10))
 			s.Spend = new(resource.MustParse("2500m"))
-			s.RateLimit = &corev1alpha1.TenantRateLimit{RequestsPerSecond: resource.MustParse("500m")}
+			s.RateLimit = &corev1beta1.TenantRateLimit{RequestsPerSecond: resource.MustParse("500m")}
 		})
 		gw.usage[tenant] = gateway.CustomerUsage{Spend: 0.1234567, Requests: 4, PeriodEnd: periodEnd}
 		got, res, err := run(q)
@@ -149,8 +149,8 @@ var _ = Describe("TenantQuota Controller", func() {
 		Expect(got.Status.Spend).To(Equal("0.123457"))
 		Expect(got.Status.PeriodEnd.Time.Equal(periodEnd)).To(BeTrue())
 		Expect(got.Status.ObservedTime).NotTo(BeNil())
-		Expect(cond(got, corev1alpha1.TenantQuotaReady).Reason).To(Equal(reasonTenantSynced))
-		exceeded := cond(got, corev1alpha1.TenantQuotaExceeded)
+		Expect(cond(got, corev1beta1.TenantQuotaReady).Reason).To(Equal(reasonTenantSynced))
+		exceeded := cond(got, corev1beta1.TenantQuotaExceeded)
 		Expect(exceeded.Status).To(Equal(metav1.ConditionFalse))
 		Expect(exceeded.Reason).To(Equal(reasonTenantWithin))
 
@@ -165,7 +165,7 @@ var _ = Describe("TenantQuota Controller", func() {
 	DescribeTable("marks a tenant at a limit with the typed reason",
 		func(usage gateway.CustomerUsage, exceeded bool, message string) {
 			const tenant = "tq-limit"
-			q := newQuota("limit", tenant, func(s *corev1alpha1.TenantQuotaSpec) {
+			q := newQuota("limit", tenant, func(s *corev1beta1.TenantQuotaSpec) {
 				s.Requests = new(int64(10))
 				s.Spend = new(resource.MustParse("1"))
 			})
@@ -173,19 +173,19 @@ var _ = Describe("TenantQuota Controller", func() {
 			gw.usage[tenant] = usage
 			got, _, err := run(q)
 			Expect(err).NotTo(HaveOccurred())
-			c := cond(got, corev1alpha1.TenantQuotaExceeded)
+			c := cond(got, corev1beta1.TenantQuotaExceeded)
 			if !exceeded {
 				Expect(c.Status).To(Equal(metav1.ConditionFalse))
 				return
 			}
 			Expect(c.Status).To(Equal(metav1.ConditionTrue))
-			Expect(c.Reason).To(Equal(corev1alpha1.ReasonTenantQuotaExceeded))
+			Expect(c.Reason).To(Equal(corev1beta1.ReasonTenantQuotaExceeded))
 			Expect(c.Message).To(ContainSubstring(message))
 			// A new period removes the mark.
 			gw.usage[tenant] = gateway.CustomerUsage{PeriodEnd: periodEnd.Add(24 * time.Hour)}
 			got, _, err = run(got)
 			Expect(err).NotTo(HaveOccurred())
-			Expect(cond(got, corev1alpha1.TenantQuotaExceeded).Status).To(Equal(metav1.ConditionFalse))
+			Expect(cond(got, corev1beta1.TenantQuotaExceeded).Status).To(Equal(metav1.ConditionFalse))
 			Expect(got.Status.Requests).To(BeZero())
 		},
 		Entry("below each limit", gateway.CustomerUsage{Requests: 9, Spend: 0.99}, false, ""),
@@ -196,11 +196,11 @@ var _ = Describe("TenantQuota Controller", func() {
 
 	It("gives no mark for a capped count below the request limit", func() {
 		const tenant = "tq-capped"
-		q := newQuota("capped", tenant, func(s *corev1alpha1.TenantQuotaSpec) { s.Requests = new(int64(10)) })
+		q := newQuota("capped", tenant, func(s *corev1beta1.TenantQuotaSpec) { s.Requests = new(int64(10)) })
 		gw.usage[tenant] = gateway.CustomerUsage{Requests: 9, RequestsCapped: true, PeriodEnd: periodEnd}
 		got, _, err := run(q)
 		Expect(err).NotTo(HaveOccurred())
-		c := cond(got, corev1alpha1.TenantQuotaExceeded)
+		c := cond(got, corev1beta1.TenantQuotaExceeded)
 		Expect(c.Status).To(Equal(metav1.ConditionUnknown))
 		Expect(c.Reason).To(Equal("RequestCountCapped"))
 		Expect(got.Status.Requests).To(Equal(int64(9)))
@@ -208,7 +208,7 @@ var _ = Describe("TenantQuota Controller", func() {
 		gw.usage[tenant] = gateway.CustomerUsage{Requests: 10, RequestsCapped: true, PeriodEnd: periodEnd}
 		got, _, err = run(got)
 		Expect(err).NotTo(HaveOccurred())
-		Expect(cond(got, corev1alpha1.TenantQuotaExceeded).Status).To(Equal(metav1.ConditionTrue))
+		Expect(cond(got, corev1beta1.TenantQuotaExceeded).Status).To(Equal(metav1.ConditionTrue))
 	})
 
 	It("gives a tenant with no limit a customer with a day period and no mark", func() {
@@ -216,7 +216,7 @@ var _ = Describe("TenantQuota Controller", func() {
 		got, _, err := run(newQuota("open", tenant, nil))
 		Expect(err).NotTo(HaveOccurred())
 		Expect(gw.specs[tenant]).To(Equal(gateway.CustomerSpec{ID: tenant, Period: 24 * time.Hour}))
-		Expect(cond(got, corev1alpha1.TenantQuotaExceeded).Status).To(Equal(metav1.ConditionFalse))
+		Expect(cond(got, corev1beta1.TenantQuotaExceeded).Status).To(Equal(metav1.ConditionFalse))
 	})
 
 	It("sets the limits again after a spec change, and makes a lost customer again", func() {
@@ -228,7 +228,7 @@ var _ = Describe("TenantQuota Controller", func() {
 		got, _, err = run(got)
 		Expect(err).NotTo(HaveOccurred())
 		Expect(gw.specs[tenant].Budget).To(Equal(3.0))
-		Expect(cond(got, corev1alpha1.TenantQuotaReady).ObservedGeneration).To(Equal(got.Generation))
+		Expect(cond(got, corev1beta1.TenantQuotaReady).ObservedGeneration).To(Equal(got.Generation))
 		sets := gw.sets
 		delete(gw.specs, tenant)
 		_, _, err = run(got)
@@ -239,7 +239,7 @@ var _ = Describe("TenantQuota Controller", func() {
 
 	It("shows a gateway error with fixed text and keeps the mark", func() {
 		const tenant = "tq-error"
-		q := newQuota("error", tenant, func(s *corev1alpha1.TenantQuotaSpec) { s.Requests = new(int64(1)) })
+		q := newQuota("error", tenant, func(s *corev1beta1.TenantQuotaSpec) { s.Requests = new(int64(1)) })
 		gw.usage[tenant] = gateway.CustomerUsage{Requests: 1, PeriodEnd: periodEnd}
 		got, _, err := run(q)
 		Expect(err).NotTo(HaveOccurred())
@@ -248,28 +248,28 @@ var _ = Describe("TenantQuota Controller", func() {
 		// controller-runtime writes the returned error to the log, so it has no text of the gateway.
 		Expect(err).To(MatchError(errTenantGateway))
 		Expect(err.Error()).To(Equal("a call to the gateway failed: HTTP 500"))
-		ready := cond(got, corev1alpha1.TenantQuotaReady)
+		ready := cond(got, corev1beta1.TenantQuotaReady)
 		Expect(ready.Status).To(Equal(metav1.ConditionFalse))
 		Expect(ready.Reason).To(Equal(reasonTenantGateway))
 		Expect(ready.Message).NotTo(ContainSubstring("sk-"))
-		Expect(cond(got, corev1alpha1.TenantQuotaExceeded).Status).To(Equal(metav1.ConditionTrue))
+		Expect(cond(got, corev1beta1.TenantQuotaExceeded).Status).To(Equal(metav1.ConditionTrue))
 	})
 
 	It("gives a tenant label to the oldest TenantQuota only", func() {
 		const tenant = "tq-twice"
-		first := newQuota("first", tenant, func(s *corev1alpha1.TenantQuotaSpec) { s.Spend = new(resource.MustParse("1")) })
+		first := newQuota("first", tenant, func(s *corev1beta1.TenantQuotaSpec) { s.Spend = new(resource.MustParse("1")) })
 		// The API server keeps the creation time in seconds, and the name decides for the same second.
-		second := newQuota("second", tenant, func(s *corev1alpha1.TenantQuotaSpec) { s.Spend = new(resource.MustParse("9")) })
+		second := newQuota("second", tenant, func(s *corev1beta1.TenantQuotaSpec) { s.Spend = new(resource.MustParse("9")) })
 		_, _, err := run(first)
 		Expect(err).NotTo(HaveOccurred())
 		got, res, err := run(second)
 		Expect(err).NotTo(HaveOccurred())
 		Expect(res.RequeueAfter).To(BeZero())
 		Expect(gw.specs[tenant].Budget).To(Equal(1.0))
-		ready := cond(got, corev1alpha1.TenantQuotaReady)
+		ready := cond(got, corev1beta1.TenantQuotaReady)
 		Expect(ready.Status).To(Equal(metav1.ConditionFalse))
 		Expect(ready.Reason).To(Equal(reasonTenantDuplicate))
-		Expect(cond(got, corev1alpha1.TenantQuotaExceeded)).To(BeNil())
+		Expect(cond(got, corev1beta1.TenantQuotaExceeded)).To(BeNil())
 		Expect(r.sameTenant(ctx, first)).To(ConsistOf(reconcile.Request{NamespacedName: client.ObjectKeyFromObject(second)}))
 
 		// A delete of the owner keeps the customer and its spend, and the second one gets the label.
@@ -281,7 +281,7 @@ var _ = Describe("TenantQuota Controller", func() {
 		got, _, err = run(second)
 		Expect(err).NotTo(HaveOccurred())
 		Expect(gw.specs[tenant].Budget).To(Equal(9.0))
-		Expect(cond(got, corev1alpha1.TenantQuotaReady).Status).To(Equal(metav1.ConditionTrue))
+		Expect(cond(got, corev1beta1.TenantQuotaReady).Status).To(Equal(metav1.ConditionTrue))
 	})
 
 	It("deletes the gateway customer before it removes the finalizer", func() {

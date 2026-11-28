@@ -17,8 +17,12 @@ limitations under the License.
 package chart
 
 import (
+	"slices"
 	"strings"
 	"testing"
+
+	admissionv1 "k8s.io/api/admissionregistration/v1"
+	"sigs.k8s.io/yaml"
 )
 
 // The manager gets the zone and the namespaces of the install. The release namespace is always
@@ -251,6 +255,35 @@ func TestZonePlacementPolicy(t *testing.T) {
 		if out, err := helmTemplate(t, tc[0]); err == nil || !strings.Contains(out, tc[1]) {
 			t.Errorf("%s is accepted: %v", name, err)
 		}
+	}
+}
+
+func TestKoodamAdmissionPolicyVersions(t *testing.T) {
+	out := render(t, "apps: {enabled: true}\nzone: {name: zone-a}\n")
+	want := map[string]string{"koodam-appversion": "appversions", "koodam-hold": "holds",
+		"koodam-zone-placement": "appversions"}
+	for _, doc := range objects(t, out, "ValidatingAdmissionPolicy") {
+		var p admissionv1.ValidatingAdmissionPolicy
+		if err := yaml.Unmarshal([]byte(doc), &p); err != nil {
+			t.Fatal(err)
+		}
+		resource, ok := want[p.Name]
+		if !ok {
+			continue
+		}
+		delete(want, p.Name)
+		m := p.Spec.MatchConstraints
+		if m == nil || m.MatchPolicy != nil || len(m.ResourceRules) != 1 {
+			t.Fatalf("%s must have one resource rule and no matchPolicy", p.Name)
+		}
+		r := m.ResourceRules[0]
+		if !slices.Equal(r.APIGroups, []string{"core.koodam.dev"}) ||
+			!slices.Equal(r.APIVersions, []string{"v1beta1"}) || !slices.Equal(r.Resources, []string{resource}) {
+			t.Errorf("%s must match v1beta1 %s", p.Name, resource)
+		}
+	}
+	if len(want) != 0 {
+		t.Errorf("the chart did not render these policies: %v", want)
 	}
 }
 

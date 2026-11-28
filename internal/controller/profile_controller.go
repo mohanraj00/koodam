@@ -33,7 +33,7 @@ import (
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
-	corev1alpha1 "github.com/mohanraj00/koodam/api/v1alpha1"
+	corev1beta1 "github.com/mohanraj00/koodam/api/v1beta1"
 )
 
 // ProfileReconciler writes the bound namespaces of each Profile. It only reads the Profiles and
@@ -52,7 +52,7 @@ type ProfileReconciler struct {
 func (r *ProfileReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	log := logf.FromContext(ctx)
 
-	p := &corev1alpha1.Profile{}
+	p := &corev1beta1.Profile{}
 	if err := r.Get(ctx, req.NamespacedName, p); err != nil {
 		return ctrl.Result{}, client.IgnoreNotFound(err)
 	}
@@ -95,8 +95,8 @@ func (r *ProfileReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ct
 // namespaceBound is the binding rule. The namespace is bound to the Profile only if the Profile
 // lists the namespace and the namespace has the label koodam.dev/profile=<Profile name>. A label
 // alone gives nothing. If the namespace or the Profile is in deletion, the namespace is not bound.
-func namespaceBound(p *corev1alpha1.Profile, ns *corev1.Namespace) bool {
-	return ns.Labels[corev1alpha1.ProfileLabel] == p.Name && ns.DeletionTimestamp.IsZero() &&
+func namespaceBound(p *corev1beta1.Profile, ns *corev1.Namespace) bool {
+	return ns.Labels[corev1beta1.ProfileLabel] == p.Name && ns.DeletionTimestamp.IsZero() &&
 		p.DeletionTimestamp.IsZero() &&
 		slices.Contains(p.Spec.Namespaces, ns.Name)
 }
@@ -112,7 +112,7 @@ func conditionsEqual(a, b []metav1.Condition) bool {
 // profileForNamespace maps a Namespace to the Profile in its label. On an update, the handler
 // calls it for the old and the new object. Thus a label change reconciles the two Profiles.
 func profileForNamespace(_ context.Context, obj client.Object) []reconcile.Request {
-	name := obj.GetLabels()[corev1alpha1.ProfileLabel]
+	name := obj.GetLabels()[corev1beta1.ProfileLabel]
 	if name == "" {
 		return nil
 	}
@@ -122,7 +122,7 @@ func profileForNamespace(_ context.Context, obj client.Object) []reconcile.Reque
 // SetupWithManager sets up the controller with the Manager.
 func (r *ProfileReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	return ctrl.NewControllerManagedBy(mgr).
-		For(&corev1alpha1.Profile{}).
+		For(&corev1beta1.Profile{}).
 		Watches(&corev1.Namespace{}, handler.EnqueueRequestsFromMapFunc(profileForNamespace)).
 		Named("profile").
 		Complete(r)

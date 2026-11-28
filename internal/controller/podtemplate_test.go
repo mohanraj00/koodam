@@ -24,14 +24,14 @@ import (
 	"k8s.io/apimachinery/pkg/util/validation/field"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
-	corev1alpha1 "github.com/mohanraj00/koodam/api/v1alpha1"
+	corev1beta1 "github.com/mohanraj00/koodam/api/v1beta1"
 	"github.com/mohanraj00/koodam/internal/podtemplate"
 )
 
 func TestOwnedSecrets(t *testing.T) {
 	const space = "team"
 	owned := &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: "ws-b-ssh-host", Namespace: space,
-		OwnerReferences: []metav1.OwnerReference{{APIVersion: corev1alpha1.GroupVersion.String(),
+		OwnerReferences: []metav1.OwnerReference{{APIVersion: corev1beta1.GroupVersion.String(),
 			Kind: "Workspace", Name: "ws-b", UID: "ws-b-uid"}}}}
 	mine := &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: "github-token", Namespace: space,
 		OwnerReferences: []metav1.OwnerReference{{APIVersion: "apps/v1", Kind: "Deployment", Name: "d", UID: "d"}}}}

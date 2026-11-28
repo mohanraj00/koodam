@@ -34,7 +34,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
-	corev1alpha1 "github.com/mohanraj00/koodam/api/v1alpha1"
+	corev1beta1 "github.com/mohanraj00/koodam/api/v1beta1"
 )
 
 // sshProgram is the OpenSSH client.
@@ -230,8 +230,8 @@ func readPublicKey(path string) (string, error) {
 // patches the Workspace only if the list changes. The patch fails if the Workspace changed
 // after the read.
 func (e *env) setKey(ctx context.Context, ns, ws, key string, add bool, out io.Writer) (
-	*corev1alpha1.Workspace, error) {
-	w := &corev1alpha1.Workspace{}
+	*corev1beta1.Workspace, error) {
+	w := &corev1beta1.Workspace{}
 	err := e.kube.Get(ctx, client.ObjectKey{Namespace: ns, Name: ws}, w)
 	if apierrors.IsNotFound(err) {
 		return nil, fmt.Errorf("workspace %s does not exist in namespace %s", ws, ns)
@@ -423,13 +423,13 @@ func (d *doctor) cluster(ctx context.Context, e *env, p sshPaths, args []string)
 			fix = err.Error()
 		}
 		d.check("RBAC: get on pods and create on pods/portforward in namespace "+ns, allowed && err == nil, fix)
-		w := &corev1alpha1.Workspace{}
+		w := &corev1beta1.Workspace{}
 		if err := e.kube.Get(ctx, client.ObjectKey{Namespace: ns, Name: ws}, w); err != nil {
 			d.check("Workspace "+t+" exists", false, apiError("get the Workspace", err).Error())
 			continue
 		}
 		d.check("Workspace "+t+" is not suspended", !w.Spec.Suspend, "set spec.suspend to false")
-		d.check("Workspace "+t+" is Running", w.Status.Phase == corev1alpha1.WorkspaceRunning,
+		d.check("Workspace "+t+" is Running", w.Status.Phase == corev1beta1.WorkspaceRunning,
 			fmt.Sprintf("the phase is %q: wait, or read the Workspace conditions", w.Status.Phase))
 	}
 }

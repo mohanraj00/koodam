@@ -24,6 +24,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 
 	corev1alpha1 "github.com/mohanraj00/koodam/api/v1alpha1"
+	corev1beta1 "github.com/mohanraj00/koodam/api/v1beta1"
 )
 
 // ReservedPortName is the container port name that the ingress owns when spec.ingressPort is set.
@@ -36,21 +37,32 @@ var (
 		"with the name http when spec.ingressPort is set")
 )
 
-// Check returns a fixed error if the ingress fields of spec are not valid. If spec.ingressPort is
-// not set, a legacy Agent can use the port name http. If it is set, it must be from 1 to 65535, and
-// no container or init container, also the main container, can have a port with the name http.
+// Check validates the ingress fields for the v1alpha1 admission webhook.
 func Check(spec corev1alpha1.AgentSpec) error {
-	if spec.IngressPort == nil {
+	var pod *corev1.PodSpec
+	if spec.PodTemplate != nil {
+		pod = &spec.PodTemplate.Spec
+	}
+	return checkPorts(spec.IngressPort, pod)
+}
+
+// CheckSpec validates the ingress fields of a v1beta1 Agent.
+func CheckSpec(spec corev1beta1.AgentSpec) error {
+	var pod *corev1.PodSpec
+	if spec.PodTemplate != nil {
+		pod = &spec.PodTemplate.Spec
+	}
+	return checkPorts(spec.IngressPort, pod)
+}
+
+func checkPorts(port *int32, pod *corev1.PodSpec) error {
+	if port == nil {
 		return nil
 	}
-	if p := *spec.IngressPort; p < 1 || p > 65535 {
+	if *port < 1 || *port > 65535 {
 		return ErrPortRange
 	}
-	if spec.PodTemplate == nil {
-		return nil
-	}
-	s := spec.PodTemplate.Spec
-	if reserved(s.Containers) || reserved(s.InitContainers) {
+	if pod != nil && (reserved(pod.Containers) || reserved(pod.InitContainers)) {
 		return ErrReservedPort
 	}
 	return nil

@@ -47,7 +47,7 @@ const (
 // hold returns a Hold with the target kind, namespace and name. A release user releases it.
 func hold(name, action, kind, namespace, target, release string) *unstructured.Unstructured {
 	u := &unstructured.Unstructured{Object: map[string]any{}}
-	u.SetAPIVersion("core.koodam.dev/v1alpha1")
+	u.SetAPIVersion("core.koodam.dev/v1beta1")
 	u.SetKind("Hold")
 	u.SetName(name)
 	_ = unstructured.SetNestedField(u.Object, action, "spec", "action")
@@ -66,7 +66,7 @@ func hold(name, action, kind, namespace, target, release string) *unstructured.U
 
 func profile(name string, bound ...string) *unstructured.Unstructured {
 	u := &unstructured.Unstructured{Object: map[string]any{}}
-	u.SetAPIVersion("core.koodam.dev/v1alpha1")
+	u.SetAPIVersion("core.koodam.dev/v1beta1")
 	u.SetKind("Profile")
 	u.SetName(name)
 	if bound != nil {

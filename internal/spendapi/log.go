@@ -29,7 +29,7 @@ import (
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
-	corev1alpha1 "github.com/mohanraj00/koodam/api/v1alpha1"
+	corev1beta1 "github.com/mohanraj00/koodam/api/v1beta1"
 )
 
 const (
@@ -109,7 +109,7 @@ func logLines(query string) (int, bool) {
 }
 
 func (a *api) runLog(ctx context.Context, ref runRef, lines int) (runLog, error) {
-	agent := &corev1alpha1.Agent{}
+	agent := &corev1beta1.Agent{}
 	if err := a.kube.Get(ctx, client.ObjectKey{Namespace: ref.namespace, Name: ref.name}, agent); err != nil {
 		return runLog{}, err
 	}

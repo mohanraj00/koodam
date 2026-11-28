@@ -28,7 +28,7 @@ import (
 	"k8s.io/apimachinery/pkg/util/intstr"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
-	corev1alpha1 "github.com/mohanraj00/koodam/api/v1alpha1"
+	corev1beta1 "github.com/mohanraj00/koodam/api/v1beta1"
 )
 
 const (
@@ -39,7 +39,7 @@ const (
 )
 
 // versionPolicy makes the NetworkPolicy of the app pods.
-func (r *AppVersionReconciler) versionPolicy(av *corev1alpha1.AppVersion, ports []corev1.ContainerPort) *networkingv1.NetworkPolicy {
+func (r *AppVersionReconciler) versionPolicy(av *corev1beta1.AppVersion, ports []corev1.ContainerPort) *networkingv1.NetworkPolicy {
 	policy := r.Egress.policy(appVersionMeta(av), appVersionLabels(av), ports, r.IngressNamespaces)
 	if policy == nil {
 		return nil
@@ -58,16 +58,16 @@ func (r *AppVersionReconciler) versionPolicy(av *corev1alpha1.AppVersion, ports 
 
 // gatePassed is true if the weights of the spec apply to the version: the version has no gate, or
 // the controller accepted a record with the verdict pass.
-func gatePassed(av *corev1alpha1.AppVersion) bool {
-	return av.Spec.Gate == nil || (av.Status.Evidence != nil && av.Status.Evidence.Verdict == corev1alpha1.EvidencePass &&
-		meta.IsStatusConditionTrue(av.Status.Conditions, corev1alpha1.AppVersionEvidence))
+func gatePassed(av *corev1beta1.AppVersion) bool {
+	return av.Spec.Gate == nil || (av.Status.Evidence != nil && av.Status.Evidence.Verdict == corev1beta1.EvidencePass &&
+		meta.IsStatusConditionTrue(av.Status.Conditions, corev1beta1.AppVersionEvidence))
 }
 
 // gateOpen is true while the gate of the version has no end state. Only then the gate pod needs a
 // path to the pods of the version.
-func gateOpen(av *corev1alpha1.AppVersion) bool {
+func gateOpen(av *corev1beta1.AppVersion) bool {
 	return av.Spec.Gate != nil && av.Status.Evidence == nil &&
-		!meta.IsStatusConditionFalse(av.Status.Conditions, corev1alpha1.AppVersionEvidence)
+		!meta.IsStatusConditionFalse(av.Status.Conditions, corev1beta1.AppVersionEvidence)
 }
 
 func gatePorts(ports []corev1.ContainerPort) []networkingv1.NetworkPolicyPort {
@@ -81,7 +81,7 @@ func gatePorts(ports []corev1.ContainerPort) []networkingv1.NetworkPolicyPort {
 
 // gateIngress is the rule of the NetworkPolicy of the version that permits ingress from the gate
 // pod of this version, on the ports of the version.
-func gateIngress(av *corev1alpha1.AppVersion, ports []corev1.ContainerPort) networkingv1.NetworkPolicyIngressRule {
+func gateIngress(av *corev1beta1.AppVersion, ports []corev1.ContainerPort) networkingv1.NetworkPolicyIngressRule {
 	return networkingv1.NetworkPolicyIngressRule{Ports: gatePorts(ports), From: []networkingv1.NetworkPolicyPeer{{
 		PodSelector: &metav1.LabelSelector{MatchLabels: map[string]string{gateLabel: av.Name}}}}}
 }
@@ -89,11 +89,11 @@ func gateIngress(av *corev1alpha1.AppVersion, ports []corev1.ContainerPort) netw
 // gatePolicyName is the name of the NetworkPolicy of the gate pod. A version name is a DNS label,
 // so it has no dot. Thus the name is never the name of the NetworkPolicy of a version, also for a
 // version with a name that ends in "-gate".
-func gatePolicyName(av *corev1alpha1.AppVersion) string { return appVersionName(av) + ".gate" }
+func gatePolicyName(av *corev1beta1.AppVersion) string { return appVersionName(av) + ".gate" }
 
 // gatePolicy is the NetworkPolicy of the gate pod. The pod gets no ingress. It gets egress only to
 // the pods of the version on their ports, and to the cluster DNS.
-func gatePolicy(av *corev1alpha1.AppVersion, ports []corev1.ContainerPort) *networkingv1.NetworkPolicy {
+func gatePolicy(av *corev1beta1.AppVersion, ports []corev1.ContainerPort) *networkingv1.NetworkPolicy {
 	tcp, udp := corev1.ProtocolTCP, corev1.ProtocolUDP
 	dns := new(intstr.FromInt32(gateDNSPort))
 	m := appVersionMeta(av)
@@ -113,7 +113,7 @@ func gatePolicy(av *corev1alpha1.AppVersion, ports []corev1.ContainerPort) *netw
 
 // applyGatePolicy makes the NetworkPolicy of the gate pod, or makes it equal to want. It gives
 // back errNotOwned if a policy with the name is not from av.
-func (r *AppVersionReconciler) applyGatePolicy(ctx context.Context, av *corev1alpha1.AppVersion,
+func (r *AppVersionReconciler) applyGatePolicy(ctx context.Context, av *corev1beta1.AppVersion,
 	want *networkingv1.NetworkPolicy) error {
 	err := r.Create(ctx, want.DeepCopy())
 	if !apierrors.IsAlreadyExists(err) {

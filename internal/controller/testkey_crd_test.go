@@ -31,7 +31,7 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
-	corev1alpha1 "github.com/mohanraj00/koodam/api/v1alpha1"
+	corev1beta1 "github.com/mohanraj00/koodam/api/v1beta1"
 )
 
 // The CRD validation of the TestKey and of the Workspace test key limits. These tests do not run
@@ -59,12 +59,12 @@ var _ = Describe("TestKey CRD", func() {
 		otherName       = "other"
 	)
 
-	newTestKey := func(name string) *corev1alpha1.TestKey {
-		return &corev1alpha1.TestKey{
+	newTestKey := func(name string) *corev1beta1.TestKey {
+		return &corev1beta1.TestKey{
 			ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: ns},
-			Spec: corev1alpha1.TestKeySpec{
-				WorkspaceRef: corev1alpha1.TestKeyWorkspaceRef{Name: workspaceName, UID: workspaceUID},
-				TestID:       testKeyTestID,
+			Spec: corev1beta1.TestKeySpec{
+				WorkspaceRef: corev1beta1.TestKeyWorkspaceRef{Name: workspaceName, UID: workspaceUID},
+				TestRunID:    testKeyTestRunID,
 				Budget:       resource.MustParse("0.5"),
 				TTL:          metav1.Duration{Duration: 30 * time.Minute},
 			},
@@ -74,12 +74,12 @@ var _ = Describe("TestKey CRD", func() {
 	// rawTestKey is a valid TestKey as a map, so that a test can remove a field.
 	rawTestKey := func(name string) *unstructured.Unstructured {
 		u := &unstructured.Unstructured{Object: map[string]any{
-			apiVersionField: corev1alpha1.GroupVersion.String(),
+			apiVersionField: corev1beta1.GroupVersion.String(),
 			kindField:       "TestKey",
 			metadataField:   map[string]any{nameField: name, namespaceField: ns},
 			specField: map[string]any{
 				"workspaceRef": map[string]any{nameField: workspaceName, uidField: workspaceUID},
-				"testID":       testKeyTestID,
+				"testRunID":    testKeyTestRunID,
 				budgetField:    "0.5",
 				ttlField:       "30m",
 			},
@@ -114,7 +114,7 @@ var _ = Describe("TestKey CRD", func() {
 		for i, id := range []string{"20261030-101900-a1b2", "a", "0", "login_smoke-", "login-smoke_",
 			strings.Repeat("t", 300)} {
 			u := rawTestKey("tk-id-" + string(rune('a'+i)))
-			Expect(unstructured.SetNestedField(u.Object, id, specField, "testID")).To(Succeed())
+			Expect(unstructured.SetNestedField(u.Object, id, specField, "testRunID")).To(Succeed())
 			Expect(create(u)).To(Succeed(), "test ID %q", id)
 		}
 	})
@@ -142,7 +142,7 @@ var _ = Describe("TestKey CRD", func() {
 		Entry("workspaceRef", "workspaceRef"),
 		Entry("workspaceRef.name", "workspaceRef", "name"),
 		Entry("workspaceRef.uid", "workspaceRef", "uid"),
-		Entry("testID", "testID"),
+		Entry("testRunID", "testRunID"),
 		Entry("budget", "budget"),
 		Entry("ttl", "ttl"),
 	)
@@ -156,15 +156,15 @@ var _ = Describe("TestKey CRD", func() {
 		Entry("empty Workspace name", "", "workspaceRef", "name"),
 		Entry("Workspace name with capitals", "Dev", "workspaceRef", "name"),
 		Entry("empty Workspace UID", "", "workspaceRef", "uid"),
-		Entry("empty test ID", "", "testID"),
-		Entry("test ID with a slash", "a/b", "testID"),
-		Entry("test ID with a dot", "a.b", "testID"),
-		Entry("test ID that starts with a hyphen", "-a", "testID"),
-		Entry("test ID that starts with an underscore", "_a", "testID"),
-		Entry("test ID with a space", "a b", "testID"),
-		Entry("test ID with a new line", "a\n", "testID"),
-		Entry("test ID with a tab", "a\tb", "testID"),
-		Entry("test ID with a NUL", "a\x00b", "testID"),
+		Entry("empty test ID", "", "testRunID"),
+		Entry("test ID with a slash", "a/b", "testRunID"),
+		Entry("test ID with a dot", "a.b", "testRunID"),
+		Entry("test ID that starts with a hyphen", "-a", "testRunID"),
+		Entry("test ID that starts with an underscore", "_a", "testRunID"),
+		Entry("test ID with a space", "a b", "testRunID"),
+		Entry("test ID with a new line", "a\n", "testRunID"),
+		Entry("test ID with a tab", "a\tb", "testRunID"),
+		Entry("test ID with a NUL", "a\x00b", "testRunID"),
 		Entry("zero budget", "0", "budget"),
 		Entry("zero budget with decimals", "0.000", "budget"),
 		Entry("negative budget", "-1", "budget"),
@@ -190,7 +190,7 @@ var _ = Describe("TestKey CRD", func() {
 	})
 
 	DescribeTable("refuses a change to the spec",
-		func(change func(*corev1alpha1.TestKeySpec)) {
+		func(change func(*corev1beta1.TestKeySpec)) {
 			tk := newTestKey("tk-immutable")
 			Expect(create(tk)).To(Succeed())
 			change(&tk.Spec)
@@ -198,14 +198,14 @@ var _ = Describe("TestKey CRD", func() {
 			expectInvalid(err)
 			Expect(err.Error()).To(ContainSubstring("spec is immutable"))
 		},
-		Entry("workspaceRef.name", func(s *corev1alpha1.TestKeySpec) { s.WorkspaceRef.Name = otherName }),
-		Entry("workspaceRef.uid", func(s *corev1alpha1.TestKeySpec) { s.WorkspaceRef.UID = "ws-uid-2" }),
-		Entry("testID", func(s *corev1alpha1.TestKeySpec) { s.TestID = "other-test" }),
-		Entry("budget", func(s *corev1alpha1.TestKeySpec) { s.Budget = resource.MustParse("1") }),
-		Entry("ttl", func(s *corev1alpha1.TestKeySpec) { s.TTL = metav1.Duration{Duration: time.Hour} }),
-		Entry("budget by 1m", func(s *corev1alpha1.TestKeySpec) { s.Budget = resource.MustParse("501m") }),
-		Entry("ttl by 1s", func(s *corev1alpha1.TestKeySpec) { s.TTL.Duration += time.Second }),
-		Entry("models", func(s *corev1alpha1.TestKeySpec) { s.Models = []string{otherModel} }),
+		Entry("workspaceRef.name", func(s *corev1beta1.TestKeySpec) { s.WorkspaceRef.Name = otherName }),
+		Entry("workspaceRef.uid", func(s *corev1beta1.TestKeySpec) { s.WorkspaceRef.UID = "ws-uid-2" }),
+		Entry("testRunID", func(s *corev1beta1.TestKeySpec) { s.TestRunID = "other-test" }),
+		Entry("budget", func(s *corev1beta1.TestKeySpec) { s.Budget = resource.MustParse("1") }),
+		Entry("ttl", func(s *corev1beta1.TestKeySpec) { s.TTL = metav1.Duration{Duration: time.Hour} }),
+		Entry("budget by 1m", func(s *corev1beta1.TestKeySpec) { s.Budget = resource.MustParse("501m") }),
+		Entry("ttl by 1s", func(s *corev1beta1.TestKeySpec) { s.TTL.Duration += time.Second }),
+		Entry("models", func(s *corev1beta1.TestKeySpec) { s.Models = []string{otherModel} }),
 	)
 
 	// The API server checks the result of the full patch. A remove and an add in one patch, or a
@@ -214,10 +214,10 @@ var _ = Describe("TestKey CRD", func() {
 		func(patch string) {
 			tk := newTestKey("tk-readd")
 			Expect(create(tk)).To(Succeed())
-			Expect(tk.Status).To(Equal(corev1alpha1.TestKeyStatus{}))
+			Expect(tk.Status).To(Equal(corev1beta1.TestKeyStatus{}))
 			expectInvalid(jsonPatch(tk, patch))
 
-			got := &corev1alpha1.TestKey{}
+			got := &corev1beta1.TestKey{}
 			Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(tk), got)).To(Succeed())
 			want := newTestKey("tk-readd").Spec
 			Expect(got.Spec.Budget.Cmp(want.Budget)).To(Equal(0))
@@ -225,10 +225,10 @@ var _ = Describe("TestKey CRD", func() {
 			Expect(got.Spec).To(Equal(want))
 		},
 		Entry("remove the spec", `[{"op":"remove","path":"/spec"}]`),
-		Entry("remove testID", `[{"op":"remove","path":"/spec/testID"}]`),
-		Entry("remove and add testID", `[{"op":"remove","path":"/spec/testID"},{"op":"add","path":"/spec/testID","value":"other"}]`),
+		Entry("remove testRunID", `[{"op":"remove","path":"/spec/testRunID"}]`),
+		Entry("remove and add testRunID", `[{"op":"remove","path":"/spec/testRunID"},{"op":"add","path":"/spec/testRunID","value":"other"}]`),
 		Entry("remove and add workspaceRef", `[{"op":"remove","path":"/spec/workspaceRef"},{"op":"add","path":"/spec/workspaceRef","value":{"name":"dev","uid":"ws-uid-2"}}]`),
-		Entry("replace the spec", `[{"op":"replace","path":"/spec","value":{"workspaceRef":{"name":"dev","uid":"ws-uid-1"},"testID":"login-smoke","budget":"9","ttl":"30m"}}]`),
+		Entry("replace the spec", `[{"op":"replace","path":"/spec","value":{"workspaceRef":{"name":"dev","uid":"ws-uid-1"},"testRunID":"login-smoke","budget":"9","ttl":"30m"}}]`),
 	)
 
 	// A typed client writes a Quantity and a Duration in the canonical form, for example "500m" and
@@ -240,7 +240,7 @@ var _ = Describe("TestKey CRD", func() {
 			Expect(unstructured.SetNestedField(u.Object, ttl, specField, ttlField)).To(Succeed())
 			Expect(create(u)).To(Succeed())
 
-			tk := &corev1alpha1.TestKey{}
+			tk := &corev1beta1.TestKey{}
 			Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(u), tk)).To(Succeed())
 			tk.Labels = map[string]string{"nookku.dev/run": "r1"}
 			Expect(k8sClient.Update(ctx, tk)).To(Succeed())
@@ -258,12 +258,12 @@ var _ = Describe("TestKey CRD", func() {
 			Expect(time.ParseDuration(canonicalTTL)).To(Equal(createdTTL))
 
 			now := metav1.NewTime(time.Now().Truncate(time.Second))
-			tk.Status = corev1alpha1.TestKeyStatus{
+			tk.Status = corev1beta1.TestKeyStatus{
 				KeyAlias:  "login-smoke-" + string(tk.UID),
 				KeyHash:   strings.Repeat("0", 64),
 				ExpiresAt: &now,
 				RevokedAt: &now,
-				Usage:     &corev1alpha1.AgentUsage{Spend: "0.01", Calls: 1},
+				Usage:     &corev1beta1.AgentUsage{Spend: "0.01", Calls: 1},
 				Conditions: []metav1.Condition{{Type: condRevoked, Status: metav1.ConditionTrue, Reason: "Expired",
 					LastTransitionTime: now}},
 			}
@@ -277,21 +277,21 @@ var _ = Describe("TestKey CRD", func() {
 	)
 
 	Context("Workspace test key limits", func() {
-		newWorkspace := func(name string) *corev1alpha1.Workspace {
-			return &corev1alpha1.Workspace{ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: ns}}
+		newWorkspace := func(name string) *corev1beta1.Workspace {
+			return &corev1beta1.Workspace{ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: ns}}
 		}
 
 		It("keeps a Workspace without the limits as before", func() {
 			ws := newWorkspace("ws-no-testkeys")
 			Expect(create(ws)).To(Succeed())
-			got := &corev1alpha1.Workspace{}
+			got := &corev1beta1.Workspace{}
 			Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(ws), got)).To(Succeed())
 			Expect(got.Spec.TestKeys).To(BeNil())
 		})
 
 		It("accepts a Workspace with the limits", func() {
 			ws := newWorkspace("ws-testkeys")
-			ws.Spec.TestKeys = &corev1alpha1.WorkspaceTestKeys{
+			ws.Spec.TestKeys = &corev1beta1.WorkspaceTestKeys{
 				MaxBudget: resource.MustParse("2"), MaxTTL: metav1.Duration{Duration: time.Hour}}
 			Expect(create(ws)).To(Succeed())
 		})
@@ -299,7 +299,7 @@ var _ = Describe("TestKey CRD", func() {
 		DescribeTable("refuses incorrect limits",
 			func(testKeys map[string]any) {
 				u := &unstructured.Unstructured{Object: map[string]any{
-					apiVersionField: corev1alpha1.GroupVersion.String(),
+					apiVersionField: corev1beta1.GroupVersion.String(),
 					kindField:       workspaceKind,
 					metadataField:   map[string]any{nameField: "ws-bad-limits", namespaceField: ns},
 					specField:       map[string]any{"testKeys": testKeys},

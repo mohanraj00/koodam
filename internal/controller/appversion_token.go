@@ -30,7 +30,7 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/validation/field"
 
-	corev1alpha1 "github.com/mohanraj00/koodam/api/v1alpha1"
+	corev1beta1 "github.com/mohanraj00/koodam/api/v1beta1"
 	"github.com/mohanraj00/koodam/internal/tenanttoken"
 )
 
@@ -58,7 +58,7 @@ func (c AppClaimCheck) tokenEnabled() bool {
 	return c.enabled() && c.TenantClaim != "" && c.TenantToken
 }
 
-func tenantTokenName(av *corev1alpha1.AppVersion) string { return appVersionName(av) + "-tenant-token" }
+func tenantTokenName(av *corev1beta1.AppVersion) string { return appVersionName(av) + "-tenant-token" }
 
 // tokenKeyID gives back an ID of a public key text. It is not a secret.
 func tokenKeyID(public string) string {
@@ -93,7 +93,7 @@ func checkTokenNames(tmpl *corev1.PodTemplateSpec) error {
 // is no Secret, it makes one with a new seed. It gives back the public key as text. It gives
 // back errTokenSecret for a Secret that is not from the version or that has no valid seed. The
 // seed is only in the Secret: no log, event, status or error has it.
-func (r *AppVersionReconciler) tenantTokenKey(ctx context.Context, av *corev1alpha1.AppVersion) (string, error) {
+func (r *AppVersionReconciler) tenantTokenKey(ctx context.Context, av *corev1beta1.AppVersion) (string, error) {
 	m := appVersionMeta(av)
 	m.Name = tenantTokenName(av)
 	s := &corev1.Secret{}
@@ -122,7 +122,7 @@ func (r *AppVersionReconciler) tenantTokenKey(ctx context.Context, av *corev1alp
 
 // addToken gives the seed to the check container and sets its flag. Only the check container
 // mounts the volume of the seed.
-func addToken(tmpl *corev1.PodTemplateSpec, check *corev1.Container, av *corev1alpha1.AppVersion, public string) {
+func addToken(tmpl *corev1.PodTemplateSpec, check *corev1.Container, av *corev1beta1.AppVersion, public string) {
 	metav1.SetMetaDataAnnotation(&tmpl.ObjectMeta, tokenKeyIDAnnotation, tokenKeyID(public))
 	tmpl.Spec.Volumes = append(tmpl.Spec.Volumes, corev1.Volume{Name: tokenVolume, VolumeSource: corev1.VolumeSource{
 		Secret: &corev1.SecretVolumeSource{SecretName: tenantTokenName(av), DefaultMode: new(int32(0o440)),

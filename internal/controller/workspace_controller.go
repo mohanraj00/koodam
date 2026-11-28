@@ -48,7 +48,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/predicate"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
-	corev1alpha1 "github.com/mohanraj00/koodam/api/v1alpha1"
+	corev1beta1 "github.com/mohanraj00/koodam/api/v1beta1"
 	"github.com/mohanraj00/koodam/internal/gateway"
 )
 
@@ -120,9 +120,8 @@ type WorkspaceReconciler struct {
 	// InstallerImage has /harness-install. The pod uses it as an init container for each
 	// harness of spec.harnesses.
 	InstallerImage string
-	// NookkuImage is the Nookku data image with the pinned Nookku files (#83). If it is empty, the
-	// pod has no Nookku files, and the condition Harnesses is False.
-	NookkuImage string
+	// PresetImages gives the data images by flag name.
+	PresetImages map[string]string
 	// Gateway makes, renews and blocks the gateway keys.
 	Gateway gateway.Gateway
 	// GatewayURL is the gateway address for the workspace pods.
@@ -155,7 +154,7 @@ type WorkspaceReconciler struct {
 
 // Reconcile makes the objects of the Workspace and writes its status.
 func (r *WorkspaceReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
-	ws := &corev1alpha1.Workspace{}
+	ws := &corev1beta1.Workspace{}
 	if err := r.Get(ctx, req.NamespacedName, ws); err != nil {
 		return ctrl.Result{}, client.IgnoreNotFound(err)
 	}
@@ -186,7 +185,7 @@ func (r *WorkspaceReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 	}
 	ws.Status.Phase = phase
 	ws.Status.Pod = ""
-	if phase != corev1alpha1.WorkspaceFailed && bound {
+	if phase != corev1beta1.WorkspaceFailed && bound {
 		ws.Status.Pod = ws.Name + "-0"
 	}
 	// The message names the namespace and the label only.
@@ -197,7 +196,7 @@ func (r *WorkspaceReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 	}
 	meta.SetStatusCondition(&ws.Status.Conditions, boundCond)
 	ready := metav1.ConditionFalse
-	if phase == corev1alpha1.WorkspaceRunning {
+	if phase == corev1beta1.WorkspaceRunning {
 		ready = metav1.ConditionTrue
 	}
 	meta.SetStatusCondition(&ws.Status.Conditions, metav1.Condition{
@@ -211,7 +210,7 @@ func (r *WorkspaceReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 		keysCond.Message = fmt.Sprintf("The controller skipped the keys at the indexes %v of spec.sshPublicKeys.", skipped)
 	}
 	meta.SetStatusCondition(&ws.Status.Conditions, keysCond)
-	meta.SetStatusCondition(&ws.Status.Conditions, harnessCondition(ws, r.InstallerImage, r.NookkuImage))
+	meta.SetStatusCondition(&ws.Status.Conditions, harnessCondition(ws, r.InstallerImage, r.PresetImages))
 	meta.SetStatusCondition(&ws.Status.Conditions, r.Egress.condition(ws.Generation))
 	res := ctrl.Result{}
 	var keyErr error
@@ -238,9 +237,9 @@ func (r *WorkspaceReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 // apply makes or updates the 3 objects of the Workspace. It returns the phase, and the reason
 // and the message of the Ready condition. It returns an error only if a retry can fix it. If
 // user (the bound Profile) is empty, apply makes no object and stops the pod.
-func (r *WorkspaceReconciler) apply(ctx context.Context, ws *corev1alpha1.Workspace, user string) (
-	corev1alpha1.WorkspacePhase, string, string, error) {
-	const failed = corev1alpha1.WorkspaceFailed
+func (r *WorkspaceReconciler) apply(ctx context.Context, ws *corev1beta1.Workspace, user string) (
+	corev1beta1.WorkspacePhase, string, string, error) {
+	const failed = corev1beta1.WorkspaceFailed
 	if len(ws.Name) > maxWorkspaceName {
 		return failed, reasonInvalid, "The Workspace name is too long for the StatefulSet. Use 52 characters or fewer.", nil
 	}
@@ -257,9 +256,9 @@ func (r *WorkspaceReconciler) apply(ctx context.Context, ws *corev1alpha1.Worksp
 			!errors.Is(err, errUnbindPending) {
 			return "", "", "", err
 		}
-		return corev1alpha1.WorkspacePending, reasonNotBound, fmt.Sprintf("No Profile binds the namespace %q. "+
+		return corev1beta1.WorkspacePending, reasonNotBound, fmt.Sprintf("No Profile binds the namespace %q. "+
 			"Add the label %s=<profile> to the namespace, and add the namespace to spec.namespaces of that Profile.",
-			ws.Namespace, corev1alpha1.ProfileLabel), nil
+			ws.Namespace, corev1beta1.ProfileLabel), nil
 	}
 	// The template check comes before the key. A template that is not valid makes no key and no
 	// pod. The controller does not change a StatefulSet that exists.
@@ -290,11 +289,11 @@ func (r *WorkspaceReconciler) apply(ctx context.Context, ws *corev1alpha1.Worksp
 	}
 	switch {
 	case errors.Is(err, errTestKeysUnblocked):
-		return corev1alpha1.WorkspacePending, reasonTestKeysBlocking,
+		return corev1beta1.WorkspacePending, reasonTestKeysBlocking,
 			"The pod changes after the gateway blocks each test key.", nil
 	case errors.Is(err, errTestKeysPending):
 		// A TestKey status change starts the next reconcile.
-		return corev1alpha1.WorkspacePending, "TestKeysRevoking",
+		return corev1beta1.WorkspacePending, "TestKeysRevoking",
 			"The gateway removal completes after the revoke of each test key.", nil
 	case errors.Is(err, errNotOwned):
 		return failed, reasonNameConflict, "An object with a Workspace object name is not from this Workspace.", nil
@@ -304,30 +303,30 @@ func (r *WorkspaceReconciler) apply(ctx context.Context, ws *corev1alpha1.Worksp
 	case err != nil:
 		return "", "", "", err
 	case ws.Spec.Suspend:
-		return corev1alpha1.WorkspaceSuspended, "Suspended", "The pod is stopped. The home PVC stays.", nil
+		return corev1beta1.WorkspaceSuspended, "Suspended", "The pod is stopped. The home PVC stays.", nil
 	case sts.Status.ObservedGeneration >= sts.Generation && sts.Status.ReadyReplicas > 0:
 		// The ready replica must come from the current StatefulSet spec.
-		return corev1alpha1.WorkspaceRunning, "PodReady", "The pod is ready for SSH.", nil
+		return corev1beta1.WorkspaceRunning, "PodReady", "The pod is ready for SSH.", nil
 	default:
-		return corev1alpha1.WorkspacePending, "PodNotReady", "The pod is not ready.", nil
+		return corev1beta1.WorkspacePending, "PodNotReady", "The pod is not ready.", nil
 	}
 }
 
-func workspaceMeta(ws *corev1alpha1.Workspace, name string) metav1.ObjectMeta {
+func workspaceMeta(ws *corev1beta1.Workspace, name string) metav1.ObjectMeta {
 	return metav1.ObjectMeta{
 		Name: name, Namespace: ws.Namespace,
 		Labels: map[string]string{WorkspaceLabel: ws.Name},
 		OwnerReferences: []metav1.OwnerReference{*metav1.NewControllerRef(ws,
-			corev1alpha1.GroupVersion.WithKind("Workspace"))},
+			corev1beta1.GroupVersion.WithKind("Workspace"))},
 	}
 }
 
-func hostKeySecretName(ws *corev1alpha1.Workspace) string { return ws.Name + hostKeySecretSuffix }
-func sshConfigMapName(ws *corev1alpha1.Workspace) string  { return ws.Name + "-ssh" }
+func hostKeySecretName(ws *corev1beta1.Workspace) string { return ws.Name + hostKeySecretSuffix }
+func sshConfigMapName(ws *corev1beta1.Workspace) string  { return ws.Name + "-ssh" }
 
 // hostKey makes the host key Secret one time only. It returns the public host key. The private
 // key goes only to the Secret: never to a log, an event, the status or an error.
-func (r *WorkspaceReconciler) hostKey(ctx context.Context, ws *corev1alpha1.Workspace) (string, error) {
+func (r *WorkspaceReconciler) hostKey(ctx context.Context, ws *corev1beta1.Workspace) (string, error) {
 	s := &corev1.Secret{}
 	name := hostKeySecretName(ws)
 	err := r.APIReader.Get(ctx, types.NamespacedName{Namespace: ws.Namespace, Name: name}, s)
@@ -355,7 +354,7 @@ func (r *WorkspaceReconciler) hostKey(ctx context.Context, ws *corev1alpha1.Work
 
 // applyConfigMap writes the valid keys of spec.sshPublicKeys to the ConfigMap. The kubelet
 // updates the mounted file, so a key change does not restart the pod.
-func (r *WorkspaceReconciler) applyConfigMap(ctx context.Context, ws *corev1alpha1.Workspace) error {
+func (r *WorkspaceReconciler) applyConfigMap(ctx context.Context, ws *corev1beta1.Workspace) error {
 	keys := ""
 	if valid, _ := validKeys(ws.Spec.SSHPublicKeys); len(valid) > 0 {
 		keys = strings.Join(valid, "\n") + "\n"
@@ -383,7 +382,7 @@ func (r *WorkspaceReconciler) applyConfigMap(ctx context.Context, ws *corev1alph
 // unbind stops the Workspace in a namespace that no Profile binds. It uses the order of a
 // suspend: it blocks the gateway key first, then it scales the StatefulSet to 0. It makes no
 // object. The home PVC stays.
-func (r *WorkspaceReconciler) unbind(ctx context.Context, ws *corev1alpha1.Workspace) error {
+func (r *WorkspaceReconciler) unbind(ctx context.Context, ws *corev1beta1.Workspace) error {
 	secret, err := r.readKey(ctx, ws)
 	if err != nil && !errors.Is(err, errNotOwned) {
 		return err
@@ -397,7 +396,7 @@ func (r *WorkspaceReconciler) unbind(ctx context.Context, ws *corev1alpha1.Works
 	// The cache can show an old False after a fast unbind, bind and unbind. Thus read the
 	// condition from the API server.
 	if ws.Spec.TestKeys != nil {
-		fresh := &corev1alpha1.Workspace{}
+		fresh := &corev1beta1.Workspace{}
 		if err := r.APIReader.Get(ctx, client.ObjectKeyFromObject(ws), fresh); err != nil {
 			return err
 		}
@@ -412,22 +411,22 @@ func (r *WorkspaceReconciler) unbind(ctx context.Context, ws *corev1alpha1.Works
 // Workspace has no key and no pod, as with spec.suspend. The owner cannot clear it, because
 // only the controller writes the status. A release removes it, and the Workspace starts again
 // with a new key.
-func (r *WorkspaceReconciler) applyHold(ctx context.Context, ws *corev1alpha1.Workspace) error {
+func (r *WorkspaceReconciler) applyHold(ctx context.Context, ws *corev1beta1.Workspace) error {
 	if done, err := r.applyQuarantine(ctx, ws); done || err != nil {
 		return err
 	}
-	h, err := stopHold(ctx, r.Client, corev1alpha1.HoldTargetWorkspace, ws.Namespace, ws.Name, "")
+	h, err := stopHold(ctx, r.Client, corev1beta1.HoldTargetWorkspace, ws.Namespace, ws.Name, "")
 	if err != nil {
 		return err
 	}
 	if h == nil {
-		meta.RemoveStatusCondition(&ws.Status.Conditions, corev1alpha1.HoldHeld)
+		meta.RemoveStatusCondition(&ws.Status.Conditions, corev1beta1.HoldHeld)
 		return nil
 	}
 	if !heldWorkspace(ws) {
 		holdEvent(r.Recorder, ws, h)
 	}
-	meta.SetStatusCondition(&ws.Status.Conditions, metav1.Condition{Type: corev1alpha1.HoldHeld,
+	meta.SetStatusCondition(&ws.Status.Conditions, metav1.Condition{Type: corev1beta1.HoldHeld,
 		Status: metav1.ConditionTrue, Reason: reasonStopped, ObservedGeneration: ws.Generation,
 		Message: fmt.Sprintf("The Hold %s stops the Workspace.", h.Name)})
 	return nil
@@ -436,8 +435,8 @@ func (r *WorkspaceReconciler) applyHold(ctx context.Context, ws *corev1alpha1.Wo
 // stopHeld stops a Workspace that a Hold stops. It blocks the key first, then it scales the
 // StatefulSet to 0. It does not read the pod template, so a template that is not valid does not
 // keep the pod. The home PVC stays.
-func (r *WorkspaceReconciler) stopHeld(ctx context.Context, ws *corev1alpha1.Workspace) (
-	corev1alpha1.WorkspacePhase, string, string, error) {
+func (r *WorkspaceReconciler) stopHeld(ctx context.Context, ws *corev1beta1.Workspace) (
+	corev1beta1.WorkspacePhase, string, string, error) {
 	secret, err := r.readKey(ctx, ws)
 	if err != nil && !errors.Is(err, errNotOwned) {
 		return "", "", "", err
@@ -448,30 +447,30 @@ func (r *WorkspaceReconciler) stopHeld(ctx context.Context, ws *corev1alpha1.Wor
 	// The TestKey controller refuses an issue when it reads Held=True. As in unbind, write that
 	// condition before the stop, so a TestKey issue that the stop does not see also sees it.
 	if ws.Spec.TestKeys != nil {
-		fresh := &corev1alpha1.Workspace{}
+		fresh := &corev1beta1.Workspace{}
 		if err := r.APIReader.Get(ctx, client.ObjectKeyFromObject(ws), fresh); err != nil {
 			return "", "", "", err
 		}
 		if !heldWorkspace(fresh) {
-			return corev1alpha1.WorkspacePending, reasonHeld, "The pod stops after the status records the Hold.", nil
+			return corev1beta1.WorkspacePending, reasonHeld, "The pod stops after the status records the Hold.", nil
 		}
 	}
 	switch err := r.stopPod(ctx, ws); {
 	case errors.Is(err, errTestKeysUnblocked):
-		return corev1alpha1.WorkspacePending, reasonTestKeysBlocking,
+		return corev1beta1.WorkspacePending, reasonTestKeysBlocking,
 			"The pod stops after the gateway blocks each test key.", nil
 	case errors.Is(err, errTestKeysPending):
-		return corev1alpha1.WorkspacePending, "TestKeysRevoking",
+		return corev1beta1.WorkspacePending, "TestKeysRevoking",
 			"The gateway removal completes after the revoke of each test key.", nil
 	case err != nil:
 		return "", "", "", err
 	}
-	return corev1alpha1.WorkspaceSuspended, reasonHeld, "A Hold stops the pod. The home PVC stays.", nil
+	return corev1beta1.WorkspaceSuspended, reasonHeld, "A Hold stops the pod. The home PVC stays.", nil
 }
 
 // stopPod waits for the block of each TestKey, then scales the StatefulSet to 0. It makes no
 // object.
-func (r *WorkspaceReconciler) stopPod(ctx context.Context, ws *corev1alpha1.Workspace) error {
+func (r *WorkspaceReconciler) stopPod(ctx context.Context, ws *corev1beta1.Workspace) error {
 	if err := r.waitTestKeyBlocks(ctx, ws); err != nil {
 		return err
 	}
@@ -495,7 +494,7 @@ func (r *WorkspaceReconciler) stopPod(ctx context.Context, ws *corev1alpha1.Work
 // applyStatefulSet makes the StatefulSet. It updates the pod template only if it is not the
 // template of the controller, and the replicas if spec.suspend or the binding changed. The
 // volumeClaimTemplates cannot change.
-func (r *WorkspaceReconciler) applyStatefulSet(ctx context.Context, ws *corev1alpha1.Workspace,
+func (r *WorkspaceReconciler) applyStatefulSet(ctx context.Context, ws *corev1beta1.Workspace,
 	want *appsv1.StatefulSet) (*appsv1.StatefulSet, error) {
 	hash, err := templateHash(want.Spec.Template)
 	if err != nil {
@@ -574,7 +573,7 @@ func volumeNames(pod corev1.PodSpec) [][]string {
 
 // createOwned creates o. If an object with the same name exists, the cache did not have it. Then
 // createOwned reads it from the API server and returns errNotOwned if it is not from ws.
-func (r *WorkspaceReconciler) createOwned(ctx context.Context, ws *corev1alpha1.Workspace, o client.Object) error {
+func (r *WorkspaceReconciler) createOwned(ctx context.Context, ws *corev1beta1.Workspace, o client.Object) error {
 	err := r.Create(ctx, o)
 	if !apierrors.IsAlreadyExists(err) {
 		return err
@@ -590,7 +589,7 @@ func (r *WorkspaceReconciler) createOwned(ctx context.Context, ws *corev1alpha1.
 
 // statefulSet makes the StatefulSet of the pod contract in issue #15. If user (the bound Profile)
 // is empty, the StatefulSet has 0 replicas.
-func (r *WorkspaceReconciler) statefulSet(ws *corev1alpha1.Workspace, user string) *appsv1.StatefulSet {
+func (r *WorkspaceReconciler) statefulSet(ws *corev1beta1.Workspace, user string) *appsv1.StatefulSet {
 	const home, ssh, globals, login = "home", "ssh", "globals", "login"
 	image := ws.Spec.Image
 	if image == "" {
@@ -681,7 +680,11 @@ func (r *WorkspaceReconciler) statefulSet(ws *corev1alpha1.Workspace, user strin
 		Volumes:    volumes,
 	}}
 	addWorkspaceHarnesses(&tmpl.Spec, ws.Spec.Harnesses, r.InstallerImage)
-	addWorkspaceNookku(&tmpl.Spec, ws.Spec.Harnesses, r.NookkuImage)
+	for _, name := range workspacePresetNames(ws.Spec.Harnesses) {
+		if p, ok := harnessPresets[name]; ok {
+			p.addWorkspace(&tmpl.Spec, r.PresetImages[p.imageFlag])
+		}
+	}
 	addIdentity(&tmpl.ObjectMeta, "", user)
 	r.Egress.annotate(&tmpl.ObjectMeta, hasGateway(ws), r.GatewayURL)
 	sts := &appsv1.StatefulSet{ObjectMeta: workspaceMeta(ws, ws.Name), Spec: appsv1.StatefulSetSpec{
@@ -708,7 +711,7 @@ func (r *WorkspaceReconciler) statefulSet(ws *corev1alpha1.Workspace, user strin
 
 // workspacesIn returns a request for each Workspace in the namespace.
 func (r *WorkspaceReconciler) workspacesIn(ctx context.Context, namespace string) []reconcile.Request {
-	list := &corev1alpha1.WorkspaceList{}
+	list := &corev1beta1.WorkspaceList{}
 	if err := r.List(ctx, list, client.InNamespace(namespace)); err != nil {
 		logf.FromContext(ctx).Error(err, "Failed to list the Workspaces", "namespace", namespace)
 		return nil
@@ -729,7 +732,7 @@ func (r *WorkspaceReconciler) workspacesForNamespace(ctx context.Context, obj cl
 // update, the handler calls it for the old and the new Profile. Thus a removed namespace is also
 // reconciled.
 func (r *WorkspaceReconciler) workspacesForProfile(ctx context.Context, obj client.Object) []reconcile.Request {
-	p, ok := obj.(*corev1alpha1.Profile)
+	p, ok := obj.(*corev1beta1.Profile)
 	if !ok {
 		return nil
 	}
@@ -753,19 +756,19 @@ func deleteStarted(e event.UpdateEvent) bool {
 // Profiles, because they give the binding.
 func (r *WorkspaceReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	return ctrl.NewControllerManagedBy(mgr).
-		For(&corev1alpha1.Workspace{}).
+		For(&corev1beta1.Workspace{}).
 		Owns(&appsv1.StatefulSet{}).
 		Owns(&corev1.ConfigMap{}).
 		Watches(&corev1.Namespace{}, handler.EnqueueRequestsFromMapFunc(r.workspacesForNamespace)).
 		// A status write of a Profile does not change the binding. Thus only a spec change or the
 		// start of a delete reconciles the Workspaces. A create and a delete always pass.
-		Watches(&corev1alpha1.Profile{}, handler.EnqueueRequestsFromMapFunc(r.workspacesForProfile),
+		Watches(&corev1beta1.Profile{}, handler.EnqueueRequestsFromMapFunc(r.workspacesForProfile),
 			builder.WithPredicates(predicate.Or(predicate.GenerationChangedPredicate{},
 				predicate.Funcs{UpdateFunc: deleteStarted}))).
 		// A TestKey revoke lets the Workspace delete continue (#192).
-		Watches(&corev1alpha1.TestKey{}, handler.EnqueueRequestsFromMapFunc(workspaceForTestKey)).
-		Watches(&corev1alpha1.Hold{},
-			handler.EnqueueRequestsFromMapFunc(holdMapper(r.Client, corev1alpha1.HoldTargetWorkspace, r.Namespaces))).
+		Watches(&corev1beta1.TestKey{}, handler.EnqueueRequestsFromMapFunc(workspaceForTestKey)).
+		Watches(&corev1beta1.Hold{},
+			handler.EnqueueRequestsFromMapFunc(holdMapper(r.Client, corev1beta1.HoldTargetWorkspace, r.Namespaces))).
 		Named("workspace").
 		Complete(r)
 }
@@ -782,7 +785,7 @@ func testKeyItems() []corev1.KeyToPath {
 }
 
 func workspaceForTestKey(_ context.Context, obj client.Object) []reconcile.Request {
-	k, ok := obj.(*corev1alpha1.TestKey)
+	k, ok := obj.(*corev1beta1.TestKey)
 	if !ok {
 		return nil
 	}

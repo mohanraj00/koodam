@@ -32,7 +32,7 @@ import (
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
-	corev1alpha1 "github.com/mohanraj00/koodam/api/v1alpha1"
+	corev1beta1 "github.com/mohanraj00/koodam/api/v1beta1"
 )
 
 const (
@@ -60,26 +60,26 @@ const (
 // stopHold returns the Hold with the action Stop and no release that targets a workload. It
 // gives the oldest Hold if more than one matches. kind is the kind of the workload. app is the
 // App of an AppVersion, else "". It returns nil if no Hold stops the workload.
-func stopHold(ctx context.Context, c client.Reader, kind corev1alpha1.HoldTargetKind,
-	namespace, name, app string) (*corev1alpha1.Hold, error) {
-	return targetHold(ctx, c, corev1alpha1.HoldStop, kind, namespace, name, app)
+func stopHold(ctx context.Context, c client.Reader, kind corev1beta1.HoldTargetKind,
+	namespace, name, app string) (*corev1beta1.Hold, error) {
+	return targetHold(ctx, c, corev1beta1.HoldStop, kind, namespace, name, app)
 }
 
 // quarantineHold is stopHold for the action Quarantine.
-func quarantineHold(ctx context.Context, c client.Reader, kind corev1alpha1.HoldTargetKind,
-	namespace, name, app string) (*corev1alpha1.Hold, error) {
-	return targetHold(ctx, c, corev1alpha1.HoldQuarantine, kind, namespace, name, app)
+func quarantineHold(ctx context.Context, c client.Reader, kind corev1beta1.HoldTargetKind,
+	namespace, name, app string) (*corev1beta1.Hold, error) {
+	return targetHold(ctx, c, corev1beta1.HoldQuarantine, kind, namespace, name, app)
 }
 
 // targetHold returns the oldest Hold with the action and no release that targets the workload.
-func targetHold(ctx context.Context, c client.Reader, action corev1alpha1.HoldAction,
-	kind corev1alpha1.HoldTargetKind, namespace, name, app string) (*corev1alpha1.Hold, error) {
-	list := &corev1alpha1.HoldList{}
+func targetHold(ctx context.Context, c client.Reader, action corev1beta1.HoldAction,
+	kind corev1beta1.HoldTargetKind, namespace, name, app string) (*corev1beta1.Hold, error) {
+	list := &corev1beta1.HoldList{}
 	if err := c.List(ctx, list); err != nil {
 		return nil, err
 	}
 	var profile *string
-	var found *corev1alpha1.Hold
+	var found *corev1beta1.Hold
 	for i := range list.Items {
 		h := &list.Items[i]
 		if h.Spec.Release != nil || h.Spec.Action != action {
@@ -88,7 +88,7 @@ func targetHold(ctx context.Context, c client.Reader, action corev1alpha1.HoldAc
 		t := h.Spec.Target
 		var match bool
 		switch t.Kind {
-		case corev1alpha1.HoldTargetProfile:
+		case corev1beta1.HoldTargetProfile:
 			if profile == nil {
 				p, err := boundProfile(ctx, c, namespace)
 				if err != nil {
@@ -97,7 +97,7 @@ func targetHold(ctx context.Context, c client.Reader, action corev1alpha1.HoldAc
 				profile = &p
 			}
 			match = *profile != "" && t.Name == *profile
-		case corev1alpha1.HoldTargetApp:
+		case corev1beta1.HoldTargetApp:
 			match = app != "" && t.Namespace == namespace && t.Name == app
 		default:
 			match = t.Kind == kind && t.Namespace == namespace && t.Name == name
@@ -111,16 +111,16 @@ func targetHold(ctx context.Context, c client.Reader, action corev1alpha1.HoldAc
 
 // heldWorkspace is true while a Hold stops the Workspace. The Workspace controller writes the
 // condition at the start of each reconcile.
-func heldWorkspace(ws *corev1alpha1.Workspace) bool {
-	return meta.IsStatusConditionTrue(ws.Status.Conditions, corev1alpha1.HoldHeld)
+func heldWorkspace(ws *corev1beta1.Workspace) bool {
+	return meta.IsStatusConditionTrue(ws.Status.Conditions, corev1beta1.HoldHeld)
 }
 
 // activeHold is true for a Hold with no release. The action is Stop or Quarantine.
-func activeHold(h *corev1alpha1.Hold) bool { return h.Spec.Release == nil }
+func activeHold(h *corev1beta1.Hold) bool { return h.Spec.Release == nil }
 
 // quarantineEvent writes a Warning event on the workload, with the Hold as the related object.
 // rec can be nil.
-func quarantineEvent(rec events.EventRecorder, obj runtime.Object, h *corev1alpha1.Hold) {
+func quarantineEvent(rec events.EventRecorder, obj runtime.Object, h *corev1beta1.Hold) {
 	if rec == nil {
 		return
 	}
@@ -129,7 +129,7 @@ func quarantineEvent(rec events.EventRecorder, obj runtime.Object, h *corev1alph
 			h.Spec.Reason)))
 }
 
-func olderHold(x, y *corev1alpha1.Hold) bool {
+func olderHold(x, y *corev1beta1.Hold) bool {
 	if !x.CreationTimestamp.Equal(&y.CreationTimestamp) {
 		return x.CreationTimestamp.Before(&y.CreationTimestamp)
 	}
@@ -138,7 +138,7 @@ func olderHold(x, y *corev1alpha1.Hold) bool {
 
 // holdEvent writes a Warning event on the workload, with the Hold as the related object. The
 // note has the reason and the user of the Hold. rec can be nil.
-func holdEvent(rec events.EventRecorder, obj runtime.Object, h *corev1alpha1.Hold) {
+func holdEvent(rec events.EventRecorder, obj runtime.Object, h *corev1beta1.Hold) {
 	if rec == nil {
 		return
 	}
@@ -169,12 +169,12 @@ func watched(namespaces []string, ns string) bool {
 // Profile, it gives each workload of the kind in each namespace of spec.namespaces. The
 // reconciler of the workload then reads the binding. It gives no request for a namespace that the
 // manager does not watch: the install of that namespace stops its own workloads.
-func holdRequests(ctx context.Context, c client.Reader, h *corev1alpha1.Hold,
-	kind corev1alpha1.HoldTargetKind, namespaces []string) []reconcile.Request {
+func holdRequests(ctx context.Context, c client.Reader, h *corev1beta1.Hold,
+	kind corev1beta1.HoldTargetKind, namespaces []string) []reconcile.Request {
 	t := h.Spec.Target
 	switch {
-	case t.Kind == corev1alpha1.HoldTargetProfile:
-		p := &corev1alpha1.Profile{}
+	case t.Kind == corev1beta1.HoldTargetProfile:
+		p := &corev1beta1.Profile{}
 		if err := c.Get(ctx, types.NamespacedName{Name: t.Name}, p); err != nil {
 			return nil
 		}
@@ -183,7 +183,7 @@ func holdRequests(ctx context.Context, c client.Reader, h *corev1alpha1.Hold,
 		return nil
 	case t.Kind == kind:
 		return []reconcile.Request{{NamespacedName: types.NamespacedName{Namespace: t.Namespace, Name: t.Name}}}
-	case t.Kind == corev1alpha1.HoldTargetApp && kind == corev1alpha1.HoldTargetAppVersion:
+	case t.Kind == corev1beta1.HoldTargetApp && kind == corev1beta1.HoldTargetAppVersion:
 		return appVersionRequests(ctx, c, t.Namespace, t.Name)
 	}
 	return nil
@@ -192,7 +192,7 @@ func holdRequests(ctx context.Context, c client.Reader, h *corev1alpha1.Hold,
 // namespaceRequests gives a request for each workload of the kind in each namespace of list that
 // the manager watches. If the list of one namespace fails, it logs the error and keeps the
 // requests of the other namespaces.
-func namespaceRequests(ctx context.Context, c client.Reader, kind corev1alpha1.HoldTargetKind,
+func namespaceRequests(ctx context.Context, c client.Reader, kind corev1beta1.HoldTargetKind,
 	list, namespaces []string) []reconcile.Request {
 	var reqs []reconcile.Request
 	for _, ns := range list {
@@ -211,7 +211,7 @@ func namespaceRequests(ctx context.Context, c client.Reader, kind corev1alpha1.H
 
 // appVersionRequests gives a request for each AppVersion of the App.
 func appVersionRequests(ctx context.Context, c client.Reader, namespace, app string) []reconcile.Request {
-	list := &corev1alpha1.AppVersionList{}
+	list := &corev1beta1.AppVersionList{}
 	if err := c.List(ctx, list, client.InNamespace(namespace)); err != nil {
 		logf.FromContext(ctx).Error(err, "Failed to list the AppVersions of an App", "app", app)
 		return nil
@@ -226,16 +226,16 @@ func appVersionRequests(ctx context.Context, c client.Reader, namespace, app str
 }
 
 // workloadRequests gives a request for each workload of the kind in the namespace.
-func workloadRequests(ctx context.Context, c client.Reader, kind corev1alpha1.HoldTargetKind,
+func workloadRequests(ctx context.Context, c client.Reader, kind corev1beta1.HoldTargetKind,
 	namespace string) ([]reconcile.Request, error) {
 	var list client.ObjectList
 	switch kind {
-	case corev1alpha1.HoldTargetAgent:
-		list = &corev1alpha1.AgentList{}
-	case corev1alpha1.HoldTargetWorkspace:
-		list = &corev1alpha1.WorkspaceList{}
-	case corev1alpha1.HoldTargetAppVersion:
-		list = &corev1alpha1.AppVersionList{}
+	case corev1beta1.HoldTargetAgent:
+		list = &corev1beta1.AgentList{}
+	case corev1beta1.HoldTargetWorkspace:
+		list = &corev1beta1.WorkspaceList{}
+	case corev1beta1.HoldTargetAppVersion:
+		list = &corev1beta1.AppVersionList{}
 	default:
 		return nil, nil
 	}
@@ -254,9 +254,9 @@ func workloadRequests(ctx context.Context, c client.Reader, kind corev1alpha1.Ho
 
 // holdMapper maps a Hold to the workloads of the kind that it can target. A release also maps,
 // so that a Workspace starts again. namespaces are the namespaces that the manager watches.
-func holdMapper(c client.Reader, kind corev1alpha1.HoldTargetKind, namespaces []string) handler.MapFunc {
+func holdMapper(c client.Reader, kind corev1beta1.HoldTargetKind, namespaces []string) handler.MapFunc {
 	return func(ctx context.Context, obj client.Object) []reconcile.Request {
-		h, ok := obj.(*corev1alpha1.Hold)
+		h, ok := obj.(*corev1beta1.Hold)
 		if !ok {
 			return nil
 		}
@@ -267,9 +267,9 @@ func holdMapper(c client.Reader, kind corev1alpha1.HoldTargetKind, namespaces []
 // profileHoldMapper maps a Namespace or a Profile to the workloads of the kind in it, but only
 // while a Hold with no release targets a Profile. Thus a namespace that a held Profile binds
 // later also stops. namespaces are the namespaces that the manager watches.
-func profileHoldMapper(c client.Reader, kind corev1alpha1.HoldTargetKind, namespaces []string) handler.MapFunc {
+func profileHoldMapper(c client.Reader, kind corev1beta1.HoldTargetKind, namespaces []string) handler.MapFunc {
 	return func(ctx context.Context, obj client.Object) []reconcile.Request {
-		list := &corev1alpha1.HoldList{}
+		list := &corev1beta1.HoldList{}
 		if err := c.List(ctx, list); err != nil {
 			logf.FromContext(ctx).Error(err, "Failed to list the Holds")
 			return nil
@@ -277,13 +277,13 @@ func profileHoldMapper(c client.Reader, kind corev1alpha1.HoldTargetKind, namesp
 		var names []string
 		for i := range list.Items {
 			h := &list.Items[i]
-			if !activeHold(h) || h.Spec.Target.Kind != corev1alpha1.HoldTargetProfile {
+			if !activeHold(h) || h.Spec.Target.Kind != corev1beta1.HoldTargetProfile {
 				continue
 			}
 			switch o := obj.(type) {
 			case *corev1.Namespace:
 				names = []string{o.Name}
-			case *corev1alpha1.Profile:
+			case *corev1beta1.Profile:
 				if o.Name == h.Spec.Target.Name {
 					names = o.Spec.Namespaces
 				}

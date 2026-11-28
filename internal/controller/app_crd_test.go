@@ -31,7 +31,7 @@ import (
 	"k8s.io/apimachinery/pkg/util/intstr"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
-	corev1alpha1 "github.com/mohanraj00/koodam/api/v1alpha1"
+	corev1beta1 "github.com/mohanraj00/koodam/api/v1beta1"
 )
 
 const appName = "shop"
@@ -69,7 +69,7 @@ var _ = Describe("App and AppVersion CRDs", func() {
 
 	appContainer := func() corev1.Container {
 		return corev1.Container{
-			Name:  corev1alpha1.AppContainerName,
+			Name:  corev1beta1.AppContainerName,
 			Image: appImage,
 			Ports: []corev1.ContainerPort{{Name: httpPort, ContainerPort: 8080}},
 			ReadinessProbe: &corev1.Probe{ProbeHandler: corev1.ProbeHandler{
@@ -78,39 +78,39 @@ var _ = Describe("App and AppVersion CRDs", func() {
 		}
 	}
 
-	newVersion := func(name string, containers ...corev1.Container) *corev1alpha1.AppVersion {
+	newVersion := func(name string, containers ...corev1.Container) *corev1beta1.AppVersion {
 		if len(containers) == 0 {
 			containers = []corev1.Container{appContainer()}
 		}
-		return &corev1alpha1.AppVersion{
+		return &corev1beta1.AppVersion{
 			ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: ns},
-			Spec: corev1alpha1.AppVersionSpec{
-				AppRef:       corev1alpha1.AppReference{Name: appName},
+			Spec: corev1beta1.AppVersionSpec{
+				AppRef:       corev1beta1.AppReference{Name: appName},
 				BudgetPerDay: new(resource.MustParse(budgetOneUnit)),
-				Template: corev1alpha1.AppVersionTemplate{
+				Template: corev1beta1.AppVersionTemplate{
 					Model:       appModel,
-					PodTemplate: corev1alpha1.PodTemplate{Spec: corev1.PodSpec{Containers: containers}},
+					PodTemplate: corev1beta1.PodTemplate{Spec: corev1.PodSpec{Containers: containers}},
 				},
 			},
 		}
 	}
 
-	update := func(v *corev1alpha1.AppVersion, change func(*corev1alpha1.AppVersion)) error {
-		current := &corev1alpha1.AppVersion{}
+	update := func(v *corev1beta1.AppVersion, change func(*corev1beta1.AppVersion)) error {
+		current := &corev1beta1.AppVersion{}
 		Expect(k8sClient.Get(ctx, types.NamespacedName{Name: v.Name, Namespace: ns}, current)).To(Succeed())
 		change(current)
 		return k8sClient.Update(ctx, current)
 	}
 
 	It("defaults maxLiveVersions of an App to 2", func() {
-		app := &corev1alpha1.App{ObjectMeta: metav1.ObjectMeta{Name: "app-default", Namespace: ns}}
+		app := &corev1beta1.App{ObjectMeta: metav1.ObjectMeta{Name: "app-default", Namespace: ns}}
 		Expect(create(app)).To(Succeed())
 		Expect(app.Spec.MaxLiveVersions).To(Equal(int32(2)))
 	})
 
 	It("refuses an App with maxLiveVersions 0", func() {
 		u := &unstructured.Unstructured{Object: map[string]any{
-			"apiVersion": corev1alpha1.GroupVersion.String(),
+			"apiVersion": corev1beta1.GroupVersion.String(),
 			"kind":       "App",
 			specField:    map[string]any{"maxLiveVersions": int64(0)},
 		}}
@@ -125,38 +125,38 @@ var _ = Describe("App and AppVersion CRDs", func() {
 		// replicas has no default, because a version with a scale must not have replicas. The
 		// controller gives a version with no replicas and no scale 1 pod.
 		Expect(v.Spec.Replicas).To(BeNil())
-		Expect(v.Spec.Lifecycle).To(Equal(corev1alpha1.AppVersionActive))
+		Expect(v.Spec.Lifecycle).To(Equal(corev1beta1.AppVersionActive))
 	})
 
 	It("accepts a scale, defaults its minimum to 1, and refuses a scale that is not valid", func() {
-		pods := corev1alpha1.AppVersionScaleMetric{Pods: &corev1alpha1.AppVersionPodsMetric{
+		pods := corev1beta1.AppVersionScaleMetric{Pods: &corev1beta1.AppVersionPodsMetric{
 			Name: "requests_in_flight", AverageValue: resource.MustParse("10")}}
 		v := newVersion("v-scale")
-		v.Spec.Scale = &corev1alpha1.AppVersionScale{MaxReplicas: 4, Metric: pods}
+		v.Spec.Scale = &corev1beta1.AppVersionScale{MaxReplicas: 4, Metric: pods}
 		Expect(create(v)).To(Succeed())
 		Expect(v.Spec.Scale.MinReplicas).To(Equal(new(int32(1))))
-		Expect(update(v, func(c *corev1alpha1.AppVersion) {
-			c.Spec.Scale.Metric = corev1alpha1.AppVersionScaleMetric{
-				CPU: &corev1alpha1.AppVersionCPUMetric{AverageUtilization: 70}}
+		Expect(update(v, func(c *corev1beta1.AppVersion) {
+			c.Spec.Scale.Metric = corev1beta1.AppVersionScaleMetric{
+				CPU: &corev1beta1.AppVersionCPUMetric{AverageUtilization: 70}}
 		})).To(Succeed())
-		expectInvalid(update(v, func(c *corev1alpha1.AppVersion) { c.Spec.Replicas = new(int32(2)) }),
+		expectInvalid(update(v, func(c *corev1beta1.AppVersion) { c.Spec.Replicas = new(int32(2)) }),
 			"Set spec.replicas or spec.scale, not the two.")
 
 		for _, tc := range []struct {
-			scale   corev1alpha1.AppVersionScale
+			scale   corev1beta1.AppVersionScale
 			message string
 		}{
-			{corev1alpha1.AppVersionScale{MinReplicas: new(int32(3)), MaxReplicas: 2, Metric: pods},
+			{corev1beta1.AppVersionScale{MinReplicas: new(int32(3)), MaxReplicas: 2, Metric: pods},
 				"scale.maxReplicas must be equal to or more than scale.minReplicas."},
-			{corev1alpha1.AppVersionScale{MinReplicas: new(int32(0)), MaxReplicas: 2, Metric: pods}, "minReplicas"},
-			{corev1alpha1.AppVersionScale{MaxReplicas: 2}, "Set metric.cpu or metric.pods, not the two."},
-			{corev1alpha1.AppVersionScale{MaxReplicas: 2, Metric: corev1alpha1.AppVersionScaleMetric{
-				CPU: &corev1alpha1.AppVersionCPUMetric{AverageUtilization: 70}, Pods: pods.Pods}},
+			{corev1beta1.AppVersionScale{MinReplicas: new(int32(0)), MaxReplicas: 2, Metric: pods}, "minReplicas"},
+			{corev1beta1.AppVersionScale{MaxReplicas: 2}, "Set metric.cpu or metric.pods, not the two."},
+			{corev1beta1.AppVersionScale{MaxReplicas: 2, Metric: corev1beta1.AppVersionScaleMetric{
+				CPU: &corev1beta1.AppVersionCPUMetric{AverageUtilization: 70}, Pods: pods.Pods}},
 				"Set metric.cpu or metric.pods, not the two."},
-			{corev1alpha1.AppVersionScale{MaxReplicas: 2, Metric: corev1alpha1.AppVersionScaleMetric{
-				Pods: &corev1alpha1.AppVersionPodsMetric{Name: "a/b", AverageValue: resource.MustParse("1")}}}, "spec.scale.metric.pods.name"},
-			{corev1alpha1.AppVersionScale{MaxReplicas: 2, Metric: corev1alpha1.AppVersionScaleMetric{
-				Pods: &corev1alpha1.AppVersionPodsMetric{Name: "q", AverageValue: resource.MustParse("0")}}},
+			{corev1beta1.AppVersionScale{MaxReplicas: 2, Metric: corev1beta1.AppVersionScaleMetric{
+				Pods: &corev1beta1.AppVersionPodsMetric{Name: "a/b", AverageValue: resource.MustParse("1")}}}, "spec.scale.metric.pods.name"},
+			{corev1beta1.AppVersionScale{MaxReplicas: 2, Metric: corev1beta1.AppVersionScaleMetric{
+				Pods: &corev1beta1.AppVersionPodsMetric{Name: "q", AverageValue: resource.MustParse("0")}}},
 				"averageValue must be more than zero"},
 		} {
 			bad := newVersion("v-bad-scale")
@@ -177,7 +177,7 @@ var _ = Describe("App and AppVersion CRDs", func() {
 			m, err := runtime.DefaultUnstructuredConverter.ToUnstructured(v)
 			Expect(err).NotTo(HaveOccurred())
 			obj := &unstructured.Unstructured{Object: m}
-			obj.SetGroupVersionKind(corev1alpha1.GroupVersion.WithKind("AppVersion"))
+			obj.SetGroupVersionKind(corev1beta1.GroupVersion.WithKind("AppVersion"))
 			unstructured.RemoveNestedField(obj.Object, specField, field)
 			expectInvalid(create(obj), field)
 		}
@@ -194,14 +194,14 @@ var _ = Describe("App and AppVersion CRDs", func() {
 	It("refuses an appRef change", func() {
 		v := newVersion("v-appref")
 		Expect(create(v)).To(Succeed())
-		expectInvalid(update(v, func(c *corev1alpha1.AppVersion) { c.Spec.AppRef.Name = otherAppName }),
+		expectInvalid(update(v, func(c *corev1beta1.AppVersion) { c.Spec.AppRef.Name = otherAppName }),
 			"spec.appRef is immutable.")
 	})
 
 	It("accepts a change of the daily budget and of the replicas", func() {
 		v := newVersion("v-mutable")
 		Expect(create(v)).To(Succeed())
-		Expect(update(v, func(c *corev1alpha1.AppVersion) {
+		Expect(update(v, func(c *corev1beta1.AppVersion) {
 			c.Spec.BudgetPerDay = new(resource.MustParse("2.5"))
 			c.Spec.Replicas = new(int32(3))
 		})).To(Succeed())
@@ -216,11 +216,11 @@ var _ = Describe("App and AppVersion CRDs", func() {
 	It("accepts Retiring and refuses a change back to Active", func() {
 		v := newVersion("v-retire")
 		Expect(create(v)).To(Succeed())
-		Expect(update(v, func(c *corev1alpha1.AppVersion) { c.Spec.Lifecycle = corev1alpha1.AppVersionRetiring })).To(Succeed())
+		Expect(update(v, func(c *corev1beta1.AppVersion) { c.Spec.Lifecycle = corev1beta1.AppVersionRetiring })).To(Succeed())
 		const terminal = "spec.lifecycle Retiring is terminal."
-		expectInvalid(update(v, func(c *corev1alpha1.AppVersion) { c.Spec.Lifecycle = corev1alpha1.AppVersionActive }), terminal)
+		expectInvalid(update(v, func(c *corev1beta1.AppVersion) { c.Spec.Lifecycle = corev1beta1.AppVersionActive }), terminal)
 		// If the field is removed, the default sets Active again, and the API server refuses it.
-		expectInvalid(update(v, func(c *corev1alpha1.AppVersion) { c.Spec.Lifecycle = "" }), terminal)
+		expectInvalid(update(v, func(c *corev1beta1.AppVersion) { c.Spec.Lifecycle = "" }), terminal)
 	})
 
 	It("refuses a pod template with no app container or with 2 app containers", func() {

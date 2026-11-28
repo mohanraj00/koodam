@@ -18,6 +18,7 @@ package ingress
 
 import (
 	"net/netip"
+	"slices"
 
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -26,7 +27,7 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/validation"
 
-	corev1alpha1 "github.com/mohanraj00/koodam/api/v1alpha1"
+	corev1beta1 "github.com/mohanraj00/koodam/api/v1beta1"
 	"github.com/mohanraj00/koodam/internal/agentingress"
 )
 
@@ -38,15 +39,15 @@ import (
 // must have a UID, no deletion, the Running phase and valid ingress fields. A Running opted-in
 // Agent with an empty status.job is not ready, thus not available. The Agent name and the Job name
 // must be valid label values, because the pod selector uses them.
-func checkAgent(a *corev1alpha1.Agent, namespace, name string) (int32, string, error) {
+func checkAgent(a *corev1beta1.Agent, namespace, name string) (int32, string, error) {
 	if a.Namespace != namespace || a.Name != name {
 		return 0, "", ErrTargetUnavailable
 	}
 	if a.Spec.IngressPort == nil {
 		return 0, "", ErrTargetAbsent
 	}
-	if a.UID == "" || a.DeletionTimestamp != nil || a.Status.Phase != corev1alpha1.AgentRunning ||
-		agentingress.Check(a.Spec) != nil || len(validation.IsValidLabelValue(a.Name)) > 0 {
+	if a.UID == "" || a.DeletionTimestamp != nil || a.Status.Phase != corev1beta1.AgentRunning ||
+		agentingress.CheckSpec(a.Spec) != nil || len(validation.IsValidLabelValue(a.Name)) > 0 {
 		return 0, "", ErrTargetUnavailable
 	}
 	job := a.Status.Job
@@ -57,14 +58,14 @@ func checkAgent(a *corev1alpha1.Agent, namespace, name string) (int32, string, e
 	return *a.Spec.IngressPort, job, nil
 }
 
-// checkJob checks the run Job j of the partial target t. j must be the Job t.job in t.namespace,
-// with a UID and no deletion. Its sole controller owner must be the Agent of t, with the exact API
-// version, kind, name and UID. A Job with a true JobComplete or JobFailed condition has ended.
+// checkJob checks the run Job j of the partial target t. Its owner must be the Agent of t.
+// Jobs that were made before the upgrade can have a v1alpha1 Agent owner reference.
 func checkJob(j *batchv1.Job, t target) error {
 	if j.Namespace != t.namespace || j.Name != t.job || j.UID == "" || j.DeletionTimestamp != nil {
 		return ErrTargetUnavailable
 	}
-	if !controlledBy(j.OwnerReferences, corev1alpha1.GroupVersion.String(), agentKind, t.agent, t.agentUID) {
+	if !controlledBy(j.OwnerReferences, agentKind, t.agent, t.agentUID,
+		corev1beta1.GroupVersion.String(), corev1beta1.GroupVersion.Group+"/v1alpha1") {
 		return ErrTargetUnavailable
 	}
 	for _, c := range j.Status.Conditions {
@@ -86,7 +87,7 @@ func eligiblePod(p *corev1.Pod, t target) bool {
 	if p.Labels[targetAgentLabel] != t.agent || p.Labels[targetRunLabel] != t.job {
 		return false
 	}
-	if !controlledBy(p.OwnerReferences, batchv1.SchemeGroupVersion.String(), jobKind, t.job, t.jobUID) {
+	if !controlledBy(p.OwnerReferences, jobKind, t.job, t.jobUID, batchv1.SchemeGroupVersion.String()) {
 		return false
 	}
 	return p.Status.Phase == corev1.PodRunning && podReady(p.Status.Conditions)
@@ -164,9 +165,8 @@ func podReady(conds []corev1.PodCondition) bool {
 	return ready
 }
 
-// controlledBy is true if refs has exactly one controller reference, and if it has the exact API
-// version, kind, name and UID. uid must not be empty.
-func controlledBy(refs []metav1.OwnerReference, apiVersion, kind, name string, uid types.UID) bool {
+// controlledBy checks the kind, name, UID and API version of the sole controller reference.
+func controlledBy(refs []metav1.OwnerReference, kind, name string, uid types.UID, apiVersions ...string) bool {
 	var owner *metav1.OwnerReference
 	for i := range refs {
 		if refs[i].Controller == nil || !*refs[i].Controller {
@@ -177,6 +177,6 @@ func controlledBy(refs []metav1.OwnerReference, apiVersion, kind, name string, u
 		}
 		owner = &refs[i]
 	}
-	return owner != nil && uid != "" && owner.APIVersion == apiVersion && owner.Kind == kind &&
+	return owner != nil && uid != "" && slices.Contains(apiVersions, owner.APIVersion) && owner.Kind == kind &&
 		owner.Name == name && owner.UID == uid
 }

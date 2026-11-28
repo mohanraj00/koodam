@@ -27,7 +27,7 @@ import (
 	authenticationclient "k8s.io/client-go/kubernetes/typed/authentication/v1"
 	authorizationclient "k8s.io/client-go/kubernetes/typed/authorization/v1"
 
-	corev1alpha1 "github.com/mohanraj00/koodam/api/v1alpha1"
+	corev1beta1 "github.com/mohanraj00/koodam/api/v1beta1"
 )
 
 var (
@@ -70,7 +70,7 @@ func (v *Viewers) user(ctx context.Context, token string) (authenticationv1.User
 
 // listAgents is the review of each path. The log path also needs readLog.
 var (
-	listAgents = authorizationv1.ResourceAttributes{Verb: "list", Group: corev1alpha1.GroupVersion.Group, Resource: "agents"}
+	listAgents = authorizationv1.ResourceAttributes{Verb: "list", Group: corev1beta1.GroupVersion.Group, Resource: "agents"}
 	readLog    = authorizationv1.ResourceAttributes{Verb: "get", Resource: "pods", Subresource: "log"}
 )
 

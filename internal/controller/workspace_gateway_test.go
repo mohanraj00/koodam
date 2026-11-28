@@ -41,7 +41,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
-	corev1alpha1 "github.com/mohanraj00/koodam/api/v1alpha1"
+	corev1beta1 "github.com/mohanraj00/koodam/api/v1beta1"
 	"github.com/mohanraj00/koodam/internal/gateway"
 )
 
@@ -132,12 +132,12 @@ var _ = Describe("Workspace gateway key", func() {
 		Expect(err).NotTo(HaveOccurred())
 		return res
 	}
-	workspace := func() *corev1alpha1.Workspace {
-		ws := &corev1alpha1.Workspace{}
+	workspace := func() *corev1beta1.Workspace {
+		ws := &corev1beta1.Workspace{}
 		Expect(k8sClient.Get(ctx, nn(name), ws)).To(Succeed())
 		return ws
 	}
-	edit := func(f func(*corev1alpha1.Workspace)) {
+	edit := func(f func(*corev1beta1.Workspace)) {
 		ws := workspace()
 		f(ws)
 		Expect(k8sClient.Update(ctx, ws)).To(Succeed())
@@ -166,20 +166,20 @@ var _ = Describe("Workspace gateway key", func() {
 		gw = &wsGateway{keys: map[string]bool{}}
 		now = time.Date(2026, 10, 21, 9, 0, 0, 0, time.UTC)
 		restart()
-		ws := &corev1alpha1.Workspace{
+		ws := &corev1beta1.Workspace{
 			ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: ns},
-			Spec: corev1alpha1.WorkspaceSpec{Storage: resource.MustParse("1Gi"),
-				Gateway: &corev1alpha1.WorkspaceGateway{Model: testGatewayModel, BudgetPerDay: resource.MustParse("5")}},
+			Spec: corev1beta1.WorkspaceSpec{Storage: resource.MustParse("1Gi"),
+				Gateway: &corev1beta1.WorkspaceGateway{Model: testGatewayModel, BudgetPerDay: resource.MustParse("5")}},
 		}
 		Expect(k8sClient.Create(ctx, ws)).To(Succeed())
 		DeferCleanup(func() {
 			bg := context.Background()
-			w := &corev1alpha1.Workspace{}
+			w := &corev1beta1.Workspace{}
 			if k8sClient.Get(bg, nn(name), w) == nil && controllerutil.RemoveFinalizer(w, workspaceFinalizer) {
 				Expect(k8sClient.Update(bg, w)).To(Succeed())
 			}
 			om := func(s string) metav1.ObjectMeta { return metav1.ObjectMeta{Name: s, Namespace: ns} }
-			for _, o := range []client.Object{&corev1alpha1.Workspace{ObjectMeta: om(name)},
+			for _, o := range []client.Object{&corev1beta1.Workspace{ObjectMeta: om(name)},
 				&corev1.Secret{ObjectMeta: om(name + "-gateway")}, &corev1.Secret{ObjectMeta: om(name + "-ssh-host")},
 				&corev1.ConfigMap{ObjectMeta: om(name + "-ssh")}, &appsv1.StatefulSet{ObjectMeta: om(name)}} {
 				Expect(client.IgnoreNotFound(k8sClient.Delete(bg, o))).To(Succeed())
@@ -250,7 +250,7 @@ var _ = Describe("Workspace gateway key", func() {
 		mustReconcile()
 		now = now.Add(ttl / 4)
 		gw.renewErr = errors.New("gateway down")
-		edit(func(ws *corev1alpha1.Workspace) { ws.Spec.Image = "img:new" })
+		edit(func(ws *corev1beta1.Workspace) { ws.Spec.Image = "img:new" })
 		_, err := reconcileOnce()
 		Expect(err).To(MatchError(errRenewFailed))
 		c := meta.FindStatusCondition(workspace().Status.Conditions, condGatewayKey)
@@ -272,7 +272,7 @@ var _ = Describe("Workspace gateway key", func() {
 		var replicasAtBlock int32
 		var secretAtBlock bool
 		gw.atBlock = func() { replicasAtBlock, secretAtBlock = replicas(), !secretGone() }
-		edit(func(ws *corev1alpha1.Workspace) { ws.Spec.Suspend = true })
+		edit(func(ws *corev1beta1.Workspace) { ws.Spec.Suspend = true })
 		res := mustReconcile()
 
 		Expect(res.RequeueAfter).To(BeZero())
@@ -284,12 +284,12 @@ var _ = Describe("Workspace gateway key", func() {
 		ws := workspace()
 		Expect(ws.Status.KeyHash).To(BeEmpty())
 		Expect(ws.Status.KeyAlias).To(BeEmpty())
-		Expect(ws.Status.Usage).To(Equal(&corev1alpha1.WorkspaceUsage{Spend: "0.5", Calls: 2, InputTokens: 10,
-			OutputTokens: 5, Source: corev1alpha1.UsageFromGateway}))
+		Expect(ws.Status.Usage).To(Equal(&corev1beta1.WorkspaceUsage{Spend: "0.5", Calls: 2, InputTokens: 10,
+			OutputTokens: 5, Source: corev1beta1.UsageFromGateway}))
 		Expect(meta.FindStatusCondition(ws.Status.Conditions, condGatewayKey).Reason).To(Equal("Revoked"))
 		Expect(controllerutil.ContainsFinalizer(ws, workspaceFinalizer)).To(BeTrue())
 
-		edit(func(ws *corev1alpha1.Workspace) { ws.Spec.Suspend = false })
+		edit(func(ws *corev1beta1.Workspace) { ws.Spec.Suspend = false })
 		mustReconcile()
 		Expect(secretKey()).NotTo(Equal(old))
 		Expect(workspace().Status.KeyHash).To(Equal(gateway.HashKey(secretKey())))
@@ -313,7 +313,7 @@ var _ = Describe("Workspace gateway key", func() {
 		mustReconcile()
 		Expect(secretAtBlock).To(BeTrue())
 		Expect(secretGone()).To(BeTrue())
-		Expect(apierrors.IsNotFound(k8sClient.Get(ctx, nn(name), &corev1alpha1.Workspace{}))).To(BeTrue())
+		Expect(apierrors.IsNotFound(k8sClient.Get(ctx, nn(name), &corev1beta1.Workspace{}))).To(BeTrue())
 	})
 
 	It("mounts the TestKey slot only with the opt-in, and waits for each TestKey revoke", func() {
@@ -322,8 +322,8 @@ var _ = Describe("Workspace gateway key", func() {
 		Expect(k8sClient.Get(ctx, nn(name), sts)).To(Succeed())
 		Expect(sts.Spec.Template.Spec.Volumes).NotTo(ContainElement(HaveField("Name", "test-gateway")))
 
-		edit(func(ws *corev1alpha1.Workspace) {
-			ws.Spec.TestKeys = &corev1alpha1.WorkspaceTestKeys{MaxBudget: resource.MustParse("1"),
+		edit(func(ws *corev1beta1.Workspace) {
+			ws.Spec.TestKeys = &corev1beta1.WorkspaceTestKeys{MaxBudget: resource.MustParse("1"),
 				MaxTTL: metav1.Duration{Duration: time.Hour}}
 		})
 		mustReconcile()
@@ -338,24 +338,24 @@ var _ = Describe("Workspace gateway key", func() {
 		Expect(pod.Containers[0].VolumeMounts).To(ContainElement(corev1.VolumeMount{Name: "test-gateway",
 			MountPath: "/etc/koodam/test-gateway", ReadOnly: true}))
 
-		edit(func(ws *corev1alpha1.Workspace) { ws.Spec.TestKeys = nil })
+		edit(func(ws *corev1beta1.Workspace) { ws.Spec.TestKeys = nil })
 		mustReconcile()
 		Expect(k8sClient.Get(ctx, nn(name), sts)).To(Succeed())
 		Expect(sts.Spec.Template.Spec.Volumes).NotTo(ContainElement(HaveField("Name", "test-gateway")),
 			"the opt-out removes the slot volume")
 		Expect(sts.Spec.Template.Spec.Containers[0].VolumeMounts).NotTo(
 			ContainElement(HaveField("Name", "test-gateway")), "the opt-out removes the slot mount")
-		edit(func(ws *corev1alpha1.Workspace) {
-			ws.Spec.TestKeys = &corev1alpha1.WorkspaceTestKeys{MaxBudget: resource.MustParse("1"),
+		edit(func(ws *corev1beta1.Workspace) {
+			ws.Spec.TestKeys = &corev1beta1.WorkspaceTestKeys{MaxBudget: resource.MustParse("1"),
 				MaxTTL: metav1.Duration{Duration: time.Hour}}
 		})
 		mustReconcile()
 
 		ws := workspace()
-		tk := &corev1alpha1.TestKey{
+		tk := &corev1beta1.TestKey{
 			ObjectMeta: metav1.ObjectMeta{Name: name + "-tk", Namespace: ns},
-			Spec: corev1alpha1.TestKeySpec{WorkspaceRef: corev1alpha1.TestKeyWorkspaceRef{Name: name, UID: ws.UID},
-				TestID: "teardown", Budget: resource.MustParse("0.5"), TTL: metav1.Duration{Duration: time.Hour}},
+			Spec: corev1beta1.TestKeySpec{WorkspaceRef: corev1beta1.TestKeyWorkspaceRef{Name: name, UID: ws.UID},
+				TestRunID: "teardown", Budget: resource.MustParse("0.5"), TTL: metav1.Duration{Duration: time.Hour}},
 		}
 		Expect(k8sClient.Create(ctx, tk)).To(Succeed())
 		DeferCleanup(k8sClient.Delete, context.Background(), tk)
@@ -371,20 +371,20 @@ var _ = Describe("Workspace gateway key", func() {
 		tk.Status.RevokedAt = &metav1.Time{Time: now}
 		Expect(k8sClient.Status().Update(ctx, tk)).To(Succeed())
 		mustReconcile()
-		Expect(apierrors.IsNotFound(k8sClient.Get(ctx, nn(name), &corev1alpha1.Workspace{}))).To(BeTrue())
+		Expect(apierrors.IsNotFound(k8sClient.Get(ctx, nn(name), &corev1beta1.Workspace{}))).To(BeTrue())
 	})
 
 	It("stops the pod only after the gateway blocks each TestKey key", func() {
-		edit(func(ws *corev1alpha1.Workspace) {
-			ws.Spec.TestKeys = &corev1alpha1.WorkspaceTestKeys{MaxBudget: resource.MustParse("1"),
+		edit(func(ws *corev1beta1.Workspace) {
+			ws.Spec.TestKeys = &corev1beta1.WorkspaceTestKeys{MaxBudget: resource.MustParse("1"),
 				MaxTTL: metav1.Duration{Duration: time.Hour}}
 		})
 		mustReconcile()
 		ws := workspace()
-		tk := &corev1alpha1.TestKey{
+		tk := &corev1beta1.TestKey{
 			ObjectMeta: metav1.ObjectMeta{Name: name + "-tk", Namespace: ns},
-			Spec: corev1alpha1.TestKeySpec{WorkspaceRef: corev1alpha1.TestKeyWorkspaceRef{Name: name, UID: ws.UID},
-				TestID: "suspend", Budget: resource.MustParse("0.5"), TTL: metav1.Duration{Duration: time.Hour}},
+			Spec: corev1beta1.TestKeySpec{WorkspaceRef: corev1beta1.TestKeyWorkspaceRef{Name: name, UID: ws.UID},
+				TestRunID: "suspend", Budget: resource.MustParse("0.5"), TTL: metav1.Duration{Duration: time.Hour}},
 		}
 		Expect(k8sClient.Create(ctx, tk)).To(Succeed())
 		DeferCleanup(k8sClient.Delete, context.Background(), tk)
@@ -393,7 +393,7 @@ var _ = Describe("Workspace gateway key", func() {
 			Status: metav1.ConditionFalse, Reason: reasonTKRevoking, Message: "The revoke started."})
 		Expect(k8sClient.Status().Update(ctx, tk)).To(Succeed())
 
-		edit(func(ws *corev1alpha1.Workspace) { ws.Spec.Suspend = true })
+		edit(func(ws *corev1beta1.Workspace) { ws.Spec.Suspend = true })
 		mustReconcile()
 		sts := &appsv1.StatefulSet{}
 		Expect(k8sClient.Get(ctx, nn(name), sts)).To(Succeed())
@@ -406,23 +406,23 @@ var _ = Describe("Workspace gateway key", func() {
 		mustReconcile()
 		Expect(k8sClient.Get(ctx, nn(name), sts)).To(Succeed())
 		Expect(*sts.Spec.Replicas).To(Equal(int32(0)))
-		Expect(workspace().Status.Phase).To(Equal(corev1alpha1.WorkspaceSuspended))
+		Expect(workspace().Status.Phase).To(Equal(corev1beta1.WorkspaceSuspended))
 	})
 
 	It("shows a pending status, not an error, while a gateway removal waits for a TestKey revoke", func() {
 		mustReconcile()
 		ws := workspace()
-		tk := &corev1alpha1.TestKey{
+		tk := &corev1beta1.TestKey{
 			ObjectMeta: metav1.ObjectMeta{Name: name + "-tk", Namespace: ns},
-			Spec: corev1alpha1.TestKeySpec{WorkspaceRef: corev1alpha1.TestKeyWorkspaceRef{Name: name, UID: ws.UID},
-				TestID: "gateway-off", Budget: resource.MustParse("0.5"), TTL: metav1.Duration{Duration: time.Hour}},
+			Spec: corev1beta1.TestKeySpec{WorkspaceRef: corev1beta1.TestKeyWorkspaceRef{Name: name, UID: ws.UID},
+				TestRunID: "gateway-off", Budget: resource.MustParse("0.5"), TTL: metav1.Duration{Duration: time.Hour}},
 		}
 		Expect(k8sClient.Create(ctx, tk)).To(Succeed())
 		DeferCleanup(k8sClient.Delete, context.Background(), tk)
 		tk.Status.KeyHash = gateway.HashKey("sk-kd-gateway-off")
 		Expect(k8sClient.Status().Update(ctx, tk)).To(Succeed())
 
-		edit(func(ws *corev1alpha1.Workspace) { ws.Spec.Gateway = nil })
+		edit(func(ws *corev1beta1.Workspace) { ws.Spec.Gateway = nil })
 		mustReconcile()
 		ready := meta.FindStatusCondition(workspace().Status.Conditions, condReady)
 		Expect(ready.Reason).To(Equal("TestKeysRevoking"))
@@ -435,7 +435,7 @@ var _ = Describe("Workspace gateway key", func() {
 		sts := &appsv1.StatefulSet{}
 		Expect(k8sClient.Get(ctx, nn(name), sts)).To(Succeed())
 		Expect(sts.Spec.Template.Annotations).To(HaveKey(gatewayURLAnnotation))
-		edit(func(ws *corev1alpha1.Workspace) { ws.Spec.Gateway = nil })
+		edit(func(ws *corev1beta1.Workspace) { ws.Spec.Gateway = nil })
 		mustReconcile()
 		Expect(gw.order).To(Equal([]string{opCreate, opBlock, opUsage}))
 		Expect(secretGone()).To(BeTrue())
@@ -483,7 +483,7 @@ var _ = Describe("Workspace gateway key", func() {
 	It("makes a new key when the model changes", func() {
 		mustReconcile()
 		old := secretKey()
-		edit(func(ws *corev1alpha1.Workspace) { ws.Spec.Gateway.Model = otherModel })
+		edit(func(ws *corev1beta1.Workspace) { ws.Spec.Gateway.Model = otherModel })
 		mustReconcile()
 		Expect(gw.order).To(Equal([]string{opCreate, opBlock, opUsage, opCreate}))
 		Expect(secretKey()).NotTo(Equal(old))
@@ -493,7 +493,7 @@ var _ = Describe("Workspace gateway key", func() {
 	})
 
 	It("makes one key that permits each model of gateway.models, and a new key when the list changes", func() {
-		edit(func(ws *corev1alpha1.Workspace) {
+		edit(func(ws *corev1beta1.Workspace) {
 			ws.Spec.Gateway.Model, ws.Spec.Gateway.Models = "", []string{testGatewayModel, otherModel}
 		})
 		mustReconcile()
@@ -513,7 +513,7 @@ var _ = Describe("Workspace gateway key", func() {
 		Expect(gw.order).To(Equal([]string{opCreate}))
 
 		By("blocking the key before the new key, when a model goes out of the list")
-		edit(func(ws *corev1alpha1.Workspace) { ws.Spec.Gateway.Models = []string{testGatewayModel} })
+		edit(func(ws *corev1beta1.Workspace) { ws.Spec.Gateway.Models = []string{testGatewayModel} })
 		mustReconcile()
 		Expect(gw.order).To(Equal([]string{opCreate, opBlock, opUsage, opCreate}))
 		Expect(secretKey()).NotTo(Equal(old))
@@ -530,9 +530,9 @@ var _ = Describe("Workspace gateway key", func() {
 		mustReconcile()
 		Expect(secretKey()).To(Equal(old))
 
-		ws := &corev1alpha1.Workspace{}
+		ws := &corev1beta1.Workspace{}
 		Expect(k8sClient.Get(ctx, nn(name), ws)).To(Succeed())
-		for _, g := range []corev1alpha1.WorkspaceGateway{
+		for _, g := range []corev1beta1.WorkspaceGateway{
 			{BudgetPerDay: resource.MustParse("5")},
 			{Model: "a", Models: []string{"b"}, BudgetPerDay: resource.MustParse("5")},
 			{Models: []string{"a", "a"}, BudgetPerDay: resource.MustParse("5")},

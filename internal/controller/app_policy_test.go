@@ -38,7 +38,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/yaml"
 
-	corev1alpha1 "github.com/mohanraj00/koodam/api/v1alpha1"
+	corev1beta1 "github.com/mohanraj00/koodam/api/v1beta1"
 )
 
 func appPolicyRules() []rbacv1.PolicyRule {
@@ -53,13 +53,13 @@ var _ = Describe("AppVersion admission policy", Ordered, func() {
 		"Set apps.apiServerEgress and add this namespace to zone.namespaces. " +
 		"Without API server access, a version Role has no effect."
 	ctx := context.Background()
-	newVersion := func(name string, change func(*corev1alpha1.AppVersion)) *corev1alpha1.AppVersion {
-		av := &corev1alpha1.AppVersion{ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: ns},
-			Spec: corev1alpha1.AppVersionSpec{
-				AppRef: corev1alpha1.AppReference{Name: "policy-app"}, BudgetPerDay: new(resource.MustParse("5")),
-				Template: corev1alpha1.AppVersionTemplate{Model: testGatewayModel,
-					PodTemplate: corev1alpha1.PodTemplate{Spec: corev1.PodSpec{Containers: []corev1.Container{{
-						Name: corev1alpha1.AppContainerName, Image: "registry.example.com/policy:v1",
+	newVersion := func(name string, change func(*corev1beta1.AppVersion)) *corev1beta1.AppVersion {
+		av := &corev1beta1.AppVersion{ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: ns},
+			Spec: corev1beta1.AppVersionSpec{
+				AppRef: corev1beta1.AppReference{Name: "policy-app"}, BudgetPerDay: new(resource.MustParse("5")),
+				Template: corev1beta1.AppVersionTemplate{Model: testGatewayModel,
+					PodTemplate: corev1beta1.PodTemplate{Spec: corev1.PodSpec{Containers: []corev1.Container{{
+						Name: corev1beta1.AppContainerName, Image: "registry.example.com/policy:v1",
 						Ports: []corev1.ContainerPort{{Name: "web", ContainerPort: 8080}},
 						ReadinessProbe: &corev1.Probe{ProbeHandler: corev1.ProbeHandler{
 							HTTPGet: &corev1.HTTPGetAction{Path: "/ok", Port: intstr.FromString("web")}}},
@@ -70,14 +70,14 @@ var _ = Describe("AppVersion admission policy", Ordered, func() {
 		}
 		return av
 	}
-	create := func(av *corev1alpha1.AppVersion) error {
+	create := func(av *corev1beta1.AppVersion) error {
 		err := k8sClient.Create(ctx, av)
 		if err == nil {
 			DeferCleanup(func() { Expect(client.IgnoreNotFound(k8sClient.Delete(ctx, av))).To(Succeed()) })
 		}
 		return err
 	}
-	port := func(av *corev1alpha1.AppVersion) *corev1.ContainerPort {
+	port := func(av *corev1beta1.AppVersion) *corev1.ContainerPort {
 		return &av.Spec.Template.PodTemplate.Spec.Containers[0].Ports[0]
 	}
 	refused := func(err error, text string) {
@@ -91,7 +91,7 @@ var _ = Describe("AppVersion admission policy", Ordered, func() {
 		// policy for a short time, and a spec of a different container must not get its refusal.
 		DeferCleanup(func() {
 			Eventually(func() error {
-				probe := newVersion("policy-gone", func(av *corev1alpha1.AppVersion) { port(av).Name = "" })
+				probe := newVersion("policy-gone", func(av *corev1beta1.AppVersion) { port(av).Name = "" })
 				err := k8sClient.Create(ctx, probe)
 				if err == nil {
 					_ = k8sClient.Delete(ctx, probe)
@@ -109,7 +109,7 @@ var _ = Describe("AppVersion admission policy", Ordered, func() {
 		}
 		// The API server starts to enforce a new policy after a short time.
 		Eventually(func() error {
-			err := k8sClient.Create(ctx, newVersion("policy-probe", func(av *corev1alpha1.AppVersion) { port(av).Name = "" }))
+			err := k8sClient.Create(ctx, newVersion("policy-probe", func(av *corev1beta1.AppVersion) { port(av).Name = "" }))
 			if err == nil {
 				_ = k8sClient.Delete(ctx, newVersion("policy-probe", nil))
 			}
@@ -119,13 +119,13 @@ var _ = Describe("AppVersion admission policy", Ordered, func() {
 
 	It("refuses a create with a name or a port that the controller cannot use", func() {
 		const portText = "Each port of the app container"
-		refused(create(newVersion("policy-a", func(av *corev1alpha1.AppVersion) { port(av).Name = "" })), portText)
-		refused(create(newVersion("policy-a", func(av *corev1alpha1.AppVersion) { port(av).Protocol = corev1.ProtocolUDP })), portText)
-		refused(create(newVersion("policy-a", func(av *corev1alpha1.AppVersion) { port(av).HostPort = 8080 })), portText)
+		refused(create(newVersion("policy-a", func(av *corev1beta1.AppVersion) { port(av).Name = "" })), portText)
+		refused(create(newVersion("policy-a", func(av *corev1beta1.AppVersion) { port(av).Protocol = corev1.ProtocolUDP })), portText)
+		refused(create(newVersion("policy-a", func(av *corev1beta1.AppVersion) { port(av).HostPort = 8080 })), portText)
 		long := "policy-" + string(bytes.Repeat([]byte("a"), 54))
 		refused(create(newVersion(long, nil)), "60 characters")
 		refused(create(newVersion("policy.a", nil)), "DNS label")
-		refused(create(newVersion("policy-a", func(av *corev1alpha1.AppVersion) {
+		refused(create(newVersion("policy-a", func(av *corev1beta1.AppVersion) {
 			av.Spec.AppRef.Name = string(bytes.Repeat([]byte("a"), 64))
 		})), "spec.appRef.name")
 		Expect(create(newVersion("policy-a", nil))).To(Succeed())
@@ -133,7 +133,7 @@ var _ = Describe("AppVersion admission policy", Ordered, func() {
 
 	It("refuses template rules on a create and on a template change", func() {
 		rules := appPolicyRules()
-		refused(create(newVersion("policy-d", func(av *corev1alpha1.AppVersion) { av.Spec.Template.Rules = rules })), rulesText)
+		refused(create(newVersion("policy-d", func(av *corev1beta1.AppVersion) { av.Spec.Template.Rules = rules })), rulesText)
 
 		av := newVersion("policy-d", nil)
 		Expect(create(av)).To(Succeed())
@@ -161,7 +161,7 @@ var _ = Describe("AppVersion admission policy", Ordered, func() {
 		refused(k8sClient.Update(ctx, av), "spec.template is immutable")
 
 		// A version with no model has no key. Its template is immutable after its objects exist.
-		keyless := newVersion("policy-c", func(av *corev1alpha1.AppVersion) {
+		keyless := newVersion("policy-c", func(av *corev1beta1.AppVersion) {
 			av.Spec.Template.Model, av.Spec.BudgetPerDay = "", nil
 		})
 		Expect(create(keyless)).To(Succeed())
@@ -177,7 +177,7 @@ var _ = Describe("AppVersion admission policy", Ordered, func() {
 		Expect(k8sClient.Get(ctx, types.NamespacedName{Namespace: ns, Name: av.Name}, av)).To(Succeed())
 		av.Spec.Replicas = new(int32(3))
 		av.Spec.BudgetPerDay = new(resource.MustParse("7"))
-		av.Spec.Lifecycle = corev1alpha1.AppVersionRetiring
+		av.Spec.Lifecycle = corev1beta1.AppVersionRetiring
 		av.Finalizers = []string{appFinalizer}
 		Expect(k8sClient.Update(ctx, av)).To(Succeed())
 		av.Finalizers = nil
@@ -201,7 +201,7 @@ var _ = Describe("AppVersion admission policy", Ordered, func() {
 		setExpression(`request.namespace in ["default"]`)
 		// Restore the shared policy if an assertion fails, so the other specs see the default.
 		DeferCleanup(setExpression, "false")
-		withRules := func(av *corev1alpha1.AppVersion) { av.Spec.Template.Rules = appPolicyRules() }
+		withRules := func(av *corev1beta1.AppVersion) { av.Spec.Template.Rules = appPolicyRules() }
 		Eventually(func() error {
 			return create(newVersion("policy-allow-create", withRules))
 		}, time.Minute, time.Second).Should(Succeed())

@@ -25,7 +25,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
-	corev1alpha1 "github.com/mohanraj00/koodam/api/v1alpha1"
+	corev1beta1 "github.com/mohanraj00/koodam/api/v1beta1"
 )
 
 const namespaceLabel = "namespace"
@@ -77,7 +77,7 @@ type runStats struct {
 func (c *Collector) Collect(ch chan<- prometheus.Metric) {
 	defer c.scrapeErrors.Collect(ch)
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	var agents corev1alpha1.AgentList
+	var agents corev1beta1.AgentList
 	err := c.reader.List(ctx, &agents)
 	cancel()
 	if err != nil {
@@ -121,19 +121,19 @@ func (c *Collector) Collect(ch chan<- prometheus.Metric) {
 	}
 }
 
-func phaseLabel(phase corev1alpha1.AgentPhase) string {
+func phaseLabel(phase corev1beta1.AgentPhase) string {
 	switch phase {
 	case "":
-		return string(corev1alpha1.AgentPending)
-	case corev1alpha1.AgentPending, corev1alpha1.AgentRunning, corev1alpha1.AgentSucceeded, corev1alpha1.AgentFailed:
+		return string(corev1beta1.AgentPending)
+	case corev1beta1.AgentPending, corev1beta1.AgentRunning, corev1beta1.AgentSucceeded, corev1beta1.AgentFailed:
 		return string(phase)
 	default:
 		return "Unknown"
 	}
 }
 
-func runDuration(status *corev1alpha1.AgentStatus) (float64, bool) {
-	if status.Phase != corev1alpha1.AgentSucceeded && status.Phase != corev1alpha1.AgentFailed {
+func runDuration(status *corev1beta1.AgentStatus) (float64, bool) {
+	if status.Phase != corev1beta1.AgentSucceeded && status.Phase != corev1beta1.AgentFailed {
 		return 0, false
 	}
 	start, end := status.StartedAt, status.CompletedAt
@@ -143,7 +143,7 @@ func runDuration(status *corev1alpha1.AgentStatus) (float64, bool) {
 	return end.Sub(start.Time).Seconds(), true
 }
 
-func addCosts(agent *corev1alpha1.Agent, spend, budgets map[[2]string]float64) {
+func addCosts(agent *corev1beta1.Agent, spend, budgets map[[2]string]float64) {
 	usage := agent.Status.Usage
 	hasModelSpend := false
 	if usage != nil {

@@ -38,7 +38,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
 
-	corev1alpha1 "github.com/mohanraj00/koodam/api/v1alpha1"
+	corev1beta1 "github.com/mohanraj00/koodam/api/v1beta1"
 	"github.com/mohanraj00/koodam/internal/gateway"
 )
 
@@ -81,7 +81,7 @@ func quarantineMarked(o client.Object) bool {
 }
 
 // homeClaimName is the name of the home PVC that the StatefulSet makes for the Workspace.
-func homeClaimName(ws *corev1alpha1.Workspace) string { return "home-" + ws.Name + "-0" }
+func homeClaimName(ws *corev1beta1.Workspace) string { return "home-" + ws.Name + "-0" }
 
 // quarantinePatch is the merge patch that adds or removes the quarantine label.
 func quarantinePatch(on bool) client.Patch {
@@ -171,37 +171,37 @@ func markBudget(ctx context.Context, c client.Client, reader client.Reader, sche
 
 // quarantined is true if the status of the workload records a complete quarantine.
 func quarantined(conds []metav1.Condition) bool {
-	c := meta.FindStatusCondition(conds, corev1alpha1.HoldHeld)
+	c := meta.FindStatusCondition(conds, corev1beta1.HoldHeld)
 	return c != nil && c.Status == metav1.ConditionTrue && c.Reason == reasonQuarantined
 }
 
 // agentQuarantined is true if the key of the run is blocked and its Job has no deadline, or if the
 // run ended and its revoke is complete.
-func agentQuarantined(a *corev1alpha1.Agent) bool {
+func agentQuarantined(a *corev1beta1.Agent) bool {
 	return quarantined(a.Status.Conditions) || agentStopped(a)
 }
 
 // workspaceQuarantined is true if the key of the Workspace is blocked and its pod stays.
-func workspaceQuarantined(ws *corev1alpha1.Workspace) bool {
+func workspaceQuarantined(ws *corev1beta1.Workspace) bool {
 	c := meta.FindStatusCondition(ws.Status.Conditions, condReady)
 	return quarantined(ws.Status.Conditions) && c != nil && c.Reason == reasonQuarantined
 }
 
 // appVersionQuarantined is true if the key of the version is blocked and its pods stay, or if
 // its revoke is complete.
-func appVersionQuarantined(av *corev1alpha1.AppVersion) bool {
+func appVersionQuarantined(av *corev1beta1.AppVersion) bool {
 	return quarantined(av.Status.Conditions) || appVersionStopped(av)
 }
 
 // applyQuarantine applies a Quarantine Hold to the run, or the release of one. It returns
 // handled=false if no quarantine applies, and the reconcile continues.
-func (r *AgentReconciler) applyQuarantine(ctx context.Context, a *corev1alpha1.Agent) (handled bool, err error) {
-	ended := a.Status.Phase == corev1alpha1.AgentSucceeded || a.Status.Phase == corev1alpha1.AgentFailed
+func (r *AgentReconciler) applyQuarantine(ctx context.Context, a *corev1beta1.Agent) (handled bool, err error) {
+	ended := a.Status.Phase == corev1beta1.AgentSucceeded || a.Status.Phase == corev1beta1.AgentFailed
 	held := quarantineMarked(a)
 	if ended && !held {
 		return false, nil
 	}
-	h, err := quarantineHold(ctx, r.Client, corev1alpha1.HoldTargetAgent, a.Namespace, a.Name, "")
+	h, err := quarantineHold(ctx, r.Client, corev1beta1.HoldTargetAgent, a.Namespace, a.Name, "")
 	if err != nil {
 		return true, err
 	}
@@ -228,8 +228,8 @@ func (r *AgentReconciler) applyQuarantine(ctx context.Context, a *corev1alpha1.A
 		return false, nil
 	}
 	if !ended {
-		meta.RemoveStatusCondition(&a.Status.Conditions, corev1alpha1.HoldHeld)
-		if err := r.fail(ctx, a, corev1alpha1.AgentFailed, reasonStopped); err != nil {
+		meta.RemoveStatusCondition(&a.Status.Conditions, corev1beta1.HoldHeld)
+		if err := r.fail(ctx, a, corev1beta1.AgentFailed, reasonStopped); err != nil {
 			return true, err
 		}
 	} else if controllerutil.ContainsFinalizer(a, finalizer) {
@@ -245,7 +245,7 @@ func (r *AgentReconciler) applyQuarantine(ctx context.Context, a *corev1alpha1.A
 
 // quarantine adds the finalizer and the label, blocks the key and removes the deadline of the Job.
 // Then the status records the quarantine. A run that waits does not start.
-func (r *AgentReconciler) quarantine(ctx context.Context, a *corev1alpha1.Agent, h *corev1alpha1.Hold) error {
+func (r *AgentReconciler) quarantine(ctx context.Context, a *corev1beta1.Agent, h *corev1beta1.Hold) error {
 	// Kubernetes refuses a new finalizer after the delete starts. Then the finalizer of the run
 	// keeps the Agent and its Job until the release.
 	deleting := !a.DeletionTimestamp.IsZero()
@@ -269,7 +269,7 @@ func (r *AgentReconciler) quarantine(ctx context.Context, a *corev1alpha1.Agent,
 	if err := r.markChildren(ctx, a, true); err != nil || done {
 		return err
 	}
-	meta.SetStatusCondition(&a.Status.Conditions, metav1.Condition{Type: corev1alpha1.HoldHeld,
+	meta.SetStatusCondition(&a.Status.Conditions, metav1.Condition{Type: corev1beta1.HoldHeld,
 		Status: metav1.ConditionTrue, Reason: reasonQuarantined, ObservedGeneration: a.Generation,
 		Message: fmt.Sprintf("The Hold %s quarantines the run. The key is blocked, and the pods stay.", h.Name)})
 	return r.Status().Update(ctx, a)
@@ -279,7 +279,7 @@ func (r *AgentReconciler) quarantine(ctx context.Context, a *corev1alpha1.Agent,
 // the label, it also removes the deadline of the Job. It removes the label also from a Job that
 // lost its owner reference, because only the manager can remove it. It also makes or removes the
 // budget of the quarantine.
-func (r *AgentReconciler) markChildren(ctx context.Context, a *corev1alpha1.Agent, on bool) error {
+func (r *AgentReconciler) markChildren(ctx context.Context, a *corev1beta1.Agent, on bool) error {
 	job := &batchv1.Job{}
 	err := r.APIReader.Get(ctx, types.NamespacedName{Namespace: a.Namespace, Name: runName(a)}, job)
 	if err != nil && !apierrors.IsNotFound(err) {
@@ -313,9 +313,9 @@ func (r *AgentReconciler) markChildren(ctx context.Context, a *corev1alpha1.Agen
 // After the release, Held has the reason Stopped until the pod is stopped. Then the controller
 // removes the finalizer, and the Workspace starts again with a new key and a new pod. It returns
 // done=false if no quarantine applies.
-func (r *WorkspaceReconciler) applyQuarantine(ctx context.Context, ws *corev1alpha1.Workspace) (done bool,
+func (r *WorkspaceReconciler) applyQuarantine(ctx context.Context, ws *corev1beta1.Workspace) (done bool,
 	err error) {
-	h, err := quarantineHold(ctx, r.Client, corev1alpha1.HoldTargetWorkspace, ws.Namespace, ws.Name, "")
+	h, err := quarantineHold(ctx, r.Client, corev1beta1.HoldTargetWorkspace, ws.Namespace, ws.Name, "")
 	if err != nil {
 		return true, err
 	}
@@ -334,7 +334,7 @@ func (r *WorkspaceReconciler) applyQuarantine(ctx context.Context, ws *corev1alp
 		if err := r.markChildren(ctx, ws, true); err != nil {
 			return true, err
 		}
-		meta.SetStatusCondition(&ws.Status.Conditions, metav1.Condition{Type: corev1alpha1.HoldHeld,
+		meta.SetStatusCondition(&ws.Status.Conditions, metav1.Condition{Type: corev1beta1.HoldHeld,
 			Status: metav1.ConditionTrue, Reason: reasonQuarantined, ObservedGeneration: ws.Generation,
 			Message: fmt.Sprintf("The Hold %s quarantines the Workspace.", h.Name)})
 		return true, nil
@@ -365,7 +365,7 @@ func (r *WorkspaceReconciler) applyQuarantine(ctx context.Context, ws *corev1alp
 		logf.FromContext(ctx).Info("Stopped the Workspace after the release of the quarantine")
 		return false, nil
 	}
-	meta.SetStatusCondition(&ws.Status.Conditions, metav1.Condition{Type: corev1alpha1.HoldHeld,
+	meta.SetStatusCondition(&ws.Status.Conditions, metav1.Condition{Type: corev1beta1.HoldHeld,
 		Status: metav1.ConditionTrue, Reason: reasonStopped, ObservedGeneration: ws.Generation,
 		Message: "The release of the quarantine stops the pod. Then the Workspace starts again with a new key."})
 	return true, nil
@@ -377,7 +377,7 @@ const podGoneRecheck = 2 * time.Second
 
 // workspacePodLeft is true while a pod of the Workspace exists, also a pod that stops. It reads
 // the API server, because the controller has no cache of the pods.
-func (r *WorkspaceReconciler) workspacePodLeft(ctx context.Context, ws *corev1alpha1.Workspace) (bool, error) {
+func (r *WorkspaceReconciler) workspacePodLeft(ctx context.Context, ws *corev1beta1.Workspace) (bool, error) {
 	pods := &corev1.PodList{}
 	if err := r.APIReader.List(ctx, pods, client.InNamespace(ws.Namespace),
 		client.MatchingLabels{WorkspaceLabel: ws.Name}); err != nil {
@@ -387,15 +387,15 @@ func (r *WorkspaceReconciler) workspacePodLeft(ctx context.Context, ws *corev1al
 }
 
 // releasingQuarantine is true while the release of a quarantine waits for the stop of the pod.
-func releasingQuarantine(ws *corev1alpha1.Workspace) bool {
-	c := meta.FindStatusCondition(ws.Status.Conditions, corev1alpha1.HoldHeld)
+func releasingQuarantine(ws *corev1beta1.Workspace) bool {
+	c := meta.FindStatusCondition(ws.Status.Conditions, corev1beta1.HoldHeld)
 	return quarantineMarked(ws) && c != nil && c.Reason == reasonStopped
 }
 
 // quarantineHeld blocks the key of a quarantined Workspace and keeps its pod. The TestKey
 // controller blocks the test keys, because it reads Held=True.
-func (r *WorkspaceReconciler) quarantineHeld(ctx context.Context, ws *corev1alpha1.Workspace) (
-	corev1alpha1.WorkspacePhase, string, string, error) {
+func (r *WorkspaceReconciler) quarantineHeld(ctx context.Context, ws *corev1beta1.Workspace) (
+	corev1beta1.WorkspacePhase, string, string, error) {
 	secret, err := r.readKey(ctx, ws)
 	if err != nil && !errors.Is(err, errNotOwned) {
 		return "", "", "", err
@@ -411,12 +411,12 @@ func (r *WorkspaceReconciler) quarantineHeld(ctx context.Context, ws *corev1alph
 	}
 	switch err := r.waitTestKeyBlocks(ctx, ws); {
 	case errors.Is(err, errTestKeysUnblocked):
-		return corev1alpha1.WorkspacePending, reasonTestKeysBlocking, "The quarantine waits for the block of each test key.",
+		return corev1beta1.WorkspacePending, reasonTestKeysBlocking, "The quarantine waits for the block of each test key.",
 			nil
 	case err != nil:
 		return "", "", "", err
 	}
-	return corev1alpha1.WorkspacePending, reasonQuarantined,
+	return corev1beta1.WorkspacePending, reasonQuarantined,
 		"A Hold quarantines the pod. The key is blocked, and the egress proxy refuses each call. " +
 			"The pod and the home PVC stay.", nil
 }
@@ -426,9 +426,9 @@ func (r *WorkspaceReconciler) quarantineHeld(ctx context.Context, ws *corev1alph
 // starts, so the controller does not remove the finalizers that the Workspace has. Thus the
 // Workspace, its StatefulSet and its pod stay until the release. The controller blocks the key
 // and adds the label, as for a Workspace that is not deleted.
-func (r *WorkspaceReconciler) quarantineDeleted(ctx context.Context, ws *corev1alpha1.Workspace) (kept bool,
+func (r *WorkspaceReconciler) quarantineDeleted(ctx context.Context, ws *corev1beta1.Workspace) (kept bool,
 	err error) {
-	h, err := quarantineHold(ctx, r.Client, corev1alpha1.HoldTargetWorkspace, ws.Namespace, ws.Name, "")
+	h, err := quarantineHold(ctx, r.Client, corev1beta1.HoldTargetWorkspace, ws.Namespace, ws.Name, "")
 	if err != nil {
 		return true, err
 	}
@@ -457,7 +457,7 @@ func (r *WorkspaceReconciler) quarantineDeleted(ctx context.Context, ws *corev1a
 	if err := r.markChildren(ctx, ws, true); err != nil {
 		return true, err
 	}
-	meta.SetStatusCondition(&ws.Status.Conditions, metav1.Condition{Type: corev1alpha1.HoldHeld,
+	meta.SetStatusCondition(&ws.Status.Conditions, metav1.Condition{Type: corev1beta1.HoldHeld,
 		Status: metav1.ConditionTrue, Reason: reasonQuarantined, ObservedGeneration: ws.Generation,
 		Message: fmt.Sprintf("The Hold %s quarantines the Workspace.", h.Name)})
 	phase, reason, msg, err := r.quarantineHeld(ctx, ws)
@@ -476,7 +476,7 @@ func (r *WorkspaceReconciler) quarantineDeleted(ctx context.Context, ws *corev1a
 
 // releaseDeleted removes the quarantine finalizer of a deleted Workspace after the release and
 // after the key step.
-func (r *WorkspaceReconciler) releaseDeleted(ctx context.Context, ws *corev1alpha1.Workspace) error {
+func (r *WorkspaceReconciler) releaseDeleted(ctx context.Context, ws *corev1beta1.Workspace) error {
 	if controllerutil.RemoveFinalizer(ws, quarantineFinalizer) {
 		return r.Update(ctx, ws)
 	}
@@ -484,7 +484,7 @@ func (r *WorkspaceReconciler) releaseDeleted(ctx context.Context, ws *corev1alph
 }
 
 // workspaceBudgetSelector selects the pods of the Workspace for the budget of the quarantine.
-func workspaceBudgetSelector(ws *corev1alpha1.Workspace) map[string]string {
+func workspaceBudgetSelector(ws *corev1beta1.Workspace) map[string]string {
 	return map[string]string{WorkspaceLabel: ws.Name}
 }
 
@@ -492,7 +492,7 @@ func workspaceBudgetSelector(ws *corev1alpha1.Workspace) map[string]string {
 // of the Workspace. At the release, it also removes the budget of the quarantine. quarantineHeld
 // makes the budget after the block of the key. The controller has no read access to the PVCs, so
 // it always sends the patch.
-func (r *WorkspaceReconciler) markChildren(ctx context.Context, ws *corev1alpha1.Workspace, on bool) error {
+func (r *WorkspaceReconciler) markChildren(ctx context.Context, ws *corev1beta1.Workspace, on bool) error {
 	sts := &appsv1.StatefulSet{}
 	err := r.APIReader.Get(ctx, client.ObjectKeyFromObject(ws), sts)
 	if err != nil && !apierrors.IsNotFound(err) {
@@ -520,14 +520,14 @@ func (r *WorkspaceReconciler) markChildren(ctx context.Context, ws *corev1alpha1
 // applyQuarantine applies a Quarantine Hold to the version, or the release of one. The release
 // revokes the version with the reason Stopped, as a Stop Hold does. It returns handled=false if no
 // quarantine applies.
-func (r *AppVersionReconciler) applyQuarantine(ctx context.Context, av *corev1alpha1.AppVersion) (handled bool,
+func (r *AppVersionReconciler) applyQuarantine(ctx context.Context, av *corev1beta1.AppVersion) (handled bool,
 	err error) {
-	revoking := meta.FindStatusCondition(av.Status.Conditions, corev1alpha1.AppVersionRevoking) != nil
+	revoking := meta.FindStatusCondition(av.Status.Conditions, corev1beta1.AppVersionRevoking) != nil
 	held := quarantineMarked(av)
 	if revoking && !held {
 		return false, nil
 	}
-	h, err := quarantineHold(ctx, r.Client, corev1alpha1.HoldTargetAppVersion, av.Namespace, av.Name,
+	h, err := quarantineHold(ctx, r.Client, corev1beta1.HoldTargetAppVersion, av.Namespace, av.Name,
 		av.Spec.AppRef.Name)
 	if err != nil {
 		return true, err
@@ -554,7 +554,7 @@ func (r *AppVersionReconciler) applyQuarantine(ctx context.Context, av *corev1al
 		}
 		return false, nil
 	}
-	meta.RemoveStatusCondition(&av.Status.Conditions, corev1alpha1.HoldHeld)
+	meta.RemoveStatusCondition(&av.Status.Conditions, corev1beta1.HoldHeld)
 	if err := r.revoke(ctx, av, reasonStopped); err != nil {
 		return true, err
 	}
@@ -566,8 +566,8 @@ func (r *AppVersionReconciler) applyQuarantine(ctx context.Context, av *corev1al
 
 // quarantine adds the finalizer and the label, and blocks the key. The pods stay, and the
 // controller does not renew the key. Then the status records the quarantine.
-func (r *AppVersionReconciler) quarantine(ctx context.Context, av *corev1alpha1.AppVersion,
-	h *corev1alpha1.Hold) error {
+func (r *AppVersionReconciler) quarantine(ctx context.Context, av *corev1beta1.AppVersion,
+	h *corev1beta1.Hold) error {
 	// Kubernetes refuses a new finalizer after the delete starts. Then the finalizer of the version
 	// keeps it and its pods until the release.
 	deleting := !av.DeletionTimestamp.IsZero()
@@ -606,7 +606,7 @@ func (r *AppVersionReconciler) quarantine(ctx context.Context, av *corev1alpha1.
 	if err := r.markChildren(ctx, av, true); err != nil {
 		return err
 	}
-	meta.SetStatusCondition(&av.Status.Conditions, metav1.Condition{Type: corev1alpha1.HoldHeld,
+	meta.SetStatusCondition(&av.Status.Conditions, metav1.Condition{Type: corev1beta1.HoldHeld,
 		Status: metav1.ConditionTrue, Reason: reasonQuarantined, ObservedGeneration: av.Generation,
 		Message: fmt.Sprintf("The Hold %s quarantines the version. The key is blocked, and the pods stay.", h.Name)})
 	return r.Status().Update(ctx, av)
@@ -614,7 +614,7 @@ func (r *AppVersionReconciler) quarantine(ctx context.Context, av *corev1alpha1.
 
 // markChildren adds or removes the quarantine label on the Deployment of the version and on its
 // pods, and makes or removes the budget of the quarantine.
-func (r *AppVersionReconciler) markChildren(ctx context.Context, av *corev1alpha1.AppVersion, on bool) error {
+func (r *AppVersionReconciler) markChildren(ctx context.Context, av *corev1beta1.AppVersion, on bool) error {
 	d := &appsv1.Deployment{}
 	found, err := r.getOwned(ctx, av, d)
 	if err != nil && !errors.Is(err, errNotOwned) {

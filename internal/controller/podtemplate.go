@@ -30,7 +30,7 @@ import (
 	"k8s.io/apimachinery/pkg/util/validation/field"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
-	corev1alpha1 "github.com/mohanraj00/koodam/api/v1alpha1"
+	corev1beta1 "github.com/mohanraj00/koodam/api/v1beta1"
 	"github.com/mohanraj00/koodam/internal/podtemplate"
 )
 
@@ -85,7 +85,7 @@ func isInvalidTemplate(err error) bool {
 }
 
 // mergedStatefulSet returns the StatefulSet of the Workspace with spec.podTemplate.
-func (r *WorkspaceReconciler) mergedStatefulSet(ctx context.Context, ws *corev1alpha1.Workspace, user string) (
+func (r *WorkspaceReconciler) mergedStatefulSet(ctx context.Context, ws *corev1beta1.Workspace, user string) (
 	*appsv1.StatefulSet, error) {
 	sts := r.statefulSet(ws, user)
 	tmpl, err := withPodTemplate(ctx, r.APIReader, ws.Namespace, sts.Spec.Template, ws.Spec.PodTemplate,
@@ -102,7 +102,7 @@ func (r *WorkspaceReconciler) mergedStatefulSet(ctx context.Context, ws *corev1a
 // the main container. If t is nil, it returns base. It refuses a reference to a Secret in
 // namespace ns that a Koodam object owns.
 func withPodTemplate(ctx context.Context, rd client.Reader, ns string, base corev1.PodTemplateSpec,
-	t *corev1alpha1.PodTemplate, main string) (corev1.PodTemplateSpec, error) {
+	t *corev1beta1.PodTemplate, main string) (corev1.PodTemplateSpec, error) {
 	if t == nil {
 		return base, nil
 	}
@@ -118,7 +118,7 @@ func withPodTemplate(ctx context.Context, rd client.Reader, ns string, base core
 	if len(errs) > 0 {
 		return base, &invalidTemplateError{errs: errs}
 	}
-	syncNookkuPythonCheck(&out.Spec, main)
+	syncPresetPythonChecks(&out.Spec, main)
 	return out, nil
 }
 
@@ -156,7 +156,7 @@ func ownedSecrets(ctx context.Context, rd client.Reader, ns string, refs []podte
 // koodamOwned reports whether one of refs is a Koodam object.
 func koodamOwned(refs []metav1.OwnerReference) bool {
 	for _, o := range refs {
-		if gv, err := schema.ParseGroupVersion(o.APIVersion); err == nil && gv.Group == corev1alpha1.GroupVersion.Group {
+		if gv, err := schema.ParseGroupVersion(o.APIVersion); err == nil && gv.Group == corev1beta1.GroupVersion.Group {
 			return true
 		}
 	}

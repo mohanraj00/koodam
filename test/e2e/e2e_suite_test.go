@@ -46,7 +46,7 @@ import (
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
-	corev1alpha1 "github.com/mohanraj00/koodam/api/v1alpha1"
+	corev1beta1 "github.com/mohanraj00/koodam/api/v1beta1"
 	"github.com/mohanraj00/koodam/test/utils"
 )
 
@@ -108,7 +108,7 @@ var _ = BeforeSuite(func() {
 	restCfg.Timeout = callTimeout
 	scheme := runtime.NewScheme()
 	Expect(clientgoscheme.AddToScheme(scheme)).To(Succeed())
-	Expect(corev1alpha1.AddToScheme(scheme)).To(Succeed())
+	Expect(corev1beta1.AddToScheme(scheme)).To(Succeed())
 	k8s, err = client.New(restCfg, client.Options{Scheme: scheme})
 	Expect(err).NotTo(HaveOccurred())
 	clientset, err = kubernetes.NewForConfig(restCfg)

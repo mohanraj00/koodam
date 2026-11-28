@@ -38,7 +38,7 @@ import (
 	"k8s.io/client-go/tools/clientcmd"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
-	corev1alpha1 "github.com/mohanraj00/koodam/api/v1alpha1"
+	corev1beta1 "github.com/mohanraj00/koodam/api/v1beta1"
 )
 
 const (
@@ -76,11 +76,11 @@ func sshHome(t *testing.T) (sshPaths, *[][]string) {
 	return sshPaths{dir: filepath.Join(home, ".ssh")}, &calls
 }
 
-func testWorkspace(key string, phase corev1alpha1.WorkspacePhase) *corev1alpha1.Workspace {
-	return &corev1alpha1.Workspace{
+func testWorkspace(key string, phase corev1beta1.WorkspacePhase) *corev1beta1.Workspace {
+	return &corev1beta1.Workspace{
 		ObjectMeta: metav1.ObjectMeta{Name: wsName, Namespace: testNS},
-		Spec:       corev1alpha1.WorkspaceSpec{SSHPublicKeys: []string{otherKey}},
-		Status:     corev1alpha1.WorkspaceStatus{Phase: phase, HostKey: key},
+		Spec:       corev1beta1.WorkspaceSpec{SSHPublicKeys: []string{otherKey}},
+		Status:     corev1beta1.WorkspaceStatus{Phase: phase, HostKey: key},
 	}
 }
 
@@ -125,9 +125,9 @@ func read(t *testing.T, path string) string {
 	return string(data)
 }
 
-func getWorkspace(t *testing.T, kube client.Client) *corev1alpha1.Workspace {
+func getWorkspace(t *testing.T, kube client.Client) *corev1beta1.Workspace {
 	t.Helper()
-	w := &corev1alpha1.Workspace{}
+	w := &corev1beta1.Workspace{}
 	if err := kube.Get(context.Background(), client.ObjectKey{Namespace: testNS, Name: wsName}, w); err != nil {
 		t.Fatal(err)
 	}
@@ -165,7 +165,7 @@ func TestSSHSetupIsIdempotent(t *testing.T) {
 	if err := os.WriteFile(p.config(), []byte(userLines), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	kube := newKube(t, nil, testWorkspace(hostKey+" root@pod", corev1alpha1.WorkspaceRunning))
+	kube := newKube(t, nil, testWorkspace(hostKey+" root@pod", corev1beta1.WorkspaceRunning))
 	out, err := runSSH(kube, "", "ssh", "setup", wsName, "--yes")
 	if err != nil {
 		t.Fatalf("setup: %v\n%s", err, out)
@@ -212,7 +212,7 @@ func TestSSHSetupIsIdempotent(t *testing.T) {
 
 func TestSSHSetupAsksBeforeTheInclude(t *testing.T) {
 	p, _ := sshHome(t)
-	kube := newKube(t, nil, testWorkspace(hostKey, corev1alpha1.WorkspaceRunning))
+	kube := newKube(t, nil, testWorkspace(hostKey, corev1beta1.WorkspaceRunning))
 	if out, err := runSSH(kube, "n\n", "ssh", "setup", wsName); err != nil {
 		t.Fatalf("setup: %v\n%s", err, out)
 	}
@@ -238,7 +238,7 @@ func TestSSHSetupStopsForABadHostKey(t *testing.T) {
 		"-----BEGIN OPENSSH PRIVATE KEY-----":      "not a valid public key",
 	} {
 		p, _ := sshHome(t)
-		kube := newKube(t, nil, testWorkspace(key, corev1alpha1.WorkspacePending))
+		kube := newKube(t, nil, testWorkspace(key, corev1beta1.WorkspacePending))
 		_, err := runSSH(kube, "", "ssh", "setup", wsName, "--yes")
 		if err == nil || !strings.Contains(err.Error(), want) {
 			t.Errorf("host key %q: got %v, want %q", key, err, want)
@@ -281,7 +281,7 @@ func TestProxyCommandQuotesAndPinsTheContext(t *testing.T) {
 
 func TestSSHSetupRefusesABadContextName(t *testing.T) {
 	p, _ := sshHome(t)
-	kube := newKube(t, nil, testWorkspace(hostKey, corev1alpha1.WorkspaceRunning))
+	kube := newKube(t, nil, testWorkspace(hostKey, corev1beta1.WorkspaceRunning))
 	_, err := runSSHEnv(&env{kube: kube, namespace: testNS, context: "kind\nProxyCommand evil"}, "",
 		"ssh", "setup", wsName, "--yes")
 	if err == nil || !strings.Contains(err.Error(), "kube context name") {
@@ -297,9 +297,9 @@ func TestSSHSetupRefusesABadContextName(t *testing.T) {
 
 func TestSSHSetupKeepsTheContextOfEachEntry(t *testing.T) {
 	p, _ := sshHome(t)
-	other := testWorkspace(hostKey, corev1alpha1.WorkspaceRunning)
+	other := testWorkspace(hostKey, corev1beta1.WorkspaceRunning)
 	other.Name = "dev"
-	kube := newKube(t, nil, testWorkspace(hostKey, corev1alpha1.WorkspaceRunning), other)
+	kube := newKube(t, nil, testWorkspace(hostKey, corev1beta1.WorkspaceRunning), other)
 	if out, err := runSSHEnv(&env{kube: kube, namespace: testNS, context: "first"}, "", "ssh", "setup", wsName,
 		"--yes"); err != nil {
 		t.Fatalf("setup: %v\n%s", err, out)
@@ -314,7 +314,7 @@ func TestSSHSetupKeepsTheContextOfEachEntry(t *testing.T) {
 
 func TestSSHSetupTellsThatTheEntryIsNotActiveAfterANo(t *testing.T) {
 	sshHome(t)
-	kube := newKube(t, nil, testWorkspace(hostKey, corev1alpha1.WorkspaceRunning))
+	kube := newKube(t, nil, testWorkspace(hostKey, corev1beta1.WorkspaceRunning))
 	out, err := runSSH(kube, "no\n", "ssh", "setup", wsName)
 	if err != nil {
 		t.Fatalf("setup: %v\n%s", err, out)
@@ -340,7 +340,7 @@ func TestSSHSetupKeepsASymlinkedConfig(t *testing.T) {
 	if err := os.Symlink(target, p.config()); err != nil {
 		t.Fatal(err)
 	}
-	kube := newKube(t, nil, testWorkspace(hostKey, corev1alpha1.WorkspaceRunning))
+	kube := newKube(t, nil, testWorkspace(hostKey, corev1beta1.WorkspaceRunning))
 	if out, err := runSSH(kube, "", "ssh", "setup", wsName, "--yes"); err != nil {
 		t.Fatalf("setup: %v\n%s", err, out)
 	}
@@ -403,7 +403,7 @@ func TestHasIncludeOnlyBeforeTheFirstHost(t *testing.T) {
 
 func TestSSHRemoveRemovesTheEntryTheHostKeyAndTheKey(t *testing.T) {
 	p, _ := sshHome(t)
-	kube := newKube(t, nil, testWorkspace(hostKey, corev1alpha1.WorkspaceRunning))
+	kube := newKube(t, nil, testWorkspace(hostKey, corev1beta1.WorkspaceRunning))
 	if out, err := runSSH(kube, "", "ssh", "setup", wsName, "--yes"); err != nil {
 		t.Fatalf("setup: %v\n%s", err, out)
 	}
@@ -429,7 +429,7 @@ func TestSSHRemoveRemovesTheEntryTheHostKeyAndTheKey(t *testing.T) {
 
 func TestSSHRemoveWithoutKeyKeepsTheKeys(t *testing.T) {
 	p, _ := sshHome(t)
-	kube := newKube(t, nil, testWorkspace(hostKey, corev1alpha1.WorkspaceRunning))
+	kube := newKube(t, nil, testWorkspace(hostKey, corev1beta1.WorkspaceRunning))
 	if out, err := runSSH(kube, "", "ssh", "setup", wsName, "--yes"); err != nil {
 		t.Fatalf("setup: %v\n%s", err, out)
 	}
@@ -446,7 +446,7 @@ func TestSSHRemoveWithoutKeyKeepsTheKeys(t *testing.T) {
 
 func TestSSHConnectAndTestRunSSH(t *testing.T) {
 	_, calls := sshHome(t)
-	kube := newKube(t, nil, testWorkspace(hostKey, corev1alpha1.WorkspaceRunning))
+	kube := newKube(t, nil, testWorkspace(hostKey, corev1beta1.WorkspaceRunning))
 	if _, err := runSSH(kube, "", "ssh", wsName); err == nil || !strings.Contains(err.Error(), "ssh setup") {
 		t.Errorf("connect before setup: got %v", err)
 	}
@@ -471,7 +471,7 @@ func TestSSHConnectAndTestRunSSH(t *testing.T) {
 
 func TestSSHDoctorFindsEachFault(t *testing.T) {
 	p, _ := sshHome(t)
-	ok := newKube(t, nil, testWorkspace(hostKey, corev1alpha1.WorkspaceRunning))
+	ok := newKube(t, nil, testWorkspace(hostKey, corev1beta1.WorkspaceRunning))
 	if out, err := runSSH(ok, "", "ssh", "setup", wsName, "--yes"); err != nil {
 		t.Fatalf("setup: %v\n%s", err, out)
 	}
@@ -485,7 +485,7 @@ func TestSSHDoctorFindsEachFault(t *testing.T) {
 	if err := os.Chmod(p.key(), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	suspended := testWorkspace(hostKey, corev1alpha1.WorkspaceSuspended)
+	suspended := testWorkspace(hostKey, corev1beta1.WorkspaceSuspended)
 	suspended.Spec.Suspend = true
 	cs := kubefake.NewClientset()
 	allow(cs, false)
@@ -523,7 +523,7 @@ func wantFaults(t *testing.T, out string, faults ...string) {
 
 func TestSSHDoctorFindsAMissingSetup(t *testing.T) {
 	p, _ := sshHome(t)
-	kube := newKube(t, nil, testWorkspace(hostKey, corev1alpha1.WorkspaceRunning))
+	kube := newKube(t, nil, testWorkspace(hostKey, corev1beta1.WorkspaceRunning))
 	out, err := runSSH(kube, "", "ssh", "doctor")
 	if err == nil {
 		t.Fatalf("doctor found no fault:\n%s", out)
@@ -538,7 +538,7 @@ func TestSSHDoctorFindsAMissingSetup(t *testing.T) {
 
 func TestSSHDoctorChecksTheWorkspaceArgument(t *testing.T) {
 	sshHome(t)
-	kube := newKube(t, nil, testWorkspace(hostKey, corev1alpha1.WorkspaceRunning))
+	kube := newKube(t, nil, testWorkspace(hostKey, corev1beta1.WorkspaceRunning))
 	if out, err := runSSH(kube, "", "ssh", "setup", wsName, "--yes"); err != nil {
 		t.Fatalf("setup: %v\n%s", err, out)
 	}
@@ -551,7 +551,7 @@ func TestSSHDoctorChecksTheWorkspaceArgument(t *testing.T) {
 
 func TestSSHDoctorShowsTheAccessReviewError(t *testing.T) {
 	sshHome(t)
-	kube := newKube(t, nil, testWorkspace(hostKey, corev1alpha1.WorkspaceRunning))
+	kube := newKube(t, nil, testWorkspace(hostKey, corev1beta1.WorkspaceRunning))
 	if out, err := runSSH(kube, "", "ssh", "setup", wsName, "--yes"); err != nil {
 		t.Fatalf("setup: %v\n%s", err, out)
 	}
@@ -572,7 +572,7 @@ func TestSSHDoctorShowsTheAccessReviewError(t *testing.T) {
 
 func TestSSHTestFailureNamesTheNamespace(t *testing.T) {
 	sshHome(t)
-	kube := newKube(t, nil, testWorkspace(hostKey, corev1alpha1.WorkspaceRunning))
+	kube := newKube(t, nil, testWorkspace(hostKey, corev1beta1.WorkspaceRunning))
 	if out, err := runSSH(kube, "", "ssh", "setup", wsName, "--yes"); err != nil {
 		t.Fatalf("setup: %v\n%s", err, out)
 	}

@@ -43,7 +43,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/event"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
-	corev1alpha1 "github.com/mohanraj00/koodam/api/v1alpha1"
+	corev1beta1 "github.com/mohanraj00/koodam/api/v1beta1"
 )
 
 var _ = Describe("Workspace Controller", func() {
@@ -67,8 +67,8 @@ var _ = Describe("Workspace Controller", func() {
 		_, err := r().Reconcile(ctx, reconcile.Request{NamespacedName: nn(name)})
 		Expect(err).NotTo(HaveOccurred())
 	}
-	workspace := func() *corev1alpha1.Workspace {
-		ws := &corev1alpha1.Workspace{}
+	workspace := func() *corev1beta1.Workspace {
+		ws := &corev1beta1.Workspace{}
 		Expect(k8sClient.Get(ctx, nn(name), ws)).To(Succeed())
 		return ws
 	}
@@ -88,9 +88,9 @@ var _ = Describe("Workspace Controller", func() {
 		ctx = logr.NewContext(context.Background(), funcr.New(func(p, a string) {
 			logs.WriteString(p + " " + a + "\n")
 		}, funcr.Options{Verbosity: 1}))
-		ws := &corev1alpha1.Workspace{
+		ws := &corev1beta1.Workspace{
 			ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: ns},
-			Spec:       corev1alpha1.WorkspaceSpec{SSHPublicKeys: []string{key1}, Storage: resource.MustParse("5Gi")},
+			Spec:       corev1beta1.WorkspaceSpec{SSHPublicKeys: []string{key1}, Storage: resource.MustParse("5Gi")},
 		}
 		Expect(k8sClient.Create(ctx, ws)).To(Succeed())
 		cleanup(ws)
@@ -102,7 +102,7 @@ var _ = Describe("Workspace Controller", func() {
 	It("merges spec.podTemplate into the StatefulSet", func() {
 		sidecar := corev1.Container{Name: "sidecar", Image: "busybox"}
 		ws := workspace()
-		ws.Spec.PodTemplate = &corev1alpha1.PodTemplate{Metadata: corev1alpha1.PodTemplateMetadata{
+		ws.Spec.PodTemplate = &corev1beta1.PodTemplate{Metadata: corev1beta1.PodTemplateMetadata{
 			Labels: map[string]string{"group": "a"}, Annotations: map[string]string{"note": "b"},
 		}, Spec: corev1.PodSpec{
 			NodeSelector: map[string]string{"pool": "agents"},
@@ -122,7 +122,7 @@ var _ = Describe("Workspace Controller", func() {
 		Expect(cs[1].Name).To(Equal(sidecar.Name))
 
 		ws = workspace()
-		ws.Spec.PodTemplate = &corev1alpha1.PodTemplate{Spec: corev1.PodSpec{
+		ws.Spec.PodTemplate = &corev1beta1.PodTemplate{Spec: corev1.PodSpec{
 			Containers: []corev1.Container{sidecar},
 		}}
 		Expect(k8sClient.Update(ctx, ws)).To(Succeed())
@@ -138,7 +138,7 @@ var _ = Describe("Workspace Controller", func() {
 		before := &appsv1.StatefulSet{}
 		get(before, name)
 		ws := workspace()
-		ws.Spec.PodTemplate = &corev1alpha1.PodTemplate{Spec: corev1.PodSpec{
+		ws.Spec.PodTemplate = &corev1beta1.PodTemplate{Spec: corev1.PodSpec{
 			Volumes: []corev1.Volume{{Name: "ssh", VolumeSource: corev1.VolumeSource{
 				EmptyDir: &corev1.EmptyDirVolumeSource{}}}},
 		}}
@@ -153,14 +153,14 @@ var _ = Describe("Workspace Controller", func() {
 
 	It("fails a Workspace with a spec.podTemplate that the merge refuses, and makes no pod", func() {
 		ws := workspace()
-		ws.Spec.PodTemplate = &corev1alpha1.PodTemplate{Spec: corev1.PodSpec{
+		ws.Spec.PodTemplate = &corev1beta1.PodTemplate{Spec: corev1.PodSpec{
 			Volumes: []corev1.Volume{{Name: "ssh", VolumeSource: corev1.VolumeSource{
 				EmptyDir: &corev1.EmptyDirVolumeSource{}}}},
 		}}
 		Expect(k8sClient.Update(ctx, ws)).To(Succeed())
 		reconcileOnce()
 		ws = workspace()
-		Expect(ws.Status.Phase).To(Equal(corev1alpha1.WorkspaceFailed))
+		Expect(ws.Status.Phase).To(Equal(corev1beta1.WorkspaceFailed))
 		Expect(ws.Status.Pod).To(BeEmpty())
 		c := meta.FindStatusCondition(ws.Status.Conditions, condReady)
 		Expect(c).NotTo(BeNil())
@@ -178,15 +178,15 @@ var _ = Describe("Workspace Controller", func() {
 
 	It("refuses a reference to a Secret that Koodam owns, and accepts a user Secret", func() {
 		owned := &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: "ws-b-gateway", Namespace: ns,
-			OwnerReferences: []metav1.OwnerReference{{APIVersion: corev1alpha1.GroupVersion.String(),
+			OwnerReferences: []metav1.OwnerReference{{APIVersion: corev1beta1.GroupVersion.String(),
 				Kind: "Workspace", Name: "ws-b", UID: "ws-b-uid"}}}}
 		mine := &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: "github-token", Namespace: ns}}
 		for _, s := range []*corev1.Secret{owned, mine} {
 			Expect(k8sClient.Create(ctx, s)).To(Succeed())
 			DeferCleanup(k8sClient.Delete, ctx, s)
 		}
-		ref := func(secret string) *corev1alpha1.PodTemplate {
-			return &corev1alpha1.PodTemplate{Spec: corev1.PodSpec{Containers: []corev1.Container{{
+		ref := func(secret string) *corev1beta1.PodTemplate {
+			return &corev1beta1.PodTemplate{Spec: corev1.PodSpec{Containers: []corev1.Container{{
 				Name: "helper", Image: image, EnvFrom: []corev1.EnvFromSource{{SecretRef: &corev1.SecretEnvSource{
 					LocalObjectReference: corev1.LocalObjectReference{Name: secret}}}}}}}}
 		}
@@ -196,7 +196,7 @@ var _ = Describe("Workspace Controller", func() {
 		Expect(k8sClient.Update(ctx, ws)).To(Succeed())
 		reconcileOnce()
 		ws = workspace()
-		Expect(ws.Status.Phase).To(Equal(corev1alpha1.WorkspaceFailed))
+		Expect(ws.Status.Phase).To(Equal(corev1beta1.WorkspaceFailed))
 		c := meta.FindStatusCondition(ws.Status.Conditions, condReady)
 		Expect(c).NotTo(BeNil())
 		Expect(c.Reason).To(Equal(reasonInvalidPodTemplate))
@@ -207,7 +207,7 @@ var _ = Describe("Workspace Controller", func() {
 		ws.Spec.PodTemplate = ref(mine.Name)
 		Expect(k8sClient.Update(ctx, ws)).To(Succeed())
 		reconcileOnce()
-		Expect(workspace().Status.Phase).NotTo(Equal(corev1alpha1.WorkspaceFailed))
+		Expect(workspace().Status.Phase).NotTo(Equal(corev1beta1.WorkspaceFailed))
 	})
 
 	It("makes the 3 objects of the pod contract", func() {
@@ -278,7 +278,7 @@ var _ = Describe("Workspace Controller", func() {
 		Expect(c.Ports).To(ConsistOf(HaveField("ContainerPort", int32(2222))))
 		Expect(c.ReadinessProbe.TCPSocket.Port.IntValue()).To(Equal(2222))
 
-		Expect(ws.Status.Phase).To(Equal(corev1alpha1.WorkspacePending))
+		Expect(ws.Status.Phase).To(Equal(corev1beta1.WorkspacePending))
 		Expect(ws.Status.Pod).To(Equal(name + "-0"))
 		Expect(meta.IsStatusConditionFalse(ws.Status.Conditions, condReady)).To(BeTrue())
 		Expect(meta.IsStatusConditionTrue(ws.Status.Conditions, condKeysValid)).To(BeTrue())
@@ -293,7 +293,7 @@ var _ = Describe("Workspace Controller", func() {
 		reconcileOnce()
 
 		ws := workspace()
-		Expect(ws.Status.Phase).To(Equal(corev1alpha1.WorkspaceFailed))
+		Expect(ws.Status.Phase).To(Equal(corev1beta1.WorkspaceFailed))
 		Expect(meta.FindStatusCondition(ws.Status.Conditions, condReady).Reason).To(Equal("NameConflict"))
 		Expect(ws.Status.HostKey).To(BeEmpty())
 		get(other, name+"-ssh-host")
@@ -367,7 +367,7 @@ var _ = Describe("Workspace Controller", func() {
 		sts := &appsv1.StatefulSet{}
 		get(sts, name)
 		Expect(sts.Spec.Replicas).To(HaveValue(Equal(int32(0))))
-		Expect(workspace().Status.Phase).To(Equal(corev1alpha1.WorkspaceSuspended))
+		Expect(workspace().Status.Phase).To(Equal(corev1beta1.WorkspaceSuspended))
 
 		ws = workspace()
 		ws.Spec.Suspend = false
@@ -375,7 +375,7 @@ var _ = Describe("Workspace Controller", func() {
 		reconcileOnce()
 		get(sts, name)
 		Expect(sts.Spec.Replicas).To(HaveValue(Equal(int32(1))))
-		Expect(workspace().Status.Phase).To(Equal(corev1alpha1.WorkspacePending))
+		Expect(workspace().Status.Phase).To(Equal(corev1beta1.WorkspacePending))
 
 		// envtest has no StatefulSet controller, so the test writes the status. A ready replica
 		// of an old generation does not give Running.
@@ -383,14 +383,14 @@ var _ = Describe("Workspace Controller", func() {
 		sts.Status.ObservedGeneration = sts.Generation - 1
 		Expect(k8sClient.Status().Update(ctx, sts)).To(Succeed())
 		reconcileOnce()
-		Expect(workspace().Status.Phase).To(Equal(corev1alpha1.WorkspacePending))
+		Expect(workspace().Status.Phase).To(Equal(corev1beta1.WorkspacePending))
 
 		get(sts, name)
 		sts.Status.ObservedGeneration = sts.Generation
 		Expect(k8sClient.Status().Update(ctx, sts)).To(Succeed())
 		reconcileOnce()
 		ws = workspace()
-		Expect(ws.Status.Phase).To(Equal(corev1alpha1.WorkspaceRunning))
+		Expect(ws.Status.Phase).To(Equal(corev1beta1.WorkspaceRunning))
 		Expect(meta.IsStatusConditionTrue(ws.Status.Conditions, condReady)).To(BeTrue())
 	})
 
@@ -409,9 +409,9 @@ var _ = Describe("Workspace Controller", func() {
 	})
 
 	It("uses spec.image and the default storage of 20Gi", func() {
-		ws := &corev1alpha1.Workspace{
+		ws := &corev1beta1.Workspace{
 			ObjectMeta: metav1.ObjectMeta{Name: name + "-d", Namespace: ns},
-			Spec:       corev1alpha1.WorkspaceSpec{Image: "example.com/my-workspace:2"},
+			Spec:       corev1beta1.WorkspaceSpec{Image: "example.com/my-workspace:2"},
 		}
 		Expect(k8sClient.Create(ctx, ws)).To(Succeed())
 		cleanup(ws)
@@ -435,7 +435,7 @@ var _ = Describe("Workspace Controller", func() {
 		reconcileOnce()
 
 		ws := workspace()
-		Expect(ws.Status.Phase).To(Equal(corev1alpha1.WorkspaceFailed))
+		Expect(ws.Status.Phase).To(Equal(corev1beta1.WorkspaceFailed))
 		Expect(meta.FindStatusCondition(ws.Status.Conditions, condReady).Reason).To(Equal("NameConflict"))
 		Expect(ws.Status.Pod).To(BeEmpty())
 		get(other, name+"-ssh")
@@ -508,16 +508,16 @@ const testWorkspaceImage = "example.com/ws:1"
 
 var _ = BeforeEach(func() {
 	ctx := context.Background()
-	p := &corev1alpha1.Profile{ObjectMeta: metav1.ObjectMeta{Name: testProfile},
-		Spec: corev1alpha1.ProfileSpec{Namespaces: []string{metav1.NamespaceDefault}}}
+	p := &corev1beta1.Profile{ObjectMeta: metav1.ObjectMeta{Name: testProfile},
+		Spec: corev1beta1.ProfileSpec{Namespaces: []string{metav1.NamespaceDefault}}}
 	Expect(client.IgnoreAlreadyExists(k8sClient.Create(ctx, p))).To(Succeed())
 	ns := &corev1.Namespace{}
 	Expect(k8sClient.Get(ctx, types.NamespacedName{Name: metav1.NamespaceDefault}, ns)).To(Succeed())
-	if ns.Labels[corev1alpha1.ProfileLabel] != testProfile {
+	if ns.Labels[corev1beta1.ProfileLabel] != testProfile {
 		if ns.Labels == nil {
 			ns.Labels = map[string]string{}
 		}
-		ns.Labels[corev1alpha1.ProfileLabel] = testProfile
+		ns.Labels[corev1beta1.ProfileLabel] = testProfile
 		Expect(k8sClient.Update(ctx, ns)).To(Succeed())
 	}
 })
@@ -538,8 +538,8 @@ var _ = Describe("Workspace Profile binding", func() {
 		_, err := rec.Reconcile(ctx, reconcile.Request{NamespacedName: nn(name)})
 		Expect(err).NotTo(HaveOccurred())
 	}
-	workspace := func() *corev1alpha1.Workspace {
-		ws := &corev1alpha1.Workspace{}
+	workspace := func() *corev1beta1.Workspace {
+		ws := &corev1beta1.Workspace{}
 		Expect(k8sClient.Get(ctx, nn(name), ws)).To(Succeed())
 		return ws
 	}
@@ -559,7 +559,7 @@ var _ = Describe("Workspace Profile binding", func() {
 		Expect(k8sClient.Get(ctx, types.NamespacedName{Name: ns}, o)).To(Succeed())
 		o.Labels = map[string]string{}
 		if on {
-			o.Labels[corev1alpha1.ProfileLabel] = profile()
+			o.Labels[corev1beta1.ProfileLabel] = profile()
 		}
 		Expect(k8sClient.Update(ctx, o)).To(Succeed())
 	}
@@ -575,8 +575,8 @@ var _ = Describe("Workspace Profile binding", func() {
 		Expect(c.Status).To(Equal(metav1.ConditionFalse))
 		Expect(c.Reason).To(Equal(reasonNotBound))
 		Expect(c.Message).To(ContainSubstring(ns))
-		Expect(c.Message).To(ContainSubstring(corev1alpha1.ProfileLabel))
-		Expect(ws.Status.Phase).To(Equal(corev1alpha1.WorkspacePending))
+		Expect(c.Message).To(ContainSubstring(corev1beta1.ProfileLabel))
+		Expect(ws.Status.Phase).To(Equal(corev1beta1.WorkspacePending))
 		Expect(ws.Status.Pod).To(BeEmpty())
 	}
 
@@ -592,21 +592,21 @@ var _ = Describe("Workspace Profile binding", func() {
 			Image: "img:test", Gateway: gw, GatewayURL: "http://gw.bind.test:4000", KeyTTL: time.Hour}
 		o := &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: ns}}
 		if label {
-			o.Labels = map[string]string{corev1alpha1.ProfileLabel: profile()}
+			o.Labels = map[string]string{corev1beta1.ProfileLabel: profile()}
 		}
 		Expect(k8sClient.Create(ctx, o)).To(Succeed())
-		p := &corev1alpha1.Profile{ObjectMeta: metav1.ObjectMeta{Name: profile()}}
+		p := &corev1beta1.Profile{ObjectMeta: metav1.ObjectMeta{Name: profile()}}
 		if list {
 			p.Spec.Namespaces = []string{ns}
 		}
 		Expect(k8sClient.Create(ctx, p)).To(Succeed())
-		ws := &corev1alpha1.Workspace{ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: ns},
-			Spec: corev1alpha1.WorkspaceSpec{Storage: resource.MustParse("1Gi"),
-				Gateway: &corev1alpha1.WorkspaceGateway{Model: "m", BudgetPerDay: resource.MustParse("1")}}}
+		ws := &corev1beta1.Workspace{ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: ns},
+			Spec: corev1beta1.WorkspaceSpec{Storage: resource.MustParse("1Gi"),
+				Gateway: &corev1beta1.WorkspaceGateway{Model: "m", BudgetPerDay: resource.MustParse("1")}}}
 		Expect(k8sClient.Create(ctx, ws)).To(Succeed())
 		DeferCleanup(func() {
 			bg := context.Background()
-			w := &corev1alpha1.Workspace{}
+			w := &corev1beta1.Workspace{}
 			err := k8sClient.Get(bg, nn(name), w)
 			Expect(client.IgnoreNotFound(err)).To(Succeed())
 			if err == nil && controllerutil.RemoveFinalizer(w, workspaceFinalizer) {
@@ -614,7 +614,7 @@ var _ = Describe("Workspace Profile binding", func() {
 			}
 			// Delete the known object, because w has no name if the Get failed. envtest has no
 			// namespace controller, so the namespace stays in deletion.
-			known := &corev1alpha1.Workspace{ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: ns}}
+			known := &corev1beta1.Workspace{ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: ns}}
 			for _, d := range []client.Object{known, p, o} {
 				Expect(client.IgnoreNotFound(k8sClient.Delete(bg, d))).To(Succeed())
 			}
@@ -651,7 +651,7 @@ var _ = Describe("Workspace Profile binding", func() {
 		sts.Status.Replicas, sts.Status.ReadyReplicas, sts.Status.ObservedGeneration = 1, 1, sts.Generation
 		Expect(k8sClient.Status().Update(ctx, sts)).To(Succeed())
 		reconcileOnce()
-		Expect(workspace().Status.Phase).To(Equal(corev1alpha1.WorkspaceRunning))
+		Expect(workspace().Status.Phase).To(Equal(corev1beta1.WorkspaceRunning))
 		old := workspace().Status.KeyHash
 
 		var replicasAtBlock int32
@@ -683,7 +683,7 @@ var _ = Describe("Workspace Profile binding", func() {
 	It("writes ProfileBound=False before an unbind stops a pod with the TestKey opt-in", func() {
 		setup(true, true)
 		ws := workspace()
-		ws.Spec.TestKeys = &corev1alpha1.WorkspaceTestKeys{MaxBudget: resource.MustParse("1"),
+		ws.Spec.TestKeys = &corev1beta1.WorkspaceTestKeys{MaxBudget: resource.MustParse("1"),
 			MaxTTL: metav1.Duration{Duration: time.Hour}}
 		Expect(k8sClient.Update(ctx, ws)).To(Succeed())
 		reconcileOnce()
@@ -701,7 +701,7 @@ var _ = Describe("Workspace Profile binding", func() {
 	It("reads ProfileBound from the API server before an unbind stops a pod with the TestKey opt-in", func() {
 		setup(true, true)
 		ws := workspace()
-		ws.Spec.TestKeys = &corev1alpha1.WorkspaceTestKeys{MaxBudget: resource.MustParse("1"),
+		ws.Spec.TestKeys = &corev1beta1.WorkspaceTestKeys{MaxBudget: resource.MustParse("1"),
 			MaxTTL: metav1.Duration{Duration: time.Hour}}
 		// With no Workspace key, the unbind writes no status before the check.
 		ws.Spec.Gateway = nil
@@ -722,7 +722,7 @@ var _ = Describe("Workspace Profile binding", func() {
 		expectBound(true)
 		var replicasAtBlock int32
 		gw.atBlock = func() { replicasAtBlock = replicas() }
-		p := &corev1alpha1.Profile{}
+		p := &corev1beta1.Profile{}
 		Expect(k8sClient.Get(ctx, types.NamespacedName{Name: profile()}, p)).To(Succeed())
 		p.Spec.Namespaces = nil
 		Expect(k8sClient.Update(ctx, p)).To(Succeed())
@@ -739,17 +739,17 @@ var _ = Describe("Workspace Profile binding", func() {
 		want := []reconcile.Request{{NamespacedName: nn(name)}}
 		Expect(rec.workspacesForNamespace(ctx, &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: ns}})).
 			To(Equal(want))
-		p := &corev1alpha1.Profile{Spec: corev1alpha1.ProfileSpec{Namespaces: []string{ns, "wsbind-none"}}}
+		p := &corev1beta1.Profile{Spec: corev1beta1.ProfileSpec{Namespaces: []string{ns, "wsbind-none"}}}
 		Expect(rec.workspacesForProfile(ctx, p)).To(Equal(want))
 	})
 })
 
 var _ = Describe("namespaceBound", func() {
 	ns := &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: "nb",
-		Labels: map[string]string{corev1alpha1.ProfileLabel: "alice"}}}
-	profile := func() *corev1alpha1.Profile {
-		return &corev1alpha1.Profile{ObjectMeta: metav1.ObjectMeta{Name: "alice"},
-			Spec: corev1alpha1.ProfileSpec{Namespaces: []string{"nb"}}}
+		Labels: map[string]string{corev1beta1.ProfileLabel: "alice"}}}
+	profile := func() *corev1beta1.Profile {
+		return &corev1beta1.Profile{ObjectMeta: metav1.ObjectMeta{Name: "alice"},
+			Spec: corev1beta1.ProfileSpec{Namespaces: []string{"nb"}}}
 	}
 
 	It("binds only if the Profile is not in deletion", func() {
@@ -778,7 +778,7 @@ func (c staleBoundClient) Get(ctx context.Context, key client.ObjectKey, obj cli
 	if err := c.Client.Get(ctx, key, obj, opts...); err != nil {
 		return err
 	}
-	if ws, ok := obj.(*corev1alpha1.Workspace); ok {
+	if ws, ok := obj.(*corev1beta1.Workspace); ok {
 		meta.SetStatusCondition(&ws.Status.Conditions, metav1.Condition{Type: condProfileBound,
 			Status: metav1.ConditionFalse, Reason: reasonNotBound, Message: "An old cache value."})
 	}

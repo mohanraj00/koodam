@@ -39,7 +39,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
-	corev1alpha1 "github.com/mohanraj00/koodam/api/v1alpha1"
+	corev1beta1 "github.com/mohanraj00/koodam/api/v1beta1"
 	"github.com/mohanraj00/koodam/internal/egress"
 	"github.com/mohanraj00/koodam/test/utils"
 )
@@ -173,7 +173,7 @@ var _ = Describe("Traced egress", Ordered, Label("egress"), func() {
 			installChart()
 		})
 		DeferCleanup(func() {
-			_ = k8s.Delete(ctx, &corev1alpha1.Profile{ObjectMeta: metav1.ObjectMeta{Name: egProfile}})
+			_ = k8s.Delete(ctx, &corev1beta1.Profile{ObjectMeta: metav1.ObjectMeta{Name: egProfile}})
 			_ = k8s.Delete(ctx, &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: egNS}})
 			Eventually(func() error {
 				return k8s.Get(ctx, client.ObjectKey{Name: egNS}, &corev1.Namespace{})
@@ -181,9 +181,9 @@ var _ = Describe("Traced egress", Ordered, Label("egress"), func() {
 		})
 		for _, o := range []client.Object{
 			&corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: egNS,
-				Labels: map[string]string{corev1alpha1.ProfileLabel: egProfile}}},
-			&corev1alpha1.Profile{ObjectMeta: metav1.ObjectMeta{Name: egProfile},
-				Spec: corev1alpha1.ProfileSpec{Namespaces: []string{egNS}}},
+				Labels: map[string]string{corev1beta1.ProfileLabel: egProfile}}},
+			&corev1beta1.Profile{ObjectMeta: metav1.ObjectMeta{Name: egProfile},
+				Spec: corev1beta1.ProfileSpec{Namespaces: []string{egNS}}},
 		} {
 			Expect(client.IgnoreAlreadyExists(k8s.Create(ctx, o))).To(Succeed())
 		}
@@ -195,10 +195,10 @@ var _ = Describe("Traced egress", Ordered, Label("egress"), func() {
 		a := sampleAgent(agentName, "sleep 900")
 		a.Namespace = egNS
 		Expect(k8s.Create(ctx, a)).To(Succeed())
-		ws := &corev1alpha1.Workspace{ObjectMeta: metav1.ObjectMeta{Name: wsTraceName, Namespace: egNS},
-			Spec: corev1alpha1.WorkspaceSpec{Image: workspaceImage, Storage: resource.MustParse("1Gi")}}
+		ws := &corev1beta1.Workspace{ObjectMeta: metav1.ObjectMeta{Name: wsTraceName, Namespace: egNS},
+			Spec: corev1beta1.WorkspaceSpec{Image: workspaceImage, Storage: resource.MustParse("1Gi")}}
 		Expect(k8s.Create(ctx, ws)).To(Succeed())
-		waitPhase(ws, corev1alpha1.WorkspaceRunning)
+		waitPhase(ws, corev1beta1.WorkspaceRunning)
 		wsPod = wsTraceName + "-0"
 		Eventually(func(g Gomega) {
 			pods := &corev1.PodList{}
@@ -377,7 +377,7 @@ var _ = Describe("Traced egress", Ordered, Label("egress"), func() {
 		}
 
 		By("reading the guard lines of the key of the Agent in the gateway log")
-		a := &corev1alpha1.Agent{}
+		a := &corev1beta1.Agent{}
 		Expect(k8s.Get(ctx, client.ObjectKey{Namespace: egNS, Name: agentName}, a)).To(Succeed())
 		Expect(a.Status.KeyAlias).NotTo(BeEmpty())
 		digest := func(text string) string {
@@ -455,7 +455,7 @@ var _ = Describe("Traced egress", Ordered, Label("egress"), func() {
 		Expect(kinds).To(HaveKey(egress.KindConnect+"/"+egress.ResultDenied), "The spans have no denied call.")
 
 		By("reading the gateway spend logs of the key of the Agent")
-		a := &corev1alpha1.Agent{}
+		a := &corev1beta1.Agent{}
 		Expect(k8s.Get(ctx, client.ObjectKey{Namespace: egNS, Name: agentName}, a)).To(Succeed())
 		Expect(a.Status.KeyHash).NotTo(BeEmpty())
 		var logs []byte
@@ -500,8 +500,8 @@ var _ = Describe("Traced egress", Ordered, Label("egress"), func() {
 			func() string { return "The call before the quarantine did not work: " + before })
 
 		By("quarantining the Agent")
-		h := makeHoldFor("e2e-agent-quarantine", corev1alpha1.HoldQuarantine,
-			corev1alpha1.HoldTarget{Kind: corev1alpha1.HoldTargetAgent, Namespace: egNS, Name: heldName})
+		h := makeHoldFor("e2e-agent-quarantine", corev1beta1.HoldQuarantine,
+			corev1beta1.HoldTarget{Kind: corev1beta1.HoldTargetAgent, Namespace: egNS, Name: heldName})
 		expectHeldWith(h, "Quarantined")
 		Eventually(call, time.Minute, 2*time.Second).Should(Equal("403"), "The proxy does not refuse the call.")
 		Expect(k8s.Get(ctx, client.ObjectKeyFromObject(a), a)).To(Succeed())
@@ -547,7 +547,7 @@ var _ = Describe("Traced egress", Ordered, Label("egress"), func() {
 		By("releasing the Hold and checking that the Agent is deleted")
 		releaseHold(h)
 		Eventually(func() bool {
-			return apierrors.IsNotFound(k8s.Get(ctx, client.ObjectKeyFromObject(a), &corev1alpha1.Agent{}))
+			return apierrors.IsNotFound(k8s.Get(ctx, client.ObjectKeyFromObject(a), &corev1beta1.Agent{}))
 		}, 2*time.Minute, 2*time.Second).Should(BeTrue(), "The Agent stays after the release.")
 		// The garbage collector deletes the pod only after the controller removes the label.
 		Eventually(func() bool {

@@ -32,7 +32,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
-	corev1alpha1 "github.com/mohanraj00/koodam/api/v1alpha1"
+	corev1beta1 "github.com/mohanraj00/koodam/api/v1beta1"
 	"github.com/mohanraj00/koodam/internal/agentingress"
 )
 
@@ -51,7 +51,7 @@ const (
 
 // ingAgentWith returns an Agent with the ingress port and the pod template. An Agent with a nil port
 // is an ordinary Agent.
-func ingAgentWith(port *int32, tmpl *corev1alpha1.PodTemplate) *corev1alpha1.Agent {
+func ingAgentWith(port *int32, tmpl *corev1beta1.PodTemplate) *corev1beta1.Agent {
 	a := ingAgent()
 	a.Spec.IngressPort, a.Spec.PodTemplate = port, tmpl
 	return a
@@ -85,7 +85,7 @@ func ingExpectPaused(t *testing.T, rd client.Reader, g *countGateway, hasFinaliz
 
 // ingExpectRevoked stops the test if the revoke did not block the stored hash first, or did not
 // complete. A nil live Agent is permitted only if gone is true.
-func ingExpectRevoked(t *testing.T, rd client.Reader, g *countGateway, hash string, phase corev1alpha1.AgentPhase,
+func ingExpectRevoked(t *testing.T, rd client.Reader, g *countGateway, hash string, phase corev1beta1.AgentPhase,
 	gone bool) {
 	t.Helper()
 	a := ingLive(t, rd)
@@ -108,8 +108,8 @@ func ingPort(name, port string) corev1.Container {
 	return corev1.Container{Name: name, Image: testAgentImage, Ports: []corev1.ContainerPort{{Name: port, ContainerPort: 8080}}}
 }
 
-func ingTemplate(cs, inits []corev1.Container) *corev1alpha1.PodTemplate {
-	return &corev1alpha1.PodTemplate{Spec: corev1.PodSpec{Containers: cs, InitContainers: inits}}
+func ingTemplate(cs, inits []corev1.Container) *corev1beta1.PodTemplate {
+	return &corev1beta1.PodTemplate{Spec: corev1.PodSpec{Containers: cs, InitContainers: inits}}
 }
 
 func TestIngressDisabledPausesNewRun(t *testing.T) {
@@ -151,7 +151,7 @@ func TestIngressProvision(t *testing.T) {
 	for _, tc := range []struct {
 		name    string
 		port    *int32
-		tmpl    *corev1alpha1.PodTemplate
+		tmpl    *corev1beta1.PodTemplate
 		enabled bool
 	}{
 		{"opted in with the ingress enabled", new(int32(8080)), web, true},
@@ -170,7 +170,7 @@ func TestIngressProvision(t *testing.T) {
 
 	t.Run("enrolled run with the ingress disabled", func(t *testing.T) {
 		a := ingAgentWith(new(int32(8080)), nil)
-		sec := ingEnroll(t, a, corev1alpha1.AgentPending)
+		sec := ingEnroll(t, a, corev1beta1.AgentPending)
 		live := ingWorld(t, a, sec)
 		g := &countGateway{live: live}
 		ingReconcile(t, ingIngressReconciler(live, live, g, false))
@@ -183,7 +183,7 @@ func TestIngressRefusesBeforeKey(t *testing.T) {
 	for _, tc := range []struct {
 		name string
 		port int32
-		tmpl *corev1alpha1.PodTemplate
+		tmpl *corev1beta1.PodTemplate
 		want error
 	}{
 		{"main container http", 8080, ingTemplate([]corev1.Container{ingPort(agentContainer, http)}, nil),
@@ -207,7 +207,7 @@ func TestIngressRefusesBeforeKey(t *testing.T) {
 			switch {
 			case len(g.order) != 0:
 				t.Fatal("the controller called the gateway for an Agent that is not valid")
-			case a.Status.Phase != corev1alpha1.AgentFailed || c == nil || c.Reason != pauseTestInvalidReason ||
+			case a.Status.Phase != corev1beta1.AgentFailed || c == nil || c.Reason != pauseTestInvalidReason ||
 				c.Message != tc.want.Error():
 				t.Fatal("the Agent does not have the fixed Invalid status")
 			case slices.Contains(a.Finalizers, finalizer) || ingHas(t, live, &corev1.Secret{}):
@@ -223,32 +223,32 @@ func TestIngressDisabledRevokes(t *testing.T) {
 	for _, tc := range []struct {
 		name string
 		port int32
-		tmpl *corev1alpha1.PodTemplate
+		tmpl *corev1beta1.PodTemplate
 	}{
 		{"enrolled run with port 0", 0, nil},
 		{"enrolled run with main container http", 8080, mainHTTP},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			a := ingAgentWith(new(tc.port), tc.tmpl)
-			sec := ingEnroll(t, a, corev1alpha1.AgentPending)
+			sec := ingEnroll(t, a, corev1beta1.AgentPending)
 			hash := a.Status.KeyHash
 			live := ingWorld(t, a, sec)
 			g := &countGateway{live: live}
 			ingReconcile(t, ingIngressReconciler(live, live, g, false))
-			ingExpectRevoked(t, live, g, hash, corev1alpha1.AgentFailed, false)
+			ingExpectRevoked(t, live, g, hash, corev1beta1.AgentFailed, false)
 		})
 	}
 
 	t.Run("run end", func(t *testing.T) {
 		a := ingAgentWith(new(int32(8080)), nil)
-		sec := ingEnroll(t, a, corev1alpha1.AgentRunning)
+		sec := ingEnroll(t, a, corev1beta1.AgentRunning)
 		hash := a.Status.KeyHash
 		job := ingJob(a)
 		job.Status.Conditions = []batchv1.JobCondition{{Type: batchv1.JobComplete, Status: corev1.ConditionTrue}}
 		live := ingWorld(t, a, sec, job)
 		g := &countGateway{live: live}
 		ingReconcile(t, ingIngressReconciler(live, live, g, false))
-		ingExpectRevoked(t, live, g, hash, corev1alpha1.AgentSucceeded, false)
+		ingExpectRevoked(t, live, g, hash, corev1beta1.AgentSucceeded, false)
 		if !ingHas(t, live, &batchv1.Job{}) {
 			t.Fatal("the revoke deleted the Job of a run that ended")
 		}
@@ -256,7 +256,7 @@ func TestIngressDisabledRevokes(t *testing.T) {
 
 	t.Run("delete with port 0", func(t *testing.T) {
 		a := ingAgentWith(new(int32(0)), nil)
-		sec := ingEnroll(t, a, corev1alpha1.AgentRunning)
+		sec := ingEnroll(t, a, corev1beta1.AgentRunning)
 		hash := a.Status.KeyHash
 		live := ingWorld(t, a, sec, ingJob(a))
 		if live.Delete(t.Context(), ingAgent()) != nil {
@@ -270,7 +270,7 @@ func TestIngressDisabledRevokes(t *testing.T) {
 
 	t.Run("running run continues", func(t *testing.T) {
 		a := ingAgentWith(new(int32(8080)), nil)
-		sec := ingEnroll(t, a, corev1alpha1.AgentRunning)
+		sec := ingEnroll(t, a, corev1beta1.AgentRunning)
 		live := ingWorld(t, a, sec, ingJob(a))
 		before := ingLive(t, live)
 		g := &countGateway{live: live}
@@ -281,14 +281,14 @@ func TestIngressDisabledRevokes(t *testing.T) {
 
 func TestIngressReadsLiveAgent(t *testing.T) {
 	port := new(int32(8080))
-	enrolled := func(uid types.UID, phase corev1alpha1.AgentPhase) (*corev1alpha1.Agent, *corev1.Secret) {
+	enrolled := func(uid types.UID, phase corev1beta1.AgentPhase) (*corev1beta1.Agent, *corev1.Secret) {
 		a := ingAgentWith(port, nil)
 		a.UID = uid
 		return a, ingEnroll(t, a, phase)
 	}
 
 	t.Run("live key hash and cached no key hash", func(t *testing.T) {
-		a, sec := enrolled(pauseTestLiveUID, corev1alpha1.AgentPending)
+		a, sec := enrolled(pauseTestLiveUID, corev1beta1.AgentPending)
 		live := ingWorld(t, a, sec)
 		g, reads := &countGateway{live: live}, 0
 		ingReconcile(t, ingIngressReconciler(ingCache(live, ingAgentWith(port, nil), &reads), live, g, false))
@@ -301,10 +301,10 @@ func TestIngressReadsLiveAgent(t *testing.T) {
 	for _, tc := range []struct {
 		name  string
 		uid   types.UID
-		phase corev1alpha1.AgentPhase
+		phase corev1beta1.AgentPhase
 	}{
-		{"live no key hash and cached key hash", pauseTestLiveUID, corev1alpha1.AgentPending},
-		{"live Agent replaced and cached old UID", pauseTestOldUID, corev1alpha1.AgentRunning},
+		{"live no key hash and cached key hash", pauseTestLiveUID, corev1beta1.AgentPending},
+		{"live Agent replaced and cached old UID", pauseTestOldUID, corev1beta1.AgentRunning},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			stale, _ := enrolled(tc.uid, tc.phase)
@@ -319,7 +319,7 @@ func TestIngressReadsLiveAgent(t *testing.T) {
 	}
 
 	t.Run("live Agent deleted and cached run", func(t *testing.T) {
-		stale, _ := enrolled(pauseTestOldUID, corev1alpha1.AgentRunning)
+		stale, _ := enrolled(pauseTestOldUID, corev1beta1.AgentRunning)
 		live := ingWorld(t)
 		g, reads := &countGateway{live: live}, 0
 		ingReconcile(t, ingIngressReconciler(ingCache(live, stale, &reads), live, g, true))
@@ -343,7 +343,7 @@ func TestIngressReadsLiveAgent(t *testing.T) {
 func TestIngressRunningWithoutEnrollmentPauses(t *testing.T) {
 	a := ingAgentWith(new(int32(8080)), nil)
 	a.Finalizers = []string{finalizer}
-	a.Status = corev1alpha1.AgentStatus{Phase: corev1alpha1.AgentRunning}
+	a.Status = corev1beta1.AgentStatus{Phase: corev1beta1.AgentRunning}
 	// A Secret with the run name and the Agent as owner, but with no key. There is no Job.
 	sec := &corev1.Secret{ObjectMeta: runMeta(a), Data: map[string][]byte{pauseTestNote: []byte(pauseTestUser)}}
 	live := ingWorld(t, a, sec)
@@ -360,7 +360,7 @@ func TestIngressRunningWithoutEnrollmentPauses(t *testing.T) {
 		t.Fatal("the paused Agent is gone")
 	case got.ResourceVersion != before.ResourceVersion:
 		t.Fatal("the pause wrote the Agent or its status")
-	case got.Status.Phase != corev1alpha1.AgentRunning || got.Status.KeyHash != "" ||
+	case got.Status.Phase != corev1beta1.AgentRunning || got.Status.KeyHash != "" ||
 		len(got.Status.Conditions) > 0 || !slices.Contains(got.Finalizers, finalizer):
 		t.Fatal("the pause changed the status or the finalizers")
 	case !ingHas(t, live, &corev1.Secret{}):
@@ -382,7 +382,7 @@ func TestIngressRunningIgnoresStaleJobCache(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			a := ingAgentWith(tc.port, nil)
-			sec := ingEnroll(t, a, corev1alpha1.AgentRunning)
+			sec := ingEnroll(t, a, corev1beta1.AgentRunning)
 			live := ingWorld(t, a, sec, ingJob(a))
 			before := ingLive(t, live)
 			g, reads := &countGateway{live: live}, 0

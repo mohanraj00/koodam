@@ -42,7 +42,7 @@ import (
 	"k8s.io/apimachinery/pkg/util/intstr"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
-	corev1alpha1 "github.com/mohanraj00/koodam/api/v1alpha1"
+	corev1beta1 "github.com/mohanraj00/koodam/api/v1beta1"
 	"github.com/mohanraj00/koodam/internal/appclaim"
 	"github.com/mohanraj00/koodam/test/utils"
 )
@@ -144,9 +144,9 @@ func (z *zoneInstall) forward(namespace, target, ports string) {
 }
 
 // quotaOf reads a TenantQuota of the install.
-func (z *zoneInstall) quotaOf(name string) *corev1alpha1.TenantQuota {
+func (z *zoneInstall) quotaOf(name string) *corev1beta1.TenantQuota {
 	GinkgoHelper()
-	q := &corev1alpha1.TenantQuota{}
+	q := &corev1beta1.TenantQuota{}
 	Expect(k8s.Get(ctx, client.ObjectKey{Namespace: z.appsNS, Name: name}, q)).To(Succeed())
 	return q
 }
@@ -166,8 +166,8 @@ var _ = Describe("Tenants and zones", Ordered, Label("zones"), func() {
 		mockModel          = "mock-1"
 		suiteManager       = "deployment/" + release + "-controller-manager"
 		outOfZone          = "RouteOutOfZone"
-		reasonRateLimited  = corev1alpha1.ReasonTenantRateLimited
-		reasonQuota        = corev1alpha1.ReasonTenantQuotaExceeded
+		reasonRateLimited  = corev1beta1.ReasonTenantRateLimited
+		reasonQuota        = corev1beta1.ReasonTenantQuotaExceeded
 		reasonZoneMismatch = appclaim.ReasonZoneMismatch
 	)
 	zoneA := &zoneInstall{zone: "zone-a", release: "zone-a", systemNS: "zone-a-system", appsNS: "zone-a-apps",
@@ -215,25 +215,25 @@ gateway:
 		Expect(os.WriteFile(file, []byte(text), 0o600)).To(Succeed())
 		return file
 	}
-	appVersion := func(z *zoneInstall) *corev1alpha1.AppVersion {
-		return &corev1alpha1.AppVersion{ObjectMeta: metav1.ObjectMeta{Name: version, Namespace: z.appsNS},
-			Spec: corev1alpha1.AppVersionSpec{AppRef: corev1alpha1.AppReference{Name: appName},
-				Template: corev1alpha1.AppVersionTemplate{
-					PodTemplate: corev1alpha1.PodTemplate{Spec: corev1.PodSpec{Containers: []corev1.Container{{
-						Name: corev1alpha1.AppContainerName, Image: pythonImage,
+	appVersion := func(z *zoneInstall) *corev1beta1.AppVersion {
+		return &corev1beta1.AppVersion{ObjectMeta: metav1.ObjectMeta{Name: version, Namespace: z.appsNS},
+			Spec: corev1beta1.AppVersionSpec{AppRef: corev1beta1.AppReference{Name: appName},
+				Template: corev1beta1.AppVersionTemplate{
+					PodTemplate: corev1beta1.PodTemplate{Spec: corev1.PodSpec{Containers: []corev1.Container{{
+						Name: corev1beta1.AppContainerName, Image: pythonImage,
 						Command: []string{"python", "-u", "-c", appServer},
 						Ports:   []corev1.ContainerPort{{Name: "http", ContainerPort: 8080}},
 						ReadinessProbe: &corev1.Probe{PeriodSeconds: 1, ProbeHandler: corev1.ProbeHandler{
 							HTTPGet: &corev1.HTTPGetAction{Path: "/", Port: intstr.FromString("http")}}},
 					}}}}}}}
 	}
-	quotas := func(z *zoneInstall) []*corev1alpha1.TenantQuota {
+	quotas := func(z *zoneInstall) []*corev1beta1.TenantQuota {
 		om := func(name string) metav1.ObjectMeta { return metav1.ObjectMeta{Name: name, Namespace: z.appsNS} }
-		return []*corev1alpha1.TenantQuota{
-			{ObjectMeta: om(tenantFast), Spec: corev1alpha1.TenantQuotaSpec{Tenant: tenantFast,
-				RateLimit: &corev1alpha1.TenantRateLimit{RequestsPerSecond: resource.MustParse("100m"), Burst: new(int32(1))}}},
-			{ObjectMeta: om(tenantQuota), Spec: corev1alpha1.TenantQuotaSpec{Tenant: tenantQuota,
-				Period: corev1alpha1.TenantQuotaPeriodDay, Requests: new(z.quota)}},
+		return []*corev1beta1.TenantQuota{
+			{ObjectMeta: om(tenantFast), Spec: corev1beta1.TenantQuotaSpec{Tenant: tenantFast,
+				RateLimit: &corev1beta1.TenantRateLimit{RequestsPerSecond: resource.MustParse("100m"), Burst: new(int32(1))}}},
+			{ObjectMeta: om(tenantQuota), Spec: corev1beta1.TenantQuotaSpec{Tenant: tenantQuota,
+				Period: corev1beta1.TenantQuotaPeriodDay, Requests: new(z.quota)}},
 		}
 	}
 	// refusedAtQuota waits until the claim check refuses the tenant at its quota. Before the
@@ -279,10 +279,10 @@ gateway:
 					}
 				}
 				// The manager of the install must remove the finalizers before the uninstall.
-				_ = k8s.DeleteAllOf(ctx, &corev1alpha1.AppVersion{}, client.InNamespace(z.appsNS))
-				_ = k8s.DeleteAllOf(ctx, &corev1alpha1.TenantQuota{}, client.InNamespace(z.appsNS))
+				_ = k8s.DeleteAllOf(ctx, &corev1beta1.AppVersion{}, client.InNamespace(z.appsNS))
+				_ = k8s.DeleteAllOf(ctx, &corev1beta1.TenantQuota{}, client.InNamespace(z.appsNS))
 				Eventually(func() int {
-					versions, list := &corev1alpha1.AppVersionList{}, &corev1alpha1.TenantQuotaList{}
+					versions, list := &corev1beta1.AppVersionList{}, &corev1beta1.TenantQuotaList{}
 					_ = k8s.List(ctx, versions, client.InNamespace(z.appsNS))
 					_ = k8s.List(ctx, list, client.InNamespace(z.appsNS))
 					return len(versions.Items) + len(list.Items)
@@ -355,14 +355,14 @@ gateway:
 		for _, z := range zones {
 			for _, name := range []string{tenantFast, tenantQuota} {
 				Eventually(func() bool {
-					return meta.IsStatusConditionTrue(z.quotaOf(name).Status.Conditions, corev1alpha1.TenantQuotaReady)
+					return meta.IsStatusConditionTrue(z.quotaOf(name).Status.Conditions, corev1beta1.TenantQuotaReady)
 				}, 3*time.Minute, 2*time.Second).Should(BeTrue(), "The TenantQuota "+name+" of "+z.zone+" is not Ready.")
 			}
 		}
 
 		By("making one App with one version in each install")
 		for _, z := range zones {
-			Expect(k8s.Create(ctx, &corev1alpha1.App{ObjectMeta: metav1.ObjectMeta{Name: appName, Namespace: z.appsNS}})).
+			Expect(k8s.Create(ctx, &corev1beta1.App{ObjectMeta: metav1.ObjectMeta{Name: appName, Namespace: z.appsNS}})).
 				To(Succeed())
 			Expect(k8s.Create(ctx, appVersion(z))).To(Succeed())
 		}
@@ -435,7 +435,7 @@ gateway:
 			By("waiting for the mark of the quota in the TenantQuota")
 			Eventually(func() []any {
 				q := z.quotaOf(tenantQuota)
-				return []any{q.Status.Requests, meta.IsStatusConditionTrue(q.Status.Conditions, corev1alpha1.TenantQuotaExceeded)}
+				return []any{q.Status.Requests, meta.IsStatusConditionTrue(q.Status.Conditions, corev1beta1.TenantQuotaExceeded)}
 			}, 3*time.Minute, 2*time.Second).Should(Equal([]any{z.quota, true}))
 			By("waiting for the refusal of the claim check")
 			refusedAtQuota(z)
@@ -456,7 +456,7 @@ gateway:
 				Expect([]any{status, reason}).To(Equal([]any{http.StatusOK, ""}))
 				q := far.quotaOf(tenantQuota)
 				Expect(q.Status.Requests).To(BeZero(), "The gateway of zone-b counted a call of zone-a.")
-				Expect(meta.IsStatusConditionTrue(q.Status.Conditions, corev1alpha1.TenantQuotaExceeded)).To(BeFalse())
+				Expect(meta.IsStatusConditionTrue(q.Status.Conditions, corev1beta1.TenantQuotaExceeded)).To(BeFalse())
 			}
 		}
 	})

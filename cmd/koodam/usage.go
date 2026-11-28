@@ -32,7 +32,7 @@ import (
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
-	corev1alpha1 "github.com/mohanraj00/koodam/api/v1alpha1"
+	corev1beta1 "github.com/mohanraj00/koodam/api/v1beta1"
 	"github.com/mohanraj00/koodam/internal/usage"
 )
 
@@ -94,7 +94,7 @@ func usageCmd(conn connect) *cobra.Command {
 				if err != nil {
 					return err
 				}
-				quotas := &corev1alpha1.TenantQuotaList{}
+				quotas := &corev1beta1.TenantQuotaList{}
 				if err := e.kube.List(cmd.Context(), quotas, client.InNamespace(e.namespace)); err != nil {
 					return apiError("list the TenantQuotas", err)
 				}
@@ -105,7 +105,7 @@ func usageCmd(conn connect) *cobra.Command {
 				if err != nil {
 					return err
 				}
-				agents := &corev1alpha1.AgentList{}
+				agents := &corev1beta1.AgentList{}
 				if err := e.kube.List(cmd.Context(), agents, client.InNamespace(e.namespace)); err != nil {
 					return apiError("list the Agents", err)
 				}
@@ -115,7 +115,7 @@ func usageCmd(conn connect) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			w := &corev1alpha1.Workspace{}
+			w := &corev1beta1.Workspace{}
 			err = e.kube.Get(cmd.Context(), client.ObjectKey{Namespace: ns, Name: ws}, w)
 			if apierrors.IsNotFound(err) {
 				return fmt.Errorf("workspace %s does not exist in namespace %s", ws, ns)
@@ -123,7 +123,7 @@ func usageCmd(conn connect) *cobra.Command {
 			if err != nil {
 				return apiError("get the Workspace", err)
 			}
-			if w.Status.Phase != corev1alpha1.WorkspaceRunning {
+			if w.Status.Phase != corev1beta1.WorkspaceRunning {
 				return fmt.Errorf("workspace %s/%s is not Running (phase %q): start it, then run koodam usage again",
 					ns, ws, w.Status.Phase)
 			}
@@ -159,7 +159,7 @@ type costGroupUsage struct {
 	spend                              float64
 }
 
-func printCostGroupUsage(out, errOut io.Writer, agents []corev1alpha1.Agent, namespace string) error {
+func printCostGroupUsage(out, errOut io.Writer, agents []corev1beta1.Agent, namespace string) error {
 	groups := map[string]costGroupUsage{}
 	var total costGroupUsage
 	var missing, invalid int

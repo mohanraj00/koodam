@@ -35,7 +35,7 @@ import (
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
-	corev1alpha1 "github.com/mohanraj00/koodam/api/v1alpha1"
+	corev1beta1 "github.com/mohanraj00/koodam/api/v1beta1"
 )
 
 const (
@@ -81,11 +81,11 @@ type HoldReconciler struct {
 
 // Reconcile writes the Held condition from the state of the workloads of the target.
 func (r *HoldReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
-	h := &corev1alpha1.Hold{}
+	h := &corev1beta1.Hold{}
 	if err := r.Get(ctx, req.NamespacedName, h); err != nil {
 		return ctrl.Result{}, client.IgnoreNotFound(err)
 	}
-	if t := h.Spec.Target; t.Kind != corev1alpha1.HoldTargetProfile && !watched(r.Namespaces, t.Namespace) {
+	if t := h.Spec.Target; t.Kind != corev1beta1.HoldTargetProfile && !watched(r.Namespaces, t.Namespace) {
 		return ctrl.Result{}, nil
 	}
 	cover := slices.Clone(h.Status.Namespaces)
@@ -94,17 +94,17 @@ func (r *HoldReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.
 		return ctrl.Result{}, err
 	}
 	var result ctrl.Result
-	if reason == reasonAppsDisabled && h.Spec.Target.Kind == corev1alpha1.HoldTargetProfile {
+	if reason == reasonAppsDisabled && h.Spec.Target.Kind == corev1beta1.HoldTargetProfile {
 		// No controller watches the AppVersions, so the Hold reads them again after a time.
 		result.RequeueAfter = appsDisabledRecheck
 	}
-	old := meta.FindStatusCondition(h.Status.Conditions, corev1alpha1.HoldHeld)
+	old := meta.FindStatusCondition(h.Status.Conditions, corev1beta1.HoldHeld)
 	if old != nil && old.Status == status && old.Reason == reason && old.Message == msg &&
 		old.ObservedGeneration == h.Generation && slices.Equal(cover, h.Status.Namespaces) {
 		return result, nil
 	}
 	changed := old == nil || old.Reason != reason
-	meta.SetStatusCondition(&h.Status.Conditions, metav1.Condition{Type: corev1alpha1.HoldHeld, Status: status,
+	meta.SetStatusCondition(&h.Status.Conditions, metav1.Condition{Type: corev1beta1.HoldHeld, Status: status,
 		Reason: reason, Message: msg, ObservedGeneration: h.Generation})
 	if err := r.Status().Update(ctx, h); err != nil {
 		return ctrl.Result{}, err
@@ -126,19 +126,19 @@ func (r *HoldReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.
 }
 
 // state gives the status, the reason and the message of the Held condition.
-func (r *HoldReconciler) state(ctx context.Context, h *corev1alpha1.Hold) (metav1.ConditionStatus, string, string,
+func (r *HoldReconciler) state(ctx context.Context, h *corev1beta1.Hold) (metav1.ConditionStatus, string, string,
 	error) {
 	switch {
 	case h.Spec.Release != nil:
 		return metav1.ConditionFalse, reasonReleased, fmt.Sprintf("The user %s released the Hold. Reason: %s",
 			h.Spec.Release.User, h.Spec.Release.Reason), nil
-	case h.Spec.Action == corev1alpha1.HoldQuarantine:
+	case h.Spec.Action == corev1beta1.HoldQuarantine:
 		return r.quarantineState(ctx, h)
-	case h.Spec.Action != corev1alpha1.HoldStop:
+	case h.Spec.Action != corev1beta1.HoldStop:
 		return metav1.ConditionFalse, reasonUnsupported, "This controller version does not know the action.", nil
 	}
 	t := h.Spec.Target
-	if !r.AppsEnabled && (t.Kind == corev1alpha1.HoldTargetApp || t.Kind == corev1alpha1.HoldTargetAppVersion) {
+	if !r.AppsEnabled && (t.Kind == corev1beta1.HoldTargetApp || t.Kind == corev1beta1.HoldTargetAppVersion) {
 		return metav1.ConditionFalse, reasonAppsDisabled,
 			"The App controllers do not run, so no controller stops an App or an AppVersion.", nil
 	}
@@ -161,16 +161,16 @@ func (r *HoldReconciler) state(ctx context.Context, h *corev1alpha1.Hold) (metav
 }
 
 // quarantineState gives the Held condition of a Hold with the action Quarantine.
-func (r *HoldReconciler) quarantineState(ctx context.Context, h *corev1alpha1.Hold) (metav1.ConditionStatus,
+func (r *HoldReconciler) quarantineState(ctx context.Context, h *corev1beta1.Hold) (metav1.ConditionStatus,
 	string, string, error) {
 	t := h.Spec.Target
-	profile := t.Kind == corev1alpha1.HoldTargetProfile
+	profile := t.Kind == corev1beta1.HoldTargetProfile
 	switch {
 	case !profile && !r.EgressProxy:
 		return metav1.ConditionFalse, reasonNoEgressProxy,
 			"The controller has no egress proxy, so no component refuses the calls of a quarantined pod. " +
 				"Use the action Stop, or enable the egress proxy.", nil
-	case !r.AppsEnabled && (t.Kind == corev1alpha1.HoldTargetApp || t.Kind == corev1alpha1.HoldTargetAppVersion):
+	case !r.AppsEnabled && (t.Kind == corev1beta1.HoldTargetApp || t.Kind == corev1beta1.HoldTargetAppVersion):
 		return metav1.ConditionFalse, reasonAppsDisabled,
 			"The App controllers do not run, so no controller quarantines an App or an AppVersion.", nil
 	}
@@ -214,13 +214,13 @@ func (r *HoldReconciler) quarantineState(ctx context.Context, h *corev1alpha1.Ho
 // record of a namespace that the Profile does not bind. The records have the order of the bound
 // namespaces, so each manager writes the same list. proxyCover returns the bound namespaces with
 // no record, and those of an install with no egress proxy.
-func (r *HoldReconciler) proxyCover(ctx context.Context, h *corev1alpha1.Hold) (missing, without []string,
+func (r *HoldReconciler) proxyCover(ctx context.Context, h *corev1beta1.Hold) (missing, without []string,
 	err error) {
 	have := map[string]bool{}
 	for _, rec := range h.Status.Namespaces {
 		have[rec.Name] = rec.EgressProxy
 	}
-	var records []corev1alpha1.HoldNamespaceStatus
+	var records []corev1beta1.HoldNamespaceStatus
 	err = r.eachBound(ctx, h.Spec.Target.Name, func(ns string) error {
 		proxy, ok := have[ns]
 		if watched(r.Namespaces, ns) {
@@ -233,7 +233,7 @@ func (r *HoldReconciler) proxyCover(ctx context.Context, h *corev1alpha1.Hold) (
 		case !proxy:
 			without = append(without, ns)
 		}
-		records = append(records, corev1alpha1.HoldNamespaceStatus{Name: ns, EgressProxy: proxy})
+		records = append(records, corev1beta1.HoldNamespaceStatus{Name: ns, EgressProxy: proxy})
 		return nil
 	})
 	if err != nil {
@@ -245,9 +245,9 @@ func (r *HoldReconciler) proxyCover(ctx context.Context, h *corev1alpha1.Hold) (
 
 // doneCheck tells if the action of a Hold is complete for a workload of each kind.
 type doneCheck struct {
-	agent     func(*corev1alpha1.Agent) bool
-	workspace func(*corev1alpha1.Workspace) bool
-	version   func(*corev1alpha1.AppVersion) bool
+	agent     func(*corev1beta1.Agent) bool
+	workspace func(*corev1beta1.Workspace) bool
+	version   func(*corev1beta1.AppVersion) bool
 }
 
 var (
@@ -257,7 +257,7 @@ var (
 
 // count gives the number of the workloads of the target, and the number for which the action is
 // not complete.
-func (r *HoldReconciler) count(ctx context.Context, t corev1alpha1.HoldTarget, d doneCheck) (total, waiting int,
+func (r *HoldReconciler) count(ctx context.Context, t corev1beta1.HoldTarget, d doneCheck) (total, waiting int,
 	err error) {
 	add := func(stopped bool) {
 		total++
@@ -268,26 +268,26 @@ func (r *HoldReconciler) count(ctx context.Context, t corev1alpha1.HoldTarget, d
 	rd := r.reader()
 	key := types.NamespacedName{Namespace: t.Namespace, Name: t.Name}
 	switch t.Kind {
-	case corev1alpha1.HoldTargetAgent:
-		a := &corev1alpha1.Agent{}
+	case corev1beta1.HoldTargetAgent:
+		a := &corev1beta1.Agent{}
 		if err := rd.Get(ctx, key, a); err != nil {
 			return 0, 0, client.IgnoreNotFound(err)
 		}
 		add(d.agent(a))
-	case corev1alpha1.HoldTargetWorkspace:
-		ws := &corev1alpha1.Workspace{}
+	case corev1beta1.HoldTargetWorkspace:
+		ws := &corev1beta1.Workspace{}
 		if err := rd.Get(ctx, key, ws); err != nil {
 			return 0, 0, client.IgnoreNotFound(err)
 		}
 		add(d.workspace(ws))
-	case corev1alpha1.HoldTargetAppVersion:
-		av := &corev1alpha1.AppVersion{}
+	case corev1beta1.HoldTargetAppVersion:
+		av := &corev1beta1.AppVersion{}
 		if err := rd.Get(ctx, key, av); err != nil {
 			return 0, 0, client.IgnoreNotFound(err)
 		}
 		add(d.version(av))
-	case corev1alpha1.HoldTargetApp:
-		list := &corev1alpha1.AppVersionList{}
+	case corev1beta1.HoldTargetApp:
+		list := &corev1beta1.AppVersionList{}
 		if err := rd.List(ctx, list, client.InNamespace(t.Namespace)); err != nil {
 			return 0, 0, err
 		}
@@ -296,7 +296,7 @@ func (r *HoldReconciler) count(ctx context.Context, t corev1alpha1.HoldTarget, d
 				add(d.version(&list.Items[i]))
 			}
 		}
-	case corev1alpha1.HoldTargetProfile:
+	case corev1beta1.HoldTargetProfile:
 		return r.countProfile(ctx, t.Name, d)
 	}
 	return total, waiting, nil
@@ -314,14 +314,14 @@ func (r *HoldReconciler) countProfile(ctx context.Context, name string, d doneCh
 	}
 	rd := r.reader()
 	err = r.eachBound(ctx, name, func(ns string) error {
-		agents := &corev1alpha1.AgentList{}
+		agents := &corev1beta1.AgentList{}
 		if err := rd.List(ctx, agents, client.InNamespace(ns)); err != nil {
 			return err
 		}
 		for i := range agents.Items {
 			add(d.agent(&agents.Items[i]))
 		}
-		workspaces := &corev1alpha1.WorkspaceList{}
+		workspaces := &corev1beta1.WorkspaceList{}
 		if err := rd.List(ctx, workspaces, client.InNamespace(ns)); err != nil {
 			return err
 		}
@@ -331,7 +331,7 @@ func (r *HoldReconciler) countProfile(ctx context.Context, name string, d doneCh
 		if !r.AppsEnabled {
 			return nil
 		}
-		versions := &corev1alpha1.AppVersionList{}
+		versions := &corev1beta1.AppVersionList{}
 		if err := rd.List(ctx, versions, client.InNamespace(ns)); err != nil {
 			return err
 		}
@@ -346,13 +346,13 @@ func (r *HoldReconciler) countProfile(ctx context.Context, name string, d doneCh
 // versionsLeft is true if the App controllers do not run and a namespace that the Profile of the
 // target binds has an AppVersion. No controller then stops or quarantines that AppVersion. The
 // read has no cache, because the manager has no AppVersion watch without the App controllers.
-func (r *HoldReconciler) versionsLeft(ctx context.Context, t corev1alpha1.HoldTarget) (bool, error) {
-	if r.AppsEnabled || t.Kind != corev1alpha1.HoldTargetProfile {
+func (r *HoldReconciler) versionsLeft(ctx context.Context, t corev1beta1.HoldTarget) (bool, error) {
+	if r.AppsEnabled || t.Kind != corev1beta1.HoldTargetProfile {
 		return false, nil
 	}
 	left := false
 	err := r.eachBound(ctx, t.Name, func(ns string) error {
-		versions := &corev1alpha1.AppVersionList{}
+		versions := &corev1beta1.AppVersionList{}
 		if err := r.reader().List(ctx, versions, client.InNamespace(ns), client.Limit(1)); err != nil {
 			return err
 		}
@@ -365,7 +365,7 @@ func (r *HoldReconciler) versionsLeft(ctx context.Context, t corev1alpha1.HoldTa
 // eachBound calls fn for each namespace of the Profile that the Profile binds. It does nothing if
 // the Profile does not exist.
 func (r *HoldReconciler) eachBound(ctx context.Context, name string, fn func(ns string) error) error {
-	p := &corev1alpha1.Profile{}
+	p := &corev1beta1.Profile{}
 	if err := r.Get(ctx, types.NamespacedName{Name: name}, p); err != nil {
 		return client.IgnoreNotFound(err)
 	}
@@ -393,26 +393,26 @@ func (r *HoldReconciler) reader() client.Reader {
 }
 
 // agentStopped is true if the run ended and its revoke is complete.
-func agentStopped(a *corev1alpha1.Agent) bool {
-	ended := a.Status.Phase == corev1alpha1.AgentSucceeded || a.Status.Phase == corev1alpha1.AgentFailed
+func agentStopped(a *corev1beta1.Agent) bool {
+	ended := a.Status.Phase == corev1beta1.AgentSucceeded || a.Status.Phase == corev1beta1.AgentFailed
 	return ended && !controllerutil.ContainsFinalizer(a, finalizer)
 }
 
 // workspaceStopped is true if a Hold stopped the Workspace: its key is revoked and its pod is
 // stopped.
-func workspaceStopped(ws *corev1alpha1.Workspace) bool {
-	return heldWorkspace(ws) && ws.Status.Phase == corev1alpha1.WorkspaceSuspended
+func workspaceStopped(ws *corev1beta1.Workspace) bool {
+	return heldWorkspace(ws) && ws.Status.Phase == corev1beta1.WorkspaceSuspended
 }
 
 // appVersionStopped is true if the revoke of the version is complete.
-func appVersionStopped(av *corev1alpha1.AppVersion) bool {
-	return meta.IsStatusConditionTrue(av.Status.Conditions, corev1alpha1.AppVersionRevoked) &&
+func appVersionStopped(av *corev1beta1.AppVersion) bool {
+	return meta.IsStatusConditionTrue(av.Status.Conditions, corev1beta1.AppVersionRevoked) &&
 		!controllerutil.ContainsFinalizer(av, appFinalizer)
 }
 
 // stopHolds maps a change of a workload to each Hold with no release.
 func (r *HoldReconciler) stopHolds(ctx context.Context, _ client.Object) []reconcile.Request {
-	list := &corev1alpha1.HoldList{}
+	list := &corev1beta1.HoldList{}
 	if err := r.List(ctx, list); err != nil {
 		logf.FromContext(ctx).Error(err, "Failed to list the Holds")
 		return nil
@@ -429,11 +429,11 @@ func (r *HoldReconciler) stopHolds(ctx context.Context, _ client.Object) []recon
 // SetupWithManager sets up the controller with the Manager.
 func (r *HoldReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	b := ctrl.NewControllerManagedBy(mgr).
-		For(&corev1alpha1.Hold{}).
-		Watches(&corev1alpha1.Agent{}, handler.EnqueueRequestsFromMapFunc(r.stopHolds)).
-		Watches(&corev1alpha1.Workspace{}, handler.EnqueueRequestsFromMapFunc(r.stopHolds))
+		For(&corev1beta1.Hold{}).
+		Watches(&corev1beta1.Agent{}, handler.EnqueueRequestsFromMapFunc(r.stopHolds)).
+		Watches(&corev1beta1.Workspace{}, handler.EnqueueRequestsFromMapFunc(r.stopHolds))
 	if r.AppsEnabled {
-		b = b.Watches(&corev1alpha1.AppVersion{}, handler.EnqueueRequestsFromMapFunc(r.stopHolds))
+		b = b.Watches(&corev1beta1.AppVersion{}, handler.EnqueueRequestsFromMapFunc(r.stopHolds))
 	}
 	return b.Named("hold").Complete(r)
 }

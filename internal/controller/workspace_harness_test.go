@@ -22,23 +22,23 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
-	corev1alpha1 "github.com/mohanraj00/koodam/api/v1alpha1"
+	corev1beta1 "github.com/mohanraj00/koodam/api/v1beta1"
 )
 
 var _ = Describe("Workspace harnesses", func() {
 	const muslLibc = "musl"
-	ws := func(h ...corev1alpha1.HarnessSpec) *corev1alpha1.Workspace {
-		return &corev1alpha1.Workspace{ObjectMeta: metav1.ObjectMeta{Name: "h", Namespace: "n"},
-			Spec: corev1alpha1.WorkspaceSpec{Harnesses: h}}
+	ws := func(h ...corev1beta1.HarnessSpec) *corev1beta1.Workspace {
+		return &corev1beta1.Workspace{ObjectMeta: metav1.ObjectMeta{Name: "h", Namespace: "n"},
+			Spec: corev1beta1.WorkspaceSpec{Harnesses: h}}
 	}
-	pod := func(w *corev1alpha1.Workspace, image string) corev1.PodSpec {
+	pod := func(w *corev1beta1.Workspace, image string) corev1.PodSpec {
 		r := &WorkspaceReconciler{Image: testWorkspaceImage, InstallerImage: image}
 		return r.statefulSet(w, testProfile).Spec.Template.Spec
 	}
 
 	It("adds one checked install for each harness and mounts the folder read-only", func() {
-		p := pod(ws(corev1alpha1.HarnessSpec{Name: claudeName, Version: "2.1.0", Libc: muslLibc},
-			corev1alpha1.HarnessSpec{Name: codexName}), installer)
+		p := pod(ws(corev1beta1.HarnessSpec{Name: claudeName, Version: "2.1.0", Libc: muslLibc},
+			corev1beta1.HarnessSpec{Name: codexName}), installer)
 
 		Expect(p.InitContainers).To(HaveLen(2))
 		Expect(p.InitContainers[0].Name).To(Equal("harness-" + claudeName))
@@ -61,22 +61,22 @@ var _ = Describe("Workspace harnesses", func() {
 	})
 
 	It("sets the condition False only for harnesses with no installer image or no Nookku image", func() {
-		Expect(harnessCondition(ws(), "", "").Reason).To(Equal("None"))
-		Expect(harnessCondition(ws(corev1alpha1.HarnessSpec{Name: codexName}), installer, "").Status).
+		Expect(harnessCondition(ws(), "", nil).Reason).To(Equal("None"))
+		Expect(harnessCondition(ws(corev1beta1.HarnessSpec{Name: codexName}), installer, nil).Status).
 			To(Equal(metav1.ConditionTrue))
-		c := harnessCondition(ws(corev1alpha1.HarnessSpec{Name: codexName}), "", "")
+		c := harnessCondition(ws(corev1beta1.HarnessSpec{Name: codexName}), "", nil)
 		Expect(c.Status).To(Equal(metav1.ConditionFalse))
 		Expect(c.Reason).To(Equal("NoInstallerImage"))
-		nookku := ws(corev1alpha1.HarnessSpec{Name: codexName, Plugins: []corev1alpha1.HarnessPlugin{nookkuTestPlugin}})
-		c = harnessCondition(nookku, installer, "")
+		nookku := ws(corev1beta1.HarnessSpec{Name: codexName, Plugins: []corev1beta1.HarnessPlugin{nookkuTestPlugin}})
+		c = harnessCondition(nookku, installer, nil)
 		Expect(c.Status).To(Equal(metav1.ConditionFalse))
 		Expect(c.Reason).To(Equal("NoNookkuImage"))
-		Expect(harnessCondition(nookku, installer, jobIngNookku).Status).To(Equal(metav1.ConditionTrue))
+		Expect(harnessCondition(nookku, installer, jobIngPresetImages).Status).To(Equal(metav1.ConditionTrue))
 	})
 
 	It("does not change the pod with no harness or no installer image", func() {
 		want := pod(ws(), installer)
 		Expect(want.InitContainers).To(BeEmpty())
-		Expect(pod(ws(corev1alpha1.HarnessSpec{Name: codexName}), "")).To(Equal(want))
+		Expect(pod(ws(corev1beta1.HarnessSpec{Name: codexName}), "")).To(Equal(want))
 	})
 })

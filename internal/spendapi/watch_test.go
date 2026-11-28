@@ -30,7 +30,7 @@ import (
 	"k8s.io/apimachinery/pkg/watch"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
-	corev1alpha1 "github.com/mohanraj00/koodam/api/v1alpha1"
+	corev1beta1 "github.com/mohanraj00/koodam/api/v1beta1"
 )
 
 const watchPath = testPath + "/" + watchPart
@@ -116,9 +116,9 @@ func (s *watchStream) next(t *testing.T) (string, runStatus) {
 	return "", runStatus{}
 }
 
-func setPhase(t *testing.T, kube client.Client, phase corev1alpha1.AgentPhase) {
+func setPhase(t *testing.T, kube client.Client, phase corev1beta1.AgentPhase) {
 	t.Helper()
-	agent := &corev1alpha1.Agent{}
+	agent := &corev1beta1.Agent{}
 	if err := kube.Get(t.Context(), client.ObjectKey{Namespace: testNamespace, Name: runName}, agent); err != nil {
 		t.Fatal(err)
 	}
@@ -133,21 +133,21 @@ func setPhase(t *testing.T, kube client.Client, phase corev1alpha1.AgentPhase) {
 func TestWatchLatency(t *testing.T) {
 	f, kube, server := newWatchFixture(t)
 	s := openWatch(t, server, f.reader)
-	if name, status := s.next(t); name != eventStatus || status.Phase != string(corev1alpha1.AgentRunning) ||
+	if name, status := s.next(t); name != eventStatus || status.Phase != string(corev1beta1.AgentRunning) ||
 		status.Name != runName || len(status.Conditions) != 1 {
 		t.Fatalf("the first event is %s %+v", name, status)
 	}
 	time.Sleep(700 * time.Millisecond)
 	start := time.Now()
-	setPhase(t, kube, corev1alpha1.AgentSucceeded)
+	setPhase(t, kube, corev1beta1.AgentSucceeded)
 	name, status := s.next(t)
 	if latency := time.Since(start); latency >= latencyTarget {
 		t.Fatalf("the phase change took %s, want less than %s", latency, latencyTarget)
 	}
-	if name != eventStatus || status.Phase != string(corev1alpha1.AgentSucceeded) {
+	if name != eventStatus || status.Phase != string(corev1beta1.AgentSucceeded) {
 		t.Fatalf("the event is %s %+v", name, status)
 	}
-	agent := &corev1alpha1.Agent{}
+	agent := &corev1beta1.Agent{}
 	agent.Namespace, agent.Name = testNamespace, runName
 	if err := kube.Delete(t.Context(), agent); err != nil {
 		t.Fatal(err)
@@ -310,8 +310,8 @@ func TestWatchAccessRecheck(t *testing.T) {
 				t.Fatalf("the first event is %s", name)
 			}
 			time.Sleep(4 * f.recheck)
-			setPhase(t, kube, corev1alpha1.AgentSucceeded)
-			if name, status := s.next(t); name != eventStatus || status.Phase != string(corev1alpha1.AgentSucceeded) {
+			setPhase(t, kube, corev1beta1.AgentSucceeded)
+			if name, status := s.next(t); name != eventStatus || status.Phase != string(corev1beta1.AgentSucceeded) {
 				t.Fatalf("the watch did not continue after the checks: %s %+v", name, status)
 			}
 			f.mu.Lock()

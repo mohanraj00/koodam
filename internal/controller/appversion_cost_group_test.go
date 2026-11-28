@@ -36,7 +36,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
-	corev1alpha1 "github.com/mohanraj00/koodam/api/v1alpha1"
+	corev1beta1 "github.com/mohanraj00/koodam/api/v1beta1"
 	"github.com/mohanraj00/koodam/internal/gateway"
 )
 
@@ -54,7 +54,7 @@ type versionCostGroupGateway struct {
 }
 
 func (g *versionCostGroupGateway) CreateKey(ctx context.Context, s gateway.KeySpec) error {
-	av := &corev1alpha1.AppVersion{}
+	av := &corev1beta1.AppVersion{}
 	g.saved = g.reader.Get(ctx, g.version, av) == nil && av.Status.CostGroup == g.group &&
 		av.Status.KeyHash == gateway.HashKey(s.Value) && av.Status.KeyAlias == s.Alias
 	g.calls++
@@ -69,26 +69,26 @@ func (g *versionCostGroupGateway) RenewKey(_ context.Context, s gateway.KeySpec)
 }
 
 func versionCostGroupObjects(namespace string, label *string) (
-	*corev1alpha1.App, *corev1alpha1.AppVersion, *corev1alpha1.Profile) {
-	app := &corev1alpha1.App{ObjectMeta: metav1.ObjectMeta{Name: "cost-app", Namespace: namespace},
-		Spec: corev1alpha1.AppSpec{MaxLiveVersions: 2}}
+	*corev1beta1.App, *corev1beta1.AppVersion, *corev1beta1.Profile) {
+	app := &corev1beta1.App{ObjectMeta: metav1.ObjectMeta{Name: "cost-app", Namespace: namespace},
+		Spec: corev1beta1.AppSpec{MaxLiveVersions: 2}}
 	if label != nil {
-		app.Labels = map[string]string{corev1alpha1.CostGroupLabel: *label}
+		app.Labels = map[string]string{corev1beta1.CostGroupLabel: *label}
 	}
-	av := &corev1alpha1.AppVersion{ObjectMeta: metav1.ObjectMeta{Name: "cost-version", Namespace: namespace,
+	av := &corev1beta1.AppVersion{ObjectMeta: metav1.ObjectMeta{Name: "cost-version", Namespace: namespace,
 		// A label on the version cannot set the cost group of the key.
-		Labels: map[string]string{corev1alpha1.CostGroupLabel: testCostGroupDenied}},
-		Spec: corev1alpha1.AppVersionSpec{AppRef: corev1alpha1.AppReference{Name: app.Name},
+		Labels: map[string]string{corev1beta1.CostGroupLabel: testCostGroupDenied}},
+		Spec: corev1beta1.AppVersionSpec{AppRef: corev1beta1.AppReference{Name: app.Name},
 			BudgetPerDay: new(resource.MustParse("5")),
-			Template: corev1alpha1.AppVersionTemplate{Model: testGatewayModel,
-				PodTemplate: corev1alpha1.PodTemplate{Spec: corev1.PodSpec{Containers: []corev1.Container{{
-					Name: corev1alpha1.AppContainerName, Image: testAgentImage,
+			Template: corev1beta1.AppVersionTemplate{Model: testGatewayModel,
+				PodTemplate: corev1beta1.PodTemplate{Spec: corev1.PodSpec{Containers: []corev1.Container{{
+					Name: corev1beta1.AppContainerName, Image: testAgentImage,
 					Ports: []corev1.ContainerPort{{Name: "http", ContainerPort: 8080}},
 					ReadinessProbe: &corev1.Probe{ProbeHandler: corev1.ProbeHandler{
 						HTTPGet: &corev1.HTTPGetAction{Path: "/readyz", Port: intstr.FromString("http")}}},
 				}}}}}}}
-	p := &corev1alpha1.Profile{ObjectMeta: metav1.ObjectMeta{Name: namespace},
-		Spec: corev1alpha1.ProfileSpec{Namespaces: []string{namespace}, CostGroups: []string{testCostGroupAllowed}}}
+	p := &corev1beta1.Profile{ObjectMeta: metav1.ObjectMeta{Name: namespace},
+		Spec: corev1beta1.ProfileSpec{Namespaces: []string{namespace}, CostGroups: []string{testCostGroupAllowed}}}
 	return app, av, p
 }
 
@@ -102,7 +102,7 @@ var _ = Describe("AppVersion cost group", func() {
 		if bound {
 			Expect(k8sClient.Create(ctx, p)).To(Succeed())
 			DeferCleanup(func() { Expect(k8sClient.Delete(ctx, p)).To(Succeed()) })
-			ns.Labels = map[string]string{corev1alpha1.ProfileLabel: p.Name}
+			ns.Labels = map[string]string{corev1beta1.ProfileLabel: p.Name}
 			Expect(k8sClient.Update(ctx, ns)).To(Succeed())
 		}
 		Expect(k8sClient.Create(ctx, app)).To(Succeed())
@@ -137,7 +137,7 @@ var _ = Describe("AppVersion cost group", func() {
 			Expect(av.Status.KeyHash).To(BeEmpty())
 			Expect(av.Status.CostGroup).To(BeEmpty())
 			Expect(av.Finalizers).NotTo(ContainElement(appFinalizer))
-			Expect(meta.FindStatusCondition(av.Status.Conditions, corev1alpha1.AppVersionRevoking)).To(BeNil())
+			Expect(meta.FindStatusCondition(av.Status.Conditions, corev1beta1.AppVersionRevoking)).To(BeNil())
 			for _, obj := range []client.Object{&corev1.Secret{}, &appsv1.Deployment{}} {
 				Expect(apierrors.IsNotFound(k8sClient.Get(ctx,
 					types.NamespacedName{Namespace: ns.Name, Name: appVersionName(av)}, obj))).To(BeTrue())
@@ -146,7 +146,7 @@ var _ = Describe("AppVersion cost group", func() {
 				return
 			}
 			if fixLabel {
-				app.Labels[corev1alpha1.CostGroupLabel] = testCostGroupAllowed
+				app.Labels[corev1beta1.CostGroupLabel] = testCostGroupAllowed
 				Expect(k8sClient.Update(ctx, app)).To(Succeed())
 				gw.group = testCostGroupAllowed
 			} else {
@@ -184,9 +184,9 @@ func TestAppVersionCostGroupRetry(t *testing.T) {
 			app, av, p := versionCostGroupObjects(testTeam, new(group))
 			av.UID, app.UID = "cost-version-uid", "cost-app-uid"
 			ns := &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: testTeam,
-				Labels: map[string]string{corev1alpha1.ProfileLabel: p.Name}}}
+				Labels: map[string]string{corev1beta1.ProfileLabel: p.Name}}}
 			c := fake.NewClientBuilder().WithScheme(ingWorld(t).Scheme()).WithObjects(ns, app, av, p).
-				WithStatusSubresource(&corev1alpha1.AppVersion{}).Build()
+				WithStatusSubresource(&corev1beta1.AppVersion{}).Build()
 			key := client.ObjectKeyFromObject(av)
 			gw := &versionCostGroupGateway{countGateway: &countGateway{}, reader: c, version: key, group: group,
 				err: errors.New("the test gateway is not ready")}
@@ -194,7 +194,7 @@ func TestAppVersionCostGroupRetry(t *testing.T) {
 			if _, err := r.Reconcile(ctx, reconcile.Request{NamespacedName: key}); err == nil || !gw.saved {
 				t.Fatal("the first call did not save the cost group before the gateway error")
 			}
-			app.Labels[corev1alpha1.CostGroupLabel] = testCostGroupDenied
+			app.Labels[corev1beta1.CostGroupLabel] = testCostGroupDenied
 			if c.Update(ctx, app) != nil || c.Delete(ctx, p) != nil {
 				t.Fatal("the test could not change the App label and remove the Profile")
 			}

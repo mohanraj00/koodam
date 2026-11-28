@@ -34,7 +34,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
 
-	corev1alpha1 "github.com/mohanraj00/koodam/api/v1alpha1"
+	corev1beta1 "github.com/mohanraj00/koodam/api/v1beta1"
 )
 
 const (
@@ -53,45 +53,45 @@ func TestCollector(t *testing.T) {
 	start := metav1.NewTime(time.Unix(100, 0))
 	end := metav1.NewTime(start.Add(4 * time.Second))
 	later := metav1.NewTime(start.Add(8 * time.Second))
-	a := &corev1alpha1.Agent{
+	a := &corev1beta1.Agent{
 		ObjectMeta: metav1.ObjectMeta{Namespace: nsA, Name: "first"},
-		Spec: corev1alpha1.AgentSpec{
+		Spec: corev1beta1.AgentSpec{
 			Models: []string{modelA, modelB}, Budget: resource.MustParse("1250m"), User: "fixture-user",
 		},
-		Status: corev1alpha1.AgentStatus{
-			Phase: corev1alpha1.AgentSucceeded, StartedAt: &start, CompletedAt: &end,
-			Usage: &corev1alpha1.AgentUsage{Spend: "0.25", Models: []corev1alpha1.ModelUsage{
+		Status: corev1beta1.AgentStatus{
+			Phase: corev1beta1.AgentSucceeded, StartedAt: &start, CompletedAt: &end,
+			Usage: &corev1beta1.AgentUsage{Spend: "0.25", Models: []corev1beta1.ModelUsage{
 				{Model: modelB, Spend: "0.25"},
 			}},
 		},
 	}
-	b := &corev1alpha1.Agent{
+	b := &corev1beta1.Agent{
 		ObjectMeta: metav1.ObjectMeta{Namespace: nsA, Name: "second"},
-		Spec:       corev1alpha1.AgentSpec{Model: modelA, Budget: resource.MustParse("750m")},
-		Status: corev1alpha1.AgentStatus{
-			Phase: corev1alpha1.AgentSucceeded, StartedAt: &start, CompletedAt: &later,
-			Usage: &corev1alpha1.AgentUsage{Spend: "0.5"},
+		Spec:       corev1beta1.AgentSpec{Model: modelA, Budget: resource.MustParse("750m")},
+		Status: corev1beta1.AgentStatus{
+			Phase: corev1beta1.AgentSucceeded, StartedAt: &start, CompletedAt: &later,
+			Usage: &corev1beta1.AgentUsage{Spend: "0.5"},
 		},
 	}
-	c := &corev1alpha1.Agent{
+	c := &corev1beta1.Agent{
 		ObjectMeta: metav1.ObjectMeta{Namespace: nsB, Name: "third"},
-		Spec:       corev1alpha1.AgentSpec{Model: modelA, Budget: resource.MustParse("3")},
-		Status: corev1alpha1.AgentStatus{
-			Phase: corev1alpha1.AgentFailed, StartedAt: &start, CompletedAt: &end,
-			Usage: &corev1alpha1.AgentUsage{Spend: "0.125"},
+		Spec:       corev1beta1.AgentSpec{Model: modelA, Budget: resource.MustParse("3")},
+		Status: corev1beta1.AgentStatus{
+			Phase: corev1beta1.AgentFailed, StartedAt: &start, CompletedAt: &end,
+			Usage: &corev1beta1.AgentUsage{Spend: "0.125"},
 		},
 	}
-	d := &corev1alpha1.Agent{
+	d := &corev1beta1.Agent{
 		ObjectMeta: metav1.ObjectMeta{Namespace: nsB, Name: "fourth"},
-		Spec:       corev1alpha1.AgentSpec{Model: modelA, Budget: resource.MustParse("1")},
-		Status:     corev1alpha1.AgentStatus{Phase: corev1alpha1.AgentRunning, StartedAt: &start},
+		Spec:       corev1beta1.AgentSpec{Model: modelA, Budget: resource.MustParse("1")},
+		Status:     corev1beta1.AgentStatus{Phase: corev1beta1.AgentRunning, StartedAt: &start},
 	}
-	e := &corev1alpha1.Agent{
+	e := &corev1beta1.Agent{
 		ObjectMeta: metav1.ObjectMeta{Namespace: nsB, Name: "fifth"},
-		Spec:       corev1alpha1.AgentSpec{Model: modelB, Budget: resource.MustParse("0")},
-		Status: corev1alpha1.AgentStatus{
-			Phase: corev1alpha1.AgentFailed, StartedAt: &end, CompletedAt: &start,
-			Usage: &corev1alpha1.AgentUsage{Spend: "NaN"},
+		Spec:       corev1beta1.AgentSpec{Model: modelB, Budget: resource.MustParse("0")},
+		Status: corev1beta1.AgentStatus{
+			Phase: corev1beta1.AgentFailed, StartedAt: &end, CompletedAt: &start,
+			Usage: &corev1beta1.AgentUsage{Spend: "NaN"},
 		},
 	}
 
@@ -129,11 +129,11 @@ koodam_agent_budget_usd{model="model-b",namespace="beta"} 0
 					return err
 				}
 				// Add the invalid value after the fake client reads the list from JSON.
-				agents := list.(*corev1alpha1.AgentList)
+				agents := list.(*corev1beta1.AgentList)
 				for i := range agents.Items {
 					agent := &agents.Items[i]
 					if agent.Name == a.Name {
-						agent.Status.Usage.Models = append(agent.Status.Usage.Models, corev1alpha1.ModelUsage{
+						agent.Status.Usage.Models = append(agent.Status.Usage.Models, corev1beta1.ModelUsage{
 							Model: "\xff", Spend: "1",
 						})
 						break
@@ -145,7 +145,7 @@ koodam_agent_budget_usd{model="model-b",namespace="beta"} 0
 		compareMetrics(t, testRegistry(invalidReader), want+fmt.Sprintf(errorText, 1))
 	})
 
-	for _, agent := range []*corev1alpha1.Agent{a, b, c, d, e} {
+	for _, agent := range []*corev1beta1.Agent{a, b, c, d, e} {
 		if err := reader.Delete(t.Context(), agent); err != nil {
 			t.Fatal(err)
 		}
@@ -154,11 +154,11 @@ koodam_agent_budget_usd{model="model-b",namespace="beta"} 0
 }
 
 func TestAddCostsWithoutSpecModel(t *testing.T) {
-	agent := &corev1alpha1.Agent{
+	agent := &corev1beta1.Agent{
 		ObjectMeta: metav1.ObjectMeta{Namespace: nsA},
-		Spec:       corev1alpha1.AgentSpec{Budget: resource.MustParse("1")},
-		Status: corev1alpha1.AgentStatus{
-			Usage: &corev1alpha1.AgentUsage{Spend: "0.5", Models: []corev1alpha1.ModelUsage{
+		Spec:       corev1beta1.AgentSpec{Budget: resource.MustParse("1")},
+		Status: corev1beta1.AgentStatus{
+			Usage: &corev1beta1.AgentUsage{Spend: "0.5", Models: []corev1beta1.ModelUsage{
 				{Model: modelB, Spend: "0.75"},
 			}},
 		},
@@ -174,7 +174,7 @@ func TestAddCostsWithoutSpecModel(t *testing.T) {
 }
 
 func TestCollectorListError(t *testing.T) {
-	agent := &corev1alpha1.Agent{ObjectMeta: metav1.ObjectMeta{Namespace: nsA, Name: "first"}}
+	agent := &corev1beta1.Agent{ObjectMeta: metav1.ObjectMeta{Namespace: nsA, Name: "first"}}
 	reader := fakeBuilder(t, agent).WithInterceptorFuncs(interceptor.Funcs{
 		List: func(ctx context.Context, c client.WithWatch, list client.ObjectList, opts ...client.ListOption) error {
 			if deadline, ok := ctx.Deadline(); !ok || time.Until(deadline) > 5*time.Second {
@@ -195,7 +195,7 @@ func TestCollectorListError(t *testing.T) {
 func fakeBuilder(t *testing.T, objects ...client.Object) *fake.ClientBuilder {
 	t.Helper()
 	scheme := runtime.NewScheme()
-	if err := corev1alpha1.AddToScheme(scheme); err != nil {
+	if err := corev1beta1.AddToScheme(scheme); err != nil {
 		t.Fatal(err)
 	}
 	return fake.NewClientBuilder().WithScheme(scheme).WithObjects(objects...)

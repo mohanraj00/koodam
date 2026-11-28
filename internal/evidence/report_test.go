@@ -21,7 +21,7 @@ import (
 	"strings"
 	"testing"
 
-	corev1alpha1 "github.com/mohanraj00/koodam/api/v1alpha1"
+	corev1beta1 "github.com/mohanraj00/koodam/api/v1beta1"
 )
 
 const (
@@ -51,19 +51,19 @@ func TestParseReportAndCheck(t *testing.T) {
 	cases := []struct {
 		name, msg, reason string
 		err               error
-		verdict           corev1alpha1.EvidenceVerdict
+		verdict           corev1beta1.EvidenceVerdict
 	}{
-		{name: "a pass", msg: pass, reason: corev1alpha1.EvidencePassed, verdict: corev1alpha1.EvidencePass},
-		{name: "a fail", msg: fail, reason: corev1alpha1.EvidenceFailed, verdict: corev1alpha1.EvidenceFail},
+		{name: "a pass", msg: pass, reason: corev1beta1.EvidencePassed, verdict: corev1beta1.EvidencePass},
+		{name: "a fail", msg: fail, reason: corev1beta1.EvidenceFailed, verdict: corev1beta1.EvidenceFail},
 		{name: "exit code 2", msg: report("2", "", "gate", `""`, "subject", `""`, "sha256", `""`, "format", "0"),
-			reason: corev1alpha1.EvidenceNotVerified},
-		{name: "exit code 2 with a pass", msg: report("2", "pass"), reason: corev1alpha1.EvidenceNotVerified},
-		{name: "a pass with exit code 1", msg: report("1", "pass"), reason: corev1alpha1.EvidenceNotVerified},
-		{name: "a fail with exit code 0", msg: report("0", "fail"), reason: corev1alpha1.EvidenceNotVerified},
+			reason: corev1beta1.EvidenceNotVerified},
+		{name: "exit code 2 with a pass", msg: report("2", "pass"), reason: corev1beta1.EvidenceNotVerified},
+		{name: "a pass with exit code 1", msg: report("1", "pass"), reason: corev1beta1.EvidenceNotVerified},
+		{name: "a fail with exit code 0", msg: report("0", "fail"), reason: corev1beta1.EvidenceNotVerified},
 		{name: "a wrong subject", msg: report("0", "pass", "subject", `"`+testSubject+`0"`),
-			reason: corev1alpha1.EvidenceSubjectMismatch},
+			reason: corev1beta1.EvidenceSubjectMismatch},
 		{name: "a wrong subject with a verdict that does not agree", msg: report("0", "fail", "subject", `"other"`),
-			reason: corev1alpha1.EvidenceSubjectMismatch},
+			reason: corev1beta1.EvidenceSubjectMismatch},
 		{name: "not JSON", msg: "Traceback (most recent call last):", err: ErrNotJSON},
 		{name: "an empty message", msg: "", err: ErrNotJSON},
 		{name: "a JSON list", msg: "[" + pass + "]", err: ErrNotJSON},

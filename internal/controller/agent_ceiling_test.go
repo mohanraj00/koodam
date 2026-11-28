@@ -30,7 +30,7 @@ import (
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"sigs.k8s.io/yaml"
 
-	corev1alpha1 "github.com/mohanraj00/koodam/api/v1alpha1"
+	corev1beta1 "github.com/mohanraj00/koodam/api/v1beta1"
 )
 
 // Rule words for the tests.
@@ -75,23 +75,23 @@ func TestInvalid(t *testing.T) {
 		{"url", []rbacv1.PolicyRule{{Verbs: []string{verbGet}, NonResourceURLs: []string{"/"}}}, true},
 		{strings.Repeat("n", 61), nil, true},
 	} {
-		a := &corev1alpha1.Agent{ObjectMeta: metav1.ObjectMeta{Name: c.name},
-			Spec: corev1alpha1.AgentSpec{Rules: c.rules, Model: "m1", Budget: resource.MustParse("1")}}
+		a := &corev1beta1.Agent{ObjectMeta: metav1.ObjectMeta{Name: c.name},
+			Spec: corev1beta1.AgentSpec{Rules: c.rules, Model: "m1", Budget: resource.MustParse("1")}}
 		if got := invalid(a) != ""; got != c.bad {
 			t.Errorf("%s: invalid is %v, want %v", c.name, got, c.bad)
 		}
 	}
 	// An Agent has spec.model or spec.models, and not the two.
-	for name, spec := range map[string]corev1alpha1.AgentSpec{
+	for name, spec := range map[string]corev1beta1.AgentSpec{
 		"no-model":   {},
 		"two-forms":  {Model: "m1", Models: []string{"m2"}},
 		"empty-item": {Models: []string{"m1", ""}},
 	} {
-		if invalid(&corev1alpha1.Agent{ObjectMeta: metav1.ObjectMeta{Name: name}, Spec: spec}) == "" {
+		if invalid(&corev1beta1.Agent{ObjectMeta: metav1.ObjectMeta{Name: name}, Spec: spec}) == "" {
 			t.Errorf("%s: invalid is false, want true", name)
 		}
 	}
-	if invalid(&corev1alpha1.Agent{Spec: corev1alpha1.AgentSpec{Models: []string{"a", "b"},
+	if invalid(&corev1beta1.Agent{Spec: corev1beta1.AgentSpec{Models: []string{"a", "b"},
 		Budget: resource.MustParse("1")}}) != "" {
 		t.Error("a models list is invalid, want valid")
 	}

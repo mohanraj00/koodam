@@ -14,7 +14,7 @@ spec:
   matchConstraints:
     resourceRules:
     - apiGroups: ["core.koodam.dev"]
-      apiVersions: ["v1alpha1"]
+      apiVersions: ["v1beta1"]
       operations: ["CREATE", "UPDATE"]
       resources: ["appversions"]
   variables:

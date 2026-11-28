@@ -28,7 +28,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
-	corev1alpha1 "github.com/mohanraj00/koodam/api/v1alpha1"
+	corev1beta1 "github.com/mohanraj00/koodam/api/v1beta1"
 )
 
 var _ = Describe("Profile Controller", func() {
@@ -38,19 +38,19 @@ var _ = Describe("Profile Controller", func() {
 	makeNamespace := func(name, profile string) {
 		ns := &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: name}}
 		if profile != "" {
-			ns.Labels = map[string]string{corev1alpha1.ProfileLabel: profile}
+			ns.Labels = map[string]string{corev1beta1.ProfileLabel: profile}
 		}
 		Expect(k8sClient.Create(ctx, ns)).To(Succeed())
 		DeferCleanup(func() { Expect(client.IgnoreNotFound(k8sClient.Delete(ctx, ns))).To(Succeed()) })
 	}
 
 	// reconcileProfile runs one reconcile and returns the Profile after it.
-	reconcileProfile := func(name string) *corev1alpha1.Profile {
+	reconcileProfile := func(name string) *corev1beta1.Profile {
 		r := &ProfileReconciler{Client: k8sClient, Scheme: k8sClient.Scheme()}
 		key := types.NamespacedName{Name: name}
 		_, err := r.Reconcile(ctx, reconcile.Request{NamespacedName: key})
 		Expect(err).NotTo(HaveOccurred())
-		p := &corev1alpha1.Profile{}
+		p := &corev1beta1.Profile{}
 		Expect(k8sClient.Get(ctx, key, p)).To(Succeed())
 		return p
 	}
@@ -62,9 +62,9 @@ var _ = Describe("Profile Controller", func() {
 		makeNamespace("pf-listed-only", "")
 		makeNamespace("pf-other-label", "pf-bob")
 
-		p := &corev1alpha1.Profile{
+		p := &corev1beta1.Profile{
 			ObjectMeta: metav1.ObjectMeta{Name: alice},
-			Spec: corev1alpha1.ProfileSpec{Namespaces: []string{
+			Spec: corev1beta1.ProfileSpec{Namespaces: []string{
 				listedLabelled, "pf-listed-only", "pf-other-label", "pf-missing",
 			}},
 		}
@@ -86,9 +86,9 @@ var _ = Describe("Profile Controller", func() {
 	It("updates the bound namespaces when a namespace label changes", func() {
 		const profile, namespace = "pf-carol", "pf-change"
 		makeNamespace(namespace, "")
-		p := &corev1alpha1.Profile{
+		p := &corev1beta1.Profile{
 			ObjectMeta: metav1.ObjectMeta{Name: profile},
-			Spec:       corev1alpha1.ProfileSpec{Namespaces: []string{namespace}},
+			Spec:       corev1beta1.ProfileSpec{Namespaces: []string{namespace}},
 		}
 		Expect(k8sClient.Create(ctx, p)).To(Succeed())
 		DeferCleanup(func() { Expect(k8sClient.Delete(ctx, p)).To(Succeed()) })
@@ -97,7 +97,7 @@ var _ = Describe("Profile Controller", func() {
 		ns := &corev1.Namespace{}
 		Expect(k8sClient.Get(ctx, types.NamespacedName{Name: namespace}, ns)).To(Succeed())
 		old := ns.DeepCopy()
-		ns.Labels = map[string]string{corev1alpha1.ProfileLabel: profile}
+		ns.Labels = map[string]string{corev1beta1.ProfileLabel: profile}
 		Expect(k8sClient.Update(ctx, ns)).To(Succeed())
 
 		By("mapping the namespace event to the Profile in the label")
@@ -107,15 +107,15 @@ var _ = Describe("Profile Controller", func() {
 		Expect(reconcileProfile(profile).Status.BoundNamespaces).To(ConsistOf(namespace))
 
 		By("removing the binding when the label goes to another Profile")
-		ns.Labels[corev1alpha1.ProfileLabel] = "pf-dave"
+		ns.Labels[corev1beta1.ProfileLabel] = "pf-dave"
 		Expect(k8sClient.Update(ctx, ns)).To(Succeed())
 		Expect(reconcileProfile(profile).Status.BoundNamespaces).To(BeEmpty())
 	})
 
 	It("refuses a namespace name that is not a DNS-1123 label", func() {
-		p := &corev1alpha1.Profile{
+		p := &corev1beta1.Profile{
 			ObjectMeta: metav1.ObjectMeta{Name: "pf-bad"},
-			Spec:       corev1alpha1.ProfileSpec{Namespaces: []string{"Not_A_Label"}},
+			Spec:       corev1beta1.ProfileSpec{Namespaces: []string{"Not_A_Label"}},
 		}
 		Expect(k8sClient.Create(ctx, p)).NotTo(Succeed())
 		Expect(client.IgnoreNotFound(k8sClient.Delete(ctx, p))).To(Succeed())

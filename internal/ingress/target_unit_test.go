@@ -27,7 +27,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
-	corev1alpha1 "github.com/mohanraj00/koodam/api/v1alpha1"
+	corev1beta1 "github.com/mohanraj00/koodam/api/v1beta1"
 	"github.com/mohanraj00/koodam/internal/agentingress"
 )
 
@@ -43,22 +43,22 @@ func TestTargetCheckAgent(t *testing.T) {
 	}
 	for _, tc := range []struct {
 		name   string
-		change func(*corev1alpha1.Agent)
+		change func(*corev1beta1.Agent)
 		want   error
 	}{
-		{"no ingress port", func(a *corev1alpha1.Agent) { a.Spec.IngressPort = nil }, ErrTargetAbsent},
-		{"no ingress port and deletion", func(a *corev1alpha1.Agent) {
+		{"no ingress port", func(a *corev1beta1.Agent) { a.Spec.IngressPort = nil }, ErrTargetAbsent},
+		{"no ingress port and deletion", func(a *corev1beta1.Agent) {
 			a.Spec.IngressPort = nil
 			a.DeletionTimestamp = tgDeleting()
 		}, ErrTargetAbsent},
-		{"empty status job", func(a *corev1alpha1.Agent) { a.Status.Job = "" }, ErrTargetUnavailable},
-		{"status job not a label value", func(a *corev1alpha1.Agent) { a.Status.Job = "Bad_Job" }, ErrTargetUnavailable},
-		{"pending phase", func(a *corev1alpha1.Agent) { a.Status.Phase = corev1alpha1.AgentPending }, ErrTargetUnavailable},
-		{"agent deletion", func(a *corev1alpha1.Agent) { a.DeletionTimestamp = tgDeleting() }, ErrTargetUnavailable},
-		{"no agent uid", func(a *corev1alpha1.Agent) { a.UID = "" }, ErrTargetUnavailable},
-		{"ingress port out of range", func(a *corev1alpha1.Agent) { a.Spec.IngressPort = new(int32(0)) },
+		{"empty status job", func(a *corev1beta1.Agent) { a.Status.Job = "" }, ErrTargetUnavailable},
+		{"status job not a label value", func(a *corev1beta1.Agent) { a.Status.Job = "Bad_Job" }, ErrTargetUnavailable},
+		{"pending phase", func(a *corev1beta1.Agent) { a.Status.Phase = corev1beta1.AgentPending }, ErrTargetUnavailable},
+		{"agent deletion", func(a *corev1beta1.Agent) { a.DeletionTimestamp = tgDeleting() }, ErrTargetUnavailable},
+		{"no agent uid", func(a *corev1beta1.Agent) { a.UID = "" }, ErrTargetUnavailable},
+		{"ingress port out of range", func(a *corev1beta1.Agent) { a.Spec.IngressPort = new(int32(0)) },
 			ErrTargetUnavailable},
-		{"agent in other namespace", func(a *corev1alpha1.Agent) { a.Namespace = tgOtherNamespace }, ErrTargetUnavailable},
+		{"agent in other namespace", func(a *corev1beta1.Agent) { a.Namespace = tgOtherNamespace }, ErrTargetUnavailable},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			a := tgAgent()

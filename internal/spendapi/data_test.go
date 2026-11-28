@@ -36,7 +36,7 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
-	corev1alpha1 "github.com/mohanraj00/koodam/api/v1alpha1"
+	corev1beta1 "github.com/mohanraj00/koodam/api/v1beta1"
 	"github.com/mohanraj00/koodam/internal/gateway"
 )
 
@@ -51,14 +51,14 @@ const (
 
 type agentReader struct {
 	client.Reader
-	items   []corev1alpha1.Agent
-	budgets []corev1alpha1.SpendBudget
+	items   []corev1beta1.Agent
+	budgets []corev1beta1.SpendBudget
 	// getErr is the error of each Get.
 	getErr error
 }
 
 func (l agentReader) Get(_ context.Context, key client.ObjectKey, target client.Object, _ ...client.GetOption) error {
-	b, ok := target.(*corev1alpha1.SpendBudget)
+	b, ok := target.(*corev1beta1.SpendBudget)
 	if !ok {
 		return fmt.Errorf("the spend API reads only SpendBudgets by name")
 	}
@@ -75,12 +75,12 @@ func (l agentReader) Get(_ context.Context, key client.ObjectKey, target client.
 }
 
 func (l agentReader) List(_ context.Context, target client.ObjectList, options ...client.ListOption) error {
-	list := target.(*corev1alpha1.AgentList)
+	list := target.(*corev1beta1.AgentList)
 	opts := (&client.ListOptions{}).ApplyOptions(options)
 	if opts.Namespace == "" || opts.Limit < 1 || opts.Limit > maxPage {
 		return fmt.Errorf("incorrect Kubernetes list options")
 	}
-	var items []corev1alpha1.Agent
+	var items []corev1beta1.Agent
 	for _, item := range l.items {
 		if item.Namespace == opts.Namespace {
 			items = append(items, item)
@@ -119,7 +119,7 @@ func newFixture(t testing.TB, count int) fixture {
 		master: rand.Text(), token: rand.Text(),
 		runKeys: make([]fakeKey, max(1, count)), keyIndex: make(map[string]int, count),
 	}
-	items := make([]corev1alpha1.Agent, count)
+	items := make([]corev1beta1.Agent, count)
 	for i := range f.runKeys {
 		secret, err := gateway.NewKeyValue()
 		if err != nil {
@@ -132,14 +132,14 @@ func newFixture(t testing.TB, count int) fixture {
 			break
 		}
 		name := fmt.Sprintf("agent-%03d", i)
-		items[i] = corev1alpha1.Agent{
+		items[i] = corev1beta1.Agent{
 			ObjectMeta: metav1.ObjectMeta{
 				Name: name, Namespace: testNamespace, UID: types.UID(name),
 				CreationTimestamp: metav1.NewTime(time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)),
 				Labels:            map[string]string{"team": name, costGroupLabel: "edited"},
 			},
-			Spec:   corev1alpha1.AgentSpec{Budget: resource.MustParse("2")},
-			Status: corev1alpha1.AgentStatus{KeyHash: hash, KeyAlias: "run-alias", CostGroup: "saved"},
+			Spec:   corev1beta1.AgentSpec{Budget: resource.MustParse("2")},
+			Status: corev1beta1.AgentStatus{KeyHash: hash, KeyAlias: "run-alias", CostGroup: "saved"},
 		}
 	}
 	handler, err := New(Config{
@@ -225,7 +225,7 @@ func TestRunSpend(t *testing.T) {
 func TestRunSpendWhenKeyIsMissing(t *testing.T) {
 	f := newFixture(t, 3)
 	items := f.kube.(agentReader).items
-	items[0].Status.Usage = &corev1alpha1.AgentUsage{Spend: "3"}
+	items[0].Status.Usage = &corev1beta1.AgentUsage{Spend: "3"}
 	items[2].Status.KeyHash = ""
 	useGateway(t, f.gateway, func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusNotFound)
@@ -409,7 +409,7 @@ func TestRunFields(t *testing.T) {
 	start := metav1.NewTime(time.Date(2026, 1, 2, 3, 4, 5, 0, time.FixedZone("plus2", 7200)))
 	items[0].Spec.Model = "model-a"
 	items[0].Status.Phase, items[0].Status.StartedAt, items[0].Status.CompletedAt =
-		corev1alpha1.AgentSucceeded, &start, &start
+		corev1beta1.AgentSucceeded, &start, &start
 	items[1].Spec.Models = []string{"model-b", "model-c"}
 	p, err := f.runs(t.Context(), f.namespaces, maxPage, "")
 	if err != nil || len(p.Items) != 2 {

@@ -43,7 +43,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
-	corev1alpha1 "github.com/mohanraj00/koodam/api/v1alpha1"
+	corev1beta1 "github.com/mohanraj00/koodam/api/v1beta1"
 	"github.com/mohanraj00/koodam/internal/gateway"
 )
 
@@ -72,7 +72,7 @@ type countGateway struct {
 }
 
 func (g *countGateway) CreateKey(ctx context.Context, s gateway.KeySpec) error {
-	a := &corev1alpha1.Agent{}
+	a := &corev1beta1.Agent{}
 	if g.live.Get(ctx, ingKey, a) != nil || a.Status.KeyHash != gateway.HashKey(s.Value) ||
 		!slices.Contains(a.Finalizers, finalizer) {
 		g.unsafe++
@@ -99,11 +99,11 @@ func (g *countGateway) Usage(context.Context, string) (gateway.Usage, error) {
 func ingWorld(t *testing.T, objs ...client.Object) client.WithWatch {
 	t.Helper()
 	s := runtime.NewScheme()
-	if clientgoscheme.AddToScheme(s) != nil || corev1alpha1.AddToScheme(s) != nil {
+	if clientgoscheme.AddToScheme(s) != nil || corev1beta1.AddToScheme(s) != nil {
 		t.Fatal("the test could not make the scheme")
 	}
 	return fake.NewClientBuilder().WithScheme(s).WithObjects(objs...).
-		WithStatusSubresource(&corev1alpha1.Agent{}, &batchv1.Job{}).Build()
+		WithStatusSubresource(&corev1beta1.Agent{}, &batchv1.Job{}).Build()
 }
 
 func ingReconciler(c client.Client, rd client.Reader, g *countGateway) *AgentReconciler {
@@ -119,39 +119,39 @@ func ingReconcile(t *testing.T, r *AgentReconciler) {
 }
 
 // ingAgent returns an ordinary Agent.
-func ingAgent() *corev1alpha1.Agent {
-	return &corev1alpha1.Agent{
+func ingAgent() *corev1beta1.Agent {
+	return &corev1beta1.Agent{
 		ObjectMeta: metav1.ObjectMeta{Name: ingKey.Name, Namespace: ingKey.Namespace, UID: "uid-live"},
-		Spec: corev1alpha1.AgentSpec{Image: testAgentImage, Command: []string{"run"}, Model: "m",
+		Spec: corev1beta1.AgentSpec{Image: testAgentImage, Command: []string{"run"}, Model: "m",
 			Budget: resource.MustParse("1"), DeadlineSeconds: 60},
 	}
 }
 
 // ingEnroll writes the controller state of a run attempt to a: the finalizer and the key hash. It
 // returns the run Secret with the key.
-func ingEnroll(t *testing.T, a *corev1alpha1.Agent, phase corev1alpha1.AgentPhase) *corev1.Secret {
+func ingEnroll(t *testing.T, a *corev1beta1.Agent, phase corev1beta1.AgentPhase) *corev1.Secret {
 	t.Helper()
 	key, err := gateway.NewKeyValue()
 	if err != nil {
 		t.Fatal("the test could not make a key")
 	}
 	a.Finalizers = []string{finalizer}
-	a.Status = corev1alpha1.AgentStatus{Phase: phase, KeyAlias: "kd-" + string(a.UID), KeyHash: gateway.HashKey(key)}
-	if phase == corev1alpha1.AgentRunning {
+	a.Status = corev1beta1.AgentStatus{Phase: phase, KeyAlias: "kd-" + string(a.UID), KeyHash: gateway.HashKey(key)}
+	if phase == corev1beta1.AgentRunning {
 		a.Status.Job = runName(a)
 	}
 	return &corev1.Secret{ObjectMeta: runMeta(a), Data: map[string][]byte{keyField: []byte(key)}}
 }
 
 // ingJob returns the run Job of a. The Job did not end.
-func ingJob(a *corev1alpha1.Agent) *batchv1.Job {
+func ingJob(a *corev1beta1.Agent) *batchv1.Job {
 	return &batchv1.Job{ObjectMeta: runMeta(a)}
 }
 
 // ingLive returns the live Agent, or nil if it is gone.
-func ingLive(t *testing.T, rd client.Reader) *corev1alpha1.Agent {
+func ingLive(t *testing.T, rd client.Reader) *corev1beta1.Agent {
 	t.Helper()
-	a := &corev1alpha1.Agent{}
+	a := &corev1beta1.Agent{}
 	if err := rd.Get(t.Context(), ingKey, a); apierrors.IsNotFound(err) {
 		return nil
 	} else if err != nil {
@@ -187,7 +187,7 @@ func ingExpectRunning(t *testing.T, rd client.Reader, g *countGateway) {
 	switch {
 	case g.creates != 1 || g.unsafe != 0 || len(g.blocked) != 0:
 		t.Fatal("the run did not make one key after the stored hash and finalizer")
-	case a == nil || a.Status.Phase != corev1alpha1.AgentRunning ||
+	case a == nil || a.Status.Phase != corev1beta1.AgentRunning ||
 		!meta.IsStatusConditionTrue(a.Status.Conditions, condProvisioned):
 		t.Fatal("the Agent is not Running")
 	case !ingHas(t, rd, &corev1.Secret{}) || !ingHas(t, rd, &rbacv1.RoleBinding{}) || !ingHas(t, rd, &batchv1.Job{}):
@@ -197,14 +197,14 @@ func ingExpectRunning(t *testing.T, rd client.Reader, g *countGateway) {
 
 // ingExpectStillRunning stops the test if the controller called the gateway, wrote the Agent or
 // deleted a run object of a Running run. before is the live Agent before the reconcile.
-func ingExpectStillRunning(t *testing.T, rd client.Reader, g *countGateway, before *corev1alpha1.Agent) {
+func ingExpectStillRunning(t *testing.T, rd client.Reader, g *countGateway, before *corev1beta1.Agent) {
 	t.Helper()
 	got := ingLive(t, rd)
 	switch {
 	case len(g.order) != 0:
 		t.Fatal("the controller called the gateway for a running run")
 	case before == nil || got == nil || got.ResourceVersion != before.ResourceVersion ||
-		got.Status.Phase != corev1alpha1.AgentRunning || !slices.Contains(got.Finalizers, finalizer):
+		got.Status.Phase != corev1beta1.AgentRunning || !slices.Contains(got.Finalizers, finalizer):
 		t.Fatal("the running run did not continue")
 	case !ingHas(t, rd, &corev1.Secret{}) || !ingHas(t, rd, &batchv1.Job{}):
 		t.Fatal("the controller deleted a run object")
@@ -213,10 +213,10 @@ func ingExpectStillRunning(t *testing.T, rd client.Reader, g *countGateway, befo
 
 // ingCache returns a client that returns stale for each Agent read, as an old cache can. It counts
 // these reads in reads.
-func ingCache(live client.WithWatch, stale *corev1alpha1.Agent, reads *int) client.Client {
+func ingCache(live client.WithWatch, stale *corev1beta1.Agent, reads *int) client.Client {
 	return interceptor.NewClient(live, interceptor.Funcs{Get: func(ctx context.Context, c client.WithWatch,
 		key client.ObjectKey, obj client.Object, opts ...client.GetOption) error {
-		if a, ok := obj.(*corev1alpha1.Agent); ok {
+		if a, ok := obj.(*corev1beta1.Agent); ok {
 			*reads++
 			stale.DeepCopyInto(a)
 			return nil
@@ -240,12 +240,12 @@ func ingJobCache(live client.WithWatch, reads *int) client.Client {
 
 func TestLiveStateRunningIsNotProvisionedAgain(t *testing.T) {
 	a := ingAgent()
-	sec := ingEnroll(t, a, corev1alpha1.AgentRunning)
+	sec := ingEnroll(t, a, corev1beta1.AgentRunning)
 	live := ingWorld(t, a, sec, ingJob(a))
 	before := ingLive(t, live)
 	// The cache has the Agent from before the run started.
 	stale := before.DeepCopy()
-	stale.Status.Phase, stale.Status.Job = corev1alpha1.AgentPending, ""
+	stale.Status.Phase, stale.Status.Job = corev1beta1.AgentPending, ""
 	g, reads := &countGateway{live: live}, 0
 	ingReconcile(t, ingReconciler(ingCache(live, stale, &reads), live, g))
 	if reads != 0 {
@@ -256,12 +256,12 @@ func TestLiveStateRunningIsNotProvisionedAgain(t *testing.T) {
 
 func TestLiveStateRevokeUsesLiveKeyHash(t *testing.T) {
 	a := ingAgent()
-	sec := ingEnroll(t, a, corev1alpha1.AgentFailed)
+	sec := ingEnroll(t, a, corev1beta1.AgentFailed)
 	hash := a.Status.KeyHash
 	live := ingWorld(t, a, sec)
 	// The cache has the same Agent with a different key hash.
 	stale := ingLive(t, live)
-	ingEnroll(t, stale, corev1alpha1.AgentFailed)
+	ingEnroll(t, stale, corev1beta1.AgentFailed)
 	if stale.Status.KeyHash == hash {
 		t.Fatal("the test made the same key two times")
 	}
@@ -273,7 +273,7 @@ func TestLiveStateRevokeUsesLiveKeyHash(t *testing.T) {
 		t.Fatal("the controller read the Agent from the cache")
 	case g.creates != 0 || !slices.Equal(g.blocked, []string{hash}) || !slices.Equal(g.order, []string{"block", "usage"}):
 		t.Fatal("the revoke did not block the live key hash first, or it made a key")
-	case got == nil || got.Status.Phase != corev1alpha1.AgentFailed || slices.Contains(got.Finalizers, finalizer) ||
+	case got == nil || got.Status.Phase != corev1beta1.AgentFailed || slices.Contains(got.Finalizers, finalizer) ||
 		!meta.IsStatusConditionTrue(got.Status.Conditions, condRevoked) || ingHas(t, live, &corev1.Secret{}):
 		t.Fatal("the revoke did not complete")
 	}
@@ -283,7 +283,7 @@ func TestLiveStateProvisionsLiveUID(t *testing.T) {
 	// The cache has the run of an old Agent with the same name.
 	stale := ingAgent()
 	stale.UID = "uid-old"
-	ingEnroll(t, stale, corev1alpha1.AgentRunning)
+	ingEnroll(t, stale, corev1beta1.AgentRunning)
 	live := ingWorld(t, ingAgent())
 	g, reads := &countGateway{live: live}, 0
 	ingReconcile(t, ingReconciler(ingCache(live, stale, &reads), live, g))
@@ -300,7 +300,7 @@ func TestLiveStateProvisionsLiveUID(t *testing.T) {
 
 func TestLiveStateDeletedAgentIgnoresCache(t *testing.T) {
 	stale := ingAgent()
-	ingEnroll(t, stale, corev1alpha1.AgentRunning)
+	ingEnroll(t, stale, corev1beta1.AgentRunning)
 	live := ingWorld(t)
 	g, reads := &countGateway{live: live}, 0
 	ingReconcile(t, ingReconciler(ingCache(live, stale, &reads), live, g))
@@ -312,7 +312,7 @@ func TestLiveStateDeletedAgentIgnoresCache(t *testing.T) {
 
 func TestLiveStateRunningIgnoresStaleJobCache(t *testing.T) {
 	a := ingAgent()
-	sec := ingEnroll(t, a, corev1alpha1.AgentRunning)
+	sec := ingEnroll(t, a, corev1beta1.AgentRunning)
 	live := ingWorld(t, a, sec, ingJob(a))
 	before := ingLive(t, live)
 	g, reads := &countGateway{live: live}, 0

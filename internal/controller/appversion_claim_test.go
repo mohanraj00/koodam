@@ -23,17 +23,17 @@ import (
 
 	corev1 "k8s.io/api/core/v1"
 
-	corev1alpha1 "github.com/mohanraj00/koodam/api/v1alpha1"
+	corev1beta1 "github.com/mohanraj00/koodam/api/v1beta1"
 )
 
 func TestAppUserContainerSecurityContext(t *testing.T) {
 	for _, issuer := range []string{"", "https://issuer.example.com"} {
 		t.Run("issuer="+issuer, func(t *testing.T) {
-			av := &corev1alpha1.AppVersion{Spec: corev1alpha1.AppVersionSpec{
-				Template: corev1alpha1.AppVersionTemplate{PodTemplate: corev1alpha1.PodTemplate{
+			av := &corev1beta1.AppVersion{Spec: corev1beta1.AppVersionSpec{
+				Template: corev1beta1.AppVersionTemplate{PodTemplate: corev1beta1.PodTemplate{
 					Spec: corev1.PodSpec{
 						Containers: []corev1.Container{
-							{Name: corev1alpha1.AppContainerName, Image: "registry.example.com/app:test",
+							{Name: corev1beta1.AppContainerName, Image: "registry.example.com/app:test",
 								Ports: []corev1.ContainerPort{{ContainerPort: 8080}}},
 							{Name: pauseTestSide, Image: "registry.example.com/side:test"},
 						},
@@ -116,7 +116,7 @@ func TestClaimAdd(t *testing.T) {
 		"init container": {InitContainers: []corev1.Container{{Name: claimContainer}}},
 		"volume":         {Volumes: []corev1.Volume{{Name: claimContainer}}},
 	} {
-		if err := c.add(&corev1.PodTemplateSpec{Spec: spec}, &corev1alpha1.AppVersion{}, app); !isInvalidTemplate(err) {
+		if err := c.add(&corev1.PodTemplateSpec{Spec: spec}, &corev1beta1.AppVersion{}, app); !isInvalidTemplate(err) {
 			t.Errorf("%s: the template with the reserved name is accepted: %v", name, err)
 		}
 	}
@@ -124,7 +124,7 @@ func TestClaimAdd(t *testing.T) {
 		Containers: []corev1.Container{{Name: pauseTestSide,
 			Ports: []corev1.ContainerPort{{ContainerPort: claimPortBase}}}},
 		InitContainers: []corev1.Container{{Name: "init"}}}}
-	if err := c.add(tmpl, &corev1alpha1.AppVersion{}, app); err != nil {
+	if err := c.add(tmpl, &corev1beta1.AppVersion{}, app); err != nil {
 		t.Fatal(err)
 	}
 	if got := c.claimPorts(&tmpl.Spec, app); len(got) != 1 || got[0].ContainerPort != claimPortBase+1 {

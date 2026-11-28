@@ -19,14 +19,14 @@ package controller
 import (
 	"testing"
 
-	corev1alpha1 "github.com/mohanraj00/koodam/api/v1alpha1"
+	corev1beta1 "github.com/mohanraj00/koodam/api/v1beta1"
 )
 
 // TestScaleReplicas checks the pods that share a tenant rate and the range of a retiring version.
 func TestScaleReplicas(t *testing.T) {
-	av := &corev1alpha1.AppVersion{Spec: corev1alpha1.AppVersionSpec{Scale: &corev1alpha1.AppVersionScale{
-		MinReplicas: new(int32(2)), MaxReplicas: 6, Metric: corev1alpha1.AppVersionScaleMetric{
-			CPU: &corev1alpha1.AppVersionCPUMetric{AverageUtilization: 80}}}}}
+	av := &corev1beta1.AppVersion{Spec: corev1beta1.AppVersionSpec{Scale: &corev1beta1.AppVersionScale{
+		MinReplicas: new(int32(2)), MaxReplicas: 6, Metric: corev1beta1.AppVersionScaleMetric{
+			CPU: &corev1beta1.AppVersionCPUMetric{AverageUtilization: 80}}}}}
 	// The tenant rate of each pod uses the maximum, so the pods never get more than the rate.
 	if n := versionReplicas(av); n != 6 {
 		t.Fatalf("versionReplicas = %d, want 6", n)
@@ -34,7 +34,7 @@ func TestScaleReplicas(t *testing.T) {
 	if h := autoscaler(av); *h.Spec.MinReplicas != 2 || h.Spec.MaxReplicas != 6 {
 		t.Fatalf("active range = %d..%d, want 2..6", *h.Spec.MinReplicas, h.Spec.MaxReplicas)
 	}
-	av.Spec.Lifecycle = corev1alpha1.AppVersionRetiring
+	av.Spec.Lifecycle = corev1beta1.AppVersionRetiring
 	if h := autoscaler(av); *h.Spec.MinReplicas != 2 || h.Spec.MaxReplicas != 2 {
 		t.Fatalf("retiring range = %d..%d, want 2..2", *h.Spec.MinReplicas, h.Spec.MaxReplicas)
 	}
