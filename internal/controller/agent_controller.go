@@ -499,7 +499,7 @@ func (r *AgentReconciler) provision(ctx context.Context, a *corev1alpha1.Agent) 
 		TTL: time.Duration(a.Spec.DeadlineSeconds)*time.Second + r.Grace, Metadata: keyMetadata(a),
 	})
 	if err != nil {
-		return err
+		return agentGatewayError("CreateKey", err)
 	}
 	user, err := boundProfile(ctx, r.Client, a.Namespace)
 	if err != nil {
@@ -544,6 +544,21 @@ func (r *AgentReconciler) provision(ctx context.Context, a *corev1alpha1.Agent) 
 	meta.SetStatusCondition(&a.Status.Conditions, r.Egress.condition(a.Generation))
 	log.Info("Provisioned the run", "keyAlias", alias)
 	return r.Status().Update(ctx, a)
+}
+
+// errAgentGateway is the error of a gateway call of the Agent controller that failed, with no
+// text of the gateway.
+var errAgentGateway = errors.New("a call to the gateway failed")
+
+// agentGatewayError gives the error that Reconcile returns for the error err of the gateway call
+// op. The text of a gateway error can have data of the gateway, and controller-runtime writes a
+// returned error to the manager log. Thus the result has fixed text, the call and, for an HTTP
+// answer, the status.
+func agentGatewayError(op string, err error) error {
+	if he, ok := errors.AsType[*gateway.HTTPError](err); ok {
+		return fmt.Errorf("%w: %s: HTTP %d", errAgentGateway, op, he.Status)
+	}
+	return fmt.Errorf("%w: %s", errAgentGateway, op)
 }
 
 // keyMetadata is the metadata of the gateway key of a run. The gateway can then group the spend
@@ -886,7 +901,7 @@ func (r *AgentReconciler) fail(ctx context.Context, a *corev1alpha1.Agent, phase
 func (r *AgentReconciler) revoke(ctx context.Context, a *corev1alpha1.Agent) error {
 	if a.Status.KeyHash != "" {
 		if err := r.Gateway.BlockKey(ctx, a.Status.KeyHash); err != nil {
-			return err
+			return agentGatewayError("BlockKey", err)
 		}
 	}
 	reason := "Revoked"
@@ -960,7 +975,7 @@ func (r *AgentReconciler) writeUsage(ctx context.Context, a *corev1alpha1.Agent,
 			}
 			a.Status.Usage = usageStatus(u)
 		default:
-			return err
+			return agentGatewayError("Usage", err)
 		}
 	}
 	a.Status.RevokedAt = &metav1.Time{Time: time.Now()}
