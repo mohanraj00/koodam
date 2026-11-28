@@ -400,6 +400,12 @@ func (r *WorkspaceReconciler) quarantineHeld(ctx context.Context, ws *corev1alph
 	if err := r.revokeKey(ctx, ws, secret); err != nil {
 		return "", "", "", err
 	}
+	// The budget step can delete a different object with the name of the budget. Thus it occurs
+	// after the block of the key.
+	if err := markBudget(ctx, r.Client, r.APIReader, r.Scheme, ws, "workspace", workspaceBudgetSelector(ws),
+		true); err != nil {
+		return "", "", "", err
+	}
 	switch err := r.waitTestKeyBlocks(ctx, ws); {
 	case errors.Is(err, errTestKeysUnblocked):
 		return corev1alpha1.WorkspacePending, reasonTestKeysBlocking, "The quarantine waits for the block of each test key.",
@@ -474,9 +480,15 @@ func (r *WorkspaceReconciler) releaseDeleted(ctx context.Context, ws *corev1alph
 	return nil
 }
 
+// workspaceBudgetSelector selects the pods of the Workspace for the budget of the quarantine.
+func workspaceBudgetSelector(ws *corev1alpha1.Workspace) map[string]string {
+	return map[string]string{WorkspaceLabel: ws.Name}
+}
+
 // markChildren adds or removes the quarantine label on the StatefulSet, the pod and the home PVC
-// of the Workspace, and makes or removes the budget of the quarantine. The controller has no read
-// access to the PVCs, so it always sends the patch.
+// of the Workspace. At the release, it also removes the budget of the quarantine. quarantineHeld
+// makes the budget after the block of the key. The controller has no read access to the PVCs, so
+// it always sends the patch.
 func (r *WorkspaceReconciler) markChildren(ctx context.Context, ws *corev1alpha1.Workspace, on bool) error {
 	sts := &appsv1.StatefulSet{}
 	err := r.APIReader.Get(ctx, client.ObjectKeyFromObject(ws), sts)
@@ -488,9 +500,11 @@ func (r *WorkspaceReconciler) markChildren(ctx context.Context, ws *corev1alpha1
 			return err
 		}
 	}
-	sel := map[string]string{WorkspaceLabel: ws.Name}
-	if err := markBudget(ctx, r.Client, r.APIReader, r.Scheme, ws, "workspace", sel, on); err != nil {
-		return err
+	sel := workspaceBudgetSelector(ws)
+	if !on {
+		if err := markBudget(ctx, r.Client, r.APIReader, r.Scheme, ws, "workspace", sel, false); err != nil {
+			return err
+		}
 	}
 	if err := markPods(ctx, r.Client, r.APIReader, ws.Namespace, sel, on); err != nil {
 		return err

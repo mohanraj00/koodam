@@ -530,6 +530,34 @@ var _ = Describe("Hold stop", func() {
 			Expect(meta.FindStatusCondition(w.Status.Conditions, corev1alpha1.HoldHeld)).To(BeNil())
 		})
 
+		It("blocks the key before it replaces a different object with the name of the Workspace budget", func() {
+			reconcileWorkspace()
+			other := &policyv1.PodDisruptionBudget{ObjectMeta: metav1.ObjectMeta{Namespace: ns,
+				Name: "kd-quarantine-workspace-" + name}, Spec: policyv1.PodDisruptionBudgetSpec{
+				MinAvailable: new(intstr.FromInt32(0)),
+				Selector:     &metav1.LabelSelector{MatchLabels: map[string]string{WorkspaceLabel: name}}}}
+			Expect(k8sClient.Create(ctx, other)).To(Succeed())
+			DeferCleanup(func() { Expect(client.IgnoreNotFound(k8sClient.Delete(ctx, other))).To(Succeed()) })
+			var uidAtBlock types.UID
+			gw.atBlock = func() {
+				pdb := &policyv1.PodDisruptionBudget{}
+				if k8sClient.Get(ctx, client.ObjectKeyFromObject(other), pdb) == nil {
+					uidAtBlock = pdb.UID
+				}
+			}
+			hold := newHold(corev1alpha1.HoldTarget{Kind: corev1alpha1.HoldTargetWorkspace, Namespace: ns, Name: name},
+				corev1alpha1.HoldQuarantine)
+			reconcileWorkspace()
+			Expect(uidAtBlock).To(Equal(other.UID), "the controller deleted the object before the block of the key")
+			pdb := &policyv1.PodDisruptionBudget{}
+			Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(other), pdb)).To(Succeed())
+			Expect(pdb.UID).NotTo(Equal(other.UID))
+			expectBudget(workspace(), "workspace", map[string]string{WorkspaceLabel: name}, true)
+			release(hold)
+			reconcileWorkspace()
+			expectBudget(workspace(), "workspace", nil, false)
+		})
+
 		It("quarantines the Workspace: blocks the key and keeps the pod, then stops and starts again", func() {
 			reconcileWorkspace()
 			Expect(replicas()).To(Equal(int32(1)))
