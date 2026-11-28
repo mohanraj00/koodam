@@ -31,6 +31,7 @@ RUN CGO_ENABLED=0 GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH} go build -a -o eg
 RUN CGO_ENABLED=0 GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH} go build -a -o agent-admission ./cmd/agent-admission
 RUN CGO_ENABLED=0 GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH} go build -a -o output-digest ./cmd/output-digest
 RUN CGO_ENABLED=0 GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH} go build -a -o app-claim-check ./cmd/app-claim-check
+RUN CGO_ENABLED=0 GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH} go build -a -o conversion ./cmd/conversion
 
 # The spend-api image (#406) has the spend-api binary only. The binary embeds
 # docs/spend-api.openapi.json, internal/opspage/static/ and internal/opspage/mugham.pin.json.
@@ -59,6 +60,7 @@ COPY --from=builder /workspace/egress-proxy .
 COPY --from=builder /workspace/agent-admission .
 COPY --from=builder /workspace/output-digest .
 COPY --from=builder /workspace/app-claim-check .
+COPY --from=builder /workspace/conversion .
 USER 65532:65532
 
 ENTRYPOINT ["/manager"]
