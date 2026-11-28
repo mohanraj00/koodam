@@ -60,8 +60,9 @@ manifests: controller-gen ## Generate ClusterRole and CustomResourceDefinition o
 	go run ./hack/agent-ingress-crd config/crd/bases/core.koodam.dev_agents.yaml config/agent-ingress/crd/bases/core.koodam.dev_agents.yaml
 
 .PHONY: generate
-generate: controller-gen ## Generate code containing DeepCopy, DeepCopyInto, and DeepCopyObject method implementations.
+generate: controller-gen conversion-gen ## Generate code containing DeepCopy, DeepCopyInto, and DeepCopyObject method implementations.
 	"$(CONTROLLER_GEN)" object:headerFile="hack/boilerplate.go.txt",year=$(YEAR) paths="./..."
+	sed 's/YEAR/$(YEAR)/' hack/boilerplate.go.txt | "$(CONVERSION_GEN)" --skip-unsafe --go-header-file /dev/stdin --output-file zz_generated.conversion.go ./api/v1alpha1
 
 .PHONY: fmt
 fmt: ## Run go fmt against code.
@@ -340,12 +341,15 @@ KIND ?= kind
 KIND_NODE_IMAGE ?=
 KUSTOMIZE ?= $(LOCALBIN)/kustomize
 CONTROLLER_GEN ?= $(LOCALBIN)/controller-gen
+CONVERSION_GEN ?= $(LOCALBIN)/conversion-gen
 ENVTEST ?= $(LOCALBIN)/setup-envtest
 GOLANGCI_LINT = $(LOCALBIN)/golangci-lint
 
 ## Tool Versions
 KUSTOMIZE_VERSION ?= v5.8.1
 CONTROLLER_TOOLS_VERSION ?= v0.22.0
+# CODE_GENERATOR_VERSION is the version of conversion-gen. Keep it the same as k8s.io/apimachinery in go.mod.
+CODE_GENERATOR_VERSION ?= v0.37.0
 
 #ENVTEST_VERSION is the controller-runtime version to use for setup-envtest, derived from go.mod
 ENVTEST_VERSION ?= $(shell v='$(call gomodver,sigs.k8s.io/controller-runtime)'; \
@@ -367,6 +371,11 @@ $(KUSTOMIZE): $(LOCALBIN)
 controller-gen: $(CONTROLLER_GEN) ## Download controller-gen locally if necessary.
 $(CONTROLLER_GEN): $(LOCALBIN)
 	$(call go-install-tool,$(CONTROLLER_GEN),sigs.k8s.io/controller-tools/cmd/controller-gen,$(CONTROLLER_TOOLS_VERSION))
+
+.PHONY: conversion-gen
+conversion-gen: $(CONVERSION_GEN) ## Download conversion-gen locally if necessary.
+$(CONVERSION_GEN): $(LOCALBIN)
+	$(call go-install-tool,$(CONVERSION_GEN),k8s.io/code-generator/cmd/conversion-gen,$(CODE_GENERATOR_VERSION))
 
 .PHONY: setup-envtest
 setup-envtest: envtest ## Download the binaries required for ENVTEST in the local bin directory.
