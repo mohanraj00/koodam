@@ -1,7 +1,8 @@
-# Nookku preset (#83)
+# Nookku preset
 
-Status: the API validation, the test folder, the Python check, the copy of the pinned Nookku files
-and the Claude Code env of an Agent. Koodam does not load the plugin in a harness at this stage.
+Release: v0.6.0.
+
+Koodam gives the pod the pinned Nookku files and a test folder. It does not load the plugin in a harness.
 
 ## The field
 

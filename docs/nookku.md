@@ -1,8 +1,10 @@
 # Koodam with Nookku
 
+Release: v0.6.0.
+
 Nookku tests an app agent. It runs as a plugin of the harness (Claude Code or Codex). Koodam gives the harness a Workspace pod on Kubernetes. This page gives the design of the 2 tools together, and the contracts between them.
 
-> Status: the span contract, the egress proxy and `koodam trace` are in v0.3.0. The test keys, the `nookku` plugin field and the test folder are in v0.4.0. The published Nookku data image with the pinned Nookku 0.6.0 files is in v0.5.0. Koodam does not load the plugin in a harness.
+Koodam does not load the plugin in a harness.
 
 ## The parts
 
@@ -35,18 +37,7 @@ flowchart LR
 - **Koodam** sends all egress of the pod through the egress proxy. The proxy writes 1 span for each call. Nookku reads the spans as a second record, and finds the calls that did not go through a Nookku proxy.
 - The 2 records do not depend on each other. Nookku runs without Koodam. Koodam runs without Nookku.
 
-## Who builds what (v0.3)
-
-| Item | Koodam issue | What Koodam gives |
-|---|---|---|
-| K1 | #146, #168 | This page, with the Workspace setup for Nookku. No CRD field. |
-| K2 | #168, #144 | The span contract v2 (`"v": 2`, `port`, `claimed`, #170) and `koodam trace --until`. |
-| K3 | #143 | `workspace.networkPolicy.extraEgress` stays when the egress proxy is on. |
-| K4 | #145 | 3 e2e cases: loopback, an `extraEgress` Service, a blocked port. |
-
-The Nookku side (Nookku 0.5.6): the test folder from `NOOKKU_TESTS_DIR`, a kind proof of the HTTP tap, the gateway spend logs as a source, and `nookku trace --egress`. The proof of Nookku inside a Workspace comes in Nookku 0.6.0, after #142 and #143 merge.
-
-The `nookku` plugin field and the test folder (#83) are in v0.4.0 and later, not in v0.3.0. [nookku-preset.md](nookku-preset.md) has them.
+The `nookku` plugin field and the test folder are in [nookku-preset.md](nookku-preset.md).
 
 ## Contract 1: the span
 

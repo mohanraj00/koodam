@@ -45,10 +45,37 @@ has no key seed: the generator of the set has the seed, and it is not here.
 | `decision-accept.signed.json` | `66d9ec4a9db994ca745370a6a05185d0f67c1b07d48f244720d243616d1cab79` |
 | `decision-reject.signed.json` | `44fe1c7b124f8521d95d6df9b7f05a9f40143c9de9e75ce2e72220351c2bf49a` |
 | `keyset.json` | `b91f9c554afdd2820e923e87968416222300ff28769792051cfe698a2621a61b` |
+| `activation.signed.json` | `a1f3f85dc2e139d9e4ebda4ca8851a034efdf2bd197ded9211de18d06edde11b` |
 
 The Entelos repository does not have these files. Its project made them on that commit with a
 generator, which runs the release in process with a fixed clock. Thus the seam job cannot get
 them from the tag, and the tests pin the SHA-256 of each file.
+
+## The signed activation
+
+`activation.signed.json` is a signed `activation` record for the scope and the function of the
+fixture set (#508). The Entelos project did not make it. It was made with the signing code of the
+Entelos tag `v0.7.0`, commit `935059139a3e47237f0703c30c8aab8407a29aee`:
+
+- The key is the vector key `a` of `src/protocol/signed/vectors/signed-cases.json` of that tag.
+  Its seed is public test data. It has the `key_id` of `keyset.json`.
+- The record is the activation of an `enable` event for the accept chain. `activationRecord` of
+  `src/lifecycle-core/activation.go` makes it, and the `Signer` of `src/lifecycle-core/sign.go`
+  signs it.
+- `entelos-make-activation_test.go.txt` is the generator. It reads the seed from the vectors file
+  of the clone, so this folder has no seed. It checks the output with `VerifyActivation` and the
+  fixture key set.
+
+To make the file again, use a clean clone of the tag outside this repository:
+
+```sh
+git -C <entelos checkout> worktree add <dir> v0.7.0
+cp entelos-make-activation_test.go.txt <dir>/src/lifecycle-core/make_activation_test.go
+cd <dir>/src/lifecycle-core
+FIXTURE=<koodam>/internal/evidence/approval/testdata/v0.7.0 OUT=<file> go test -run TestMakeActivation .
+```
+
+An ed25519 signature has no random part, so each run gives the same bytes.
 
 # The pin of the seam job
 
