@@ -89,6 +89,8 @@ type approvalState struct {
 	reason, message string
 	// evidence is the verified record of an accept or of a reject.
 	evidence *approval.Record
+	// decided is the time decided_at of the decision of evidence.
+	decided time.Time
 }
 
 // approvalRank gives the order of the states if the records of an Agent give more than one. A
@@ -145,7 +147,7 @@ func checkRecord(rec *corev1alpha1.ApprovalRecord, trust *corev1alpha1.ProfileAp
 	}
 	// The subject of the evidence is the subject of the run, and not the snapshot reference.
 	result.Record.Subject = subject
-	s.evidence = &result.Record
+	s.evidence, s.decided = &result.Record, decided
 	return s
 }
 
@@ -159,11 +161,11 @@ func (r *AgentReconciler) approvalState(ctx context.Context, a *corev1alpha1.Age
 		return approvalState{}, err
 	}
 	if p == nil || p.Spec.Approval == nil {
-		return approvalState{metav1.ConditionFalse, corev1alpha1.ApprovalNoKeySet,
-			"The Profile of the namespace has no spec.approval.", nil}, nil
+		return approvalState{status: metav1.ConditionFalse, reason: corev1alpha1.ApprovalNoKeySet,
+			message: "The Profile of the namespace has no spec.approval."}, nil
 	}
-	best := approvalState{metav1.ConditionUnknown, corev1alpha1.ApprovalWaiting,
-		fmt.Sprintf("No ApprovalRecord targets the Agent. The subject of the run is %s.", subject), nil}
+	best := approvalState{status: metav1.ConditionUnknown, reason: corev1alpha1.ApprovalWaiting,
+		message: fmt.Sprintf("No ApprovalRecord targets the Agent. The subject of the run is %s.", subject)}
 	list := &corev1alpha1.ApprovalRecordList{}
 	for token, read := "", 0; ; {
 		if err := r.APIReader.List(ctx, list, client.InNamespace(a.Namespace),
@@ -172,7 +174,11 @@ func (r *AgentReconciler) approvalState(ctx context.Context, a *corev1alpha1.Age
 			return approvalState{}, err
 		}
 		for i := range list.Items {
-			if s := checkRecord(&list.Items[i], p.Spec.Approval, subject, now); approvalRank[s.reason] > approvalRank[best.reason] {
+			// Of two accepts, the state keeps the accept with the earlier decision, because the
+			// wait deadline applies to the time of the decision.
+			s := checkRecord(&list.Items[i], p.Spec.Approval, subject, now)
+			if approvalRank[s.reason] > approvalRank[best.reason] || (s.reason == corev1alpha1.ApprovalApproved &&
+				best.reason == corev1alpha1.ApprovalApproved && s.decided.Before(best.decided)) {
 				best = s
 			}
 		}
@@ -184,9 +190,9 @@ func (r *AgentReconciler) approvalState(ctx context.Context, a *corev1alpha1.Age
 			// A record that the check did not read can have a higher rank. Only Denied has the
 			// highest rank, so each other state waits: an incomplete check never starts a run.
 			if best.reason != corev1alpha1.ApprovalDenied {
-				best = approvalState{metav1.ConditionUnknown, corev1alpha1.ApprovalWaiting,
-					fmt.Sprintf("The check read only %d records of the Agent, so it cannot start the run. "+
-						"Delete the ApprovalRecords that are not necessary. The subject of the run is %s.", read, subject), nil}
+				best = approvalState{status: metav1.ConditionUnknown, reason: corev1alpha1.ApprovalWaiting,
+					message: fmt.Sprintf("The check read only %d records of the Agent, so it cannot start the run. "+
+						"Delete the ApprovalRecords that are not necessary. The subject of the run is %s.", read, subject)}
 			}
 			break
 		}
@@ -219,9 +225,13 @@ func (r *AgentReconciler) awaitApproval(ctx context.Context, a *corev1alpha1.Age
 		return false, err
 	}
 	deadline := a.CreationTimestamp.Add(time.Duration(a.Spec.Approval.WaitSeconds) * time.Second)
-	if s.status == metav1.ConditionUnknown && !now.Before(deadline) {
-		s = approvalState{metav1.ConditionFalse, corev1alpha1.ApprovalTimeout, fmt.Sprintf(
-			"The run got no approval in %d seconds.", a.Spec.Approval.WaitSeconds), nil}
+	// An accept that was decided after the deadline does not start a run, for example if the
+	// manager was down at the deadline. A run with a key hash got its accept at an earlier start
+	// attempt, so its retry continues.
+	late := s.status == metav1.ConditionTrue && a.Status.KeyHash == "" && s.decided.After(deadline)
+	if late || (s.status == metav1.ConditionUnknown && !now.Before(deadline)) {
+		s = approvalState{status: metav1.ConditionFalse, reason: corev1alpha1.ApprovalTimeout, message: fmt.Sprintf(
+			"The run got no approval in %d seconds.", a.Spec.Approval.WaitSeconds)}
 	}
 	before := a.Status.DeepCopy()
 	// An approver integration reads the request and the subject from the status.

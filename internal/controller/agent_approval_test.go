@@ -158,6 +158,11 @@ var _ = Describe("Agent approval", Ordered, func() {
 	expiredBy := func(s approvalSigner, subject, disposition string) approvalChain {
 		return s.chain(subject, disposition, now.Add(-time.Minute), now.Add(-3*day), now.Add(-day))
 	}
+	// decidedAt gives a chain with an accept that was decided at the time and a date range around
+	// the time of the test.
+	decidedAt := func(subject string, at time.Time) approvalChain {
+		return signer.chain(subject, "accept", at, now.Add(-2*day), now.Add(2*day))
+	}
 	machine, policy := signer, signer
 	machine.kind, policy.kind = "model", "policy"
 	accept := func(subject string) approvalChain { return decide(signer, subject, "accept") }
@@ -230,6 +235,13 @@ var _ = Describe("Agent approval", Ordered, func() {
 		Entry("NotVerified: an invalid disposition with an until date in the past does not stop the run", false,
 			one(func(s string) approvalChain { return expiredBy(signer, s, "maybe") }),
 			time.Duration(0), metav1.ConditionUnknown, corev1alpha1.ApprovalNotVerified, "invalid_disposition"),
+		Entry("Timeout: an accept that was decided after the wait deadline", false,
+			one(func(s string) approvalChain { return decidedAt(s, now.Add(2*time.Hour)) }),
+			2*time.Hour+time.Minute, metav1.ConditionFalse, corev1alpha1.ApprovalTimeout, "no approval in 3600 seconds"),
+		Entry("Approved: an accept before the wait deadline, also with an accept after it", false,
+			func(s string) []approvalChain {
+				return []approvalChain{decidedAt(s, now.Add(65*time.Minute)), decidedAt(s, now.Add(55*time.Minute))}
+			}, 70*time.Minute, metav1.ConditionTrue, corev1alpha1.ApprovalApproved, "valid accept"),
 		Entry("NotYetValid: a from date in the future", false,
 			one(func(s string) approvalChain {
 				return signer.chain(s, "accept", now.Add(-time.Minute), now.Add(2*day), now.Add(4*day))
